@@ -187,13 +187,14 @@ export default function App() {
       setStatusProcesso("💾 Salvando resultado na galeria...");
 
       const { error } = await supabase.from("processamentos").insert([
-        {
-          imagem_original: urlPublica,
-          imagem_processada: dados.imagem_processada,
-          status: "processado",
-          user_id: usuario.id,
-        },
-      ]);
+  {
+    imagem_original: urlPublica,
+    imagem_processada: dados.imagem_processada,
+    status: "processado",
+    user_id: usuario.id,
+    tipo: "foto",
+  },
+]);
 
       if (error) {
         alert(error.message);
