@@ -16,6 +16,7 @@ export default function App() {
   const [urlPublica, setUrlPublica] = useState("");
   const [resultadoIA, setResultadoIA] = useState("");
   const [processando, setProcessando] = useState(false);
+  const [statusProcesso, setStatusProcesso] = useState("");
 
   useEffect(() => {
     verificarUsuario();
@@ -45,7 +46,7 @@ export default function App() {
     }
 
     setUsuario(data.user);
-    alert("Login realizado!");
+    setScreen("home");
   }
 
   async function cadastrarUsuario() {
@@ -122,7 +123,10 @@ export default function App() {
       return;
     }
 
-    const nomeArquivo = `${Date.now()}-${arquivo.name
+    setProcessando(true);
+    setStatusProcesso("⬆️ Enviando imagem para o Supabase...");
+
+    const nomeArquivo = `${usuario.id}/${Date.now()}-${arquivo.name
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-zA-Z0-9.]/g, "-")}`;
@@ -132,25 +136,33 @@ export default function App() {
       .upload(nomeArquivo, arquivo, { upsert: true });
 
     if (error) {
+      setProcessando(false);
+      setStatusProcesso("");
       alert(error.message);
       return;
     }
 
-    const { data } = supabase.storage
-      .from("imagens")
-      .getPublicUrl(nomeArquivo);
+    const { data } = supabase.storage.from("imagens").getPublicUrl(nomeArquivo);
 
     setUrlPublica(data.publicUrl);
-    alert("Imagem enviada!");
+    setStatusProcesso("✅ Imagem enviada. Agora pode processar com IA.");
+    setProcessando(false);
   }
 
   async function processarIA() {
+    if (!usuario) {
+      alert("Faça login primeiro");
+      setScreen("login");
+      return;
+    }
+
     if (!urlPublica) {
       alert("Envie a imagem primeiro");
       return;
     }
 
     setProcessando(true);
+    setStatusProcesso("🤖 Processando imagem com IA...");
 
     try {
       const resposta = await fetch(
@@ -165,12 +177,14 @@ export default function App() {
       const dados = await resposta.json();
 
       if (!dados.imagem_processada) {
-        alert("A Function não retornou imagem.");
+        console.log(dados);
+        setStatusProcesso("❌ A IA não retornou uma imagem.");
         setProcessando(false);
         return;
       }
 
       setResultadoIA(dados.imagem_processada);
+      setStatusProcesso("💾 Salvando resultado na galeria...");
 
       const { error } = await supabase.from("processamentos").insert([
         {
@@ -186,10 +200,11 @@ export default function App() {
       } else {
         await carregarDashboard();
         await carregarGaleria();
-        alert("Imagem processada e salva!");
+        setStatusProcesso("✅ Concluído! Imagem processada e salva na galeria.");
       }
     } catch (erro) {
       console.log(erro);
+      setStatusProcesso("❌ Erro ao processar imagem.");
       alert("Erro ao processar imagem.");
     }
 
@@ -208,11 +223,68 @@ export default function App() {
     document.body.removeChild(link);
   }
 
+  async function excluirImagem(item) {
+    const confirmar = confirm("Deseja excluir esta imagem da galeria?");
+    if (!confirmar) return;
+
+    const { error } = await supabase
+      .from("processamentos")
+      .delete()
+      .eq("created_at", item.created_at)
+      .eq("user_id", usuario.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    await carregarDashboard();
+    await carregarGaleria();
+  }
+
+  function limparTelaFoto() {
+    setArquivo(null);
+    setPreview("");
+    setUrlPublica("");
+    setResultadoIA("");
+    setStatusProcesso("");
+  }
+
   const cardStyle = {
     background: "#0f172a",
     padding: "20px",
-    borderRadius: "12px",
-    border: "1px solid #1d4ed8",
+    borderRadius: "16px",
+    border: "1px solid #2563eb",
+  };
+
+  const buttonBlue = {
+    padding: "12px 18px",
+    background: "#2563eb",
+    color: "white",
+    border: "none",
+    borderRadius: "10px",
+    cursor: "pointer",
+    fontWeight: "bold",
+  };
+
+  const buttonGreen = {
+    padding: "12px 18px",
+    background: "#22c55e",
+    color: "white",
+    border: "none",
+    borderRadius: "10px",
+    cursor: "pointer",
+    fontWeight: "bold",
+  };
+
+  const buttonRed = {
+    padding: "12px 18px",
+    background: "#dc2626",
+    color: "white",
+    border: "none",
+    borderRadius: "10px",
+    cursor: "pointer",
+    fontWeight: "bold",
   };
 
   return (
@@ -235,7 +307,14 @@ export default function App() {
         </p>
       )}
 
-      <div style={{ display: "flex", justifyContent: "center", gap: "15px", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          gap: "12px",
+          flexWrap: "wrap",
+        }}
+      >
         <button onClick={() => setScreen("home")}>Home</button>
         <button onClick={() => setScreen("foto")}>Fotos IA</button>
         <button onClick={() => setScreen("galeria")}>Galeria</button>
@@ -282,7 +361,13 @@ export default function App() {
         <div style={{ marginTop: "50px" }}>
           <h2>Painel de Controle APPIA AI</h2>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))", gap: "20px" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))",
+              gap: "20px",
+            }}
+          >
             <div style={cardStyle}>
               <h3>📸 Fotos IA</h3>
               <h1>{totalFotos}</h1>
@@ -301,11 +386,18 @@ export default function App() {
 
           <h2 style={{ marginTop: "50px" }}>🖼 Últimas Imagens</h2>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "20px" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+              gap: "20px",
+            }}
+          >
             {ultimasImagens.map((item) => (
               <div key={item.created_at} style={cardStyle}>
                 <img
                   src={item.imagem_processada}
+                  alt=""
                   style={{
                     width: "100%",
                     height: "220px",
@@ -324,7 +416,7 @@ export default function App() {
         <div style={{ marginTop: "50px" }}>
           <h2>📸 Foto Premium IA</h2>
 
-          <div style={{ ...cardStyle, maxWidth: "900px", margin: "30px auto" }}>
+          <div style={{ ...cardStyle, maxWidth: "950px", margin: "30px auto" }}>
             <input
               type="file"
               accept="image/*"
@@ -336,35 +428,88 @@ export default function App() {
                 setPreview(URL.createObjectURL(file));
                 setUrlPublica("");
                 setResultadoIA("");
+                setStatusProcesso("");
               }}
             />
+
+            {statusProcesso && (
+              <div
+                style={{
+                  marginTop: "25px",
+                  padding: "15px",
+                  background: "#020617",
+                  border: "1px solid #38bdf8",
+                  borderRadius: "12px",
+                  color: "#bfdbfe",
+                  fontWeight: "bold",
+                }}
+              >
+                {statusProcesso}
+              </div>
+            )}
 
             {preview && (
               <div style={{ marginTop: "30px" }}>
                 <h3>Original</h3>
 
-                <img src={preview} style={{ maxWidth: "350px", borderRadius: "10px", background: "white" }} />
+                <img
+                  src={preview}
+                  alt=""
+                  style={{
+                    maxWidth: "350px",
+                    borderRadius: "10px",
+                    background: "white",
+                  }}
+                />
 
                 <br />
 
-                <button onClick={enviarImagem} style={{ marginTop: "20px", padding: "14px" }}>
-                  Enviar
-                </button>
-
-                <button
-                  onClick={processarIA}
-                  disabled={processando}
-                  style={{ marginLeft: "10px", padding: "14px" }}
+                <div
+                  style={{
+                    marginTop: "25px",
+                    display: "flex",
+                    justifyContent: "center",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                  }}
                 >
-                  {processando ? "Processando..." : "✨ Processar IA"}
-                </button>
+                  <button onClick={enviarImagem} disabled={processando} style={buttonBlue}>
+                    ⬆️ Enviar
+                  </button>
+
+                  <button onClick={processarIA} disabled={processando} style={buttonGreen}>
+                    {processando ? "⏳ Processando..." : "✨ Processar IA"}
+                  </button>
+
+                  <button onClick={limparTelaFoto} disabled={processando} style={buttonRed}>
+                    🧹 Limpar
+                  </button>
+                </div>
               </div>
             )}
 
             {resultadoIA && (
               <div style={{ marginTop: "40px" }}>
                 <h2 style={{ color: "#22c55e" }}>✅ Resultado IA</h2>
-                <img src={resultadoIA} style={{ maxWidth: "450px", borderRadius: "10px", background: "white" }} />
+
+                <img
+                  src={resultadoIA}
+                  alt=""
+                  style={{
+                    maxWidth: "450px",
+                    borderRadius: "10px",
+                    background: "white",
+                  }}
+                />
+
+                <br />
+
+                <button
+                  onClick={() => baixarImagem(resultadoIA)}
+                  style={{ ...buttonGreen, marginTop: "20px" }}
+                >
+                  ⬇️ Baixar Resultado
+                </button>
               </div>
             )}
           </div>
@@ -376,11 +521,18 @@ export default function App() {
           <h2>🖼 Galeria</h2>
           <p>Total: {galeria.length}</p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: "20px" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))",
+              gap: "20px",
+            }}
+          >
             {galeria.map((item) => (
               <div key={item.created_at} style={cardStyle}>
                 <img
                   src={item.imagem_processada}
+                  alt=""
                   style={{
                     width: "100%",
                     height: "230px",
@@ -394,9 +546,35 @@ export default function App() {
                   {new Date(item.created_at).toLocaleString("pt-BR")}
                 </p>
 
-                <button onClick={() => baixarImagem(item.imagem_processada)}>
-                  ⬇️ Baixar
-                </button>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    justifyContent: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <a
+                    href={item.imagem_processada}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      ...buttonBlue,
+                      textDecoration: "none",
+                      display: "inline-block",
+                    }}
+                  >
+                    🔎 Abrir
+                  </a>
+
+                  <button onClick={() => baixarImagem(item.imagem_processada)} style={buttonGreen}>
+                    ⬇️ Baixar
+                  </button>
+
+                  <button onClick={() => excluirImagem(item)} style={buttonRed}>
+                    🗑️ Excluir
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -406,6 +584,7 @@ export default function App() {
       {screen === "admin" && (
         <div style={{ marginTop: "50px" }}>
           <h2>Painel Administrativo</h2>
+
           <div style={cardStyle}>
             <h3>Processamentos do usuário</h3>
             <h1>{totalFotos}</h1>
