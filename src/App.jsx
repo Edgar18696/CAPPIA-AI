@@ -10,7 +10,7 @@ export default function App() {
   const [totalFotos, setTotalFotos] = useState(0);
   const [ultimasImagens, setUltimasImagens] = useState([]);
   const [galeria, setGaleria] = useState([]);
-
+const [bannerModelo, setBannerModelo] = useState("mercadolivre");
   const [arquivo, setArquivo] = useState(null);
   const [preview, setPreview] = useState("");
   const [urlPublica, setUrlPublica] = useState("");
@@ -111,43 +111,43 @@ export default function App() {
     setGaleria(data || []);
   }
 
-  async function enviarImagem() {
-    if (!usuario) {
-      alert("Faça login primeiro");
-      setScreen("login");
-      return;
-    }
-
-    if (!arquivo) {
-      alert("Escolha uma imagem primeiro");
-      return;
-    }
-
-    setProcessando(true);
-    setStatusProcesso("⬆️ Enviando imagem para o Supabase...");
-
-    const nomeArquivo = `${usuario.id}/${Date.now()}-${arquivo.name
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-zA-Z0-9.]/g, "-")}`;
-
-    const { error } = await supabase.storage
-      .from("imagens")
-      .upload(nomeArquivo, arquivo, { upsert: true });
-
-    if (error) {
-      setProcessando(false);
-      setStatusProcesso("");
-      alert(error.message);
-      return;
-    }
-
-    const { data } = supabase.storage.from("imagens").getPublicUrl(nomeArquivo);
-
-    setUrlPublica(data.publicUrl);
-    setStatusProcesso("✅ Imagem enviada. Agora pode processar com IA.");
-    setProcessando(false);
+async function enviarImagem() {
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return null;
   }
+
+  if (!arquivo) {
+    alert("Escolha uma imagem primeiro");
+    return null;
+  }
+
+  setStatusProcesso("⬆️ Enviando imagem...");
+
+  const nomeArquivo = `${usuario.id}/${Date.now()}-${arquivo.name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9.]/g, "-")}`;
+
+  const { error } = await supabase.storage
+    .from("imagens")
+    .upload(nomeArquivo, arquivo, { upsert: true });
+
+  if (error) {
+    alert(error.message);
+    return null;
+  }
+
+  const { data } = supabase.storage
+    .from("imagens")
+    .getPublicUrl(nomeArquivo);
+
+  setUrlPublica(data.publicUrl);
+  setStatusProcesso("✅ Imagem enviada.");
+
+  return data.publicUrl;
+}
 
   async function processarIA() {
     if (!usuario) {
@@ -287,6 +287,76 @@ export default function App() {
     cursor: "pointer",
     fontWeight: "bold",
   };
+async function processarBannerIA() {
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return;
+  }
+
+  if (!arquivo) {
+    alert("Escolha uma imagem primeiro");
+    return;
+  }
+
+  setProcessando(true);
+  setStatusProcesso("🎨 Gerando banner com IA...");
+
+  try {
+    const imagemEnviada = await enviarImagem();
+
+    if (!imagemEnviada) {
+      setProcessando(false);
+      return;
+    }
+
+    const resposta = await fetch(
+      "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/processar-imagem",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: imagemEnviada,
+          tipo: "banner",
+          modelo: bannerModelo,
+        }),
+      }
+    );
+
+    const dados = await resposta.json();
+
+    console.log("RESPOSTA BANNER IA:", dados);
+
+    if (!dados.imagem_processada) {
+      alert("A IA não retornou o banner.");
+      setProcessando(false);
+      return;
+    }
+
+    setResultadoIA(dados.imagem_processada);
+
+    await supabase.from("processamentos").insert([
+      {
+        imagem_original: imagemEnviada,
+        imagem_processada: dados.imagem_processada,
+        status: "processado",
+        user_id: usuario.id,
+        tipo: "banner",
+        modelo_banner: bannerModelo,
+      },
+    ]);
+
+    await carregarDashboard();
+    await carregarGaleria();
+
+    setStatusProcesso("✅ Banner gerado e salvo!");
+  } catch (erro) {
+    console.log(erro);
+    alert("Erro ao gerar banner.");
+  }
+
+  setProcessando(false);
+}
 
   return (
     <div
@@ -318,6 +388,7 @@ export default function App() {
       >
         <button onClick={() => setScreen("home")}>Home</button>
         <button onClick={() => setScreen("foto")}>Fotos IA</button>
+        <button onClick={() => setScreen("banner")}>Banner IA</button>
         <button onClick={() => setScreen("galeria")}>Galeria</button>
         <button onClick={() => setScreen("admin")}>Administrador</button>
         {!usuario ? (
@@ -412,6 +483,59 @@ export default function App() {
           </div>
         </div>
       )}
+{screen === "banner" && (
+  <div style={{ marginTop: "50px" }}>
+    <h2>🎨 Banner IA</h2>
+
+    <select
+      value={bannerModelo}
+      onChange={(e) => setBannerModelo(e.target.value)}
+      style={{ padding: "12px", marginBottom: "20px" }}
+    >
+      <option value="mercadolivre">Mercado Livre</option>
+      <option value="shopee">Shopee</option>
+      <option value="instagram">Instagram</option>
+      <option value="whatsapp">WhatsApp</option>
+    </select>
+
+<input
+  type="file"
+  accept="image/*"
+  onChange={(e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setArquivo(file);
+    setPreview(URL.createObjectURL(file));
+  }}
+/>
+
+{preview && (
+  <div style={{ marginTop: "20px" }}>
+    <img
+      src={preview}
+      style={{
+        maxWidth: "350px",
+        borderRadius: "10px",
+        background: "white",
+      }}
+    />
+
+    <br />
+
+    <button
+  onClick={processarBannerIA}
+  disabled={processando}
+  style={{
+    marginTop: "20px",
+    padding: "12px 20px",
+  }}
+>
+  {processando ? "⏳ Gerando..." : "🎨 Gerar Banner"}
+</button>
+  </div>
+)}  </div>
+)}
 
       {screen === "foto" && (
         <div style={{ marginTop: "50px" }}>
@@ -516,6 +640,7 @@ export default function App() {
           </div>
         </div>
       )}
+      
 
       {screen === "galeria" && (
         <div style={{ marginTop: "50px" }}>
@@ -595,3 +720,4 @@ export default function App() {
     </div>
   );
 }
+
