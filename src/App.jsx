@@ -9,7 +9,7 @@ export default function App() {
   const [senha, setSenha] = useState("");
 const [filtroGaleria, setFiltroGaleria] = useState("todos");
 const [totalBanners, setTotalBanners] = useState(0);
-
+const [totalVideos, setTotalVideos] = useState(0);
   const [totalFotos, setTotalFotos] = useState(0);
   const [ultimasImagens, setUltimasImagens] = useState([]);
   const [galeria, setGaleria] = useState([]);
@@ -83,8 +83,16 @@ const [bannerModelo, setBannerModelo] = useState("mercadolivre");
   .select("*", { count: "exact", head: true })
   .eq("user_id", usuario.id)
   .eq("tipo", "banner");
-
 setTotalBanners(countBanners || 0);
+
+
+const { count: countVideos } = await supabase
+  .from("processamentos")
+  .select("*", { count: "exact", head: true })
+  .eq("user_id", usuario.id)
+  .eq("tipo", "video");
+
+setTotalVideos(countVideos || 0);
 
     const { data } = await supabase
       .from("processamentos")
@@ -484,13 +492,37 @@ padding: "20px 40px",
             </div>
 
             <div style={cardStyle}>
-              <h3>🎬 Vídeos</h3>
-              <h1>0</h1>
+<h3>🎬 Vídeos</h3>
+<h1>{totalVideos}</h1>
             </div>
           </div>
 
           <h2 style={{ marginTop: "50px" }}>🖼 Últimas Imagens</h2>
+<h2 style={{ marginTop: "40px" }}>🎨 Últimos Banners</h2>
 
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+    gap: "20px",
+  }}
+>
+  {ultimosBanners.map((item) => (
+    <div key={item.created_at} style={cardStyle}>
+      <img
+        src={item.imagem_processada}
+        alt=""
+        style={{
+          width: "100%",
+          height: "220px",
+          objectFit: "contain",
+          background: "white",
+          borderRadius: "10px",
+        }}
+      />
+    </div>
+  ))}
+</div>
           <div
             style={{
               display: "grid",
