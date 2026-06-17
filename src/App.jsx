@@ -26,6 +26,7 @@ const [bannerModelo, setBannerModelo] = useState("mercadolivre");
 const [nomeProjeto, setNomeProjeto] = useState("");
 const [descricaoProjeto, setDescricaoProjeto] = useState("");
 const [imagemProjeto, setImagemProjeto] = useState("");
+const [arquivoProjeto, setArquivoProjeto] = useState(null);
 
   useEffect(() => {
     verificarUsuario();
@@ -153,13 +154,61 @@ async function criarProjeto() {
     alert("Digite o nome do projeto");
     return;
   }
+  async function enviarImagemProjeto() {
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return null;
+  }
+
+  if (!arquivoProjeto) {
+    return "";
+  }
+  async function excluirProjeto(id) {
+  const confirmar = window.confirm(
+    "Deseja realmente excluir este projeto?"
+  );
+
+  if (!confirmar) return;
+
+  await supabase
+    .from("projetos")
+    .delete()
+    .eq("id", id);
+
+  carregarProjetos();
+}
+
+  const nomeArquivo = `${usuario.id}/projetos/${Date.now()}-${arquivoProjeto.name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9.]/g, "-")}`;
+
+  const { error } = await supabase.storage
+    .from("imagens")
+    .upload(nomeArquivo, arquivoProjeto, { upsert: true });
+
+  if (error) {
+    alert(error.message);
+    return null;
+  }
+
+  const { data } = supabase.storage
+    .from("imagens")
+    .getPublicUrl(nomeArquivo);
+
+  return data.publicUrl;
+}
+const imagemUrl = await enviarImagemProjeto();
+
+if (imagemUrl === null) return;
 
   const { error } = await supabase.from("projetos").insert([
     {
       user_id: usuario.id,
       nome: nomeProjeto,
       descricao: descricaoProjeto,
-      imagem: imagemProjeto,
+      imagem: imagemUrl,
       status: "Em andamento",
     },
   ]);
@@ -872,61 +921,6 @@ padding: "20px 40px",
   <div style={{ marginTop: "50px" }}>
     <h2>📦 Projetos</h2>
 
-    <input
-      placeholder="Nome do Projeto"
-      value={nomeProjeto}
-      onChange={(e) => setNomeProjeto(e.target.value)}
-      style={{
-        padding: "12px",
-        width: "300px",
-        marginRight: "10px",
-      }}
-    />
-
-    <button
-      onClick={() => {
-        if (!nomeProjeto) return;
-
-        setProjetos([
-          ...projetos,
-          {
-            nome: nomeProjeto,
-            fotos: 0,
-            banners: 0,
-            status: "Em andamento",
-          },
-        ]);
-
-        setNomeProjeto("");
-      }}
-    >
-      ➕ Criar Projeto
-    </button>
-
-    <div
-      style={{
-        marginTop: "30px",
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))",
-        gap: "20px",
-      }}
-    >
-      {projetos.map((item, index) => (
-        <div key={index} style={cardStyle}>
-          <h3>{item.nome}</h3>
-
-          <p>📸 Fotos: {item.fotos}</p>
-          <p>🎨 Banners: {item.banners}</p>
-          <p>📌 {item.status}</p>
-        </div>
-      ))}
-    </div>
-  </div>
-)}
-{screen === "projetos" && (
-  <div style={{ marginTop: "50px" }}>
-    <h2>📦 Projetos</h2>
-
     <div style={{ ...cardStyle, maxWidth: "700px", margin: "20px auto" }}>
       <input
         placeholder="Nome do projeto"
@@ -952,9 +946,13 @@ padding: "20px 40px",
       />
 
       <input
-        placeholder="URL da imagem"
-        value={imagemProjeto}
-        onChange={(e) => setImagemProjeto(e.target.value)}
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          setArquivoProjeto(file);
+        }}
         style={{
           width: "90%",
           padding: "12px",
@@ -962,10 +960,7 @@ padding: "20px 40px",
         }}
       />
 
-      <button
-        onClick={criarProjeto}
-        style={buttonBlue}
-      >
+      <button onClick={criarProjeto} style={buttonBlue}>
         ➕ Criar Projeto
       </button>
     </div>
@@ -988,25 +983,31 @@ padding: "20px 40px",
                 height: "220px",
                 objectFit: "cover",
                 borderRadius: "10px",
+                marginBottom: "15px",
               }}
             />
           )}
 
           <h3>{item.nome}</h3>
 
-          <p style={{ color: "#93c5fd" }}>
-            {item.descricao}
-          </p>
+          <p style={{ color: "#93c5fd" }}>{item.descricao}</p>
 
-          <p style={{ color: "#22c55e" }}>
-            {item.status}
-          </p>
+          <p style={{ color: "#22c55e" }}>📌 {item.status}</p>
         </div>
       ))}
+      <p style={{ color: "#22c55e" }}>
+  📌 {item.status}
+</p>
+
+<button
+  onClick={() => excluirProjeto(item.id)}
+  style={buttonRed}
+>
+  🗑️ Excluir
+</button>
     </div>
   </div>
 )}
-
       {screen === "admin" && (
         <div style={{ marginTop: "50px" }}>
           <h2>Painel Administrativo</h2>
