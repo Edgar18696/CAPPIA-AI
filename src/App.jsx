@@ -22,6 +22,8 @@ const [bannerModelo, setBannerModelo] = useState("mercadolivre");
   const [resultadoIA, setResultadoIA] = useState("");
   const [processando, setProcessando] = useState(false);
   const [statusProcesso, setStatusProcesso] = useState("");
+  const [projetos, setProjetos] = useState([]);
+const [nomeProjeto, setNomeProjeto] = useState("");
 
   useEffect(() => {
     verificarUsuario();
@@ -408,7 +410,7 @@ padding: "20px 40px",
   src={logoAppia}
   alt="APPIA AI"
   style={{
-    width: "280px",
+    width: "320px",
     marginTop: "10px",
     marginBottom: "-40px",
   }}
@@ -442,11 +444,38 @@ padding: "20px 40px",
           flexWrap: "wrap",
         }}
       >
-        <button onClick={() => setScreen("home")}>Home</button>
-        <button onClick={() => setScreen("foto")}>Fotos IA</button>
-        <button onClick={() => setScreen("banner")}>Banner IA</button>
-        <button onClick={() => setScreen("galeria")}>Galeria</button>
-        <button onClick={() => setScreen("admin")}>Administrador</button>
+       <button onClick={() => setScreen("home")}>🏠 Home</button>
+
+<button onClick={() => setScreen("foto")}>
+  📸 Fotos IA
+</button>
+
+<button onClick={() => setScreen("banner")}>
+  🎨 Banner IA
+</button>
+
+<button onClick={() => setScreen("galeria")}>
+  🖼 Galeria
+</button>
+
+<button
+  onClick={() => setScreen("projetos")}
+  style={{
+    background: "#2563eb",
+    color: "white",
+    fontWeight: "bold",
+    padding: "10px 18px",
+    borderRadius: "8px",
+    border: "none",
+    cursor: "pointer",
+  }}
+>
+  📦 Projetos
+</button>
+
+<button onClick={() => setScreen("admin")}>
+  ⚙️ Administrador
+</button>
         {!usuario ? (
           <button onClick={() => setScreen("login")}>Login</button>
         ) : (
@@ -790,6 +819,61 @@ padding: "20px 40px",
         </div>
       )}
 
+{screen === "projetos" && (
+  <div style={{ marginTop: "50px" }}>
+    <h2>📦 Projetos</h2>
+
+    <input
+      placeholder="Nome do Projeto"
+      value={nomeProjeto}
+      onChange={(e) => setNomeProjeto(e.target.value)}
+      style={{
+        padding: "12px",
+        width: "300px",
+        marginRight: "10px",
+      }}
+    />
+
+    <button
+      onClick={() => {
+        if (!nomeProjeto) return;
+
+        setProjetos([
+          ...projetos,
+          {
+            nome: nomeProjeto,
+            fotos: 0,
+            banners: 0,
+            status: "Em andamento",
+          },
+        ]);
+
+        setNomeProjeto("");
+      }}
+    >
+      ➕ Criar Projeto
+    </button>
+
+    <div
+      style={{
+        marginTop: "30px",
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))",
+        gap: "20px",
+      }}
+    >
+      {projetos.map((item, index) => (
+        <div key={index} style={cardStyle}>
+          <h3>{item.nome}</h3>
+
+          <p>📸 Fotos: {item.fotos}</p>
+          <p>🎨 Banners: {item.banners}</p>
+          <p>📌 {item.status}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
       {screen === "admin" && (
         <div style={{ marginTop: "50px" }}>
           <h2>Painel Administrativo</h2>
