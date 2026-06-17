@@ -368,7 +368,7 @@ async function processarBannerIA() {
         minHeight: "100vh",
         background: "#020617",
         color: "white",
-        padding: "40px",
+padding: "20px 40px",
         textAlign: "center",
         fontFamily: "Arial",
       }}
@@ -378,36 +378,31 @@ async function processarBannerIA() {
   src={logoAppia}
   alt="APPIA AI"
   style={{
-    width: "420px",
-    marginBottom: "15px",
+    width: "280px",
+    marginTop: "10px",
+    marginBottom: "-40px",
   }}
 />
-
-<h1
+<p
   style={{
-    fontSize: "42px",
-    fontWeight: "900",
-    color: "#3b82f6",
-    letterSpacing: "3px",
-    marginBottom: "5px",
+    color: "#93c5fd",
+    fontSize: "22px",
+    marginBottom: "20px",
+    fontWeight: "500",
   }}
 >
-  APPIA AI
-</h1>
+  Criação inteligente de imagens, banners e conteúdo digital
+</p>
 
 <p
   style={{
     color: "#93c5fd",
     fontSize: "18px",
-    marginBottom: "25px",
+    marginBottom: "15px",
   }}
 >
-Criação inteligente de imagens, banners e conteúdo digital
-      {usuario && (
-        <p style={{ color: "#93c5fd" }}>
-          Logado como: <strong>{usuario.email}</strong>
-        </p>
-      )}
+</p>
+      
 
       <div
         style={{
@@ -462,8 +457,15 @@ Criação inteligente de imagens, banners e conteúdo digital
 
       {screen === "home" && (
         <div style={{ marginTop: "50px" }}>
-          <h2>Painel de Controle APPIA AI</h2>
-
+<h2
+  style={{
+    color: "#3b82f6",
+    marginBottom: "10px",
+    marginTop: "25px",
+  }}
+>
+  Painel de Controle APPIA AI
+</h2>
           <div
             style={{
               display: "grid",
@@ -478,7 +480,7 @@ Criação inteligente de imagens, banners e conteúdo digital
 
             <div style={cardStyle}>
               <h3>🎨 Banners</h3>
-              <h1>0</h1>
+            <h1>{totalBanners}</h1>
             </div>
 
             <div style={cardStyle}>
