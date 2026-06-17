@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
+import logoAppia from "./assets/logo-appia-ai.png";
 
 export default function App() {
   const [screen, setScreen] = useState("home");
   const [usuario, setUsuario] = useState(null);
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
+const [filtroGaleria, setFiltroGaleria] = useState("todos");
+const [totalBanners, setTotalBanners] = useState(0);
 
   const [totalFotos, setTotalFotos] = useState(0);
   const [ultimasImagens, setUltimasImagens] = useState([]);
@@ -75,12 +78,13 @@ const [bannerModelo, setBannerModelo] = useState("mercadolivre");
   async function carregarDashboard() {
     if (!usuario) return;
 
-    const { count } = await supabase
-      .from("processamentos")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", usuario.id);
+    const { count: countBanners } = await supabase
+  .from("processamentos")
+  .select("*", { count: "exact", head: true })
+  .eq("user_id", usuario.id)
+  .eq("tipo", "banner");
 
-    setTotalFotos(count || 0);
+setTotalBanners(countBanners || 0);
 
     const { data } = await supabase
       .from("processamentos")
@@ -369,8 +373,36 @@ async function processarBannerIA() {
         fontFamily: "Arial",
       }}
     >
-      <h1>🚀 APPIA AI</h1>
-      <p>Transformando imagens em vendas</p>
+    
+<img
+  src={logoAppia}
+  alt="APPIA AI"
+  style={{
+    width: "260px",
+    marginBottom: "15px",
+  }}
+/>
+
+<h1
+  style={{
+    fontSize: "48px",
+    fontWeight: "900",
+    color: "#3b82f6",
+    letterSpacing: "3px",
+    marginBottom: "5px",
+  }}
+>
+  APPIA AI
+</h1>
+
+<p
+  style={{
+    color: "#93c5fd",
+    fontSize: "18px",
+    marginBottom: "25px",
+  }}
+>
+IA para imagens, banners e conteúdo digital</p>
 
       {usuario && (
         <p style={{ color: "#93c5fd" }}>
