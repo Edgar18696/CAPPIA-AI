@@ -24,17 +24,20 @@ const [bannerModelo, setBannerModelo] = useState("mercadolivre");
   const [statusProcesso, setStatusProcesso] = useState("");
   const [projetos, setProjetos] = useState([]);
 const [nomeProjeto, setNomeProjeto] = useState("");
+const [descricaoProjeto, setDescricaoProjeto] = useState("");
+const [imagemProjeto, setImagemProjeto] = useState("");
 
   useEffect(() => {
     verificarUsuario();
   }, []);
 
-  useEffect(() => {
-    if (usuario) {
-      carregarDashboard();
-      carregarGaleria();
-    }
-  }, [usuario]);
+useEffect(() => {
+  if (usuario) {
+    carregarDashboard();
+    carregarGaleria();
+    carregarProjetos();
+  }
+}, [usuario]);
 
   async function verificarUsuario() {
     const { data } = await supabase.auth.getUser();
@@ -127,6 +130,52 @@ const [nomeProjeto, setNomeProjeto] = useState("");
     .limit(4);
 
   setUltimosBanners(bannersRecentes || []);
+}
+async function carregarProjetos() {
+  if (!usuario) return;
+
+  const { data } = await supabase
+    .from("projetos")
+    .select("*")
+    .eq("user_id", usuario.id)
+    .order("created_at", { ascending: false });
+
+  setProjetos(data || []);
+}
+async function criarProjeto() {
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return;
+  }
+
+  if (!nomeProjeto.trim()) {
+    alert("Digite o nome do projeto");
+    return;
+  }
+
+  const { error } = await supabase.from("projetos").insert([
+    {
+      user_id: usuario.id,
+      nome: nomeProjeto,
+      descricao: descricaoProjeto,
+      imagem: imagemProjeto,
+      status: "Em andamento",
+    },
+  ]);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setNomeProjeto("");
+  setDescricaoProjeto("");
+  setImagemProjeto("");
+
+  await carregarProjetos();
+
+  alert("Projeto criado com sucesso!");
 }
 
   async function carregarGaleria() {
@@ -874,6 +923,90 @@ padding: "20px 40px",
     </div>
   </div>
 )}
+{screen === "projetos" && (
+  <div style={{ marginTop: "50px" }}>
+    <h2>📦 Projetos</h2>
+
+    <div style={{ ...cardStyle, maxWidth: "700px", margin: "20px auto" }}>
+      <input
+        placeholder="Nome do projeto"
+        value={nomeProjeto}
+        onChange={(e) => setNomeProjeto(e.target.value)}
+        style={{
+          width: "90%",
+          padding: "12px",
+          marginBottom: "10px",
+        }}
+      />
+
+      <textarea
+        placeholder="Descrição"
+        value={descricaoProjeto}
+        onChange={(e) => setDescricaoProjeto(e.target.value)}
+        style={{
+          width: "90%",
+          padding: "12px",
+          height: "120px",
+          marginBottom: "10px",
+        }}
+      />
+
+      <input
+        placeholder="URL da imagem"
+        value={imagemProjeto}
+        onChange={(e) => setImagemProjeto(e.target.value)}
+        style={{
+          width: "90%",
+          padding: "12px",
+          marginBottom: "15px",
+        }}
+      />
+
+      <button
+        onClick={criarProjeto}
+        style={buttonBlue}
+      >
+        ➕ Criar Projeto
+      </button>
+    </div>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
+        gap: "20px",
+      }}
+    >
+      {projetos.map((item) => (
+        <div key={item.id} style={cardStyle}>
+          {item.imagem && (
+            <img
+              src={item.imagem}
+              alt=""
+              style={{
+                width: "100%",
+                height: "220px",
+                objectFit: "cover",
+                borderRadius: "10px",
+              }}
+            />
+          )}
+
+          <h3>{item.nome}</h3>
+
+          <p style={{ color: "#93c5fd" }}>
+            {item.descricao}
+          </p>
+
+          <p style={{ color: "#22c55e" }}>
+            {item.status}
+          </p>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+
       {screen === "admin" && (
         <div style={{ marginTop: "50px" }}>
           <h2>Painel Administrativo</h2>
