@@ -11,6 +11,8 @@ const [filtroGaleria, setFiltroGaleria] = useState("todos");
 const [totalBanners, setTotalBanners] = useState(0);
 const [totalVideos, setTotalVideos] = useState(0);
   const [totalFotos, setTotalFotos] = useState(0);
+  
+  const [ultimosBanners, setUltimosBanners] = useState([]);
   const [ultimasImagens, setUltimasImagens] = useState([]);
   const [galeria, setGaleria] = useState([]);
 const [bannerModelo, setBannerModelo] = useState("mercadolivre");
@@ -76,34 +78,54 @@ const [bannerModelo, setBannerModelo] = useState("mercadolivre");
   }
 
   async function carregarDashboard() {
-    if (!usuario) return;
+  if (!usuario) return;
 
-    const { count: countBanners } = await supabase
-  .from("processamentos")
-  .select("*", { count: "exact", head: true })
-  .eq("user_id", usuario.id)
-  .eq("tipo", "banner");
-setTotalBanners(countBanners || 0);
+  const { count: countFotos } = await supabase
+    .from("processamentos")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", usuario.id)
+    .eq("tipo", "foto");
 
+  setTotalFotos(countFotos || 0);
 
-const { count: countVideos } = await supabase
-  .from("processamentos")
-  .select("*", { count: "exact", head: true })
-  .eq("user_id", usuario.id)
-  .eq("tipo", "video");
+  const { count: countBanners } = await supabase
+    .from("processamentos")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", usuario.id)
+    .eq("tipo", "banner");
 
-setTotalVideos(countVideos || 0);
+  setTotalBanners(countBanners || 0);
 
-    const { data } = await supabase
-      .from("processamentos")
-      .select("*")
-      .eq("user_id", usuario.id)
-      .not("imagem_processada", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(6);
+  const { count: countVideos } = await supabase
+    .from("processamentos")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", usuario.id)
+    .eq("tipo", "video");
 
-    setUltimasImagens(data || []);
-  }
+  setTotalVideos(countVideos || 0);
+
+  const { data: fotosRecentes } = await supabase
+    .from("processamentos")
+    .select("*")
+    .eq("user_id", usuario.id)
+    .eq("tipo", "foto")
+    .not("imagem_processada", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(6);
+
+  setUltimasImagens(fotosRecentes || []);
+
+  const { data: bannersRecentes } = await supabase
+    .from("processamentos")
+    .select("*")
+    .eq("user_id", usuario.id)
+    .eq("tipo", "banner")
+    .not("imagem_processada", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(4);
+
+  setUltimosBanners(bannersRecentes || []);
+}
 
   async function carregarGaleria() {
     if (!usuario) return;
@@ -463,91 +485,87 @@ padding: "20px 40px",
         </div>
       )}
 
-      {screen === "home" && (
-        <div style={{ marginTop: "50px" }}>
-<h2
-  style={{
-    color: "#3b82f6",
-    marginBottom: "10px",
-    marginTop: "25px",
-  }}
->
-  Painel de Controle APPIA AI
-</h2>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))",
-              gap: "20px",
-            }}
-          >
-            <div style={cardStyle}>
-              <h3>📸 Fotos IA</h3>
-              <h1>{totalFotos}</h1>
-            </div>
+{screen === "home" && (
+  <div style={{ marginTop: "50px" }}>
+    <h2>Painel de Controle APPIA AI</h2>
 
-            <div style={cardStyle}>
-              <h3>🎨 Banners</h3>
-            <h1>{totalBanners}</h1>
-            </div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))",
+        gap: "20px",
+      }}
+    >
+      <div style={cardStyle}>
+        <h3>📸 Fotos IA</h3>
+        <h1>{totalFotos}</h1>
+      </div>
 
-            <div style={cardStyle}>
-<h3>🎬 Vídeos</h3>
-<h1>{totalVideos}</h1>
-            </div>
-          </div>
+      <div style={cardStyle}>
+        <h3>🎨 Banners</h3>
+        <h1>{totalBanners}</h1>
+      </div>
 
-          <h2 style={{ marginTop: "50px" }}>🖼 Últimas Imagens</h2>
-<h2 style={{ marginTop: "40px" }}>🎨 Últimos Banners</h2>
-
-<div
-  style={{
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
-    gap: "20px",
-  }}
->
-  {ultimosBanners.map((item) => (
-    <div key={item.created_at} style={cardStyle}>
-      <img
-        src={item.imagem_processada}
-        alt=""
-        style={{
-          width: "100%",
-          height: "220px",
-          objectFit: "contain",
-          background: "white",
-          borderRadius: "10px",
-        }}
-      />
+      <div style={cardStyle}>
+        <h3>🎬 Vídeos</h3>
+        <h1>{totalVideos}</h1>
+      </div>
     </div>
-  ))}
-</div>
-          <div
+
+    <h2 style={{ marginTop: "50px" }}>🖼 Últimas Imagens</h2>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+        gap: "20px",
+      }}
+    >
+      {ultimasImagens.map((item) => (
+        <div key={item.created_at} style={cardStyle}>
+          <img
+            src={item.imagem_processada}
+            alt=""
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
-              gap: "20px",
+              width: "100%",
+              height: "220px",
+              objectFit: "contain",
+              background: "white",
+              borderRadius: "10px",
             }}
-          >
-            {ultimasImagens.map((item) => (
-              <div key={item.created_at} style={cardStyle}>
-                <img
-                  src={item.imagem_processada}
-                  alt=""
-                  style={{
-                    width: "100%",
-                    height: "220px",
-                    objectFit: "contain",
-                    background: "white",
-                    borderRadius: "10px",
-                  }}
-                />
-              </div>
-            ))}
-          </div>
+          />
         </div>
-      )}
+      ))}
+    </div>
+
+    <h2 style={{ marginTop: "40px" }}>🎨 Últimos Banners</h2>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+        gap: "20px",
+      }}
+    >
+      {ultimosBanners.map((item) => (
+        <div key={item.created_at} style={cardStyle}>
+          <img
+            src={item.imagem_processada}
+            alt=""
+            style={{
+              width: "100%",
+              height: "220px",
+              objectFit: "contain",
+              background: "white",
+              borderRadius: "10px",
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+
 {screen === "banner" && (
   <div style={{ marginTop: "50px" }}>
     <h2>🎨 Banner IA</h2>
