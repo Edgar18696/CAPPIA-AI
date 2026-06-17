@@ -27,6 +27,7 @@ const [nomeProjeto, setNomeProjeto] = useState("");
 const [descricaoProjeto, setDescricaoProjeto] = useState("");
 const [imagemProjeto, setImagemProjeto] = useState("");
 const [arquivoProjeto, setArquivoProjeto] = useState(null);
+const [statusProjeto, setStatusProjeto] = useState("Em andamento");
 
   useEffect(() => {
     verificarUsuario();
@@ -198,8 +199,7 @@ async function criarProjeto() {
       nome: nomeProjeto,
       descricao: descricaoProjeto,
       imagem: imagemUrl,
-      status: "Em andamento",
-    },
+status: statusProjeto,    },
   ]);
 
   if (error) {
@@ -211,6 +211,7 @@ async function criarProjeto() {
   setDescricaoProjeto("");
   setImagemProjeto("");
   setArquivoProjeto(null);
+  setStatusProjeto("Em andamento");
 
   await carregarProjetos();
 
@@ -955,6 +956,19 @@ padding: "20px 40px",
           marginBottom: "10px",
         }}
       />
+      <select
+  value={statusProjeto}
+  onChange={(e) => setStatusProjeto(e.target.value)}
+  style={{
+    width: "90%",
+    padding: "12px",
+    marginBottom: "15px",
+  }}
+>
+  <option>Em andamento</option>
+  <option>Concluído</option>
+  <option>Pausado</option>
+</select>
 
       <input
         type="file"
@@ -1004,9 +1018,19 @@ padding: "20px 40px",
         {item.descricao}
       </p>
 
-      <p style={{ color: "#22c55e" }}>
-        📌 {item.status}
-      </p>
+      <p
+  style={{
+    color:
+      item.status === "Concluído"
+        ? "#22c55e"
+        : item.status === "Pausado"
+        ? "#f59e0b"
+        : "#38bdf8",
+    fontWeight: "bold",
+  }}
+>
+  📌 {item.status}
+</p>
 
       <button
         onClick={() => excluirProjeto(item.id)}
