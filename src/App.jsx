@@ -378,14 +378,14 @@ async function processarBannerIA() {
   src={logoAppia}
   alt="APPIA AI"
   style={{
-    width: "260px",
+    width: "420px",
     marginBottom: "15px",
   }}
 />
 
 <h1
   style={{
-    fontSize: "48px",
+    fontSize: "42px",
     fontWeight: "900",
     color: "#3b82f6",
     letterSpacing: "3px",
@@ -402,8 +402,7 @@ async function processarBannerIA() {
     marginBottom: "25px",
   }}
 >
-IA para imagens, banners e conteúdo digital</p>
-
+Criação inteligente de imagens, banners e conteúdo digital
       {usuario && (
         <p style={{ color: "#93c5fd" }}>
           Logado como: <strong>{usuario.email}</strong>
