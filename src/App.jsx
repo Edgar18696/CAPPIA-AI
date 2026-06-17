@@ -143,18 +143,8 @@ async function carregarProjetos() {
 
   setProjetos(data || []);
 }
-async function criarProjeto() {
-  if (!usuario) {
-    alert("Faça login primeiro");
-    setScreen("login");
-    return;
-  }
 
-  if (!nomeProjeto.trim()) {
-    alert("Digite o nome do projeto");
-    return;
-  }
-  async function enviarImagemProjeto() {
+async function enviarImagemProjeto() {
   if (!usuario) {
     alert("Faça login primeiro");
     setScreen("login");
@@ -164,20 +154,6 @@ async function criarProjeto() {
   if (!arquivoProjeto) {
     return "";
   }
-  async function excluirProjeto(id) {
-  const confirmar = window.confirm(
-    "Deseja realmente excluir este projeto?"
-  );
-
-  if (!confirmar) return;
-
-  await supabase
-    .from("projetos")
-    .delete()
-    .eq("id", id);
-
-  carregarProjetos();
-}
 
   const nomeArquivo = `${usuario.id}/projetos/${Date.now()}-${arquivoProjeto.name
     .normalize("NFD")
@@ -199,9 +175,22 @@ async function criarProjeto() {
 
   return data.publicUrl;
 }
-const imagemUrl = await enviarImagemProjeto();
 
-if (imagemUrl === null) return;
+async function criarProjeto() {
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return;
+  }
+
+  if (!nomeProjeto.trim()) {
+    alert("Digite o nome do projeto");
+    return;
+  }
+
+  const imagemUrl = await enviarImagemProjeto();
+
+  if (imagemUrl === null) return;
 
   const { error } = await supabase.from("projetos").insert([
     {
@@ -221,12 +210,34 @@ if (imagemUrl === null) return;
   setNomeProjeto("");
   setDescricaoProjeto("");
   setImagemProjeto("");
+  setArquivoProjeto(null);
 
   await carregarProjetos();
 
   alert("Projeto criado com sucesso!");
 }
 
+async function excluirProjeto(id) {
+  const confirmar = window.confirm(
+    "Deseja realmente excluir este projeto?"
+  );
+
+  if (!confirmar) return;
+
+  const { error } = await supabase
+    .from("projetos")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  await carregarProjetos();
+
+  alert("Projeto excluído!");
+}
   async function carregarGaleria() {
     if (!usuario) return;
 
@@ -964,51 +975,52 @@ padding: "20px 40px",
         ➕ Criar Projeto
       </button>
     </div>
-
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
-        gap: "20px",
-      }}
-    >
-      {projetos.map((item) => (
-        <div key={item.id} style={cardStyle}>
-          {item.imagem && (
-            <img
-              src={item.imagem}
-              alt=""
-              style={{
-                width: "100%",
-                height: "220px",
-                objectFit: "cover",
-                borderRadius: "10px",
-                marginBottom: "15px",
-              }}
-            />
-          )}
-
-          <h3>{item.nome}</h3>
-
-          <p style={{ color: "#93c5fd" }}>{item.descricao}</p>
-
-          <p style={{ color: "#22c55e" }}>📌 {item.status}</p>
-        </div>
-      ))}
-      <p style={{ color: "#22c55e" }}>
-  📌 {item.status}
-</p>
-
-<button
-  onClick={() => excluirProjeto(item.id)}
-  style={buttonRed}
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))",
+    gap: "20px",
+  }}
 >
-  🗑️ Excluir
-</button>
+  {projetos.map((item) => (
+    <div key={item.id} style={cardStyle}>
+      {item.imagem && (
+        <img
+          src={item.imagem}
+          alt=""
+          style={{
+            width: "100%",
+            height: "220px",
+            objectFit: "cover",
+            borderRadius: "10px",
+            marginBottom: "15px",
+          }}
+        />
+      )}
+
+      <h3>{item.nome}</h3>
+
+      <p style={{ color: "#93c5fd" }}>
+        {item.descricao}
+      </p>
+
+      <p style={{ color: "#22c55e" }}>
+        📌 {item.status}
+      </p>
+
+      <button
+        onClick={() => excluirProjeto(item.id)}
+        style={buttonRed}
+      >
+        🗑️ Excluir
+      </button>
     </div>
+  ))}
+</div>
   </div>
 )}
-      {screen === "admin" && (
+
+{screen === "admin" && (
         <div style={{ marginTop: "50px" }}>
           <h2>Painel Administrativo</h2>
 
