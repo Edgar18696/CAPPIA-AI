@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+} from "recharts";
 import logoAppia from "./assets/logo-appia-ai.png";
+
 
 export default function App() {
   const [screen, setScreen] = useState("home");
@@ -548,7 +556,26 @@ async function processarBannerIA() {
 
   setProcessando(false);
 }
+const dadosProjetos = [
+  {
+    name: "Em andamento",
+    value: projetosAndamento,
+  },
+  {
+    name: "Concluídos",
+    value: projetosConcluidos,
+  },
+  {
+    name: "Pausados",
+    value: projetosPausados,
+  },
+];
 
+const COLORS = [
+  "#3b82f6",
+  "#22c55e",
+  "#f59e0b",
+];
   return (
     <div
       style={{
@@ -734,7 +761,40 @@ padding: "20px 40px",
     <h1>{projetosPausados}</h1>
   </div>
 </div>
+<div
+  style={{
+    marginTop: "40px",
+    ...cardStyle,
+  }}
+>
+  <h2>📊 Status dos Projetos</h2>
 
+  <div
+    style={{
+      width: "100%",
+      height: "300px",
+    }}
+  >
+    <ResponsiveContainer>
+      <PieChart>
+        <Pie
+          data={dadosProjetos}
+          cx="50%"
+          cy="50%"
+          outerRadius={100}
+          dataKey="value"
+          label
+        >
+          {dadosProjetos.map((entry, index) => (
+            <Cell key={index} fill={COLORS[index]} />
+          ))}
+        </Pie>
+
+        <Tooltip />
+      </PieChart>
+    </ResponsiveContainer>
+  </div>
+</div>
     <h2 style={{ marginTop: "50px" }}>🖼 Últimas Imagens</h2>
 
     <div
