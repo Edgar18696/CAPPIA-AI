@@ -30,6 +30,10 @@ const [imagemProjeto, setImagemProjeto] = useState("");
 const [arquivoProjeto, setArquivoProjeto] = useState(null);
 const [statusProjeto, setStatusProjeto] = useState("Em andamento");
 const [totalProjetos, setTotalProjetos] = useState(0);
+const [projetosAndamento, setProjetosAndamento] = useState(0);
+const [projetosConcluidos, setProjetosConcluidos] = useState(0);
+const [projetosPausados, setProjetosPausados] = useState(0);
+const [buscaProjeto, setBuscaProjeto] = useState("");
 
   useEffect(() => {
     verificarUsuario();
@@ -147,6 +151,18 @@ async function carregarProjetos() {
 
   setProjetos(data || []);
   setTotalProjetos(count || 0);
+
+  setProjetosAndamento(
+    (data || []).filter((p) => p.status === "Em andamento").length
+  );
+
+  setProjetosConcluidos(
+    (data || []).filter((p) => p.status === "Concluído").length
+  );
+
+  setProjetosPausados(
+    (data || []).filter((p) => p.status === "Pausado").length
+  );
 }
 
 async function enviarImagemProjeto() {
@@ -645,19 +661,33 @@ padding: "20px 40px",
 
 {screen === "home" && (
   <div style={{ marginTop: "50px" }}>
-    <h2
-      style={{
-        color: "#3b82f6",
-        marginBottom: "25px",
-      }}
-    >
-      Painel de Controle APPIA AI
-    </h2>
+    <h1
+  style={{
+    fontSize: "42px",
+    fontWeight: "bold",
+    color: "#38bdf8",
+    textAlign: "center",
+    marginBottom: "10px",
+    textShadow: "0 0 20px rgba(56,189,248,0.4)",
+  }}
+>
+  🚀 APPIA AI 
+  </h1>
+<p
+  style={{
+    color: "#94a3b8",
+    textAlign: "center",
+    fontSize: "22px",
+    marginBottom: "40px",
+  }}
+>
+  Plataforma Inteligente para Fotos, Banners e Videos
+</p>
 
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))",
+        gridTemplateColumns: "repeat(4,1fr)",
         gap: "20px",
       }}
     >
@@ -681,6 +711,29 @@ padding: "20px 40px",
         <h1>{totalVideos}</h1>
       </div>
     </div>
+    <div
+  style={{
+    marginTop: "30px",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+    gap: "20px",
+  }}
+>
+  <div style={cardStyle}>
+    <h3>🔵 Em andamento</h3>
+    <h1>{projetosAndamento}</h1>
+  </div>
+
+  <div style={cardStyle}>
+    <h3>🟢 Concluídos</h3>
+    <h1>{projetosConcluidos}</h1>
+  </div>
+
+  <div style={cardStyle}>
+    <h3>🟡 Pausados</h3>
+    <h1>{projetosPausados}</h1>
+  </div>
+</div>
 
     <h2 style={{ marginTop: "50px" }}>🖼 Últimas Imagens</h2>
 
@@ -1038,6 +1091,22 @@ padding: "20px 40px",
     : "➕ Criar Projeto"}
 </button>
     </div>
+    
+    <input
+placeholder="🔍 Buscar projeto por nome..."
+  value={buscaProjeto}
+  onChange={(e) => setBuscaProjeto(e.target.value)}
+  style={{
+    width: "100%",
+    maxWidth: "500px",
+    padding: "14px",
+    margin: "20px auto",
+    display: "block",
+    borderRadius: "10px",
+    border: "1px solid #2563eb",
+    fontSize: "16px",
+  }}
+/>
 <div
   style={{
     display: "grid",
@@ -1045,7 +1114,13 @@ padding: "20px 40px",
     gap: "20px",
   }}
 >
-  {projetos.map((item) => (
+{projetos
+  .filter((item) =>
+    item.nome
+      ?.toLowerCase()
+      .includes(buscaProjeto.toLowerCase())
+  )
+  .map((item) => (
     <div key={item.id} style={cardStyle}>
       {item.imagem && (
         <img
