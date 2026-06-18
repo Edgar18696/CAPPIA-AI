@@ -556,6 +556,11 @@ async function processarBannerIA() {
 
   setProcessando(false);
 }
+console.log(
+  projetosAndamento,
+  projetosConcluidos,
+  projetosPausados
+);
 const dadosProjetos = [
   {
     name: "Em andamento",
@@ -570,7 +575,6 @@ const dadosProjetos = [
     value: projetosPausados,
   },
 ];
-
 const COLORS = [
   "#3b82f6",
   "#22c55e",
