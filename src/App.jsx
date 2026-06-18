@@ -758,112 +758,135 @@ padding: "20px 40px",
   </div>
 )}  </div>
 )}
+{screen === "foto" && (
+  <div style={{ marginTop: "50px" }}>
+    <h2>📸 Foto Premium IA</h2>
 
-      {screen === "foto" && (
-        <div style={{ marginTop: "50px" }}>
-          <h2>📸 Foto Premium IA</h2>
+    <div style={{ ...cardStyle, maxWidth: "950px", margin: "30px auto" }}>
+      <input
+        type="file"
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files[0];
+          if (!file) return;
 
-          <div style={{ ...cardStyle, maxWidth: "950px", margin: "30px auto" }}>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => {
-                const file = e.target.files[0];
-                if (!file) return;
+          setArquivo(file);
+          setPreview(URL.createObjectURL(file));
+          setUrlPublica("");
+          setResultadoIA("");
+          setStatusProcesso("");
+        }}
+      />
 
-                setArquivo(file);
-                setPreview(URL.createObjectURL(file));
-                setUrlPublica("");
-                setResultadoIA("");
-                setStatusProcesso("");
-              }}
-            />
+      {statusProcesso && (
+        <div
+          style={{
+            marginTop: "25px",
+            padding: "15px",
+            background: "#020617",
+            border: "1px solid #38bdf8",
+            borderRadius: "12px",
+            color: "#bfdbfe",
+            fontWeight: "bold",
+          }}
+        >
+          {statusProcesso}
+        </div>
+      )}
 
-            {statusProcesso && (
-              <div
+      {preview && (
+        <div style={{ marginTop: "30px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              gap: "30px",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+            }}
+          >
+            <div>
+              <h3 style={{ color: "#38bdf8" }}>
+                📸 Original
+              </h3>
+
+              <img
+                src={preview}
+                alt=""
                 style={{
-                  marginTop: "25px",
-                  padding: "15px",
-                  background: "#020617",
-                  border: "1px solid #38bdf8",
-                  borderRadius: "12px",
-                  color: "#bfdbfe",
-                  fontWeight: "bold",
+                  width: "400px",
+                  borderRadius: "10px",
+                  background: "white",
                 }}
-              >
-                {statusProcesso}
-              </div>
-            )}
-
-            {preview && (
-              <div style={{ marginTop: "30px" }}>
-                <h3>Original</h3>
-
-                <img
-                  src={preview}
-                  alt=""
-                  style={{
-                    maxWidth: "350px",
-                    borderRadius: "10px",
-                    background: "white",
-                  }}
-                />
-
-                <br />
-
-                <div
-                  style={{
-                    marginTop: "25px",
-                    display: "flex",
-                    justifyContent: "center",
-                    gap: "12px",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <button onClick={enviarImagem} disabled={processando} style={buttonBlue}>
-                    ⬆️ Enviar
-                  </button>
-
-                  <button onClick={processarIA} disabled={processando} style={buttonGreen}>
-                    {processando ? "⏳ Processando..." : "✨ Processar IA"}
-                  </button>
-
-                  <button onClick={limparTelaFoto} disabled={processando} style={buttonRed}>
-                    🧹 Limpar
-                  </button>
-                </div>
-              </div>
-            )}
+              />
+            </div>
 
             {resultadoIA && (
-              <div style={{ marginTop: "40px" }}>
-                <h2 style={{ color: "#22c55e" }}>✅ Resultado IA</h2>
+              <div>
+                <h3 style={{ color: "#22c55e" }}>
+                  ✅ Resultado IA
+                </h3>
 
                 <img
                   src={resultadoIA}
                   alt=""
                   style={{
-                    maxWidth: "450px",
+                    width: "400px",
                     borderRadius: "10px",
                     background: "white",
                   }}
                 />
-
-                <br />
-
-                <button
-                  onClick={() => baixarImagem(resultadoIA)}
-                  style={{ ...buttonGreen, marginTop: "20px" }}
-                >
-                  ⬇️ Baixar Resultado
-                </button>
               </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              marginTop: "25px",
+              display: "flex",
+              justifyContent: "center",
+              gap: "12px",
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              onClick={enviarImagem}
+              disabled={processando}
+              style={buttonBlue}
+            >
+              ⬆️ Enviar
+            </button>
+
+            <button
+              onClick={processarIA}
+              disabled={processando}
+              style={buttonGreen}
+            >
+              {processando ? "⏳ Processando..." : "✨ Processar IA"}
+            </button>
+
+            <button
+              onClick={limparTelaFoto}
+              disabled={processando}
+              style={buttonRed}
+            >
+              🧹 Limpar
+            </button>
+
+            {resultadoIA && (
+              <button
+                onClick={() => baixarImagem(resultadoIA)}
+                style={buttonGreen}
+              >
+                ⬇️ Baixar Resultado
+              </button>
             )}
           </div>
         </div>
       )}
-      
-
+    </div>
+  </div>
+)}
       {screen === "galeria" && (
         <div style={{ marginTop: "50px" }}>
           <h2>🖼 Galeria</h2>
