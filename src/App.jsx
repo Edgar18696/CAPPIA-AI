@@ -11,7 +11,8 @@ const [filtroGaleria, setFiltroGaleria] = useState("todos");
 const [totalBanners, setTotalBanners] = useState(0);
 const [totalVideos, setTotalVideos] = useState(0);
   const [totalFotos, setTotalFotos] = useState(0);
-  
+  const [editandoProjeto, setEditandoProjeto] = useState(null);
+const [novoStatus, setNovoStatus] = useState("");
   const [ultimosBanners, setUltimosBanners] = useState([]);
   const [ultimasImagens, setUltimasImagens] = useState([]);
   const [galeria, setGaleria] = useState([]);
@@ -28,6 +29,7 @@ const [descricaoProjeto, setDescricaoProjeto] = useState("");
 const [imagemProjeto, setImagemProjeto] = useState("");
 const [arquivoProjeto, setArquivoProjeto] = useState(null);
 const [statusProjeto, setStatusProjeto] = useState("Em andamento");
+const [totalProjetos, setTotalProjetos] = useState(0);
 
   useEffect(() => {
     verificarUsuario();
@@ -133,16 +135,18 @@ useEffect(() => {
 
   setUltimosBanners(bannersRecentes || []);
 }
+
 async function carregarProjetos() {
   if (!usuario) return;
 
-  const { data } = await supabase
+  const { data, count } = await supabase
     .from("projetos")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("user_id", usuario.id)
     .order("created_at", { ascending: false });
 
   setProjetos(data || []);
+  setTotalProjetos(count || 0);
 }
 
 async function enviarImagemProjeto() {
@@ -176,7 +180,32 @@ async function enviarImagemProjeto() {
 
   return data.publicUrl;
 }
+async function atualizarProjeto() {
+  if (!editandoProjeto) return;
 
+  const { error } = await supabase
+    .from("projetos")
+    .update({
+      nome: nomeProjeto,
+      descricao: descricaoProjeto,
+      status: novoStatus,
+    })
+    .eq("id", editandoProjeto);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setEditandoProjeto(null);
+  setNomeProjeto("");
+  setDescricaoProjeto("");
+  setNovoStatus("");
+
+  await carregarProjetos();
+
+  alert("Projeto atualizado!");
+}
 async function criarProjeto() {
   if (!usuario) {
     alert("Faça login primeiro");
@@ -547,86 +576,83 @@ padding: "20px 40px",
       
 
       <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          gap: "12px",
-          flexWrap: "wrap",
-        }}
-      >
-       <button onClick={() => setScreen("home")}>🏠 Home</button>
-
-<button onClick={() => setScreen("foto")}>
-  📸 Fotos IA
-</button>
-
-<button onClick={() => setScreen("banner")}>
-  🎨 Banner IA
-</button>
-
-<button onClick={() => setScreen("galeria")}>
-  🖼 Galeria
-</button>
-
-<button
-  onClick={() => setScreen("projetos")}
   style={{
-    background: "#2563eb",
-    color: "white",
-    fontWeight: "bold",
-    padding: "10px 18px",
-    borderRadius: "8px",
-    border: "none",
-    cursor: "pointer",
+    display: "flex",
+    justifyContent: "center",
+    gap: "12px",
+    flexWrap: "wrap",
   }}
 >
-  📦 Projetos
-</button>
+  <button onClick={() => setScreen("home")}>🏠 Home</button>
+  <button onClick={() => setScreen("foto")}>📸 Fotos IA</button>
+  <button onClick={() => setScreen("banner")}>🎨 Banner IA</button>
+  <button onClick={() => setScreen("galeria")}>🖼 Galeria</button>
 
-<button onClick={() => setScreen("admin")}>
-  ⚙️ Administrador
-</button>
-        {!usuario ? (
-          <button onClick={() => setScreen("login")}>Login</button>
-        ) : (
-          <button onClick={sairUsuario}>Sair</button>
-        )}
-      </div>
+  <button
+    onClick={() => setScreen("projetos")}
+    style={{
+      background: "#2563eb",
+      color: "white",
+      fontWeight: "bold",
+      padding: "10px 18px",
+      borderRadius: "8px",
+      border: "none",
+      cursor: "pointer",
+    }}
+  >
+    📦 Projetos
+  </button>
 
-      {screen === "login" && (
-        <div style={{ ...cardStyle, maxWidth: "450px", margin: "50px auto" }}>
-          <h2>🔐 Login APPIA AI</h2>
+  <button onClick={() => setScreen("admin")}>⚙️ Administrador</button>
 
-          <input
-            placeholder="E-mail"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: "90%", padding: "12px", marginTop: "15px" }}
-          />
+  {!usuario ? (
+    <button onClick={() => setScreen("login")}>Login</button>
+  ) : (
+    <button onClick={sairUsuario}>Sair</button>
+  )}
+</div>
 
-          <input
-            type="password"
-            placeholder="Senha"
-            value={senha}
-            onChange={(e) => setSenha(e.target.value)}
-            style={{ width: "90%", padding: "12px", marginTop: "15px" }}
-          />
+{screen === "login" && (
+  <div style={{ ...cardStyle, maxWidth: "450px", margin: "50px auto" }}>
+    <h2>🔐 Login APPIA AI</h2>
 
-          <br />
+    <input
+      placeholder="E-mail"
+      value={email}
+      onChange={(e) => setEmail(e.target.value)}
+      style={{ width: "90%", padding: "12px", marginTop: "15px" }}
+    />
 
-          <button onClick={entrarUsuario} style={{ marginTop: "20px", padding: "12px" }}>
-            Entrar
-          </button>
+    <input
+      type="password"
+      placeholder="Senha"
+      value={senha}
+      onChange={(e) => setSenha(e.target.value)}
+      style={{ width: "90%", padding: "12px", marginTop: "15px" }}
+    />
 
-          <button onClick={cadastrarUsuario} style={{ marginLeft: "10px", padding: "12px" }}>
-            Criar Conta
-          </button>
-        </div>
-      )}
+    <br />
+
+    <button onClick={entrarUsuario} style={{ marginTop: "20px", padding: "12px" }}>
+      Entrar
+    </button>
+
+    <button onClick={cadastrarUsuario} style={{ marginLeft: "10px", padding: "12px" }}>
+      Criar Conta
+    </button>
+  </div>
+)}
 
 {screen === "home" && (
   <div style={{ marginTop: "50px" }}>
-    <h2>Painel de Controle APPIA AI</h2>
+    <h2
+      style={{
+        color: "#3b82f6",
+        marginBottom: "25px",
+      }}
+    >
+      Painel de Controle APPIA AI
+    </h2>
 
     <div
       style={{
@@ -643,6 +669,11 @@ padding: "20px 40px",
       <div style={cardStyle}>
         <h3>🎨 Banners</h3>
         <h1>{totalBanners}</h1>
+      </div>
+
+      <div style={cardStyle}>
+        <h3>📦 Projetos</h3>
+        <h1>{totalProjetos}</h1>
       </div>
 
       <div style={cardStyle}>
@@ -720,44 +751,49 @@ padding: "20px 40px",
       <option value="whatsapp">WhatsApp</option>
     </select>
 
-<input
-  type="file"
-  accept="image/*"
-  onChange={(e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    <br />
 
-    setArquivo(file);
-    setPreview(URL.createObjectURL(file));
-  }}
-/>
+    <input
+      type="file"
+      accept="image/*"
+      onChange={(e) => {
+        const file = e.target.files[0];
+        if (!file) return;
 
-{preview && (
-  <div style={{ marginTop: "20px" }}>
-    <img
-      src={preview}
-      style={{
-        maxWidth: "350px",
-        borderRadius: "10px",
-        background: "white",
+        setArquivo(file);
+        setPreview(URL.createObjectURL(file));
       }}
     />
 
-    <br />
+    {preview && (
+      <div style={{ marginTop: "20px" }}>
+        <img
+          src={preview}
+          alt=""
+          style={{
+            maxWidth: "350px",
+            borderRadius: "10px",
+            background: "white",
+          }}
+        />
 
-    <button
-  onClick={processarBannerIA}
-  disabled={processando}
-  style={{
-    marginTop: "20px",
-    padding: "12px 20px",
-  }}
->
-  {processando ? "⏳ Gerando..." : "🎨 Gerar Banner"}
-</button>
+        <br />
+
+        <button
+          onClick={processarBannerIA}
+          disabled={processando}
+          style={{
+            marginTop: "20px",
+            padding: "12px 20px",
+          }}
+        >
+          {processando ? "⏳ Gerando..." : "🎨 Gerar Banner"}
+        </button>
+      </div>
+    )}
   </div>
-)}  </div>
 )}
+
 {screen === "foto" && (
   <div style={{ marginTop: "50px" }}>
     <h2>📸 Foto Premium IA</h2>
@@ -806,9 +842,7 @@ padding: "20px 40px",
             }}
           >
             <div>
-              <h3 style={{ color: "#38bdf8" }}>
-                📸 Original
-              </h3>
+              <h3 style={{ color: "#38bdf8" }}>📸 Original</h3>
 
               <img
                 src={preview}
@@ -823,9 +857,7 @@ padding: "20px 40px",
 
             {resultadoIA && (
               <div>
-                <h3 style={{ color: "#22c55e" }}>
-                  ✅ Resultado IA
-                </h3>
+                <h3 style={{ color: "#22c55e" }}>✅ Resultado IA</h3>
 
                 <img
                   src={resultadoIA}
@@ -849,35 +881,20 @@ padding: "20px 40px",
               flexWrap: "wrap",
             }}
           >
-            <button
-              onClick={enviarImagem}
-              disabled={processando}
-              style={buttonBlue}
-            >
+            <button onClick={enviarImagem} disabled={processando} style={buttonBlue}>
               ⬆️ Enviar
             </button>
 
-            <button
-              onClick={processarIA}
-              disabled={processando}
-              style={buttonGreen}
-            >
+            <button onClick={processarIA} disabled={processando} style={buttonGreen}>
               {processando ? "⏳ Processando..." : "✨ Processar IA"}
             </button>
 
-            <button
-              onClick={limparTelaFoto}
-              disabled={processando}
-              style={buttonRed}
-            >
+            <button onClick={limparTelaFoto} disabled={processando} style={buttonRed}>
               🧹 Limpar
             </button>
 
             {resultadoIA && (
-              <button
-                onClick={() => baixarImagem(resultadoIA)}
-                style={buttonGreen}
-              >
+              <button onClick={() => baixarImagem(resultadoIA)} style={buttonGreen}>
                 ⬇️ Baixar Resultado
               </button>
             )}
@@ -887,71 +904,71 @@ padding: "20px 40px",
     </div>
   </div>
 )}
-      {screen === "galeria" && (
-        <div style={{ marginTop: "50px" }}>
-          <h2>🖼 Galeria</h2>
-          <p>Total: {galeria.length}</p>
+
+{screen === "galeria" && (
+  <div style={{ marginTop: "50px" }}>
+    <h2>🖼 Galeria</h2>
+    <p>Total: {galeria.length}</p>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))",
+        gap: "20px",
+      }}
+    >
+      {galeria.map((item) => (
+        <div key={item.created_at} style={cardStyle}>
+          <img
+            src={item.imagem_processada}
+            alt=""
+            style={{
+              width: "100%",
+              height: "230px",
+              objectFit: "contain",
+              background: "white",
+              borderRadius: "10px",
+            }}
+          />
+
+          <p style={{ color: "#93c5fd", fontSize: "12px" }}>
+            {new Date(item.created_at).toLocaleString("pt-BR")}
+          </p>
 
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))",
-              gap: "20px",
+              display: "flex",
+              gap: "8px",
+              justifyContent: "center",
+              flexWrap: "wrap",
             }}
           >
-            {galeria.map((item) => (
-              <div key={item.created_at} style={cardStyle}>
-                <img
-                  src={item.imagem_processada}
-                  alt=""
-                  style={{
-                    width: "100%",
-                    height: "230px",
-                    objectFit: "contain",
-                    background: "white",
-                    borderRadius: "10px",
-                  }}
-                />
+            <a
+              href={item.imagem_processada}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                ...buttonBlue,
+                textDecoration: "none",
+                display: "inline-block",
+              }}
+            >
+              🔎 Abrir
+            </a>
 
-                <p style={{ color: "#93c5fd", fontSize: "12px" }}>
-                  {new Date(item.created_at).toLocaleString("pt-BR")}
-                </p>
+            <button onClick={() => baixarImagem(item.imagem_processada)} style={buttonGreen}>
+              ⬇️ Baixar
+            </button>
 
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    justifyContent: "center",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <a
-                    href={item.imagem_processada}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      ...buttonBlue,
-                      textDecoration: "none",
-                      display: "inline-block",
-                    }}
-                  >
-                    🔎 Abrir
-                  </a>
-
-                  <button onClick={() => baixarImagem(item.imagem_processada)} style={buttonGreen}>
-                    ⬇️ Baixar
-                  </button>
-
-                  <button onClick={() => excluirImagem(item)} style={buttonRed}>
-                    🗑️ Excluir
-                  </button>
-                </div>
-              </div>
-            ))}
+            <button onClick={() => excluirImagem(item)} style={buttonRed}>
+              🗑️ Excluir
+            </button>
           </div>
         </div>
-      )}
-
+      ))}
+    </div>
+  </div>
+)}
 {screen === "projetos" && (
   <div style={{ marginTop: "50px" }}>
     <h2>📦 Projetos</h2>
@@ -1008,9 +1025,18 @@ padding: "20px 40px",
         }}
       />
 
-      <button onClick={criarProjeto} style={buttonBlue}>
-        ➕ Criar Projeto
-      </button>
+    <button
+  onClick={
+    editandoProjeto
+      ? atualizarProjeto
+      : criarProjeto
+  }
+  style={buttonBlue}
+>
+  {editandoProjeto
+    ? "💾 Salvar Alterações"
+    : "➕ Criar Projeto"}
+</button>
     </div>
 <div
   style={{
@@ -1054,6 +1080,18 @@ padding: "20px 40px",
 >
   📌 {item.status}
 </p>
+
+<button
+  onClick={() => {
+    setEditandoProjeto(item.id);
+    setNomeProjeto(item.nome);
+    setDescricaoProjeto(item.descricao || "");
+    setNovoStatus(item.status || "Em andamento");
+  }}
+  style={buttonBlue}
+>
+  ✏️ Editar
+</button>
 
       <button
         onClick={() => excluirProjeto(item.id)}
