@@ -913,29 +913,43 @@ padding: "20px 40px",
     marginTop: "20px",
   }}
 >
-  {ultimosProjetos.map((item) => (
-    <div key={item.id} style={cardStyle}>
-      <h3>{item.nome}</h3>
-
-      <p style={{ color: "#93c5fd" }}>
-        {item.descricao}
-      </p>
-
-      <p
+{ultimosProjetos.map((item) => (
+  <div key={item.id} style={cardStyle}>
+    {item.imagem && (
+      <img
+        src={item.imagem}
+        alt=""
         style={{
-          color:
-            item.status === "Concluído"
-              ? "#22c55e"
-              : item.status === "Pausado"
-              ? "#f59e0b"
-              : "#38bdf8",
-          fontWeight: "bold",
+          width: "100%",
+          height: "160px",
+          objectFit: "cover",
+          borderRadius: "10px",
+          marginBottom: "12px",
         }}
-      >
-        📌 {item.status}
-      </p>
-    </div>
-  ))}
+      />
+    )}
+
+    <h3>{item.nome}</h3>
+
+    <p style={{ color: "#93c5fd" }}>
+      {item.descricao}
+    </p>
+
+    <p
+      style={{
+        color:
+          item.status === "Concluído"
+            ? "#22c55e"
+            : item.status === "Pausado"
+            ? "#f59e0b"
+            : "#38bdf8",
+        fontWeight: "bold",
+      }}
+    >
+      📌 {item.status}
+    </p>
+  </div>
+))}
 </div>
 </div>
 )}
