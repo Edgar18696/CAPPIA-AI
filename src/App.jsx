@@ -42,7 +42,7 @@ const [projetosAndamento, setProjetosAndamento] = useState(0);
 const [projetosConcluidos, setProjetosConcluidos] = useState(0);
 const [projetosPausados, setProjetosPausados] = useState(0);
 const [buscaProjeto, setBuscaProjeto] = useState("");
-
+const [ultimosProjetos, setUltimosProjetos] = useState([]);
   useEffect(() => {
     verificarUsuario();
   }, []);
@@ -166,6 +166,7 @@ async function carregarProjetos() {
 
   setProjetos(lista);
   setTotalProjetos(count || 0);
+  setUltimosProjetos(lista.slice(0, 5));
 
   setProjetosAndamento(
     lista.filter((p) =>
@@ -874,32 +875,69 @@ padding: "20px 40px",
       ))}
     </div>
 
-    <h2 style={{ marginTop: "40px" }}>🎨 Últimos Banners</h2>
+<h2 style={{ marginTop: "40px" }}>🎨 Últimos Banners</h2>
 
-    <div
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+    gap: "20px",
+  }}
+>
+{ultimosBanners.map((item) => (
+  <div key={item.created_at} style={cardStyle}>
+    <img
+      src={item.imagem_processada}
+      alt=""
       style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
-        gap: "20px",
+        width: "100%",
+        height: "220px",
+        objectFit: "contain",
+        background: "white",
+        borderRadius: "10px",
       }}
-    >
-      {ultimosBanners.map((item) => (
-        <div key={item.created_at} style={cardStyle}>
-          <img
-            src={item.imagem_processada}
-            alt=""
-            style={{
-              width: "100%",
-              height: "220px",
-              objectFit: "contain",
-              background: "white",
-              borderRadius: "10px",
-            }}
-          />
-        </div>
-      ))}
-    </div>
+    />
   </div>
+))}
+</div>
+
+<h2 style={{ marginTop: "40px" }}>
+  📦 Últimos Projetos
+</h2>
+
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(250px,1fr))",
+    gap: "20px",
+    marginTop: "20px",
+  }}
+>
+  {ultimosProjetos.map((item) => (
+    <div key={item.id} style={cardStyle}>
+      <h3>{item.nome}</h3>
+
+      <p style={{ color: "#93c5fd" }}>
+        {item.descricao}
+      </p>
+
+      <p
+        style={{
+          color:
+            item.status === "Concluído"
+              ? "#22c55e"
+              : item.status === "Pausado"
+              ? "#f59e0b"
+              : "#38bdf8",
+          fontWeight: "bold",
+        }}
+      >
+        📌 {item.status}
+      </p>
+    </div>
+  ))}
+</div>
+</div>
 )}
 
 {screen === "banner" && (
