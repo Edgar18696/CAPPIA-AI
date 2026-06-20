@@ -151,68 +151,53 @@ useEffect(() => {
 async function carregarProjetos() {
   if (!usuario) return;
 
-  const { data, count } = await supabase
+  const { data, count, error } = await supabase
     .from("projetos")
     .select("*", { count: "exact" })
     .eq("user_id", usuario.id)
     .order("created_at", { ascending: false });
 
-  setProjetos(data || []);
+  if (error) {
+    console.log("ERRO CARREGAR PROJETOS:", error);
+    return;
+  }
+
+  const lista = data || [];
+
+  setProjetos(lista);
   setTotalProjetos(count || 0);
 
   setProjetosAndamento(
-    (data || []).filter((p) => p.status === "Em andamento").length
+    lista.filter((p) =>
+      (p.status || "").trim().toLowerCase() === "em andamento"
+    ).length
   );
 
   setProjetosConcluidos(
-    (data || []).filter((p) => p.status === "Concluído").length
+    lista.filter((p) =>
+      (p.status || "").trim().toLowerCase() === "concluído" ||
+      (p.status || "").trim().toLowerCase() === "concluido"
+    ).length
   );
 
   setProjetosPausados(
-    (data || []).filter((p) => p.status === "Pausado").length
+    lista.filter((p) =>
+      (p.status || "").trim().toLowerCase() === "pausado"
+    ).length
   );
 }
-
-async function enviarImagemProjeto() {
-  if (!usuario) {
-    alert("Faça login primeiro");
-    setScreen("login");
-    return null;
-  }
-
-  if (!arquivoProjeto) {
-    return "";
-  }
-
-  const nomeArquivo = `${usuario.id}/projetos/${Date.now()}-${arquivoProjeto.name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9.]/g, "-")}`;
-
-  const { error } = await supabase.storage
-    .from("imagens")
-    .upload(nomeArquivo, arquivoProjeto, { upsert: true });
-
-  if (error) {
-    alert(error.message);
-    return null;
-  }
-
-  const { data } = supabase.storage
-    .from("imagens")
-    .getPublicUrl(nomeArquivo);
-
-  return data.publicUrl;
-}
 async function atualizarProjeto() {
-  if (!editandoProjeto) return;
+  if (!editandoProjeto) {
+    alert("Nenhum projeto selecionado");
+    return;
+  }
 
   const { error } = await supabase
     .from("projetos")
     .update({
       nome: nomeProjeto,
       descricao: descricaoProjeto,
-      status: novoStatus,
+      status: novoStatus || statusProjeto,
     })
     .eq("id", editandoProjeto);
 
@@ -224,73 +209,15 @@ async function atualizarProjeto() {
   setEditandoProjeto(null);
   setNomeProjeto("");
   setDescricaoProjeto("");
-  setNovoStatus("");
-
-  await carregarProjetos();
-
-  alert("Projeto atualizado!");
-}
-async function criarProjeto() {
-  if (!usuario) {
-    alert("Faça login primeiro");
-    setScreen("login");
-    return;
-  }
-
-  if (!nomeProjeto.trim()) {
-    alert("Digite o nome do projeto");
-    return;
-  }
-
-  const imagemUrl = await enviarImagemProjeto();
-
-  if (imagemUrl === null) return;
-
-  const { error } = await supabase.from("projetos").insert([
-    {
-      user_id: usuario.id,
-      nome: nomeProjeto,
-      descricao: descricaoProjeto,
-      imagem: imagemUrl,
-status: statusProjeto,    },
-  ]);
-
-  if (error) {
-    alert(error.message);
-    return;
-  }
-
-  setNomeProjeto("");
-  setDescricaoProjeto("");
   setImagemProjeto("");
   setArquivoProjeto(null);
   setStatusProjeto("Em andamento");
+  setNovoStatus("");
 
   await carregarProjetos();
+  await carregarDashboard();
 
-  alert("Projeto criado com sucesso!");
-}
-
-async function excluirProjeto(id) {
-  const confirmar = window.confirm(
-    "Deseja realmente excluir este projeto?"
-  );
-
-  if (!confirmar) return;
-
-  const { error } = await supabase
-    .from("projetos")
-    .delete()
-    .eq("id", id);
-
-  if (error) {
-    alert(error.message);
-    return;
-  }
-
-  await carregarProjetos();
-
-  alert("Projeto excluído!");
+  alert("Projeto atualizado!");
 }
   async function carregarGaleria() {
     if (!usuario) return;
@@ -580,6 +507,128 @@ const COLORS = [
   "#22c55e",
   "#f59e0b",
 ];
+async function criarProjeto() {
+  console.log("NOME:", nomeProjeto);
+console.log("DESCRIÇÃO:", descricaoProjeto);
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return;
+  }
+
+  if (!nomeProjeto.trim()) {
+    alert("Digite o nome do projeto");
+    return;
+  }
+
+  const imagemUrl = await enviarImagemProjeto();
+
+  if (imagemUrl === null) return;
+
+  const { error } = await supabase.from("projetos").insert([
+    {
+      user_id: usuario.id,
+      nome: nomeProjeto,
+      descricao: descricaoProjeto,
+imagem: imagemUrl,
+      status: statusProjeto,
+    },
+  ]);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setNomeProjeto("");
+  setDescricaoProjeto("");
+  setArquivoProjeto(null);
+  setStatusProjeto("Em andamento");
+  setNovoStatus("");
+  setEditandoProjeto(null);
+
+  await carregarProjetos();
+  await carregarDashboard();
+
+  alert("Projeto criado com sucesso!");
+}
+
+async function atualizarProjeto() {
+  if (!editandoProjeto) {
+    alert("Nenhum projeto selecionado");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("projetos")
+    .update({
+      nome: nomeProjeto,
+      descricao: descricaoProjeto,
+      status: novoStatus || statusProjeto,
+    })
+    .eq("id", editandoProjeto);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setEditandoProjeto(null);
+  setNomeProjeto("");
+  setDescricaoProjeto("");
+  setArquivoProjeto(null);
+  setStatusProjeto("Em andamento");
+  setNovoStatus("");
+
+  await carregarProjetos();
+  await carregarDashboard();
+
+  alert("Projeto atualizado!");
+}
+
+async function excluirProjeto(id) {
+  const confirmar = window.confirm("Deseja realmente excluir este projeto?");
+
+  if (!confirmar) return;
+
+  const { error } = await supabase
+    .from("projetos")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  await carregarProjetos();
+  await carregarDashboard();
+
+  alert("Projeto excluído!");
+}
+async function enviarImagemProjeto() {
+  if (!arquivoProjeto) return null;
+
+  const nomeArquivo =
+    `${usuario.id}/projetos/${Date.now()}-${arquivoProjeto.name}`;
+
+  const { error } = await supabase.storage
+    .from("imagens")
+    .upload(nomeArquivo, arquivoProjeto, {
+      upsert: true,
+    });
+
+  if (error) {
+    alert(error.message);
+    return null;
+  }
+
+  const { data } = supabase.storage
+    .from("imagens")
+    .getPublicUrl(nomeArquivo);
+
+  return data.publicUrl;
+}
   return (
     <div
       style={{
@@ -1091,6 +1140,13 @@ padding: "20px 40px",
     <h2>📦 Projetos</h2>
 
     <div style={{ ...cardStyle, maxWidth: "700px", margin: "20px auto" }}>
+      {editandoProjeto && (
+  <h3 style={{ color: "#f59e0b", marginBottom: "20px" }}>
+    ✏️ Editando Projeto
+  </h3>
+)}
+
+
       <input
         placeholder="Nome do projeto"
         value={nomeProjeto}
@@ -1113,18 +1169,28 @@ padding: "20px 40px",
           marginBottom: "10px",
         }}
       />
-      <select
-  value={statusProjeto}
-  onChange={(e) => setStatusProjeto(e.target.value)}
+<select
+  value={
+    editandoProjeto
+      ? novoStatus
+      : statusProjeto
+  }
+  onChange={(e) => {
+    if (editandoProjeto) {
+      setNovoStatus(e.target.value);
+    } else {
+      setStatusProjeto(e.target.value);
+    }
+  }}
   style={{
     width: "90%",
     padding: "12px",
     marginBottom: "15px",
   }}
 >
-  <option>Em andamento</option>
-  <option>Concluído</option>
-  <option>Pausado</option>
+  <option value="Em andamento">Em andamento</option>
+  <option value="Concluído">Concluído</option>
+  <option value="Pausado">Pausado</option>
 </select>
 
       <input
@@ -1142,19 +1208,17 @@ padding: "20px 40px",
         }}
       />
 
-    <button
-  onClick={
-    editandoProjeto
-      ? atualizarProjeto
-      : criarProjeto
-  }
-  style={buttonBlue}
->
-  {editandoProjeto
-    ? "💾 Salvar Alterações"
-    : "➕ Criar Projeto"}
-</button>
+   {editandoProjeto ? (
+  <button onClick={atualizarProjeto} style={buttonGreen}>
+    💾 Salvar Alterações
+  </button>
+) : (
+  <button onClick={criarProjeto} style={buttonBlue}>
+    ➕ Criar Projeto
+  </button>
+)}
     </div>
+
     
     <input
 placeholder="🔍 Buscar projeto por nome..."
@@ -1171,6 +1235,9 @@ placeholder="🔍 Buscar projeto por nome..."
     fontSize: "16px",
   }}
 />
+<h3 style={{ color: "#38bdf8", marginTop: "20px" }}>
+  Total Projetos: {projetos.length}
+</h3>
 <div
   style={{
     display: "grid",
@@ -1180,9 +1247,7 @@ placeholder="🔍 Buscar projeto por nome..."
 >
 {projetos
   .filter((item) =>
-    item.nome
-      ?.toLowerCase()
-      .includes(buscaProjeto.toLowerCase())
+    item.nome?.toLowerCase().includes(buscaProjeto.toLowerCase())
   )
   .map((item) => (
     <div key={item.id} style={cardStyle}>
@@ -1207,32 +1272,37 @@ placeholder="🔍 Buscar projeto por nome..."
       </p>
 
       <p
-  style={{
-    color:
-      item.status === "Concluído"
-        ? "#22c55e"
-        : item.status === "Pausado"
-        ? "#f59e0b"
-        : "#38bdf8",
-    fontWeight: "bold",
-  }}
->
-  📌 {item.status}
-</p>
-
-<button
-  onClick={() => {
-    setEditandoProjeto(item.id);
-    setNomeProjeto(item.nome);
-    setDescricaoProjeto(item.descricao || "");
-    setNovoStatus(item.status || "Em andamento");
-  }}
-  style={buttonBlue}
->
-  ✏️ Editar
-</button>
+        style={{
+          color:
+            item.status === "Concluído"
+              ? "#22c55e"
+              : item.status === "Pausado"
+              ? "#f59e0b"
+              : "#38bdf8",
+          fontWeight: "bold",
+        }}
+      >
+        📌 {item.status}
+      </p>
 
       <button
+        onClick={() => {
+          setEditandoProjeto(item.id);
+          setNomeProjeto(item.nome || "");
+          setDescricaoProjeto(item.descricao || "");
+          setStatusProjeto(item.status || "Em andamento");
+          setNovoStatus(item.status || "Em andamento");
+
+          setTimeout(() => {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }, 100);
+        }}
+        style={buttonBlue}
+      >
+        ✏️ Editar
+      </button>
+
+            <button
         onClick={() => excluirProjeto(item.id)}
         style={buttonRed}
       >
@@ -1245,16 +1315,15 @@ placeholder="🔍 Buscar projeto por nome..."
 )}
 
 {screen === "admin" && (
-        <div style={{ marginTop: "50px" }}>
-          <h2>Painel Administrativo</h2>
+  <div style={{ marginTop: "50px" }}>
+    <h2>Painel Administrativo</h2>
 
-          <div style={cardStyle}>
-            <h3>Processamentos do usuário</h3>
-            <h1>{totalFotos}</h1>
-          </div>
-        </div>
-      )}
+    <div style={cardStyle}>
+      <h3>Processamentos do usuário</h3>
+      <h1>{totalFotos}</h1>
+    </div>
+  </div>
+)}
     </div>
   );
 }
-
