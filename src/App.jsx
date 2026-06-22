@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, supabaseKey } from "./supabase";
 import {
   PieChart,
   Pie,
@@ -43,6 +43,11 @@ const [projetosConcluidos, setProjetosConcluidos] = useState(0);
 const [projetosPausados, setProjetosPausados] = useState(0);
 const [buscaProjeto, setBuscaProjeto] = useState("");
 const [ultimosProjetos, setUltimosProjetos] = useState([]);
+const [imagemBanner, setImagemBanner] = useState(null);
+const [categoriaBanner, setCategoriaBanner] = useState("autopecas");
+const [estiloBanner, setEstiloBanner] = useState("premium");
+const [tamanhoBanner, setTamanhoBanner] = useState("1200x1200");
+const [fundoBanner, setFundoBanner] = useState("automatico");
   useEffect(() => {
     verificarUsuario();
   }, []);
@@ -230,6 +235,9 @@ async function atualizarProjeto() {
       .not("imagem_processada", "is", null)
       .order("created_at", { ascending: false });
 
+      console.log("GALERIA:", data);
+console.log("ERRO GALERIA:", error);
+
     if (error) {
       console.log(error);
       return;
@@ -276,68 +284,77 @@ async function enviarImagem() {
   return data.publicUrl;
 }
 
-  async function processarIA() {
-    if (!usuario) {
-      alert("Faça login primeiro");
-      setScreen("login");
-      return;
-    }
-
-    if (!urlPublica) {
-      alert("Envie a imagem primeiro");
-      return;
-    }
-
-    setProcessando(true);
-    setStatusProcesso("🤖 Processando imagem com IA...");
-
-    try {
-      const resposta = await fetch(
-        "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/processar-imagem",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageUrl: urlPublica }),
-        }
-      );
-
-      const dados = await resposta.json();
-
-      if (!dados.imagem_processada) {
-        console.log(dados);
-        setStatusProcesso("❌ A IA não retornou uma imagem.");
-        setProcessando(false);
-        return;
-      }
-
-      setResultadoIA(dados.imagem_processada);
-      setStatusProcesso("💾 Salvando resultado na galeria...");
-
-      const { error } = await supabase.from("processamentos").insert([
-  {
-    imagem_original: urlPublica,
-    imagem_processada: dados.imagem_processada,
-    status: "processado",
-    user_id: usuario.id,
-    tipo: "foto",
-  },
-]);
-
-      if (error) {
-        alert(error.message);
-      } else {
-        await carregarDashboard();
-        await carregarGaleria();
-        setStatusProcesso("✅ Concluído! Imagem processada e salva na galeria.");
-      }
-    } catch (erro) {
-      console.log(erro);
-      setStatusProcesso("❌ Erro ao processar imagem.");
-      alert("Erro ao processar imagem.");
-    }
-
-    setProcessando(false);
+async function processarIA() {
+  if (!usuario) {
+    alert("Faça login primeiro");
+    setScreen("login");
+    return;
   }
+
+  if (!urlPublica) {
+    alert("Envie a imagem primeiro");
+    return;
+  }
+
+  setProcessando(true);
+  setStatusProcesso("🤖 Processando imagem com IA...");
+
+  try {
+const resposta = await fetch(
+  "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/processar-imagem",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+    },
+    body: JSON.stringify({ imageUrl: urlPublica }),
+  }
+);
+    const dados = await resposta.json();
+
+    console.log("RESPOSTA IA:", dados);
+    console.log("URL RETORNADA:", dados.imagem_processada);
+
+if (!dados.imagem_processada) {
+  console.log("ERRO COMPLETO:", dados);
+  setStatusProcesso("❌ " + (dados.erro || "A IA não retornou uma imagem."));
+  setProcessando(false);
+  return;
+}
+
+    setResultadoIA(dados.imagem_processada);
+    setStatusProcesso("💾 Salvando resultado na galeria...");
+
+    const { error } = await supabase.from("processamentos").insert([
+      {
+        imagem_original: urlPublica,
+        imagem_processada: dados.imagem_processada,
+        status: "processado",
+        user_id: usuario.id,
+        tipo: "foto",
+      },
+    ]);
+
+    if (error) {
+      console.log("ERRO AO SALVAR GALERIA:", error);
+      setStatusProcesso("❌ Processou, mas não salvou na galeria.");
+      setProcessando(false);
+      return;
+    }
+
+    await carregarGaleria();
+    await carregarDashboard();
+
+    setStatusProcesso("✅ Imagem processada e salva!");
+  } catch (erro) {
+    console.log("ERRO PROCESSAR IA:", erro);
+    setStatusProcesso("❌ Erro ao processar imagem.");
+  }
+
+  setProcessando(false);
+}
 
   async function baixarImagem(url) {
     const resposta = await fetch(url);
@@ -421,8 +438,8 @@ async function processarBannerIA() {
     return;
   }
 
-  if (!arquivo) {
-    alert("Escolha uma imagem primeiro");
+  if (!imagemBanner) {
+    alert("Escolha uma imagem da galeria.");
     return;
   }
 
@@ -430,23 +447,26 @@ async function processarBannerIA() {
   setStatusProcesso("🎨 Gerando banner com IA...");
 
   try {
-    const imagemEnviada = await enviarImagem();
-
-    if (!imagemEnviada) {
-      setProcessando(false);
-      return;
-    }
+    const imagemEnviada = imagemBanner;
 
     const resposta = await fetch(
       "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/processar-imagem",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageUrl: imagemEnviada,
-          tipo: "banner",
-          modelo: bannerModelo,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+   body: JSON.stringify({
+  imageUrl: imagemEnviada,
+  tipo: "banner",
+  modelo: bannerModelo,
+  categoria: categoriaBanner,
+  estilo: estiloBanner,
+  tamanho: tamanhoBanner,
+  fundo: fundoBanner,
+}),
       }
     );
 
@@ -455,59 +475,60 @@ async function processarBannerIA() {
     console.log("RESPOSTA BANNER IA:", dados);
 
     if (!dados.imagem_processada) {
-      alert("A IA não retornou o banner.");
+      console.log("ERRO BANNER COMPLETO:", dados);
+      alert(dados.erro || JSON.stringify(dados));
       setProcessando(false);
       return;
     }
 
     setResultadoIA(dados.imagem_processada);
 
-    await supabase.from("processamentos").insert([
-      {
-        imagem_original: imagemEnviada,
-        imagem_processada: dados.imagem_processada,
-        status: "processado",
-        user_id: usuario.id,
-        tipo: "banner",
-        modelo_banner: bannerModelo,
-      },
-    ]);
+    const { error: erroSalvar } = await supabase
+      .from("processamentos")
+      .insert([
+        {
+          user_id: usuario.id,
+          imagem_original: imagemEnviada,
+          imagem_processada: dados.imagem_processada,
+          status: "finalizado",
+          tipo: "banner",
+          modelo_banner: bannerModelo,
+        },
+      ]);
+
+    if (erroSalvar) {
+      console.log("ERRO AO SALVAR BANNER:", erroSalvar);
+      alert("Banner processou, mas não salvou na galeria.");
+      setProcessando(false);
+      return;
+    }
 
     await carregarDashboard();
     await carregarGaleria();
 
     setStatusProcesso("✅ Banner gerado e salvo!");
+    setProcessando(false);
   } catch (erro) {
-    console.log(erro);
-    alert("Erro ao gerar banner.");
+    console.log("ERRO AO GERAR BANNER:", erro);
+    alert(erro?.message || JSON.stringify(erro) || "Erro ao gerar banner.");
+    setProcessando(false);
   }
-
-  setProcessando(false);
 }
+
 console.log(
   projetosAndamento,
   projetosConcluidos,
   projetosPausados
 );
+
 const dadosProjetos = [
-  {
-    name: "Em andamento",
-    value: projetosAndamento,
-  },
-  {
-    name: "Concluídos",
-    value: projetosConcluidos,
-  },
-  {
-    name: "Pausados",
-    value: projetosPausados,
-  },
+  { name: "Em andamento", value: projetosAndamento },
+  { name: "Concluídos", value: projetosConcluidos },
+  { name: "Pausados", value: projetosPausados },
 ];
-const COLORS = [
-  "#3b82f6",
-  "#22c55e",
-  "#f59e0b",
-];
+
+const COLORS = ["#3b82f6", "#22c55e", "#f59e0b"];
+
 async function criarProjeto() {
   console.log("NOME:", nomeProjeto);
 console.log("DESCRIÇÃO:", descricaoProjeto);
@@ -860,17 +881,20 @@ padding: "20px 40px",
     >
       {ultimasImagens.map((item) => (
         <div key={item.created_at} style={cardStyle}>
-          <img
-            src={item.imagem_processada}
-            alt=""
-            style={{
-              width: "100%",
-              height: "220px",
-              objectFit: "contain",
-              background: "white",
-              borderRadius: "10px",
-            }}
-          />
+       <img
+  src={item.imagem_processada || item.imagem_original}
+  alt=""
+  onError={(e) => {
+    e.currentTarget.style.display = "none";
+  }}
+  style={{
+    width: "100%",
+    height: "230px",
+    objectFit: "contain",
+    background: "white",
+    borderRadius: "10px",
+  }}
+/>
         </div>
       ))}
     </div>
@@ -937,6 +961,16 @@ padding: "20px 40px",
 
     <p
       style={{
+        color: "#64748b",
+        fontSize: "12px",
+        marginTop: "8px",
+      }}
+    >
+      📅 {new Date(item.created_at).toLocaleDateString("pt-BR")}
+    </p>
+
+    <p
+      style={{
         color:
           item.status === "Concluído"
             ? "#22c55e"
@@ -958,6 +992,42 @@ padding: "20px 40px",
   <div style={{ marginTop: "50px" }}>
     <h2>🎨 Banner IA</h2>
 
+    <h3 style={{ color: "white", marginBottom: "10px" }}>
+      Escolha uma imagem da galeria
+    </h3>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))",
+        gap: "10px",
+        marginBottom: "20px",
+      }}
+    >
+      {galeria
+        .filter((item) => item.tipo === "foto")
+        .map((item) => (
+          <img
+            key={item.id}
+            src={item.imagem_processada}
+            alt=""
+            onClick={() => setImagemBanner(item.imagem_processada)}
+            style={{
+              width: "100%",
+              height: "120px",
+              objectFit: "contain",
+              background: "#fff",
+              cursor: "pointer",
+              border:
+                imagemBanner === item.imagem_processada
+                  ? "3px solid #22c55e"
+                  : "2px solid #333",
+              borderRadius: "10px",
+            }}
+          />
+        ))}
+    </div>
+
     <select
       value={bannerModelo}
       onChange={(e) => setBannerModelo(e.target.value)}
@@ -967,47 +1037,73 @@ padding: "20px 40px",
       <option value="shopee">Shopee</option>
       <option value="instagram">Instagram</option>
       <option value="whatsapp">WhatsApp</option>
-    </select>
+    </select>.
+    <select value={categoriaBanner} onChange={(e) => setCategoriaBanner(e.target.value)} style={{ padding: "12px", margin: "10px" }}>
+  <option value="autopecas">🚗 Autopeças</option>
+  <option value="moda">👕 Moda / Roupas</option>
+  <option value="papelaria">📚 Papelaria</option>
+  <option value="doceria">🍰 Doceria</option>
+  <option value="cosmeticos">💄 Cosméticos</option>
+  <option value="petshop">🐶 Pet Shop</option>
+  <option value="eletronicos">📱 Eletrônicos</option>
+  <option value="ferramentas">🔧 Ferramentas</option>
+</select>
+
+<select value={estiloBanner} onChange={(e) => setEstiloBanner(e.target.value)} style={{ padding: "12px", margin: "10px" }}>
+  <option value="premium">Premium</option>
+  <option value="luxo">Luxo</option>
+  <option value="moderno">Moderno</option>
+  <option value="promocao">Promoção</option>
+  <option value="minimalista">Minimalista</option>
+  <option value="marketplace">Marketplace</option>
+</select>
+
+<select value={tamanhoBanner} onChange={(e) => setTamanhoBanner(e.target.value)} style={{ padding: "12px", margin: "10px" }}>
+  <option value="400x400">400x400</option>
+  <option value="600x600">600x600</option>
+  <option value="800x400">800x400</option>
+  <option value="800x800">800x800</option>
+  <option value="1080x1080">1080x1080</option>
+  <option value="1200x1200">1200x1200</option>
+  <option value="1200x1800">1200x1800</option>
+  <option value="1080x1920">1080x1920 Story</option>
+  <option value="1920x1080">1920x1080 Site</option>
+</select>
+
+<select value={fundoBanner} onChange={(e) => setFundoBanner(e.target.value)} style={{ padding: "12px", margin: "10px" }}>
+  <option value="automatico">Automático IA</option>
+  <option value="branco">Branco</option>
+  <option value="transparente">Transparente</option>
+  <option value="azul_degrade">Azul degradê</option>
+  <option value="escuro_premium">Escuro premium</option>
+  <option value="colorido">Colorido</option>
+</select>
 
     <br />
 
-    <input
-      type="file"
-      accept="image/*"
-      onChange={(e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        setArquivo(file);
-        setPreview(URL.createObjectURL(file));
+    <button
+      onClick={processarBannerIA}
+      disabled={processando}
+      style={{
+        marginTop: "20px",
+        padding: "12px 20px",
       }}
-    />
+    >
+      {processando ? "⏳ Gerando..." : "🎨 Gerar Banner"}
+    </button>
 
-    {preview && (
-      <div style={{ marginTop: "20px" }}>
-        <img
-          src={preview}
-          alt=""
-          style={{
-            maxWidth: "350px",
-            borderRadius: "10px",
-            background: "white",
-          }}
-        />
-
-        <br />
-
-        <button
-          onClick={processarBannerIA}
-          disabled={processando}
-          style={{
-            marginTop: "20px",
-            padding: "12px 20px",
-          }}
-        >
-          {processando ? "⏳ Gerando..." : "🎨 Gerar Banner"}
-        </button>
-      </div>
+    {resultadoIA && (
+      <img
+        src={resultadoIA}
+        alt=""
+        style={{
+          width: "100%",
+          maxWidth: "600px",
+          marginTop: "20px",
+          borderRadius: "12px",
+          background: "white",
+        }}
+      />
     )}
   </div>
 )}
@@ -1126,7 +1222,10 @@ padding: "20px 40px",
 {screen === "galeria" && (
   <div style={{ marginTop: "50px" }}>
     <h2>🖼 Galeria</h2>
-    <p>Total: {galeria.length}</p>
+
+    <p style={{ color: "#93c5fd" }}>
+      Total de imagens: {galeria.length}
+    </p>
 
     <div
       style={{
@@ -1136,52 +1235,37 @@ padding: "20px 40px",
       }}
     >
       {galeria.map((item) => (
-        <div key={item.created_at} style={cardStyle}>
-          <img
-            src={item.imagem_processada}
-            alt=""
-            style={{
-              width: "100%",
-              height: "230px",
-              objectFit: "contain",
-              background: "white",
-              borderRadius: "10px",
-            }}
-          />
+        <div key={item.id || item.created_at} style={cardStyle}>
+          
+       <>
+  <a
+    href={item.imagem_processada}
+    target="_blank"
+    rel="noreferrer"
+    style={{ color: "yellow" }}
+  >
+    Abrir imagem
+  </a>
 
-          <p style={{ color: "#93c5fd", fontSize: "12px" }}>
-            {new Date(item.created_at).toLocaleString("pt-BR")}
-          </p>
+  <img
+    src={item.imagem_processada}
+    alt=""
+    style={{
+      width: "100%",
+      height: "230px",
+      objectFit: "contain",
+      background: "white",
+      borderRadius: "10px",
+    }}
+  />
+</>
 
-          <div
-            style={{
-              display: "flex",
-              gap: "8px",
-              justifyContent: "center",
-              flexWrap: "wrap",
-            }}
+          <button
+            onClick={() => baixarImagem(item.imagem_processada || item.imagem_original)}
+            style={{ ...buttonGreen, marginTop: "12px" }}
           >
-            <a
-              href={item.imagem_processada}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                ...buttonBlue,
-                textDecoration: "none",
-                display: "inline-block",
-              }}
-            >
-              🔎 Abrir
-            </a>
-
-            <button onClick={() => baixarImagem(item.imagem_processada)} style={buttonGreen}>
-              ⬇️ Baixar
-            </button>
-
-            <button onClick={() => excluirImagem(item)} style={buttonRed}>
-              🗑️ Excluir
-            </button>
-          </div>
+            ⬇️ Baixar
+          </button>
         </div>
       ))}
     </div>
