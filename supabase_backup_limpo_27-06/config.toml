@@ -1,0 +1,5 @@
+[functions.atendimento-ia]
+enabled = true
+verify_jwt = false
+# import_map = "./functions/atendimento-ia/deno.json"
+# entrypoint = "./functions/atendimento-ia/index.ts"
