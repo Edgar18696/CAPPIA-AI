@@ -57,6 +57,7 @@ import {
   removerProcessamento,
   removerProcessamentosSelecionados,
 } from "./services/processamentosService";
+import { vincularImagensProjeto } from "./services/projetoImagensService";
 // =====================================================
 // APPIA AI
 // Organização do projeto
@@ -783,9 +784,6 @@ const dadosProjetos = [
 const COLORS = ["#3b82f6", "#22c55e", "#f59e0b"];
 
 async function criarProjeto() {
-  console.log("NOME:", nomeProjeto);
-  console.log("DESCRIÇÃO:", descricaoProjeto);
-
   if (!usuario) {
     mostrarNotificacao("Faça login primeiro");
     setScreen("login");
@@ -801,7 +799,7 @@ async function criarProjeto() {
 
   if (imagemUrl === null) return;
 
-  const { error } = await inserirProjeto(supabase, usuario, {
+  const { data: projetoCriado, error } = await inserirProjeto(supabase, usuario, {
     nome: nomeProjeto,
     descricao: descricaoProjeto,
     imagem: imagemUrl,
@@ -813,12 +811,31 @@ async function criarProjeto() {
     return;
   }
 
+  const imagensDoProjeto = galeria.filter((item) =>
+    selecionadas.includes(item.created_at)
+  );
+
+  if (imagensDoProjeto.length > 0) {
+    const { error: erroVinculo } = await vincularImagensProjeto(
+      supabase,
+      usuario,
+      projetoCriado.id,
+      imagensDoProjeto
+    );
+
+    if (erroVinculo) {
+      alert("Projeto criado, mas erro ao vincular imagens: " + erroVinculo.message);
+      return;
+    }
+  }
+
   setNomeProjeto("");
   setDescricaoProjeto("");
   setArquivoProjeto(null);
   setStatusProjeto("Em andamento");
   setNovoStatus("");
   setEditandoProjeto(null);
+  setSelecionadas([]);
 
   await carregarProjetos();
   await carregarDashboard();
@@ -994,8 +1011,8 @@ padding: "20px 40px",
   <button onClick={() => setScreen("galeria")}>🖼 Galeria</button>
   <button onClick={() => setScreen("atendimento")}>💬 Atendimento IA</button>
   <button onClick={() => setScreen("clipIA")}>🎬 Clip IA</button>
-<button onClick={() => setScreen("centroConhecimento")}>
-  📚 Centro de Catálogos
+<button onClick={() => setScreen("pesquisa")}>
+  🧠 Central de Pesquisa
 </button>
 {/*
 <button onClick={() => setScreen("fabricantes")}>
@@ -1003,7 +1020,7 @@ padding: "20px 40px",
 </button>
 
 <button onClick={() => setScreen("catalogo")}>
-  📚 Catálogo IA
+  🧠 Central de Pesquisa
 </button>
 */}
 
@@ -1980,6 +1997,7 @@ mostrarNotificacao("❤️ Resposta favoritada!");
 {screen === "admin" && (
   <Admin totalFotos={totalFotos} cardStyle={cardStyle} />
 )}
+
 {screen === "copilot" && (
   <Copilot
     cardStyle={cardStyle}
@@ -1987,6 +2005,7 @@ mostrarNotificacao("❤️ Resposta favoritada!");
     setProdutoCopilot={setProdutoCopilot}
   />
 )}
+
 {screen === "novoAnuncio" && (
   <NovoAnuncio
     cardStyle={cardStyle}
@@ -1996,8 +2015,57 @@ mostrarNotificacao("❤️ Resposta favoritada!");
   />
 )}
 
-<Footer />
+{screen === "pesquisa" && (
+  <div style={cardStyle}>
+    <h2 style={{ color: "#67e8f9", fontSize: "32px", marginBottom: "10px" }}>
+      🧠 Central de Pesquisa
+    </h2>
 
+    <p style={{ color: "#cbd5e1", marginBottom: "30px" }}>
+      Consulte códigos, aplicações, catálogos, equivalências e fabricantes em um só lugar.
+    </p>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        gap: "20px",
+      }}
+    >
+      <div style={cardStyle}>
+        <h3>🔎 Pesquisa por Código</h3>
+        <p>Busque peças pelo código OEM ou fabricante.</p>
+      </div>
+
+      <div style={cardStyle}>
+        <h3>🚗 Pesquisa por Aplicação</h3>
+        <p>Encontre peças pelo veículo, motor e ano.</p>
+      </div>
+
+      <div style={cardStyle}>
+        <h3>📚 Catálogos</h3>
+        <p>Consulte catálogos técnicos das montadoras.</p>
+      </div>
+
+      <div style={cardStyle}>
+        <h3>🔄 Equivalências</h3>
+        <p>Compare códigos equivalentes entre fabricantes.</p>
+      </div>
+
+      <div style={cardStyle}>
+        <h3>🏭 Fabricantes</h3>
+        <p>Bosch, Magneti Marelli, Delphi, NGK, Denso e outros.</p>
+      </div>
+
+      <div style={cardStyle}>
+        <h3>🤖 IA Especialista</h3>
+        <p>Faça perguntas técnicas e gere descrições profissionais.</p>
+      </div>
+    </div>
+  </div>
+)}
+
+<Footer />
     </div>
   );
 }
