@@ -33,7 +33,7 @@ import Footer from "./components/Footer";
 import Projetos from "./components/Projetos";
 import Copilot from "./components/Copilot";
 import NovoAnuncio from "./components/NovoAnuncio";
-
+import CentralPesquisa from "./components/CentralPesquisa";
 import {
   cardStyle,
   buttonBlue,
@@ -2016,55 +2016,8 @@ mostrarNotificacao("❤️ Resposta favoritada!");
 )}
 
 {screen === "pesquisa" && (
-  <div style={cardStyle}>
-    <h2 style={{ color: "#67e8f9", fontSize: "32px", marginBottom: "10px" }}>
-      🧠 Central de Pesquisa
-    </h2>
-
-    <p style={{ color: "#cbd5e1", marginBottom: "30px" }}>
-      Consulte códigos, aplicações, catálogos, equivalências e fabricantes em um só lugar.
-    </p>
-
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-        gap: "20px",
-      }}
-    >
-      <div style={cardStyle}>
-        <h3>🔎 Pesquisa por Código</h3>
-        <p>Busque peças pelo código OEM ou fabricante.</p>
-      </div>
-
-      <div style={cardStyle}>
-        <h3>🚗 Pesquisa por Aplicação</h3>
-        <p>Encontre peças pelo veículo, motor e ano.</p>
-      </div>
-
-      <div style={cardStyle}>
-        <h3>📚 Catálogos</h3>
-        <p>Consulte catálogos técnicos das montadoras.</p>
-      </div>
-
-      <div style={cardStyle}>
-        <h3>🔄 Equivalências</h3>
-        <p>Compare códigos equivalentes entre fabricantes.</p>
-      </div>
-
-      <div style={cardStyle}>
-        <h3>🏭 Fabricantes</h3>
-        <p>Bosch, Magneti Marelli, Delphi, NGK, Denso e outros.</p>
-      </div>
-
-      <div style={cardStyle}>
-        <h3>🤖 IA Especialista</h3>
-        <p>Faça perguntas técnicas e gere descrições profissionais.</p>
-      </div>
-    </div>
-  </div>
+  <CentralPesquisa cardStyle={cardStyle} />
 )}
-
 <Footer />
     </div>
   );
