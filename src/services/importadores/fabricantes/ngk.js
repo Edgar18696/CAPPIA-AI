@@ -6,7 +6,7 @@ import { parserNgkVelasCabos } from "../parsers/parserNgkVelasCabos";
 
 import { parserNgkInterruptoresOleo } from "../parsers/parserNgkInterruptoresOleo";
 
-import { parserNgkSensores } from "../parsers/parserNgkSensores";
+import { parserNgkSensores } from "../parsers/parserNGKSensores";
 
 const importarNgkBase =
   criarParserBase({

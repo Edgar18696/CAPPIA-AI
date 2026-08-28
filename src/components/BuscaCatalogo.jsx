@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { preencherAnuncioAutomaticamente } from "../services/PreencherAnuncioService";
+import { preencherAnuncioAutomaticamente } from "../services/preencherAnuncioService";
 import PainelResumoCatalogo from "./PainelResumoCatalogo";
 import DiagnosticoTecnicoIA from "./DiagnosticoTecnicoIA";
 import FichaTecnicaIA from "./FichaTecnicaIA";
