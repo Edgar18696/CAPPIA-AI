@@ -3,3 +3,37 @@ enabled = true
 verify_jwt = false
 # import_map = "./functions/atendimento-ia/deno.json"
 # entrypoint = "./functions/atendimento-ia/index.ts"
+[functions.processar-foto]
+verify_jwt = false
+[functions.gerar-video-hedra]
+enabled = true
+verify_jwt = false
+import_map = "./functions/gerar-video-hedra/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/gerar-video-hedra/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/gerar-video-hedra/*.html" ]
+
+[functions.testar-woocommerce]
+enabled = true
+verify_jwt = false
+import_map = "./functions/testar-woocommerce/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/testar-woocommerce/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/testar-woocommerce/*.html" ]
+
+[functions.publicar-woocommerce]
+enabled = true
+verify_jwt = false
+import_map = "./functions/publicar-woocommerce/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/publicar-woocommerce/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/publicar-woocommerce/*.html" ]

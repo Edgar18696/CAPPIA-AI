@@ -1,14 +1,22 @@
 export default function Footer() {
   return (
-    <div
+    <footer
       style={{
-        marginTop: "40px",
+        marginTop: "50px",
+        paddingTop: "20px",
+        borderTop: "1px solid #1e293b",
+        color: "#94a3b8",
+        fontSize: "13px",
         textAlign: "center",
-        color: "#64748b",
-        fontSize: "14px",
       }}
     >
-      APPIA AI v1.0 RC1 • Plataforma de Marketing Visual com IA
-    </div>
+      <p style={{ margin: 0 }}>
+        APPIA AI • Versão 1.0.0
+      </p>
+
+      <p style={{ marginTop: "6px" }}>
+        Criador Inteligente de Anúncios com IA
+      </p>
+    </footer>
   );
 }

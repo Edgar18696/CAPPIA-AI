@@ -1,5 +1,17 @@
+# Dependências
+node_modules/
+
+# Build
+dist/
+dist-ssr/
+
+# Variáveis de ambiente / segredos
+.env
+.env.*
+!.env.example
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,18 +19,28 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Backups locais
+BACKUPS APPIA/
+backup-limpeza/
+supabase_backup_limpo_27-06/
+
+# Arquivos locais / dumps
+CAPPIA-AI.zip
+catalogo_pecas_dump.sql
+estrutura-src.txt
+build-log.txt
+
+# Arquivos locais
 *.local
 
-# Editor directories and files
+# VS Code / IDE
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+supabase/.temp/

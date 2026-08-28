@@ -1,38 +1,49 @@
 export const modelosPremiumBanner = [
   {
-    id: "premium",
-    icone: "⭐",
-    nome: "Premium",
-    descricao: "Visual elegante para qualquer produto",
+    id: "normal",
+    icone: "📦",
+    nome: "Normal",
+    descricao:
+      "Banner padrão para qualquer anúncio.",
   },
+
   {
-    id: "luxo",
-    icone: "👑",
-    nome: "Luxo",
-    descricao: "Visual sofisticado e premium",
+    id: "mercado_livre",
+    icone: "🟡",
+    nome: "Mercado Livre",
+    descricao:
+      "Layout otimizado para Mercado Livre.",
   },
+
   {
-    id: "oferta",
-    icone: "🔥",
-    nome: "Oferta",
-    descricao: "Ideal para promoções",
+    id: "shopee",
+    icone: "🟠",
+    nome: "Shopee",
+    descricao:
+      "Layout otimizado para Shopee.",
   },
+
+  {
+    id: "amazon",
+    icone: "🔵",
+    nome: "Amazon",
+    descricao:
+      "Layout otimizado para Amazon.",
+  },
+
   {
     id: "instagram",
-    icone: "📱",
+    icone: "📷",
     nome: "Instagram",
-    descricao: "Modelo para redes sociais",
+    descricao:
+      "Banner para Feed e Stories.",
   },
+
   {
-    id: "marketplace",
-    icone: "🛒",
-    nome: "Marketplace",
-    descricao: "Modelo focado em venda online",
-  },
-  {
-    id: "black",
-    icone: "⚫",
-    nome: "Black",
-    descricao: "Visual Black Edition premium",
+    id: "whatsapp",
+    icone: "💬",
+    nome: "WhatsApp",
+    descricao:
+      "Banner para compartilhamento.",
   },
 ];

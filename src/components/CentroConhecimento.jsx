@@ -12,9 +12,40 @@ export default function CentroConhecimento({ setScreen }) {
   }, []);
 
   async function carregarTotais() {
-    const { count: catalogo } = await supabase
-      .from("catalogo_pecas")
-      .select("*", { count: "exact", head: true });
+ let catalogo = 0;
+
+const {
+  count: totalCatalogoMestre,
+  error: erroCatalogoMestre,
+} = await supabase
+  .from("catalogo_mestre")
+  .select("*", {
+    count: "exact",
+    head: true,
+  })
+  .eq("ativo", true);
+
+if (!erroCatalogoMestre) {
+  catalogo = totalCatalogoMestre || 0;
+} else {
+  console.warn(
+    "Falha ao contar catalogo_mestre:",
+    erroCatalogoMestre
+  );
+
+  const {
+    count: totalCatalogoCompatibilidade,
+  } = await supabase
+    .from("catalogo_mestre")
+    .select("*", {
+      count: "exact",
+      head: true,
+    })
+    .eq("ativo", true);
+
+  catalogo =
+    totalCatalogoCompatibilidade || 0;
+}
 
     const { count: fabricantes } = await supabase
       .from("fabricantes")

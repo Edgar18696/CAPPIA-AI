@@ -1,3 +1,27 @@
+Biblioteca
+/
+index_processar_imagem_corrigido.ts
+
+
+/// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
+
+import {
+  AlphaAction,
+  ImageMagick,
+  initializeImageMagick,
+  MagickColor,
+} from "npm:@imagemagick/magick-wasm@0.0.40";
+
+const wasmBytes = await Deno.readFile(
+  new URL(
+    "magick.wasm",
+    import.meta.resolve(
+      "npm:@imagemagick/magick-wasm@0.0.40"
+    )
+  )
+);
+
+await initializeImageMagick(wasmBytes);
 /// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
 
 const corsHeaders = {
@@ -314,18 +338,34 @@ const promptFinal =
     : fundo === "transparente"
     ? promptTransparente
     : promptFotoInteligente;
+const fotoSemDistorcao =
+  tipo === "foto";
 
-    const criarResposta = await fetch("https://api.replicate.com/v1/predictions", {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${replicateToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        version: "black-forest-labs/flux-kontext-pro",
+const fundoTransparente =
+  tipo === "foto" &&
+  fundo === "transparente";
+
+const endpointReplicate =
+  fotoSemDistorcao
+    ? "https://api.replicate.com/v1/models/recraft-ai/recraft-remove-background/predictions"
+    : "https://api.replicate.com/v1/predictions";
+
+const configuracaoReplicate =
+  fotoSemDistorcao
+    ? {
+        input: {
+          image: imageUrl,
+        },
+      }
+    : {
+        version:
+          "black-forest-labs/flux-kontext-pro",
+
         input: {
           prompt: promptFinal,
+
           input_image: imageUrl,
+
           aspect_ratio:
             tamanho === "1200x1800"
               ? "2:3"
@@ -334,22 +374,72 @@ const promptFinal =
               : tamanho === "1920x1080"
               ? "16:9"
               : "1:1",
+
           output_format: "png",
         },
-      }),
-    });
+      };
 
-    let prediction = await criarResposta.json();
+console.log("==========");
+console.log("FUNDO:", fundo);
+console.log("TIPO:", tipo);
+console.log(
+  "PROCESSAMENTO:",
+  fotoSemDistorcao
+    ? fundoTransparente
+      ? "RECRAFT TRANSPARENTE"
+      : "RECRAFT PARA FUNDO BRANCO"
+    : "FLUX KONTEXT"
+);
+console.log("ENDPOINT:", endpointReplicate);
+console.log(
+  "INPUT:",
+  configuracaoReplicate.input
+);
+console.log("==========");
 
-    if (!criarResposta.ok) {
-      const detalhe = prediction?.detail || prediction?.error || "";
+const criarResposta = await fetch(
+  endpointReplicate,
+  {
+    method: "POST",
 
-      if (detalhe.toLowerCase().includes("insufficient credit")) {
-        throw new Error("Sem créditos no Replicate. Adicione saldo em Billing.");
-      }
+    headers: {
+      Authorization:
+        `Bearer ${replicateToken}`,
 
-      throw new Error(detalhe || "Erro ao criar processamento no Replicate.");
-    }
+      "Content-Type":
+        "application/json",
+    },
+
+    body: JSON.stringify(
+      configuracaoReplicate
+    ),
+  }
+);
+
+let prediction =
+  await criarResposta.json();
+
+if (!criarResposta.ok) {
+  const detalhe =
+    prediction?.detail ||
+    prediction?.error ||
+    "";
+
+  if (
+    String(detalhe)
+      .toLowerCase()
+      .includes("insufficient credit")
+  ) {
+    throw new Error(
+      "Sem créditos no Replicate. Adicione saldo em Billing."
+    );
+  }
+
+  throw new Error(
+    detalhe ||
+      "Erro ao criar processamento no Replicate."
+  );
+}
 
     const getUrl = prediction?.urls?.get;
 
@@ -363,7 +453,7 @@ const promptFinal =
       const buscarResposta = await fetch(getUrl, {
         method: "GET",
         headers: {
-          Authorization: `Token ${replicateToken}`,
+          Authorization: `Bearer ${replicateToken}`,
           "Content-Type": "application/json",
         },
       });
@@ -391,37 +481,120 @@ const promptFinal =
           throw new Error("Replicate não retornou imagem final.");
         }
 
-        const imagemResposta = await fetch(imagemFinal);
+const imagemResposta = await fetch(
+  imagemFinal
+);
 
-        if (!imagemResposta.ok) {
-          throw new Error("Não foi possível baixar a imagem processada.");
-        }
+if (!imagemResposta.ok) {
+  throw new Error(
+    "Não foi possível baixar a imagem processada."
+  );
+}
 
-        const imagemBlob = await imagemResposta.blob();
+const contentType =
+  imagemResposta.headers.get(
+    "content-type"
+  ) || "";
 
-        const nomeArquivo = `processados/${Date.now()}-imagem-processada.png`;
+const imagemBlob =
+  await imagemResposta.blob();
 
-        const uploadResposta = await fetch(
-          `${supabaseUrl}/storage/v1/object/imagens/${nomeArquivo}`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${serviceRoleKey}`,
-              apikey: serviceRoleKey,
-              "Content-Type": "image/png",
-              "x-upsert": "true",
-            },
-            body: imagemBlob,
-          }
+console.log(
+  "CONTENT-TYPE RECEBIDO:",
+  contentType
+);
+
+console.log(
+  "BLOB TYPE:",
+  imagemBlob.type
+);
+
+console.log(
+  "BLOB SIZE:",
+  imagemBlob.size
+);
+
+const imagemOriginalBytes =
+  new Uint8Array(
+    await imagemBlob.arrayBuffer()
+  );
+
+let imagemFinalBytes =
+  imagemOriginalBytes;
+
+if (
+  tipo === "foto" &&
+  fundo === "branco"
+) {
+  console.log(
+    "APLICANDO FUNDO BRANCO SEM DISTORCER A PEÇA"
+  );
+
+  imagemFinalBytes =
+    ImageMagick.read(
+      imagemOriginalBytes,
+      (imagem): Uint8Array => {
+        imagem.backgroundColor =
+          new MagickColor("#ffffff");
+
+        imagem.alpha(
+          AlphaAction.Remove
         );
 
-        if (!uploadResposta.ok) {
-          const erroUpload = await uploadResposta.text();
-          console.log("ERRO UPLOAD SUPABASE:", erroUpload);
-          throw new Error("Erro ao salvar imagem processada no Storage.");
-        }
+        return imagem.write(
+          (dados) => dados
+        );
+      }
+    );
+}
 
-        const imagemSupabase = `${supabaseUrl}/storage/v1/object/public/imagens/${nomeArquivo}`;
+const imagemFinalBlob =
+  new Blob(
+    [imagemFinalBytes],
+    {
+      type: "image/png",
+    }
+  );
+
+const nomeArquivo =
+  `processados/${Date.now()}-imagem-processada.png`;
+
+const uploadResposta = await fetch(
+  `${supabaseUrl}/storage/v1/object/imagens/${nomeArquivo}`,
+  {
+    method: "POST",
+
+    headers: {
+      Authorization:
+        `Bearer ${serviceRoleKey}`,
+
+      apikey: serviceRoleKey,
+
+      "Content-Type":
+        "image/png",
+
+      "x-upsert": "true",
+    },
+
+    body: imagemFinalBlob,
+  }
+);
+
+if (!uploadResposta.ok) {
+  const erroUpload =
+    await uploadResposta.text();
+
+  console.log(
+    "ERRO UPLOAD SUPABASE:",
+    erroUpload
+  );
+
+  throw new Error(
+    "Erro ao salvar imagem processada no Storage."
+  );
+}
+const imagemSupabase =
+  `${supabaseUrl}/storage/v1/object/public/imagens/${nomeArquivo}`;
 
         return new Response(
           JSON.stringify({

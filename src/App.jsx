@@ -1,50 +1,87 @@
 import { useEffect, useState } from "react";
 import { supabase, supabaseKey } from "./supabase";
-
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-} from "recharts";
-// import NovoAnuncio from "./components/NovoAnuncio";
-
+import Catalogos from "./components/Catalogos";
+import BuscaCatalogo from "./components/BuscaCatalogo";
+import MeusRascunhos from "./components/MeusRascunhos";
+import ContasMarketplace from "./components/ContasMarketplace";
+import InteligenciaCatalogo from "./components/InteligenciaCatalogo";
+import LeitorCatalogoIA from "./components/LeitorCatalogoIA";
+import ImportadorBoschV2 from "./components/ImportadorBoschV2";
+import PesquisaCatalogoCompleta from "./components/PesquisaCatalogoCompleta";
+import ImportadorUniversal from "./components/ImportadorUniversal";
+import { testarInteligencia } from "./services/inteligencia/testarInteligencia";
+import LoadingAppia from "./components/LoadingAppia";
+import ClipIA from "./components/ClipIA";
+import useBannerState from "./hooks/useBannerState";
+import useFotoState from "./hooks/useFotoState";
+import useProjetoState from "./hooks/useProjetoState";
+import CentralPesquisa from "./components/CentralPesquisa";
 import logoAppia from "./assets/logo-appia-ai.png";
-import ImportadorCatalogo from "./components/ImportadorCatalogo";
+import ImportadorCatalogos from "./components/ImportadorCatalogos";
 import FabricantesAdmin from "./components/FabricantesAdmin";
 import EquivalenciasAdmin from "./components/EquivalenciasAdmin";
-import CentroConhecimento from "./components/CentroConhecimento";
+import CentroConhecimentoScreen from "./components/screens/CentroConhecimentoScreen";
 import DashboardAppia from "./components/DashboardAppia";
-import AppHeader from "./components/layout/AppHeader";
-import { modelosPremiumBanner } from "./components/bannerConstants";
 import {
   API_ATENDIMENTO_IA,
   API_PROCESSAR_IMAGEM,
+  API_PROCESSAR_CLIP,
+  API_PROCESSAR_FOTO,
 } from "./components/constants/apiConstants";
-
-import FotoIA from "./components/FotoIA";
-import BannerIA from "./components/BannerIA";
-import Galeria from "./components/Galeria";
+import CentralPublicacaoScreen from "./components/screens/CentralPublicacaoScreen";
+import FotoIAScreen from "./components/screens/FotoIAScreen";
+import BannerStudio from "./components/BannerStudio";
+import useGaleriaState from "./hooks/useGaleriaState";
+import GaleriaScreen from "./components/screens/GaleriaScreen";
 import Admin from "./components/Admin";
-import Home from "./components/Home";
+import MarketingAppia from "./components/MarketingAppia";
+import HomeScreen from "./components/screens/HomeScreen";
+import Projetos from "./components/Projetos";
 import Login from "./components/Login";
 import Footer from "./components/Footer";
-import Projetos from "./components/Projetos";
 import Copilot from "./components/Copilot";
-import NovoAnuncio from "./components/NovoAnuncio";
-import CentralPesquisa from "./components/CentralPesquisa";
+import NovoAnuncioScreen from "./components/screens/NovoAnuncioScreen";
+import MeusAnuncios from "./components/MeusAnuncios";
+import CentralPrecificacaoScreen from "./components/screens/CentralPrecificacaoScreen";
+import MercadoLivreTeste from "./components/MercadoLivreTeste";
+import PublicacaoSite from "./components/PublicacaoSite";
+import MidiasAppia from "./components/MidiasAppia";
+import PlanosPagamentos from "./components/PlanosPagamentos";
 import {
   cardStyle,
   buttonBlue,
   buttonGreen,
   buttonRed,
 } from "./components/stylesAppia";
-import ClipIA from "./components/ClipIA";
+
+import {
+  criarProjetoAction,
+  atualizarProjetoAction,
+  excluirProjetoAction,
+} from "./services/projetoActions";
+
+import { obterResumoBaseMestre } from "./services/baseMestreResumo";
+import {
+  obterResumoComercial,
+} from "./services/resumoComercial";
+
+import {
+  processarFotoAction,
+  enviarFotoOriginalAction,
+  salvarFotoNaGaleriaAction,
+} from "./services/fotoActions";
+
+import {
+  processarBannerAction,
+} from "./services/bannerActions";
+
+import {
+  gerarRespostaIAAction,
+} from "./services/atendimentoActions";
+import CentralInteligencia from "./components/CentralInteligencia";
 import { criarNotificacao } from "./components/utils/notificacaoUtils";
 import { baixarImagem as baixarImagemUtil } from "./components/utils/downloadUtils";
-import { enviarMensagemAtendimento } from "./services/atendimentoService";
-
+import ProjetosScreen from "./components/screens/ProjetosScreen";
 import {
   buscarProjetos,
   inserirProjeto,
@@ -65,92 +102,382 @@ import { vincularImagensProjeto } from "./services/projetoImagensService";
 // Gradualmente, sem alterar o funcionamento.
 // =====================================================
 export default function App() {
-  console.log("APPIA APP CARREGOU");
+ const [statusSistema, setStatusSistema] =
+  useState("🟢 IA Online");
 
-const [statusSistema, setStatusSistema] = useState("🟢 IA Online");
-const [screen, setScreen] = useState("home");
-const [fotosAnuncio, setFotosAnuncio] = useState([]);
-console.log("TELA ATUAL:", screen);
-const [produtoCopilot, setProdutoCopilot] = useState("");
-const [usuario, setUsuario] = useState(null);
-const [email, setEmail] = useState("");
-const [senha, setSenha] = useState("");
-const [filtroGaleria, setFiltroGaleria] = useState("todos");
-const [totalBanners, setTotalBanners] = useState(0);
-const [totalVideos, setTotalVideos] = useState(0);
-const [totalFotos, setTotalFotos] = useState(0);
-const [editandoProjeto, setEditandoProjeto] = useState(null);
-const [novoStatus, setNovoStatus] = useState("");
-const [ultimosBanners, setUltimosBanners] = useState([]);
-const [ultimasImagens, setUltimasImagens] = useState([]);
-const [galeria, setGaleria] = useState([]);
-const [selecionadas, setSelecionadas] = useState([]);
-const [bannerModelo, setBannerModelo] = useState("mercadolivre");
-const [modeloPremiumBanner, setModeloPremiumBanner] = useState("premium");
-  const [arquivo, setArquivo] = useState(null);
-  const [preview, setPreview] = useState("");
-  const [urlPublica, setUrlPublica] = useState("");
-  const [resultadoIA, setResultadoIA] = useState("");
-  const [tituloIA, setTituloIA] = useState("");
-const [descricaoIA, setDescricaoIA] = useState("");
-const [palavrasIA, setPalavrasIA] = useState("");
-const [especificacoesIA, setEspecificacoesIA] = useState("");
-  const [processando, setProcessando] = useState(false);
-  const [notificacao, setNotificacao] = useState("");
-  const [statusProcesso, setStatusProcesso] = useState("");
-  const [projetos, setProjetos] = useState([]);
-const [nomeProjeto, setNomeProjeto] = useState("");
-const [descricaoProjeto, setDescricaoProjeto] = useState("");
-const [imagemProjeto, setImagemProjeto] = useState("");
-const [arquivoProjeto, setArquivoProjeto] = useState(null);
-const [statusProjeto, setStatusProjeto] = useState("Em andamento");
-const [totalProjetos, setTotalProjetos] = useState(0);
-const [projetosAndamento, setProjetosAndamento] = useState(0);
-const [projetosConcluidos, setProjetosConcluidos] = useState(0);
-const [projetosPausados, setProjetosPausados] = useState(0);
-const [buscaProjeto, setBuscaProjeto] = useState("");
-const [ultimosProjetos, setUltimosProjetos] = useState([]);
-const [imagemBanner, setImagemBanner] = useState(null);
-const [categoriaBanner, setCategoriaBanner] = useState("autopecas");
-const [categoriaFoto, setCategoriaFoto] = useState("autopecas");
-const [estiloBanner, setEstiloBanner] = useState("premium");
-const [tamanhoBanner, setTamanhoBanner] = useState("1200x1200");
-const [fundoBanner, setFundoBanner] = useState("automatico");
-const [arquivosFotos, setArquivosFotos] = useState([]);
-const [tipoFundoFoto, setTipoFundoFoto] = useState("branco");
-const [tamanhoFoto, setTamanhoFoto] = useState("1200x1200");
-const [paginaAtual, setPaginaAtual] = useState(1);
-const itensPorPagina = 12;
-const [buscaGaleria, setBuscaGaleria] = useState("");
-const [totalFotosIA, setTotalFotosIA] = useState(0);
-const [totalBannersIA, setTotalBannersIA] = useState(0);
-const [totalProcessamentos, setTotalProcessamentos] = useState(0);
-const [imagensSelecionadas, setImagensSelecionadas] = useState([]);
-const [baixandoLote, setBaixandoLote] = useState(false);
-const [textoAtendimento, setTextoAtendimento] = useState("");
-const [especialistaAtendimento, setEspecialistaAtendimento] = useState("auto");
-const [respostaAtendimento, setRespostaAtendimento] = useState("");
-const [historicoAtendimento, setHistoricoAtendimento] = useState([]);
-const [favoritosAtendimento, setFavoritosAtendimento] = useState([]);
-const [carregandoAtendimento, setCarregandoAtendimento] = useState(false);
-const [statusIA, setStatusIA] = useState("");
-const [totalRespostas, setTotalRespostas] = useState(0);
-const [totalFavoritos, setTotalFavoritos] = useState(0);
-const [ultimaAcao, setUltimaAcao] = useState("Nenhuma resposta gerada ainda.");
-const [sugestaoIA, setSugestaoIA] = useState("");
-const [editando, setEditando] = useState(null);
-const [salvandoEdicao, setSalvandoEdicao] = useState(false);
-const [tempoSessao] = useState(
-  new Date().toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+const [screen, setScreen] =
+  useState("home");
+
+const [
+  anuncioEditando,
+  setAnuncioEditando,
+] = useState(null);
+
+const [
+  fotosAnuncio,
+  setFotosAnuncio,
+] = useState([]);
+const {
+  projetos,
+  setProjetos,
+
+  nomeProjeto,
+  setNomeProjeto,
+
+  descricaoProjeto,
+  setDescricaoProjeto,
+
+  statusProjeto,
+  setStatusProjeto,
+
+  novoStatus,
+  setNovoStatus,
+
+  editandoProjeto,
+  setEditandoProjeto,
+
+  buscaProjeto,
+  setBuscaProjeto,
+
+  imagemProjeto,
+  setImagemProjeto,
+
+  arquivoProjeto,
+  setArquivoProjeto,
+
+  totalProjetos,
+  setTotalProjetos,
+
+  projetosAndamento,
+  setProjetosAndamento,
+
+  projetosConcluidos,
+  setProjetosConcluidos,
+
+  projetosPausados,
+  setProjetosPausados,
+
+  ultimosProjetos,
+  setUltimosProjetos,
+} = useProjetoState();
+const {
+  bannerModelo,
+  setBannerModelo,
+
+  modeloPremiumBanner,
+  setModeloPremiumBanner,
+
+  imagemBanner,
+  setImagemBanner,
+
+  categoriaBanner,
+  setCategoriaBanner,
+
+  estiloBanner,
+  setEstiloBanner,
+
+  tamanhoBanner,
+  setTamanhoBanner,
+
+  fundoBanner,
+  setFundoBanner,
+} = useBannerState();
+const {
+  categoriaFoto,
+  setCategoriaFoto,
+
+  arquivosFotos,
+  setArquivosFotos,
+
+  tipoFundoFoto,
+  setTipoFundoFoto,
+
+  tamanhoFoto,
+  setTamanhoFoto,
+
+  qualidadeFoto,
+  setQualidadeFoto,
+
+  destinoFoto,
+  setDestinoFoto,
+} = useFotoState();
+
+const {
+  filtroGaleria,
+  setFiltroGaleria,
+
+  galeria,
+  setGaleria,
+
+  selecionadas,
+  setSelecionadas,
+
+  paginaAtual,
+  setPaginaAtual,
+
+  buscaGaleria,
+  setBuscaGaleria,
+
+  totalFotosIA,
+  setTotalFotosIA,
+
+  totalBannersIA,
+  setTotalBannersIA,
+
+  totalProcessamentos,
+  setTotalProcessamentos,
+
+  imagensSelecionadas,
+  setImagensSelecionadas,
+
+  baixandoLote,
+  setBaixandoLote,
+
+  itensPorPagina,
+} = useGaleriaState();
+
+const [
+  produtoCopilot,
+  setProdutoCopilot,
+] = useState("");
+
+const [usuario, setUsuario] =
+  useState(null);
+
+const [email, setEmail] =
+  useState("");
+
+const [senha, setSenha] =
+  useState("");
+
+const [
+  totalBanners,
+  setTotalBanners,
+] = useState(0);
+
+const [
+  totalVideos,
+  setTotalVideos,
+] = useState(0);
+
+const [
+  totalFotos,
+  setTotalFotos,
+] = useState(0);
+
+const [
+  ultimosBanners,
+  setUltimosBanners,
+] = useState([]);
+
+const [
+  ultimasImagens,
+  setUltimasImagens,
+] = useState([]);
+
+const [arquivo, setArquivo] =
+  useState(null);
+
+const [preview, setPreview] =
+  useState("");
+
+const [
+  urlPublica,
+  setUrlPublica,
+] = useState("");
+
+const [
+  resultadoIA,
+  setResultadoIA,
+] = useState("");
+
+const [
+  resultadosFotos,
+  setResultadosFotos,
+] = useState([]);
+
+const [tituloIA, setTituloIA] =
+  useState("");
+
+const [
+  descricaoIA,
+  setDescricaoIA,
+] = useState("");
+
+const [
+  palavrasIA,
+  setPalavrasIA,
+] = useState("");
+
+const [
+  especificacoesIA,
+  setEspecificacoesIA,
+] = useState("");
+
+const [
+  processando,
+  setProcessando,
+] = useState(false);
+
+const [
+  notificacao,
+  setNotificacao,
+] = useState("");
+
+const [
+  statusProcesso,
+  setStatusProcesso,
+] = useState("");
+
+const [
+  textoAtendimento,
+  setTextoAtendimento,
+] = useState("");
+
+const [
+  especialistaAtendimento,
+  setEspecialistaAtendimento,
+] = useState("auto");
+
+const [
+  respostaAtendimento,
+  setRespostaAtendimento,
+] = useState("");
+
+const [
+  historicoAtendimento,
+  setHistoricoAtendimento,
+] = useState([]);
+
+const [
+  favoritosAtendimento,
+  setFavoritosAtendimento,
+] = useState([]);
+
+const [
+  carregandoAtendimento,
+  setCarregandoAtendimento,
+] = useState(false);
+
+const [statusIA, setStatusIA] =
+  useState("");
+
+const [
+  totalRespostas,
+  setTotalRespostas,
+] = useState(0);
+
+const [
+  totalFavoritos,
+  setTotalFavoritos,
+] = useState(0);
+
+const [
+  ultimaAcao,
+  setUltimaAcao,
+] = useState(
+  "Nenhuma resposta gerada ainda."
 );
 
-const [ultimaPergunta, setUltimaPergunta] = useState("");
+const [
+  sugestaoIA,
+  setSugestaoIA,
+] = useState("");
+
+const [editando, setEditando] =
+  useState(null);
+
+const [tempoSessao] = useState(
+  new Date().toLocaleTimeString(
+    "pt-BR",
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+    }
+  )
+);
+const [
+  resumoBaseMestre,
+  setResumoBaseMestre,
+] = useState({
+  totalPecas: 0,
+  totalFabricantes: 0,
+  totalCatalogos: 0,
+  totalCompatibilidades: 0,
+});
+
+const [
+  resumoComercial,
+  setResumoComercial,
+] = useState({
+  totalAnuncios: 0,
+  anunciosProntos: 0,
+  anunciosMargemBaixa: 0,
+  anunciosReajuste: 0,
+  oportunidadesMargem: 0,
+  produtosPoucaConcorrencia: 0,
+  anunciosSemFoto: 0,
+  lucroEstimado: 0,
+  margemMedia: 0,
+  precoMedio: 0,
+  totalMercadoLivre: 0,
+  totalShopee: 0,
+  totalAmazon: 0,
+  totalSite: 0,
+});
+
+const [
+  ultimaPergunta,
+  setUltimaPergunta,
+] = useState("");
+
 function mostrarNotificacao(texto) {
-  criarNotificacao(setNotificacao, texto);
+  criarNotificacao(
+    setNotificacao,
+    texto
+  );
 }
+
+useEffect(() => {
+  console.table(
+    testarInteligencia()
+  );
+}, []);
+
+useEffect(() => {
+  async function carregarResumoComercial() {
+    const resumo =
+      await obterResumoComercial();
+
+    setResumoComercial(resumo);
+  }
+
+  carregarResumoComercial();
+}, []);
+
+useEffect(() => {
+  async function carregarResumoBase() {
+    const resumo =
+      await obterResumoBaseMestre();
+
+    setResumoBaseMestre({
+      totalPecas:
+        resumo?.totalPecas || 0,
+
+      totalFabricantes:
+        resumo?.totalFabricantes || 0,
+
+      totalCatalogos:
+        resumo?.totalCatalogos || 0,
+
+      totalCompatibilidades:
+        resumo?.totalCompatibilidades || 0,
+    });
+  }
+
+  carregarResumoBase();
+}, []);
+
 useEffect(() => {
   async function recuperarSessao() {
     const {
@@ -174,86 +501,144 @@ useEffect(() => {
     subscription.unsubscribe();
   };
 }, []);
+
 const gerarRespostaIA = async () => {
-  if (!textoAtendimento || !textoAtendimento.trim()) {
-    mostrarNotificacao("Digite uma mensagem primeiro");
+  if (
+    !textoAtendimento ||
+    !textoAtendimento.trim()
+  ) {
+    mostrarNotificacao(
+      "Digite uma mensagem primeiro"
+    );
     return;
   }
 
   setCarregandoAtendimento(true);
-  setStatusSistema("🟡 Processando...");
-  setStatusIA("🔍 Enviando para a IA...");
+  setStatusSistema(
+    "🟡 Processando..."
+  );
+  setStatusIA(
+    "🔍 Enviando para a IA..."
+  );
   setRespostaAtendimento("");
   setHistoricoAtendimento([]);
-setSugestaoIA("");
-  setUltimaPergunta(textoAtendimento);
+  setSugestaoIA("");
+  setUltimaPergunta(
+    textoAtendimento
+  );
 
   try {
-const retornoApi = await enviarMensagemAtendimento({
-  mensagem: textoAtendimento,
-  especialista: especialistaAtendimento,
-  supabaseKey,
-});
-console.log("STATUS:", retornoApi.status);
-console.log("DATA:", retornoApi.data);
+    const {
+      resposta,
+      dados,
+    } = await gerarRespostaIAAction({
+      mensagem:
+        textoAtendimento,
+      especialista:
+        especialistaAtendimento,
+      supabaseKey,
+    });
 
-const data = retornoApi.data;
-
-const resposta =
-  data?.resposta ||
-  data?.error ||
-  JSON.stringify(data, null, 2) ||
-  "Não consegui gerar uma resposta.";
-
-setRespostaAtendimento(resposta);
-
-    setUltimaAcao(
-      `Última resposta gerada às ${new Date().toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })}`
+    console.log(
+      "DATA ATENDIMENTO:",
+      dados
     );
 
-    setHistoricoAtendimento((anterior) => [
-  {
-    id: Date.now(),
+    setRespostaAtendimento(
+      resposta
+    );
 
-    especialista: especialistaAtendimento,
+    setUltimaAcao(
+      `Última resposta gerada às ${new Date().toLocaleTimeString(
+        "pt-BR",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+        }
+      )}`
+    );
 
-    pergunta: textoAtendimento,
+    setHistoricoAtendimento(
+      (anterior) => [
+        {
+          id: Date.now(),
 
-    resposta,
+          especialista:
+            especialistaAtendimento,
 
-    favorito: false,
+          pergunta:
+            textoAtendimento,
 
-    copiado: false,
+          resposta,
 
-    whatsapp: false,
+          favorito: false,
 
-    horario: new Date().toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  },
+          copiado: false,
 
-  ...anterior,
-]);
+          whatsapp: false,
 
-    setStatusIA("✅ Resposta pronta!");
-    setStatusSistema("🟢 IA Online");
+          horario:
+            new Date().toLocaleTimeString(
+              "pt-BR",
+              {
+                hour: "2-digit",
+                minute: "2-digit",
+              }
+            ),
+        },
+
+        ...anterior,
+      ]
+    );
+
+    setStatusIA(
+      "✅ Resposta pronta!"
+    );
+
+    setStatusSistema(
+      "🟢 IA Online"
+    );
   } catch (erro) {
-    console.log("ERRO GERAL ATENDIMENTO IA:", erro);
-    setRespostaAtendimento("❌ Erro inesperado ao gerar resposta.");
-    setStatusIA("❌ Erro inesperado");
-    setStatusSistema("🔴 Erro");
-  }
+    console.error(
+      "ERRO GERAL ATENDIMENTO IA:",
+      erro
+    );
 
-  setCarregandoAtendimento(false);
+    const mensagemErro =
+      erro?.message ||
+      "Erro inesperado ao gerar resposta.";
+
+    setRespostaAtendimento(
+      `❌ ${mensagemErro}`
+    );
+
+    setStatusIA(
+      "❌ Erro inesperado"
+    );
+
+    setStatusSistema(
+      "🔴 Erro"
+    );
+  } finally {
+    setCarregandoAtendimento(
+      false
+    );
+  }
 };
 
 useEffect(() => {
-  if (usuario && screen === "galeria") {
+  if (!usuario) return;
+
+  if (
+    screen === "galeria" ||
+    screen === "banner" ||
+    screen === "bannerStudio"
+  ) {
     carregarGaleria();
+  }
+
+  if (screen === "dashboardAppia") {
+    carregarDashboard();
   }
 }, [usuario, screen]);
 
@@ -285,18 +670,117 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
     setScreen("home");
   }
 
-  async function cadastrarUsuario() {
-    const { error } = await supabase.auth.signUp({
+  async function cadastrarUsuario(
+    dadosCadastro = {}
+  ) {
+    const {
+      data,
+      error,
+    } = await supabase.auth.signUp({
       email,
       password: senha,
+      options: {
+        data: {
+          tipo_conta:
+            dadosCadastro.tipoConta ||
+            "pf",
+
+          nome:
+            dadosCadastro.nome ||
+            "",
+
+          documento:
+            dadosCadastro.documento ||
+            "",
+
+          telefone:
+            dadosCadastro.telefone ||
+            "",
+
+          nome_loja:
+            dadosCadastro.nomeLoja ||
+            "",
+
+          cep:
+            dadosCadastro.cep ||
+            "",
+
+          logradouro:
+            dadosCadastro.logradouro ||
+            "",
+
+          numero_endereco:
+            dadosCadastro.numeroEndereco ||
+            "",
+
+          bairro:
+            dadosCadastro.bairro ||
+            "",
+
+          cidade:
+            dadosCadastro.cidade ||
+            "",
+
+          estado:
+            dadosCadastro.estado ||
+            "",
+        },
+      },
     });
 
     if (error) {
-      alert(error.message);
+      const mensagem =
+        String(error.message || "");
+
+      if (
+        mensagem
+          .toLowerCase()
+          .includes("security purposes") ||
+        mensagem
+          .toLowerCase()
+          .includes("after") &&
+        mensagem
+          .toLowerCase()
+          .includes("seconds")
+      ) {
+        alert(
+          "⏳ Aguarde alguns segundos antes de tentar novamente. A APPIA está protegendo seu cadastro contra envios repetidos."
+        );
+        return;
+      }
+
+      if (
+        mensagem
+          .toLowerCase()
+          .includes("already registered") ||
+        mensagem
+          .toLowerCase()
+          .includes("already been registered")
+      ) {
+        alert(
+          "ℹ️ Este e-mail já possui uma conta na APPIA. Use a opção Entrar."
+        );
+        return;
+      }
+
+      alert(
+        "❌ Não foi possível criar sua conta. " +
+          mensagem
+      );
       return;
     }
 
-    mostrarNotificacao("✅ Cadastro criado! Verifique seu e-mail");
+    if (data?.user) {
+      setUsuario(
+        data.session?.user || null
+      );
+    }
+
+    alert(
+      "✅ Conta criada com sucesso!\n\nEnviamos um e-mail de confirmação. Abra sua caixa de entrada e clique no botão para ativar sua conta APPIA."
+    );
+
+    setScreen("login");
   }
 
   async function sairUsuario() {
@@ -417,36 +901,38 @@ async function EditarProjeto() {
     return;
   }
 
-  const { error } = await supabase
-    .from("projetos")
-    .update({
-      nome: nomeProjeto,
-      descricao: descricaoProjeto,
-      status: novoStatus || statusProjeto,
-    })
-    .eq("id", editandoProjeto);
+  try {
+    await atualizarProjetoAction({
+      supabase,
+      projetoId: editandoProjeto,
+      nomeProjeto,
+      descricaoProjeto,
+      statusProjeto:
+        novoStatus || statusProjeto,
+    });
 
-  if (error) {
-    alert(error.message);
-    return;
+    setEditandoProjeto(null);
+    setNomeProjeto("");
+    setDescricaoProjeto("");
+    setImagemProjeto("");
+    setArquivoProjeto(null);
+    setStatusProjeto(
+      "Em andamento"
+    );
+    setNovoStatus("");
+
+    await carregarProjetos();
+    await carregarDashboard();
+
+    alert("Projeto atualizado!");
+  } catch (erro) {
+    alert(
+      erro?.message ||
+        "Erro ao atualizar projeto."
+    );
   }
-
-  setEditandoProjeto(null);
-  setNomeProjeto("");
-  setDescricaoProjeto("");
-  setImagemProjeto("");
-  setArquivoProjeto(null);
-  setStatusProjeto("Em andamento");
-  setNovoStatus("");
-
-  await carregarProjetos();
-  await carregarDashboard();
-
-  alert("Projeto atualizado!");
 }
 async function carregarGaleria() {
-  console.log("🔥 carregarGaleria chamou");
-console.log("USUARIO GALERIA:", usuario);
   if (!usuario) return;
 
   const { data, error } = await supabase
@@ -456,8 +942,7 @@ console.log("USUARIO GALERIA:", usuario);
     .not("imagem_processada", "is", null)
     .order("created_at", { ascending: false });
 
-  console.log("GALERIA:", data);
-  console.log("TOTAL GALERIA:", data?.length);
+  
   console.log("ERRO GALERIA:", error);
 
   if (error) {
@@ -467,6 +952,7 @@ console.log("USUARIO GALERIA:", usuario);
   }
 
   const lista = data || [];
+  
 
   setGaleria(lista);
 
@@ -474,128 +960,443 @@ console.log("USUARIO GALERIA:", usuario);
   setTotalBannersIA(lista.filter((item) => item.tipo === "banner").length);
   setTotalProcessamentos(lista.length);
 }
-async function processarSelecionadas() {
-  const selecionadas = arquivosFotos.filter((foto) => foto.selecionada);
 
-  if (selecionadas.length === 0) {
-   mostrarNotificacao("🖼️ Selecione pelo menos uma foto");
-    return;
+async function padronizarImagemFinal1200({
+  url,
+  transparente = false,
+}) {
+  if (!url) {
+    throw new Error(
+      "Imagem processada não informada."
+    );
   }
 
-  setProcessando(true);
-  setStatusProcesso(`⏳ Processando ${selecionadas.length} fotos...`);
+  const resposta =
+    await fetch(url);
 
-  for (let i = 0; i < selecionadas.length; i++) {
-    const foto = selecionadas[i];
-
-    try {
-      setStatusProcesso(`⏳ Processando foto ${i + 1} de ${selecionadas.length}...`);
-
-      const urlEnviada = await enviarImagem(foto.file);
-
-      if (!urlEnviada) {
-        throw new Error("Falha ao enviar imagem.");
-      }
-
-      await processarIA(urlEnviada);
-    } catch (erro) {
-      console.log(`ERRO FOTO ${i + 1}:`, erro);
-      setStatusProcesso("❌ " + (erro?.message || `Erro ao processar foto ${i + 1}`));
-      setProcessando(false);
-      return;
-    }
+  if (!resposta.ok) {
+    throw new Error(
+      "Não foi possível baixar a imagem processada para padronizar em 1200x1200."
+    );
   }
 
-  await carregarGaleria();
-  await carregarDashboard();
+  const blobOriginal =
+    await resposta.blob();
 
-  setProcessando(false);
-setStatusProcesso(`✅ ${selecionadas.length} fotos processadas com sucesso! Resultado salvo na galeria.`);
-
-// Mantém o usuário na tela atual para avaliar o resultado.
-// Não volta automaticamente para a galeria.
-  setTimeout(() => {
-   // setScreen("galeria");
-  }, 1500);
-}
-
-async function processarIA(urlImagem = urlPublica) {
-  if (!usuario) {
-    mostrarNotificacao("🔐 Faça login primeiro");
-    return;
-  }
-
-  if (!urlImagem) {
-    mostrarNotificacao("📸 Envie uma imagem primeiro");
-    return;
-  }
-
-  setProcessando(true);
-  setStatusProcesso("🤖 Processando imagem com IA...");
-
-  try {
-    const respostaApi = await fetch(
-API_PROCESSAR_IMAGEM, 
-     {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-        },
-body: JSON.stringify({
-  imageUrl: urlImagem,
-  tipo: "foto",
-  categoria: categoriaFoto,
-  fundo: tipoFundoFoto,
-  tamanho: tamanhoFoto,
-})
-      }
+  const urlTemporaria =
+    URL.createObjectURL(
+      blobOriginal
     );
 
-    const data = await respostaApi.json();
+  try {
+    const imagem =
+      await new Promise(
+        (resolve, reject) => {
+          const img =
+            new Image();
 
-    console.log("STATUS FOTO:", respostaApi.status);
-    console.log("DATA FOTO:", data);
+          img.onload = () =>
+            resolve(img);
 
-    if (!respostaApi.ok || !data.imagem_processada) {
+          img.onerror = () =>
+            reject(
+              new Error(
+                "Não foi possível abrir a imagem processada."
+              )
+            );
+
+          img.src =
+            urlTemporaria;
+        }
+      );
+
+    const canvas =
+      document.createElement(
+        "canvas"
+      );
+
+    canvas.width = 1200;
+    canvas.height = 1200;
+
+    const ctx =
+      canvas.getContext("2d");
+
+    if (!ctx) {
       throw new Error(
-        data.erro ||
-          data.error ||
-          data.detalhes ||
-          "Erro ao processar imagem."
+        "Não foi possível criar a imagem final 1200x1200."
       );
     }
 
-    setResultadoIA(data.imagem_processada);
-    setStatusProcesso("💾 Salvando resultado na galeria...");
+    ctx.clearRect(
+      0,
+      0,
+      1200,
+      1200
+    );
 
-    const { error } = await supabase.from("processamentos").insert([
-      {
-        imagem_original: urlImagem,
-        imagem_processada: data.imagem_processada,
-        status: "processado",
-        user_id: usuario.id,
-        tipo: "foto",
-      },
-    ]);
+    if (!transparente) {
+      ctx.fillStyle =
+        "#ffffff";
 
-    if (error) {
-      console.log("ERRO AO SALVAR GALERIA:", error);
-      throw new Error("Processou, mas não salvou na galeria.");
+      ctx.fillRect(
+        0,
+        0,
+        1200,
+        1200
+      );
+    }
+
+    const escala =
+      Math.min(
+        1200 / imagem.width,
+        1200 / imagem.height
+      );
+
+    const largura =
+      imagem.width * escala;
+
+    const altura =
+      imagem.height * escala;
+
+    const x =
+      (1200 - largura) / 2;
+
+    const y =
+      (1200 - altura) / 2;
+
+    ctx.drawImage(
+      imagem,
+      x,
+      y,
+      largura,
+      altura
+    );
+
+    const tipoArquivo =
+      transparente
+        ? "image/png"
+        : "image/jpeg";
+
+    const extensao =
+      transparente
+        ? "png"
+        : "jpg";
+
+    const blobFinal =
+      await new Promise(
+        (resolve, reject) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(
+                  new Error(
+                    "Não foi possível gerar a imagem final 1200x1200."
+                  )
+                );
+
+                return;
+              }
+
+              resolve(blob);
+            },
+            tipoArquivo,
+            transparente
+              ? undefined
+              : 0.95
+          );
+        }
+      );
+
+    const nomeArquivo =
+      `${usuario.id}/processadas/1200x1200-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${extensao}`;
+
+    const {
+      error: erroUpload,
+    } =
+      await supabase.storage
+        .from("imagens")
+        .upload(
+          nomeArquivo,
+          blobFinal,
+          {
+            contentType:
+              tipoArquivo,
+            upsert: false,
+          }
+        );
+
+    if (erroUpload) {
+      throw new Error(
+        "A foto foi processada, mas não foi possível salvar a versão 1200x1200: " +
+          erroUpload.message
+      );
+    }
+
+    const {
+      data: dadosUrl,
+    } =
+      supabase.storage
+        .from("imagens")
+        .getPublicUrl(
+          nomeArquivo
+        );
+
+    if (
+      !dadosUrl?.publicUrl
+    ) {
+      throw new Error(
+        "Não foi possível gerar a URL da foto final 1200x1200."
+      );
+    }
+
+    return dadosUrl.publicUrl;
+  } finally {
+    URL.revokeObjectURL(
+      urlTemporaria
+    );
+  }
+}
+
+async function processarSelecionadas() {
+  const fotosSelecionadas =
+    arquivosFotos.filter(
+      (foto) => foto.selecionada
+    );
+
+  if (fotosSelecionadas.length === 0) {
+    mostrarNotificacao(
+      "🖼️ Selecione pelo menos uma foto"
+    );
+    return;
+  }
+
+  if (processando) {
+    return;
+  }
+
+  if (!usuario) {
+    mostrarNotificacao(
+      "Faça login primeiro"
+    );
+    setScreen("login");
+    return;
+  }
+
+  setProcessando(true);
+  setResultadosFotos([]);
+  setResultadoIA("");
+
+  let totalSucesso = 0;
+  let totalErros = 0;
+
+  const erros = [];
+
+  try {
+    for (
+      let i = 0;
+      i < fotosSelecionadas.length;
+      i += 1
+    ) {
+      const foto =
+        fotosSelecionadas[i];
+
+      setStatusProcesso(
+        `⬆️ Enviando foto ${i + 1} de ${fotosSelecionadas.length}...`
+      );
+
+      try {
+        const {
+          urlPublica:
+            imagemOriginal,
+        } =
+          await enviarFotoOriginalAction({
+            supabase,
+            usuario,
+            arquivo: foto.file,
+          });
+
+        setUrlPublica(
+          imagemOriginal
+        );
+
+        setStatusProcesso(
+          `🤖 Processando foto ${i + 1} de ${fotosSelecionadas.length}...`
+        );
+
+        const {
+          imagemProcessada,
+          fundoTransparente,
+        } =
+          await processarFotoAction({
+            apiProcessarImagem:
+              API_PROCESSAR_FOTO,
+
+            supabaseKey,
+
+            urlImagem:
+              imagemOriginal,
+
+            categoriaFoto,
+
+            tipoFundoFoto,
+
+            qualidadeFoto,
+
+            tamanhoFoto,
+          });
+
+        if (!imagemProcessada) {
+          throw new Error(
+            "A IA não retornou a imagem processada."
+          );
+        }
+
+        const transparenteFinal =
+          tipoFundoFoto ===
+            "transparente" ||
+          Boolean(
+            fundoTransparente
+          );
+
+        setStatusProcesso(
+          `📐 Padronizando foto ${i + 1} em 1200 x 1200...`
+        );
+
+        const imagemFinal1200 =
+          await padronizarImagemFinal1200({
+            url:
+              imagemProcessada,
+
+            transparente:
+              transparenteFinal,
+          });
+
+        setStatusProcesso(
+          `💾 Salvando foto ${i + 1} na Galeria...`
+        );
+
+        await salvarFotoNaGaleriaAction({
+          supabase,
+          usuario,
+
+          imagemOriginal,
+
+          imagemProcessada:
+            imagemFinal1200,
+        });
+
+        setResultadoIA(
+          imagemFinal1200
+        );
+
+        setResultadosFotos(
+          (atuais) => [
+            ...atuais,
+            {
+              original:
+                imagemOriginal,
+
+              processada:
+                imagemFinal1200,
+
+              transparente:
+                transparenteFinal,
+
+              largura: 1200,
+              altura: 1200,
+
+              criadaEm:
+                new Date().toISOString(),
+            },
+          ]
+        );
+
+        totalSucesso += 1;
+
+        if (
+          i <
+          fotosSelecionadas.length - 1
+        ) {
+          setStatusProcesso(
+            `✅ Foto ${i + 1} concluída. Preparando a próxima...`
+          );
+
+          await new Promise(
+            (resolve) => {
+              setTimeout(
+                resolve,
+                11000
+              );
+            }
+          );
+        }
+      } catch (erroFoto) {
+        totalErros += 1;
+
+        const mensagem =
+          erroFoto?.message ||
+          `Erro ao processar a foto ${i + 1}`;
+
+        erros.push(
+          `Foto ${i + 1}: ${mensagem}`
+        );
+
+        console.error(
+          `ERRO FOTO ${i + 1}:`,
+          erroFoto
+        );
+
+        if (
+          i <
+          fotosSelecionadas.length - 1
+        ) {
+          await new Promise(
+            (resolve) => {
+              setTimeout(
+                resolve,
+                11000
+              );
+            }
+          );
+        }
+      }
     }
 
     await carregarGaleria();
     await carregarDashboard();
 
-setStatusProcesso("✅ Foto pronta! Você pode baixar, limpar ou criar um banner.");  } catch (erro) {
-    console.log("ERRO PROCESSAR IA:", erro);
-    setStatusProcesso("❌ " + (erro?.message || "Erro ao processar imagem."));
+    if (
+      totalSucesso ===
+      fotosSelecionadas.length
+    ) {
+      setStatusProcesso(
+        `✅ ${totalSucesso} foto(s) processada(s) com sucesso!`
+      );
+    } else if (totalSucesso > 0) {
+      setStatusProcesso(
+        `⚠️ ${totalSucesso} foto(s) processada(s) e ${totalErros} com erro.`
+      );
+
+      console.warn(
+        "ERROS DO LOTE:",
+        erros
+      );
+    } else {
+      setStatusProcesso(
+        "❌ Nenhuma foto foi processada."
+      );
+
+      console.error(
+        "ERROS DO LOTE:",
+        erros
+      );
+    }
+  } finally {
+    setProcessando(false);
   }
-
-  setProcessando(false);
 }
-
 async function baixarImagem(url) {
   await baixarImagemUtil(url);
 }
@@ -609,13 +1410,14 @@ function alternarSelecionada(id) {
   );
 }
 async function excluirSelecionadas() {
-  if (selecionadas.length === 0) return;
+  if (!selecionadas || selecionadas.length === 0) {
+    alert("Selecione pelo menos uma imagem para excluir.");
+    return;
+  }
 
-  const confirmar = confirm(
-    `Deseja excluir ${selecionadas.length} imagem(ns) selecionada(s)?`
-  );
-
-  if (!confirmar) return;
+  if (!confirm(`Excluir ${selecionadas.length} imagem(ns) selecionada(s)?`)) {
+    return;
+  }
 
   const { error } = await supabase
     .from("processamentos")
@@ -623,12 +1425,15 @@ async function excluirSelecionadas() {
     .in("created_at", selecionadas);
 
   if (error) {
-    alert("Erro ao excluir selecionadas: " + error.message);
+    console.error("Erro ao excluir:", error);
+    alert("Erro ao excluir imagens: " + error.message);
     return;
   }
 
   setSelecionadas([]);
   await carregarGaleria();
+
+  alert("✅ Imagens selecionadas excluídas.");
 }
 async function baixarSelecionadas() {
   if (selecionadas.length === 0) return;
@@ -687,102 +1492,115 @@ async function excluirImagem(item) {
 
 async function processarBannerIA() {
   if (!usuario) {
-  mostrarNotificacao("Faça login primeiro");
+    mostrarNotificacao(
+      "Faça login primeiro"
+    );
+
     setScreen("login");
     return;
   }
 
   if (!imagemBanner) {
-mostrarNotificacao("📸 Escolha uma imagem primeiro");    return;
+    mostrarNotificacao(
+      "📸 Escolha uma imagem primeiro"
+    );
+    return;
   }
 
   setProcessando(true);
-  setStatusProcesso("🎨 Gerando banner com IA...");
+
+  setStatusProcesso(
+    "🎨 Gerando banner com IA..."
+  );
 
   try {
-    const imagemEnviada = imagemBanner;
+    const {
+      imagemProcessada,
+    } = await processarBannerAction({
+      apiProcessarImagem:
+        API_PROCESSAR_IMAGEM,
 
-    const resposta = await fetch(
-API_PROCESSAR_IMAGEM,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-        },
-   body: JSON.stringify({
-  imageUrl: imagemEnviada,
-  tipo: "banner",
-  modelo: bannerModelo,
-  categoria: categoriaBanner,
-  estilo: estiloBanner,
-  tamanho: tamanhoBanner,
-  fundo: fundoBanner,
-  modeloPremium: modeloPremiumBanner,
-}),
-      }
+      supabaseKey,
+
+      imagem: imagemBanner,
+
+      bannerModelo,
+
+      categoriaBanner,
+
+      estiloBanner,
+
+      tamanhoBanner,
+
+      fundoBanner,
+
+      modeloPremiumBanner,
+    });
+
+    setResultadoIA(
+      imagemProcessada
     );
 
-    const dados = await resposta.json();
-
-    console.log("RESPOSTA BANNER IA:", dados);
-
-    if (!dados.imagem_processada) {
-      console.log("ERRO BANNER COMPLETO:", dados);
-      alert(dados.erro || JSON.stringify(dados));
-      setProcessando(false);
-      return;
-    }
-
-    setResultadoIA(dados.imagem_processada);
-
-    const { error: erroSalvar } = await supabase
+    const {
+      error: erroSalvar,
+    } = await supabase
       .from("processamentos")
       .insert([
         {
           user_id: usuario.id,
-          imagem_original: imagemEnviada,
-          imagem_processada: dados.imagem_processada,
+
+          imagem_original:
+            imagemBanner,
+
+          imagem_processada:
+            imagemProcessada,
+
           status: "finalizado",
+
           tipo: "banner",
-          modelo_banner: bannerModelo,
+
+          modelo_banner:
+            bannerModelo,
         },
       ]);
 
     if (erroSalvar) {
-      console.log("ERRO AO SALVAR BANNER:", erroSalvar);
-      alert("Banner processou, mas não salvou na galeria.");
-      setProcessando(false);
-      return;
+      throw new Error(
+        "O banner foi processado, mas não foi salvo na galeria."
+      );
     }
 
-    await carregarDashboard();
     await carregarGaleria();
+await carregarDashboard();
 
-    setStatusProcesso("✅ Banner gerado e salvo!");
-    setProcessando(false);
+localStorage.setItem(
+  "abrirUltimasFotos",
+  "true"
+);
+
+localStorage.setItem(
+  "filtroGaleria",
+  "foto"
+);
+
+    setStatusProcesso(
+      "✅ Banner gerado e salvo!"
+    );
   } catch (erro) {
-    console.log("ERRO AO GERAR BANNER:", erro);
-    alert(erro?.message || JSON.stringify(erro) || "Erro ao gerar banner.");
+    console.error(
+      "ERRO AO GERAR BANNER:",
+      erro
+    );
+
+    setStatusProcesso(
+      "❌ " +
+        (erro?.message ||
+          "Erro ao gerar banner.")
+    );
+  } finally {
     setProcessando(false);
   }
 }
-
-console.log(
-  projetosAndamento,
-  projetosConcluidos,
-  projetosPausados
-);
-
-const dadosProjetos = [
-  { name: "Em andamento", value: projetosAndamento },
-  { name: "Concluídos", value: projetosConcluidos },
-  { name: "Pausados", value: projetosPausados },
-];
-
-const COLORS = ["#3b82f6", "#22c55e", "#f59e0b"];
-
 async function criarProjeto() {
   if (!usuario) {
     mostrarNotificacao("Faça login primeiro");
@@ -842,92 +1660,205 @@ async function criarProjeto() {
 
   alert("Projeto criado com sucesso!");
 }
-async function atualizarProjeto() {
-  if (!editandoProjeto) {
-    alert("Nenhum projeto selecionado");
+async function criarProjeto() {
+  if (!usuario) {
+    mostrarNotificacao(
+      "Faça login primeiro"
+    );
+
+    setScreen("login");
     return;
   }
 
-  const { error } = await editarProjeto(
-    supabase,
-    editandoProjeto,
-    {
-      nome: nomeProjeto,
-      descricao: descricaoProjeto,
-      status: novoStatus || statusProjeto,
+  if (!nomeProjeto.trim()) {
+    alert(
+      "Digite o nome do projeto"
+    );
+    return;
+  }
+
+  try {
+    const imagemUrl =
+      await enviarImagemProjeto();
+
+    if (imagemUrl === null) {
+      return;
     }
-  );
 
-  if (error) {
-    alert(error.message);
-    return;
+    const {
+      data: projetoCriado,
+      error,
+    } = await criarProjetoAction({
+      supabase,
+      usuario,
+      nomeProjeto,
+      descricaoProjeto,
+      statusProjeto,
+      imagem: imagemUrl,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const imagensDoProjeto =
+      galeria.filter((item) =>
+        selecionadas.includes(
+          item.created_at
+        )
+      );
+
+    if (
+      imagensDoProjeto.length > 0 &&
+      projetoCriado?.id
+    ) {
+      const {
+        error: erroVinculo,
+      } = await vincularImagensProjeto(
+        supabase,
+        usuario,
+        projetoCriado.id,
+        imagensDoProjeto
+      );
+
+      if (erroVinculo) {
+        throw new Error(
+          "Projeto criado, mas ocorreu erro ao vincular as imagens: " +
+            erroVinculo.message
+        );
+      }
+    }
+
+    setNomeProjeto("");
+    setDescricaoProjeto("");
+    setImagemProjeto("");
+    setArquivoProjeto(null);
+    setStatusProjeto(
+      "Em andamento"
+    );
+    setNovoStatus("");
+    setEditandoProjeto(null);
+    setSelecionadas([]);
+
+    await carregarProjetos();
+    await carregarDashboard();
+
+    alert(
+      "Projeto criado com sucesso!"
+    );
+  } catch (erro) {
+    console.error(
+      "Erro ao criar projeto:",
+      erro
+    );
+
+    alert(
+      erro?.message ||
+        "Não foi possível criar o projeto."
+    );
   }
-
-  setEditandoProjeto(null);
-  setNomeProjeto("");
-  setDescricaoProjeto("");
-  setArquivoProjeto(null);
-  setStatusProjeto("Em andamento");
-  setNovoStatus("");
-
-  await carregarProjetos();
-  await carregarDashboard();
-
-  alert("Projeto atualizado!");
 }
 async function excluirProjeto(id) {
   const confirmar = window.confirm(
     "Deseja realmente excluir este projeto?"
   );
 
-  if (!confirmar) return;
-
-  const { error } = await removerProjeto(supabase, id);
-
-  if (error) {
-    alert(error.message);
+  if (!confirmar) {
     return;
   }
 
-  await carregarProjetos();
-  await carregarDashboard();
+  try {
+    const { error } =
+      await excluirProjetoAction({
+        supabase,
+        projetoId: id,
+      });
 
-  alert("Projeto excluído!");
+    if (error) {
+      throw error;
+    }
+
+    await carregarProjetos();
+    await carregarDashboard();
+
+    alert("Projeto excluído!");
+  } catch (erro) {
+    alert(
+      erro?.message ||
+        "Erro ao excluir projeto."
+    );
+  }
 }
-async function enviarImagem(arquivoSelecionado = arquivo) {
+async function enviarImagem(
+  arquivoSelecionado = arquivo
+) {
   if (!usuario) {
     alert("Faça login primeiro");
     setScreen("login");
     return null;
   }
 
- if (!arquivoSelecionado) {
-  mostrarNotificacao("📸 Escolha uma imagem primeiro");
-  return null;
-}
-
-  setStatusProcesso("⬆️ Enviando imagem...");
-
-  const nomeArquivo = `${usuario.id}/${Date.now()}-${arquivoSelecionado.name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9.]/g, "-")}`;
-
-  const { error } = await supabase.storage
-    .from("imagens")
-    .upload(nomeArquivo, arquivoSelecionado, { upsert: true });
-
-  if (error) {
-    alert(error.message);
+  if (!arquivoSelecionado) {
+    mostrarNotificacao(
+      "📸 Escolha uma imagem primeiro"
+    );
     return null;
   }
 
-  const { data } = supabase.storage
-    .from("imagens")
-    .getPublicUrl(nomeArquivo);
+  setStatusProcesso(
+    "⬆️ Enviando imagem..."
+  );
 
-  setUrlPublica(data.publicUrl);
-  setStatusProcesso("✅ Imagem enviada.");
+  const nomeArquivo =
+    `${usuario.id}/originais/${Date.now()}-${arquivoSelecionado.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-zA-Z0-9.]/g, "-")}`;
+
+  const {
+    error: erroUpload,
+  } = await supabase.storage
+    .from("imagens")
+    .upload(
+      nomeArquivo,
+      arquivoSelecionado,
+      {
+        upsert: false,
+      }
+    );
+
+  if (erroUpload) {
+    console.error(
+      "ERRO UPLOAD:",
+      erroUpload
+    );
+
+    throw new Error(
+      erroUpload.message
+    );
+  }
+
+  const {
+    data,
+  } = supabase.storage
+    .from("imagens")
+    .getPublicUrl(
+      nomeArquivo
+    );
+
+  if (!data?.publicUrl) {
+    throw new Error(
+      "Não foi possível gerar a URL pública."
+    );
+  }
+
+  setUrlPublica(
+    data.publicUrl
+  );
+
+  setStatusProcesso(
+    "✅ Upload concluído."
+  );
 
   return data.publicUrl;
 }
@@ -938,115 +1869,106 @@ function mostrarNotificacao(texto) {
     setNotificacao("");
   }, 3000);
 }
-console.log("CHEGOU NO RETURN DO APP");
+
 // =====================================================
 // LAYOUT PRINCIPAL
 // Cabeçalho e Menu Principal
 // As telas serão renderizadas abaixo conforme o screen.
 // =====================================================
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#020617",
-        color: "white",
-padding: "20px 40px",
-        textAlign: "center",
-        fontFamily: "Arial",
-      }}
-    >
-    <h1 style={{ color: "#fff" }}>TESTE APPIA</h1>
-<img
-  src={logoAppia}
-  alt="APPIA AI"
-  style={{
-    width: "320px",
-    marginTop: "10px",
-    marginBottom: "-40px",
-  }}
-/>
-<p
-  style={{
-    color: "#93c5fd",
-    fontSize: "22px",
-    marginBottom: "20px",
-    fontWeight: "500",
-  }}
->
-  Criação inteligente de imagens, banners e conteúdo digital
-</p>
 
-<p
-  style={{
-    color: "#93c5fd",
-    fontSize: "18px",
-    marginBottom: "15px",
-  }}
->
-</p>
-      
-
-      <div
-  style={{
-    display: "flex",
-    justifyContent: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-  }}
->
-<button
-  onClick={() => setScreen("novoAnuncio")}
-  style={buttonGreen}
->
-  📦 Novo Anúncio
-</button>
-
-
-<button onClick={() => setScreen("foto")}>
-  📸 Fotos IA
-</button>
-<button onClick={() => setScreen("banner")}>
-  🎨 Banner IA
-</button>
-  <button onClick={() => setScreen("galeria")}>🖼 Galeria</button>
-  <button onClick={() => setScreen("atendimento")}>💬 Atendimento IA</button>
-  <button onClick={() => setScreen("clipIA")}>🎬 Clip IA</button>
-<button onClick={() => setScreen("pesquisa")}>
-  🧠 Central de Pesquisa
-</button>
-{/*
-<button onClick={() => setScreen("fabricantes")}>
-  🏭 Fabricantes
-</button>
-
-<button onClick={() => setScreen("catalogo")}>
-  🧠 Central de Pesquisa
-</button>
-*/}
-
-  <button
-    onClick={() => setScreen("projetos")}
+return (
+  <div
     style={{
-      background: "#2563eb",
+      minHeight: "100vh",
+      background: "#020617",
       color: "white",
-      fontWeight: "bold",
-      padding: "10px 18px",
-      borderRadius: "8px",
-      border: "none",
-      cursor: "pointer",
+      padding: "20px 40px",
+      textAlign: "center",
+      fontFamily: "Arial",
     }}
   >
-    📦 Projetos
-  </button>
+<header
+  style={{
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "20px",
+    flexWrap: "wrap",
+    marginBottom: "30px",
+    borderBottom: "1px solid #1e293b",
+    paddingBottom: "18px",
+  }}
+>
+  <div
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: "14px",
+    }}
+  >
+    <img
+      src={logoAppia}
+      alt="APPIA AI"
+      style={{ width: "70px" }}
+    />
 
-  <button onClick={() => setScreen("admin")}>⚙️ Administrador</button>
+    <div style={{ textAlign: "left" }}>
+      <h2 style={{ margin: 0, color: "#67e8f9" }}>
+        APPIA AI
+      </h2>
 
-  {!usuario ? (
-    <button onClick={() => setScreen("login")}>Login</button>
-  ) : (
-    <button onClick={sairUsuario}>Sair</button>
-  )}
-</div>
+      <p style={{ margin: 0, color: "#94a3b8" }}>
+        Criador Inteligente de Anúncios
+      </p>
+    </div>
+  </div>
+
+
+
+  <div
+    style={{
+      display: "flex",
+      gap: "10px",
+      flexWrap: "wrap",
+      alignItems: "center",
+    }}
+  >
+    
+
+
+    {!usuario ? (
+      <button style={botaoTopo} onClick={() => setScreen("login")}>
+        Login
+      </button>
+    ) : (
+      <>
+        <button
+          type="button"
+          style={botaoTopo}
+          onClick={() => setScreen("home")}
+        >
+          🏠 Home
+        </button>
+
+        <button
+          type="button"
+          style={botaoTopoDestaque}
+          onClick={() => setScreen("planosPagamentos")}
+        >
+          💳 Planos e Pagamentos
+        </button>
+
+        <button
+          type="button"
+          style={botaoTopo}
+          onClick={sairUsuario}
+        >
+          Sair
+        </button>
+      </>
+    )}
+  </div>
+</header>
 
 {notificacao && (
   <div
@@ -1078,59 +2000,197 @@ padding: "20px 40px",
     cardStyle={cardStyle}
   />
 )}
-{screen === "home" && (
-  <div style={cardStyle}>
-    <h1>✅ APPIA abriu</h1>
-    <p>Tela home em teste.</p>
-  </div>
+{screen === "marketingAppia" && (
+  <MarketingAppia
+    setScreen={setScreen}
+  />
 )}
 
+{screen === "home" && (
+  <HomeScreen
+    totalFotos={totalFotos}
+    totalBanners={totalBanners}
+    totalVideos={totalVideos}
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
 
-{screen === "banner" && (
-  <BannerIA
+{screen === "planosPagamentos" && (
+  <PlanosPagamentos
+    setScreen={setScreen}
+    usuario={usuario}
+  />
+)}
+
+{screen === "contasMarketplace" && (
+  <ContasMarketplace
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "centralPesquisa" && (
+  <CentralPesquisa
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{(screen === "banner" || screen === "bannerStudio") && (
+  <BannerStudio
     galeria={galeria}
-    imagemBanner={imagemBanner}
-    setImagemBanner={setImagemBanner}
-    bannerModelo={bannerModelo}
-    setBannerModelo={setBannerModelo}
-    categoriaBanner={categoriaBanner}
-    setCategoriaBanner={setCategoriaBanner}
-    estiloBanner={estiloBanner}
-    setEstiloBanner={setEstiloBanner}
-    tamanhoBanner={tamanhoBanner}
-    setTamanhoBanner={setTamanhoBanner}
-    fundoBanner={fundoBanner}
-    setFundoBanner={setFundoBanner}
-    modeloPremiumBanner={modeloPremiumBanner}
-    setModeloPremiumBanner={setModeloPremiumBanner}
-    processarBannerIA={processarBannerIA}
-    processando={processando}
-    resultadoIA={resultadoIA}
-    baixarImagem={baixarImagem}
+    setScreen={setScreen}
+    cardStyle={cardStyle}
   />
 )}
 {(screen === "baseConhecimento" || screen === "catalogo") && (
   <div style={{ marginTop: "40px" }}>
-    <ImportadorCatalogo />
+    <ImportadorCatalogos />
   </div>
 )}
 {screen === "centroConhecimento" && (
-  <CentroConhecimento setScreen={setScreen} />
+  <CentroConhecimentoScreen
+    setScreen={setScreen}
+  />
 )}
 {screen === "fabricantes" && (
   <div style={{ marginTop: "40px" }}>
     <FabricantesAdmin />
   </div>
 )}
-{screen === "dashboardAppia" && (
-  <DashboardAppia setScreen={setScreen} />
+{screen === "inteligenciaCatalogo" && (
+  <InteligenciaCatalogo cardStyle={cardStyle} />
 )}
+
+{screen === "dashboardAppia" && (
+  <CentralInteligencia
+    setScreen={setScreen}
+
+    totalFotos={totalFotos}
+    totalBanners={totalBanners}
+    totalVideos={totalVideos}
+
+    totalAnuncios={
+      resumoComercial.totalAnuncios
+    }
+
+    anunciosProntos={
+      resumoComercial.anunciosProntos
+    }
+
+    anunciosMargemBaixa={
+      resumoComercial.anunciosMargemBaixa
+    }
+
+    anunciosReajuste={
+      resumoComercial.anunciosReajuste
+    }
+
+    oportunidadesMargem={
+      resumoComercial.oportunidadesMargem
+    }
+
+    produtosPoucaConcorrencia={
+      resumoComercial.produtosPoucaConcorrencia
+    }
+
+    anunciosSemFoto={
+      resumoComercial.anunciosSemFoto
+    }
+
+    lucroEstimado={
+      resumoComercial.lucroEstimado
+    }
+
+    margemMedia={
+      resumoComercial.margemMedia
+    }
+
+    precoMedio={
+      resumoComercial.precoMedio
+    }
+
+    totalMercadoLivre={
+      resumoComercial.totalMercadoLivre
+    }
+
+    totalShopee={
+      resumoComercial.totalShopee
+    }
+
+    totalAmazon={
+      resumoComercial.totalAmazon
+    }
+
+    totalSite={
+      resumoComercial.totalSite
+    }
+
+    totalPecas={
+      resumoBaseMestre.totalPecas
+    }
+
+    totalFabricantes={
+      resumoBaseMestre.totalFabricantes
+    }
+
+    totalCatalogos={
+      resumoBaseMestre.totalCatalogos
+    }
+
+    totalCompatibilidades={
+      resumoBaseMestre.totalCompatibilidades
+    }
+  />
+)}
+
+{screen === "importadorBoschV2" && (
+  <div style={{ marginTop: "40px" }}>
+    <ImportadorBoschV2 />
+  </div>
+)}
+
+{screen === "importadorUniversal" && (
+  <ImportadorUniversal
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
 {screen === "equivalencias" && (
   <div style={{ marginTop: "40px" }}>
     <EquivalenciasAdmin />
   </div>
 )}
-{screen === "clipIA" && <ClipIA cardStyle={cardStyle} />}
+{screen === "clipIA" && (
+  <ClipIA
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "midiasAppia" && (
+  <MidiasAppia
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "centralPublicacao" && (
+  <CentralPublicacaoScreen
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "centralPrecificacao" && (
+  <CentralPrecificacaoScreen
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
 {screen === "atendimento" && (
   <div style={{ marginTop: "50px" }}>
     <h2>💬 Atendimento IA</h2>
@@ -1322,6 +2382,14 @@ padding: "20px 40px",
   <button style={cardStyle} onClick={() => setTextoAtendimento("Verificar compatibilidade da peça pelo código ou chassi")}>
     🔍 Compatibilidade
   </button>
+
+<button
+  style={cardStyle}
+  onClick={() => setScreen("importadorUniversal")}
+>
+  📚 Importador Universal
+</button>
+
 </div>
 </div>
 
@@ -1707,6 +2775,7 @@ mostrarNotificacao("✅ Resposta copiada!");        }}
       >
         📋 Copiar Resposta
       </button>
+
       <button
   onClick={() => {
     setFavoritosAtendimento((lista) => [
@@ -1728,6 +2797,7 @@ mostrarNotificacao("❤️ Resposta favoritada!");
 >
   ❤️ Favoritar
 </button>
+
 <button
   onClick={() => {
     setTextoAtendimento("");
@@ -1746,6 +2816,7 @@ mostrarNotificacao("❤️ Resposta favoritada!");
 >
   🗑️ Limpar
 </button>
+
 <button
   onClick={() => {
     navigator.clipboard.writeText(respostaAtendimento);
@@ -1922,34 +2993,53 @@ mostrarNotificacao("❤️ Resposta favoritada!");
   </div>
 )}
 {screen === "foto" && (
-  <FotoIA
+  <FotoIAScreen
     categoriaFoto={categoriaFoto}
     setCategoriaFoto={setCategoriaFoto}
+
     arquivosFotos={arquivosFotos}
     setArquivosFotos={setArquivosFotos}
+
     setArquivo={setArquivo}
     setPreview={setPreview}
     setUrlPublica={setUrlPublica}
+
     setResultadoIA={setResultadoIA}
     setStatusProcesso={setStatusProcesso}
+
+    resultadosFotos={resultadosFotos}
+    setResultadosFotos={setResultadosFotos}
+
     tipoFundoFoto={tipoFundoFoto}
     setTipoFundoFoto={setTipoFundoFoto}
+
+    qualidadeFoto={qualidadeFoto}
+setQualidadeFoto={setQualidadeFoto}
+
     processarSelecionadas={processarSelecionadas}
+
     statusProcesso={statusProcesso}
     preview={preview}
     resultadoIA={resultadoIA}
+
     limparTelaFoto={limparTelaFoto}
+
     processando={processando}
+
     baixarImagem={baixarImagem}
+
     cardStyle={cardStyle}
     buttonGreen={buttonGreen}
     buttonRed={buttonRed}
+
     produtoCopilot={produtoCopilot}
+
+    setScreen={setScreen}
   />
 )}
 
 {screen === "galeria" && (
-  <Galeria
+  <GaleriaScreen
     galeria={galeria}
     filtroGaleria={filtroGaleria}
     setFiltroGaleria={setFiltroGaleria}
@@ -1964,13 +3054,92 @@ mostrarNotificacao("❤️ Resposta favoritada!");
     baixarImagem={baixarImagem}
     excluirImagem={excluirImagem}
     setImagemBanner={setImagemBanner}
-    setScreen={setScreen}
     setFotosAnuncio={setFotosAnuncio}
+    setScreen={setScreen}
     cardStyle={cardStyle}
   />
 )}
+
+{screen === "admin" && (
+<Admin
+  totalFotos={totalFotos}
+  cardStyle={cardStyle}
+  setScreen={setScreen}
+/>)}
+
+{screen === "copilot" && (
+  <Copilot
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+    setProdutoCopilot={setProdutoCopilot}
+  />
+)}
+
+{screen === "novoAnuncio" && (
+<NovoAnuncioScreen
+  usuario={usuario}
+  cardStyle={cardStyle}
+  setScreen={setScreen}
+  fotosAnuncio={fotosAnuncio}
+  setFotosAnuncio={setFotosAnuncio}
+  anuncioEditando={anuncioEditando}
+  setAnuncioEditando={setAnuncioEditando}
+/>
+)}
+
+{screen === "meusAnuncios" && (
+  <MeusAnuncios
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+    setAnuncioEditando={setAnuncioEditando}
+  />
+)}
+
+{screen === "mercadoLivreTeste" && (
+  <MercadoLivreTeste
+    setScreen={setScreen}
+  />
+)}
+{screen === "publicacaoSite" && (
+  <PublicacaoSite
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "meusRascunhos" && (
+  <MeusRascunhos
+    usuario={usuario}
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+    setAnuncioEditando={setAnuncioEditando}
+    setFotosAnuncio={setFotosAnuncio}
+  />
+)}
+
+{screen === "catalogos" && (
+  <Catalogos
+    setScreen={setScreen}
+    cardStyle={cardStyle}
+  />
+)}
+
+{screen === "importadorCatalogos" && (
+  <ImportadorCatalogos cardStyle={cardStyle} />
+)}
+
+{screen === "leitorCatalogoIA" && (
+  <LeitorCatalogoIA />
+)}
+
+{screen === "buscaCatalogo" && (
+  <BuscaCatalogo
+    setScreen={setScreen}
+    cardStyle={cardStyle}
+  />
+)}
+
 {screen === "projetos" && (
-  <Projetos
+  <ProjetosScreen
     projetos={projetos}
     nomeProjeto={nomeProjeto}
     setNomeProjeto={setNomeProjeto}
@@ -1983,7 +3152,7 @@ mostrarNotificacao("❤️ Resposta favoritada!");
     editandoProjeto={editandoProjeto}
     setEditandoProjeto={setEditandoProjeto}
     criarProjeto={criarProjeto}
-    atualizarProjeto={atualizarProjeto}
+    atualizarProjeto={EditarProjeto}
     excluirProjeto={excluirProjeto}
     buscaProjeto={buscaProjeto}
     setBuscaProjeto={setBuscaProjeto}
@@ -1991,34 +3160,57 @@ mostrarNotificacao("❤️ Resposta favoritada!");
     buttonGreen={buttonGreen}
     buttonBlue={buttonBlue}
     buttonRed={buttonRed}
-  />
-)}
-
-{screen === "admin" && (
-  <Admin totalFotos={totalFotos} cardStyle={cardStyle} />
-)}
-
-{screen === "copilot" && (
-  <Copilot
-    cardStyle={cardStyle}
     setScreen={setScreen}
-    setProdutoCopilot={setProdutoCopilot}
+    setAnuncioEditando={setAnuncioEditando}
+  />
+)}
+{processando && (
+  <LoadingAppia
+    titulo="🤖 APPIA AI"
+    mensagem={
+      statusProcesso ||
+      "Processando imagem com IA..."
+    }
   />
 )}
 
-{screen === "novoAnuncio" && (
-  <NovoAnuncio
-    cardStyle={cardStyle}
-    setScreen={setScreen}
-    fotosAnuncio={fotosAnuncio}
-    setFotosAnuncio={setFotosAnuncio}
-  />
-)}
-
-{screen === "pesquisa" && (
-  <CentralPesquisa cardStyle={cardStyle} />
-)}
-<Footer />
-    </div>
-  );
+</div>
+);
 }
+const botaoTopo = {
+  padding: "10px 16px",
+  borderRadius: "999px",
+  border: "1px solid #334155",
+  background: "#0f172a",
+  color: "#fff",
+  fontWeight: "bold",
+  cursor: "pointer",
+};
+
+const botaoTopoDestaque = {
+  ...botaoTopo,
+  background:
+    "linear-gradient(135deg,#2563eb,#22d3ee)",
+  border: "none",
+};
+
+const cardFerramenta = {
+  background: "#0f172a",
+  border: "1px solid #334155",
+  borderRadius: "20px",
+  padding: "22px",
+  color: "#fff",
+  cursor: "pointer",
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "center",
+  textAlign: "center",
+  minHeight: "180px",
+  transition: "all .25s",
+};
+
+const iconeCard = {
+  fontSize: "42px",
+  marginBottom: "14px",
+};
