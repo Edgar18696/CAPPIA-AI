@@ -48,9 +48,7 @@ export default function Catalogos({
   }
 
   function abrirImportadorCatalogos() {
-    setScreen(
-      "importadorUniversal"
-    );
+    setScreen("catalogo");
   }
 
   return (
@@ -153,7 +151,7 @@ export default function Catalogos({
               whiteSpace: "nowrap",
             }}
           >
-            🚀 Abrir Importador
+            📄 Importar PDF
           </div>
         </div>
       </button>
