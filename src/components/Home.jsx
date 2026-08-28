@@ -78,6 +78,13 @@ export default function Home({
         "Acompanhe estatísticas da plataforma e produtividade.",
       tela: "dashboardAppia",
     },
+    {
+      titulo: "Planos e Pagamentos",
+      icone: "💳",
+      texto:
+        "Gerencie seu plano, créditos e formas de pagamento.",
+      tela: "planosPagamentos",
+    },
   ];
 
   function abrirCard(card) {
