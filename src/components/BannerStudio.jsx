@@ -71,7 +71,7 @@ const MODELOS_DESCRICAO = [
     id: "oferta",
     nome: "🔥 Promoção",
     texto:
-      "Faça uma promoção por R$ 149,90. Destaque o produto, use visual forte e limpo, pronta entrega e chamada para comprar.",
+      "Faça uma promoção. Destaque o produto, use visual forte e limpo, pronta entrega e chamada para comprar.",
   },
   {
     id: "produto",
@@ -342,6 +342,29 @@ export default function BannerStudio({
   cardStyle,
 }) {
   const previewRef = useRef(null);
+
+  const [usuario, setUsuario] = useState(null);
+
+useEffect(() => {
+  async function carregarUsuario() {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error) {
+      console.error(
+        "Erro ao carregar usuário no Banner Express:",
+        error
+      );
+      return;
+    }
+
+    setUsuario(user || null);
+  }
+
+  carregarUsuario();
+}, []);
 
   const [formato, setFormato] =
     useState("instagram");
@@ -941,7 +964,40 @@ useEffect(() => {
       );
     }
   }
+async function salvarBannerNaGaleria(urlBanner) {
+  if (!urlBanner) {
+    throw new Error(
+      "Banner sem imagem para salvar."
+    );
+  }
 
+  if (!usuario?.id) {
+    throw new Error(
+      "Usuário não identificado."
+    );
+  }
+
+  const { error } = await supabase
+    .from("processamentos")
+    .insert([
+      {
+        user_id: usuario.id,
+        imagem_original:
+          imagemSelecionada || null,
+        imagem_processada: urlBanner,
+        status: "finalizado",
+        tipo: "banner",
+        modelo_banner: formato,
+      },
+    ]);
+
+  if (error) {
+    throw new Error(
+      "Não foi possível salvar o banner na Galeria: " +
+        error.message
+    );
+  }
+}
   async function exportarPng() {
     /*
      * Quando a IA já devolveu a arte completa em PNG,
@@ -987,8 +1043,8 @@ useEffect(() => {
         );
 
         setStatus(
-          "✅ Banner baixado em PNG."
-        );
+  "✅ Banner baixado e salvo na Galeria."
+);
 
         return;
       } catch (erro) {
