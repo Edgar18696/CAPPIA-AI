@@ -379,6 +379,10 @@ export default function BannerStudio({
   const [mostrarGaleria, setMostrarGaleria] =
     useState(false);
 
+useEffect(() => {
+  console.log("ESTADO DA GALERIA:", mostrarGaleria);
+}, [mostrarGaleria]);
+
   /*
    * Conteúdo textual 100% automático.
    * O usuário não precisa digitar título, preço ou chamada.
@@ -1329,15 +1333,16 @@ export default function BannerStudio({
 
           <button
             type="button"
-            onClick={() =>
-              setMostrarGaleria(true)
-            }
+            onClick={() => {
+  console.log("ABRINDO GALERIA DO BANNER");
+  setMostrarGaleria(true);
+}}
             style={{
               ...botaoPrincipal,
               width: "100%",
             }}
           >
-            🖼️ Buscar Foto Transparente na Galeria
+            🖼️ Buscar Foto na Galeria
           </button>
 
           {imagemSelecionada && (
@@ -2493,8 +2498,10 @@ export default function BannerStudio({
                   gap: "14px",
                 }}
               >
-                {imagensDisponiveis.map(
-                  (imagem) => (
+                {imagensDisponiveis
+  .filter((imagem) => imagem?.url)
+  .map((imagem) => (
+
                     <button
                       key={imagem.id}
                       type="button"
