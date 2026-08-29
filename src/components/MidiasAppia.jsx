@@ -550,7 +550,68 @@ export default function MidiasAppia({
           </button>
         </div>
       </section>
+      <section
+        style={{
+          ...estiloBase,
+          padding: "18px",
+          marginBottom: "16px",
+          border: "1px solid #2563eb",
+          background:
+            "linear-gradient(135deg,#172554,#0f172a)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "16px",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                color: "#67e8f9",
+                fontWeight: "bold",
+                fontSize: "20px",
+              }}
+            >
+              🎬 Clip de Produto
+            </div>
 
+            <div
+              style={{
+                color: "#cbd5e1",
+                marginTop: "5px",
+              }}
+            >
+              Transforme as fotos da sua peça em um vídeo profissional para anúncios.
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.removeItem(
+                "abrirModoMascoteIA"
+              );
+
+              setScreen?.("clipIA");
+            }}
+            style={{
+              ...botaoPrincipal,
+              width: "auto",
+              minWidth: "220px",
+              padding: "13px 20px",
+              background:
+                "linear-gradient(135deg,#2563eb,#06b6d4)",
+            }}
+          >
+            🎬 Criar Clip de Produto
+          </button>
+        </div>
+      </section>
       <section
         style={{
           ...estiloBase,
