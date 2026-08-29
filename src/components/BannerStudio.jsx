@@ -1774,6 +1774,13 @@ async function salvarBannerNaGaleria(urlBanner) {
                 ? "⬇️ Baixar Arte PNG"
                 : "🔒 Aprove para baixar"}
             </button>
+            <button
+  type="button"
+  onClick={() => setScreen?.("galeria")}
+  style={botaoPrincipal}
+>
+  🖼️ Galeria
+</button>
           </div>
 
           <div
