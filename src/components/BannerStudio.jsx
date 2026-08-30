@@ -1042,11 +1042,17 @@ async function salvarBannerNaGaleria(urlBanner) {
           1500
         );
 
-        setStatus(
+       await salvarBannerNaGaleria(fundoIA);
+
+console.log(
+  "✅ BANNER SALVO NA GALERIA"
+);
+
+setStatus(
   "✅ Banner baixado e salvo na Galeria."
 );
 
-        return;
+return;
       } catch (erro) {
         console.error(
           "❌ DOWNLOAD PNG IA:",
@@ -1616,7 +1622,7 @@ async function salvarBannerNaGaleria(urlBanner) {
                 )
               }
               rows={7}
-              placeholder="Ex.: Faça uma promoção por R$ 149,90, fundo B, peça grande, destacar pronta entrega e consulte aplicações."
+             placeholder="Faça uma promoção. Destaque o produto, use visual forte e limpo, pronta entrega e chamada para comprar."
               style={{
                 ...inputStyle,
                 minHeight: "145px",
