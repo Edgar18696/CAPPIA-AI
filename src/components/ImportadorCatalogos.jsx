@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motorImportacao } from "../services/importadores/motorImportacao";
 import { executarExtracaoBruta } from "../services/importadores/pipeline/executarExtracaoBruta";
+import { executarInterpretacaoAmostra } from "../services/importadores/pipeline/executarInterpretacaoAmostra";
 
 const FABRICANTES = [
   {
@@ -20,6 +21,154 @@ const FABRICANTES = [
     nome: "NGK / NTK",
   },
 ];
+
+const FILTROS_AUDITORIA_FASE2 = [
+  { id: "todos", rotulo: "Todos", tipo: null },
+  { id: "produto", rotulo: "Produto", tipo: "produto" },
+  { id: "aplicacao", rotulo: "Aplicação", tipo: "aplicacao" },
+  {
+    id: "tabela_referencia",
+    rotulo: "Tabela/Referência",
+    tipo: "tabela_referencia",
+  },
+  { id: "indefinido", rotulo: "Indefinido", tipo: "indefinido" },
+];
+
+function celulaAuditoria(valor) {
+  if (valor === null || valor === undefined || valor === "") {
+    return "—";
+  }
+  return String(valor);
+}
+
+function normalizarCodigoPecaAuditoria(valor) {
+  return String(valor || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizarCampoDuplicidade(valor) {
+  return String(valor ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+function camposProdutoAuditoria(item) {
+  return {
+    codigo_peca: item?.interpretacao?.codigo_peca ?? null,
+    codigo_interno:
+      item?.interpretacao?.evidencias?.codigo_interno ??
+      item?.interpretacao?.codigo_interno ??
+      null,
+    descricao: item?.interpretacao?.descricao ?? null,
+    oem: item?.interpretacao?.oem ?? null,
+  };
+}
+
+function valoresUnicosCampo(ocorrencias, campo) {
+  return [
+    ...new Set(
+      ocorrencias.map((ocorrencia) =>
+        normalizarCampoDuplicidade(ocorrencia.campos[campo])
+      )
+    ),
+  ];
+}
+
+export function analisarDuplicidadeProdutosCandidatos(resultados = []) {
+  const produtos = (resultados || [])
+    .map((item, indice) => ({
+      item,
+      indice,
+      campos: camposProdutoAuditoria(item),
+    }))
+    .filter(
+      ({ item }) => item.interpretacao?.classificacao_candidata === "produto"
+    );
+
+  const gruposPorCodigo = new Map();
+
+  for (const produto of produtos) {
+    const chave = normalizarCodigoPecaAuditoria(produto.campos.codigo_peca);
+    if (!chave) {
+      continue;
+    }
+    if (!gruposPorCodigo.has(chave)) {
+      gruposPorCodigo.set(chave, []);
+    }
+    gruposPorCodigo.get(chave).push(produto);
+  }
+
+  const grupos = [...gruposPorCodigo.entries()].map(([chave, ocorrencias]) => {
+    const internos = valoresUnicosCampo(ocorrencias, "codigo_interno");
+    const descricoes = valoresUnicosCampo(ocorrencias, "descricao");
+    const oems = valoresUnicosCampo(ocorrencias, "oem");
+    const repetido = ocorrencias.length > 1;
+    const conflito =
+      repetido &&
+      (internos.length > 1 || descricoes.length > 1 || oems.length > 1);
+
+    return {
+      chave,
+      codigo_peca: ocorrencias[0].campos.codigo_peca,
+      quantidade: ocorrencias.length,
+      paginasOrdens: ocorrencias
+        .map(
+          (ocorrencia) =>
+            `${ocorrencia.item.bloco?.pagina ?? "—"}/${ocorrencia.item.bloco?.ordem_bloco ?? "—"}`
+        )
+        .join(", "),
+      indices: ocorrencias.map((ocorrencia) => ocorrencia.indice),
+      codigo_interno: ocorrencias
+        .map((ocorrencia) => celulaAuditoria(ocorrencia.campos.codigo_interno))
+        .filter((valor, indice, lista) => lista.indexOf(valor) === indice)
+        .join(" | "),
+      descricao: ocorrencias
+        .map((ocorrencia) => celulaAuditoria(ocorrencia.campos.descricao))
+        .filter((valor, indice, lista) => lista.indexOf(valor) === indice)
+        .join(" | "),
+      oem: ocorrencias
+        .map((ocorrencia) => celulaAuditoria(ocorrencia.campos.oem))
+        .filter((valor, indice, lista) => lista.indexOf(valor) === indice)
+        .join(" | "),
+      status: !repetido ? "único" : conflito ? "CONFLITO" : "CONSISTENTE",
+      repetido,
+      conflito,
+    };
+  });
+
+  grupos.sort((a, b) => {
+    if (a.conflito !== b.conflito) {
+      return a.conflito ? -1 : 1;
+    }
+    if (a.repetido !== b.repetido) {
+      return a.repetido ? -1 : 1;
+    }
+    return a.chave.localeCompare(b.chave);
+  });
+
+  const porIndice = new Map();
+  for (const grupo of grupos) {
+    for (const indice of grupo.indices) {
+      porIndice.set(indice, grupo.status);
+    }
+  }
+
+  return {
+    grupos,
+    porIndice,
+    resumo: {
+      produtosCandidatos: produtos.length,
+      codigosUnicos: grupos.length,
+      codigosRepetidos: grupos.filter((grupo) => grupo.repetido).length,
+      repeticoesConsistentes: grupos.filter(
+        (grupo) => grupo.status === "CONSISTENTE"
+      ).length,
+      conflitos: grupos.filter((grupo) => grupo.status === "CONFLITO").length,
+    },
+  };
+}
 
 export default function ImportadorCatalogos({
   cardStyle,
@@ -78,6 +227,28 @@ export default function ImportadorCatalogos({
     buscaInspecao,
     setBuscaInspecao,
   ] = useState("");
+
+  const [
+    interpretandoAmostra,
+    setInterpretandoAmostra,
+  ] = useState(false);
+
+  const [
+    resultadoInterpretacao,
+    setResultadoInterpretacao,
+  ] = useState(null);
+
+  const [
+    filtroAuditoriaFase2,
+    setFiltroAuditoriaFase2,
+  ] = useState("todos");
+
+  const [
+    blocoAuditoriaAtivo,
+    setBlocoAuditoriaAtivo,
+  ] = useState(null);
+
+  const detalhesBlocoFase2Ref = useRef({});
 
   const obterCodigoDiagnostico = (
   tipoCatalogo = ""
@@ -435,10 +606,41 @@ const registrosDiagnostico =
     }
   }
 
+  async function interpretarAmostraFase2() {
+    setInterpretandoAmostra(true);
+    setResultadoInterpretacao(null);
+    setFiltroAuditoriaFase2("todos");
+    setBlocoAuditoriaAtivo(null);
+
+    try {
+      const resposta = await executarInterpretacaoAmostra({
+        loteId: resultadoBruto?.loteId || null,
+        onProgresso: (mensagem) => {
+          setProgresso(String(mensagem || ""));
+        },
+      });
+
+      setResultadoInterpretacao(resposta);
+      setProgresso(
+        `✅ Lote de validação Fase 2: ${resposta.totalInterpretados} bloco(s) interpretados de ${resposta.totalBlocosLote} no lote. Nada foi enviado para catalogo_pecas.`
+      );
+    } catch (erro) {
+      console.error("Erro na interpretação da amostra:", erro);
+      setProgresso("❌ Não foi possível interpretar a amostra da Fase 2.");
+      alert(
+        "Erro na interpretação da amostra: " +
+          (erro instanceof Error ? erro.message : "Erro desconhecido.")
+      );
+    } finally {
+      setInterpretandoAmostra(false);
+    }
+  }
+
   const ocupado =
     analisando ||
     importando ||
-    extraindoBruto;
+    extraindoBruto ||
+    interpretandoAmostra;
 
   const blocosInspecao = resultadoBruto?.blocos || [];
   const termoInspecao = String(buscaInspecao || "")
@@ -451,6 +653,32 @@ const registrosDiagnostico =
           .includes(termoInspecao)
       )
     : blocosInspecao;
+
+  const resultadosFase2 = resultadoInterpretacao?.resultados || [];
+  const filtroAuditoria = FILTROS_AUDITORIA_FASE2.find(
+    (item) => item.id === filtroAuditoriaFase2
+  );
+  const linhasAuditoriaFase2 = resultadosFase2
+    .map((item, indice) => ({ item, indice }))
+    .filter(({ item }) =>
+      filtroAuditoria?.tipo
+        ? item.interpretacao?.classificacao_candidata === filtroAuditoria.tipo
+        : true
+    );
+
+  const duplicidadeProdutosFase2 =
+    analisarDuplicidadeProdutosCandidatos(resultadosFase2);
+
+  function irParaDetalheBlocoFase2(indice) {
+    setBlocoAuditoriaAtivo(indice);
+    const alvo = detalhesBlocoFase2Ref.current[indice];
+    if (alvo?.scrollIntoView) {
+      alvo.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+  }
 
   return (
     <div style={cardStyle}>
@@ -626,11 +854,400 @@ const registrosDiagnostico =
             ? "⏳ Gravando extração bruta..."
             : "💾 Extrair bruto (Fase 1)"}
         </button>
+
+        <button
+          type="button"
+          onClick={interpretarAmostraFase2}
+          disabled={ocupado}
+          style={{
+            ...botaoPrincipal,
+            background: "#6d28d9",
+            opacity: ocupado ? 0.55 : 1,
+            cursor: ocupado ? "not-allowed" : "pointer",
+          }}
+        >
+          {interpretandoAmostra
+            ? "⏳ Interpretando lote de validação..."
+            : "🧠 Interpretar lote de validação Fase 2 (50 blocos)"}
+        </button>
       </div>
 
-      {progresso && (
-        <div style={progressoStyle}>
-          {progresso}
+      {resultadoInterpretacao && (
+        <div style={resultadoStyle}>
+          <h3
+            style={{
+              color: "#c4b5fd",
+              marginTop: 0,
+            }}
+          >
+            Fase 2 — lote de validação
+          </h3>
+          <div
+            style={{
+              color: "#94a3b8",
+              fontSize: "13px",
+              marginBottom: "14px",
+            }}
+          >
+            {resultadoInterpretacao.totalInterpretados} bloco(s) interpretados
+            de {resultadoInterpretacao.totalBlocosLote} no lote{" "}
+            {resultadoInterpretacao.loteId}. Fase 1 não foi alterada.
+            catalogo_pecas: nenhum registro enviado.
+          </div>
+
+          {resultadoInterpretacao.resumo && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                gap: "10px",
+                marginBottom: "16px",
+              }}
+            >
+              {[
+                ["Total analisado", resultadoInterpretacao.resumo.totalAnalisado],
+                [
+                  "Produtos candidatos",
+                  resultadoInterpretacao.resumo.produtosCandidatos,
+                ],
+                [
+                  "Tabelas/referências",
+                  resultadoInterpretacao.resumo.tabelasReferencias,
+                ],
+                ["Aplicações", resultadoInterpretacao.resumo.aplicacoes],
+                ["Indefinidos", resultadoInterpretacao.resumo.indefinidos],
+                ["Revisão manual", resultadoInterpretacao.resumo.revisaoManual],
+                [
+                  "Confiança média",
+                  Number(resultadoInterpretacao.resumo.confiancaMedia || 0).toFixed(
+                    2
+                  ),
+                ],
+              ].map(([rotulo, valor]) => (
+                <div key={rotulo} style={infoStyle}>
+                  <span style={rotuloStyle}>{rotulo}</span>
+                  <strong>{valor}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: "10px",
+            }}
+          >
+            {FILTROS_AUDITORIA_FASE2.map((filtro) => (
+              <button
+                key={filtro.id}
+                type="button"
+                onClick={() => setFiltroAuditoriaFase2(filtro.id)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: "8px",
+                  border:
+                    filtroAuditoriaFase2 === filtro.id
+                      ? "1px solid #c4b5fd"
+                      : "1px solid #334155",
+                  background:
+                    filtroAuditoriaFase2 === filtro.id ? "#4c1d95" : "#0f172a",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                {filtro.rotulo}
+              </button>
+            ))}
+          </div>
+
+          <div style={tabelaAuditoriaWrapStyle}>
+            <table style={tabelaAuditoriaStyle}>
+              <thead>
+                <tr>
+                  {[
+                    "#",
+                    "página",
+                    "ordem",
+                    "classificação",
+                    "código_peça",
+                    "código_interno",
+                    "descrição",
+                    "OEM",
+                    "confiança",
+                    "revisão_manual",
+                    "duplicidade",
+                  ].map((coluna) => (
+                    <th key={coluna} style={tabelaAuditoriaThStyle}>
+                      {coluna}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {linhasAuditoriaFase2.map(({ item, indice }) => {
+                  const ativo = blocoAuditoriaAtivo === indice;
+                  const duplicidade =
+                    item.interpretacao?.classificacao_candidata === "produto"
+                      ? duplicidadeProdutosFase2.porIndice.get(indice) || "—"
+                      : "—";
+                  return (
+                    <tr
+                      key={
+                        item.interpretacao?.id ||
+                        `${item.amostraCodigo}-${indice}`
+                      }
+                      onClick={() => irParaDetalheBlocoFase2(indice)}
+                      style={{
+                        cursor: "pointer",
+                        background: ativo ? "#312e81" : "transparent",
+                      }}
+                    >
+                      <td style={tabelaAuditoriaTdStyle}>{indice + 1}</td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(item.bloco?.pagina)}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(item.bloco?.ordem_bloco)}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(
+                          item.interpretacao?.classificacao_candidata
+                        )}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(item.interpretacao?.codigo_peca)}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(
+                          item.interpretacao?.evidencias?.codigo_interno
+                        )}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(item.interpretacao?.descricao)}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {celulaAuditoria(item.interpretacao?.oem)}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {item.interpretacao?.confianca == null
+                          ? "—"
+                          : Number(item.interpretacao.confianca).toFixed(2)}
+                      </td>
+                      <td style={tabelaAuditoriaTdStyle}>
+                        {item.interpretacao?.revisao_manual ? "sim" : "não"}
+                      </td>
+                      <td
+                        style={{
+                          ...tabelaAuditoriaTdStyle,
+                          color:
+                            duplicidade === "CONFLITO"
+                              ? "#fca5a5"
+                              : duplicidade === "CONSISTENTE"
+                                ? "#86efac"
+                                : "#cbd5e1",
+                          fontWeight:
+                            duplicidade === "CONFLITO" ||
+                            duplicidade === "CONSISTENTE"
+                              ? "700"
+                              : "400",
+                        }}
+                      >
+                        {duplicidade}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div
+            style={{
+              color: "#c4b5fd",
+              fontSize: "13px",
+              fontWeight: "700",
+              marginBottom: "8px",
+            }}
+          >
+            Duplicidade de produtos candidatos
+          </div>
+          <div
+            style={{
+              color: "#94a3b8",
+              fontSize: "12px",
+              marginBottom: "10px",
+            }}
+          >
+            Repetição não é erro automático. O mesmo produto pode aparecer em
+            páginas/estruturas diferentes. Nenhum registro foi mesclado ou
+            excluído.
+          </div>
+          <div style={tabelaAuditoriaWrapStyle}>
+            <table style={tabelaAuditoriaStyle}>
+              <thead>
+                <tr>
+                  {[
+                    "código_peça",
+                    "ocorrências",
+                    "páginas/ordens",
+                    "código_interno",
+                    "descrição",
+                    "OEM",
+                    "status",
+                  ].map((coluna) => (
+                    <th key={coluna} style={tabelaAuditoriaThStyle}>
+                      {coluna}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {duplicidadeProdutosFase2.grupos.map((grupo) => (
+                  <tr
+                    key={grupo.chave}
+                    onClick={() => irParaDetalheBlocoFase2(grupo.indices[0])}
+                    style={{
+                      cursor: "pointer",
+                      background:
+                        grupo.status === "CONFLITO"
+                          ? "rgba(127,29,29,.35)"
+                          : grupo.status === "CONSISTENTE"
+                            ? "rgba(20,83,45,.35)"
+                            : "transparent",
+                    }}
+                  >
+                    <td style={tabelaAuditoriaTdStyle}>{grupo.codigo_peca}</td>
+                    <td style={tabelaAuditoriaTdStyle}>{grupo.quantidade}</td>
+                    <td
+                      style={tabelaAuditoriaTdStyle}
+                      title={grupo.paginasOrdens}
+                    >
+                      {grupo.paginasOrdens}
+                    </td>
+                    <td style={tabelaAuditoriaTdStyle}>{grupo.codigo_interno}</td>
+                    <td style={tabelaAuditoriaTdStyle}>{grupo.descricao}</td>
+                    <td style={tabelaAuditoriaTdStyle}>{grupo.oem}</td>
+                    <td
+                      style={{
+                        ...tabelaAuditoriaTdStyle,
+                        fontWeight: "700",
+                        color:
+                          grupo.status === "CONFLITO"
+                            ? "#fca5a5"
+                            : grupo.status === "CONSISTENTE"
+                              ? "#86efac"
+                              : "#cbd5e1",
+                      }}
+                    >
+                      {grupo.status}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+              gap: "10px",
+              marginBottom: "16px",
+            }}
+          >
+            {[
+              [
+                "Produtos candidatos",
+                duplicidadeProdutosFase2.resumo.produtosCandidatos,
+              ],
+              ["Códigos únicos", duplicidadeProdutosFase2.resumo.codigosUnicos],
+              [
+                "Códigos repetidos",
+                duplicidadeProdutosFase2.resumo.codigosRepetidos,
+              ],
+              [
+                "Repetições consistentes",
+                duplicidadeProdutosFase2.resumo.repeticoesConsistentes,
+              ],
+              ["Conflitos", duplicidadeProdutosFase2.resumo.conflitos],
+            ].map(([rotulo, valor]) => (
+              <div key={rotulo} style={infoStyle}>
+                <span style={rotuloStyle}>{rotulo}</span>
+                <strong>{valor}</strong>
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              ...inspecaoListaStyle,
+              maxHeight: "72vh",
+            }}
+          >
+          {(resultadoInterpretacao.resultados || []).map((item, indice) => (
+            <div
+              key={item.interpretacao?.id || `${item.amostraCodigo}-${indice}`}
+              ref={(no) => {
+                detalhesBlocoFase2Ref.current[indice] = no;
+              }}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "12px",
+                marginBottom: "16px",
+                outline:
+                  blocoAuditoriaAtivo === indice
+                    ? "2px solid #c4b5fd"
+                    : "none",
+                borderRadius: "12px",
+                scrollMarginTop: "12px",
+              }}
+            >
+              <div style={inspecaoItemStyle}>
+                <span style={rotuloStyle}>Bloco bruto original</span>
+                <div>
+                  #{indice + 1} · {item.amostraCodigo} · página {item.bloco?.pagina} ·
+                  ordem {item.bloco?.ordem_bloco}
+                </div>
+                <pre style={inspecaoPreStyle}>
+                  {item.bloco?.texto_original || "(vazio)"}
+                </pre>
+              </div>
+              <div style={inspecaoItemStyle}>
+                <span style={rotuloStyle}>Interpretação candidata</span>
+                <div>
+                  {item.interpretacao?.classificacao_candidata} ·{" "}
+                  {item.interpretacao?.status_interpretacao} · revisão manual:{" "}
+                  {item.interpretacao?.revisao_manual ? "sim" : "não"}
+                </div>
+                <pre style={inspecaoPreStyle}>
+                  {JSON.stringify(
+                    {
+                      codigo_peca: item.interpretacao?.codigo_peca ?? null,
+                      codigo_interno:
+                        item.interpretacao?.evidencias?.codigo_interno ?? null,
+                      descricao: item.interpretacao?.descricao ?? null,
+                      oem: item.interpretacao?.oem ?? null,
+                      fabricante_marca:
+                        item.interpretacao?.fabricante_marca ?? null,
+                      aplicacoes: item.interpretacao?.aplicacoes ?? [],
+                      equivalencias: item.interpretacao?.equivalencias ?? [],
+                      confianca: item.interpretacao?.confianca ?? null,
+                      motivo_classificacao:
+                        item.interpretacao?.motivo_classificacao ?? null,
+                      evidencias: item.interpretacao?.evidencias ?? {},
+                    },
+                    null,
+                    2
+                  )}
+                </pre>
+              </div>
+            </div>
+          ))}
+          </div>
         </div>
       )}
 
@@ -1129,6 +1746,41 @@ const resultadoStyle = {
   borderRadius: "16px",
   background: "#020617",
   border: "1px solid #22d3ee",
+};
+
+const tabelaAuditoriaWrapStyle = {
+  marginBottom: "16px",
+  maxHeight: "280px",
+  overflow: "auto",
+  border: "1px solid #334155",
+  borderRadius: "10px",
+};
+
+const tabelaAuditoriaStyle = {
+  width: "100%",
+  borderCollapse: "collapse",
+  fontSize: "12px",
+  color: "#e2e8f0",
+};
+
+const tabelaAuditoriaThStyle = {
+  position: "sticky",
+  top: 0,
+  background: "#1e1b4b",
+  color: "#c4b5fd",
+  textAlign: "left",
+  padding: "8px",
+  whiteSpace: "nowrap",
+  borderBottom: "1px solid #4338ca",
+};
+
+const tabelaAuditoriaTdStyle = {
+  padding: "7px 8px",
+  borderBottom: "1px solid #1e293b",
+  whiteSpace: "nowrap",
+  maxWidth: "160px",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
 };
 
 const inspecaoListaStyle = {

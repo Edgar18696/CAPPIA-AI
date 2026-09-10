@@ -28,257 +28,181 @@ export default function Catalogos({
     "Denso",
   ];
 
-  function abrirCatalogo(catalogo) {
-    if (catalogo === "CatCar") {
-      window.open(
-        "https://www.catcar.info/",
-        "_blank",
-        "noopener,noreferrer"
-      );
-
-      return;
-    }
-
-    localStorage.setItem(
-      "catalogoSelecionado",
-      catalogo
-    );
-
-    setScreen("buscaCatalogo");
+  function voltar() {
+    setScreen?.("home");
   }
 
+function abrirCatalogo(catalogo) {
+  localStorage.setItem(
+    "catalogoSelecionado",
+    catalogo
+  );
+
+  setScreen(
+    "buscaCatalogo"
+  );
+}
+
   function abrirImportadorCatalogos() {
-    setScreen("catalogo");
+    setScreen("importadorCatalogos");
   }
 
   return (
     <div style={cardStyle}>
-      <h2
+      {/* CABEÇALHO */}
+
+      <div
         style={{
-          color: "#67e8f9",
-          marginBottom: "10px",
+          display: "flex",
+          justifyContent:
+            "space-between",
+          alignItems:
+            "flex-start",
+          gap: "16px",
+          flexWrap: "wrap",
+          marginBottom:
+            "26px",
         }}
       >
-        📚 Central de Catálogos
-      </h2>
+        <div>
+          <h2
+            style={{
+              color:
+                "#67e8f9",
+              marginTop: 0,
+              marginBottom:
+                "8px",
+            }}
+          >
+            📚 Catálogos Técnicos
+          </h2>
 
-      <p
-        style={{
-          color: "#cbd5e1",
-          marginBottom: "25px",
-          lineHeight: "1.6",
-        }}
-      >
-        Consulte códigos OEM, equivalentes,
-        aplicações, montadoras, modelos,
-        motores e informações técnicas dos
-        catálogos disponíveis no APPIA AI.
-      </p>
+          <p
+            style={{
+              color:
+                "#cbd5e1",
+              margin: 0,
+              lineHeight:
+                "1.6",
+              maxWidth:
+                "760px",
+            }}
+          >
+            Consulte a Base
+            Técnica PAIIA por
+            fabricante e encontre
+            informações,
+            aplicações e códigos
+            para seus anúncios.
+          </p>
+        </div>
 
-      {/* =====================================================
-          IMPORTAR CATÁLOGO
-      ===================================================== */}
+        <button
+          type="button"
+          onClick={voltar}
+          style={
+            botaoVoltar
+          }
+        >
+          ← Voltar
+        </button>
+      </div>
 
       <button
         type="button"
-        onClick={
-          abrirImportadorCatalogos
-        }
+        onClick={abrirImportadorCatalogos}
         style={{
           width: "100%",
-          marginBottom: "28px",
-          padding: "22px",
-          borderRadius: "16px",
-          border:
-            "1px solid #22d3ee",
+          marginBottom: "18px",
+          padding: "16px 18px",
+          borderRadius: "14px",
+          border: "1px solid #0e7490",
           background:
-            "linear-gradient(135deg,#0f172a,#172554)",
+            "linear-gradient(135deg,#0f766e,#155e75)",
           color: "#ffffff",
           cursor: "pointer",
           textAlign: "left",
-          boxShadow:
-            "0 12px 32px rgba(37,99,235,.15)",
         }}
       >
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent:
-              "space-between",
-            gap: "20px",
-            flexWrap: "wrap",
+            fontWeight: 800,
+            marginBottom: "4px",
           }}
         >
-          <div>
-            <div
-              style={{
-                color: "#67e8f9",
-                fontSize: "22px",
-                fontWeight: "bold",
-                marginBottom: "8px",
-              }}
-            >
-              📥 Importar Catálogo Técnico
-            </div>
-
-            <div
-              style={{
-                color: "#cbd5e1",
-                fontSize: "14px",
-                lineHeight: "1.5",
-              }}
-            >
-              Adicione novos catálogos PDF
-              à Base Técnica APPIA.
-              Bosch, Magneti Marelli,
-              Renault/Motrio, NGK, Denso
-              e outros fabricantes.
-            </div>
-          </div>
-
-          <div
-            style={{
-              padding: "10px 16px",
-              borderRadius: "999px",
-              background:
-                "rgba(34,211,238,.12)",
-              border:
-                "1px solid rgba(103,232,249,.35)",
-              color: "#67e8f9",
-              fontSize: "13px",
-              fontWeight: "bold",
-              whiteSpace: "nowrap",
-            }}
-          >
-            📄 Importar PDF
-          </div>
+          📥 Importar Catálogo Técnico
+        </div>
+        <div
+          style={{
+            fontSize: "13px",
+            color: "#cffafe",
+          }}
+        >
+          📄 Importar PDF — extração bruta e interpretação
         </div>
       </button>
 
-      {/* =====================================================
-          CATÁLOGOS DISPONÍVEIS
-      ===================================================== */}
-
-      <div
-        style={{
-          marginBottom: "14px",
-          color: "#94a3b8",
-          fontSize: "13px",
-          fontWeight: "bold",
-          textAlign: "left",
-        }}
-      >
-        CATÁLOGOS DISPONÍVEIS
-      </div>
+      {/* CATÁLOGOS */}
 
       <div
         style={{
           display: "grid",
           gridTemplateColumns:
-            "repeat(auto-fit, minmax(190px, 1fr))",
+            "repeat(auto-fit,minmax(180px,1fr))",
           gap: "14px",
         }}
       >
         {catalogos.map(
-          (catalogo) => {
-            const ehCatCar =
-              catalogo === "CatCar";
-
-            return (
-              <button
-                key={catalogo}
-                type="button"
-                onClick={() =>
-                  abrirCatalogo(
-                    catalogo
-                  )
-                }
+          (catalogo) => (
+            <button
+              key={
+                catalogo
+              }
+              type="button"
+              onClick={() =>
+                abrirCatalogo(
+                  catalogo
+                )
+              }
+              style={
+                botaoCatalogo
+              }
+            >
+              <span
                 style={{
-                  ...botaoCatalogo,
-
-                  background:
-                    ehCatCar
-                      ? "linear-gradient(135deg,#0f172a,#164e63)"
-                      : "#0f172a",
-
-                  border:
-                    ehCatCar
-                      ? "1px solid #22d3ee"
-                      : "1px solid #2563eb",
-
-                  boxShadow:
-                    ehCatCar
-                      ? "0 10px 28px rgba(34,211,238,.12)"
-                      : "none",
+                  fontSize:
+                    "20px",
+                  marginBottom:
+                    "7px",
                 }}
               >
-                <div
-                  style={{
-                    fontSize: "20px",
-                    marginBottom: "8px",
-                  }}
-                >
-                  {ehCatCar
-                    ? "🚘 CatCar"
-                    : `📘 ${catalogo}`}
-                </div>
+                {catalogo ===
+                "CatCar"
+                  ? "🌐"
+                  : "📘"}
+              </span>
 
-                <div
-                  style={{
-                    color: ehCatCar
-                      ? "#cffafe"
-                      : "#94a3b8",
+              <strong>
+                {catalogo}
+              </strong>
 
-                    fontSize: "13px",
-                    fontWeight:
-                      "normal",
-
-                    lineHeight: "1.4",
-                  }}
-                >
-                  {ehCatCar
-                    ? "Catálogo técnico auxiliar com OEM, diagramas e identificação por veículo."
-                    : "Consultar códigos, aplicações e equivalências."}
-                </div>
-
-                {ehCatCar && (
-                  <div
-                    style={{
-                      marginTop:
-                        "12px",
-
-                      display:
-                        "inline-block",
-
-                      padding:
-                        "5px 9px",
-
-                      borderRadius:
-                        "999px",
-
-                      background:
-                        "rgba(34,211,238,.12)",
-
-                      border:
-                        "1px solid rgba(103,232,249,.35)",
-
-                      color:
-                        "#67e8f9",
-
-                      fontSize:
-                        "11px",
-
-                      fontWeight:
-                        "bold",
-                    }}
-                  >
-                    🔗 Abrir CatCar
-                  </div>
-                )}
-              </button>
-            );
-          }
+              <span
+                style={{
+                  marginTop:
+                    "5px",
+                  color:
+                    "#94a3b8",
+                  fontSize:
+                    "12px",
+                }}
+              >
+                {catalogo ===
+                "CatCar"
+                  ? "Consulta técnica"
+                  : "Pesquisar catálogo"}
+              </span>
+            </button>
+          )
         )}
       </div>
     </div>
@@ -286,26 +210,39 @@ export default function Catalogos({
 }
 
 const botaoCatalogo = {
-  padding: "18px",
-
+  minHeight: "105px",
+  padding: "16px",
   borderRadius: "14px",
-
-  background: "#0f172a",
-
-  color: "#67e8f9",
-
   border:
-    "1px solid #2563eb",
-
-  fontSize: "17px",
-
-  fontWeight: "bold",
-
+    "1px solid #1e40af",
+  background:
+    "linear-gradient(180deg,#0f172a,#020617)",
+  color: "#ffffff",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent:
+    "center",
   cursor: "pointer",
+  textAlign: "center",
+  boxShadow:
+    "0 8px 20px rgba(2,6,23,.25)",
+};
 
-  textAlign: "left",
-
-  transition: "0.2s",
-
-  width: "100%",
+const botaoVoltar = {
+  padding:
+    "11px 18px",
+  borderRadius:
+    "12px",
+  border:
+    "1px solid #334155",
+  background:
+    "#0f172a",
+  color:
+    "#ffffff",
+  fontWeight: 700,
+  cursor:
+    "pointer",
+  whiteSpace:
+    "nowrap",
 };
