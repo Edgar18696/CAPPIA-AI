@@ -219,6 +219,7 @@ export default function Home({
 
   return (
     <div
+      className="paiia-home-conteudo"
       style={{
         marginTop: "50px",
         position: "relative",
@@ -432,6 +433,22 @@ export default function Home({
             object-fit: contain;
             object-position: center;
             display: block;
+          }
+          @media (max-width: 720px) {
+            .paiia-home-conteudo {
+              margin-top: 6px !important;
+            }
+            .paiia-home-conteudo > h1 {
+              margin-top: 2px;
+              margin-bottom: 4px;
+            }
+            .paiia-home-conteudo > p {
+              margin-top: 0;
+              margin-bottom: 8px;
+            }
+            .paiia-home-paizinho {
+              margin-top: 10px;
+            }
           }
           @media (max-width: 980px) {
             .paiia-home-paizinho {
