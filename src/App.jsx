@@ -1878,6 +1878,11 @@ function mostrarNotificacao(texto) {
 
 return (
   <div
+    className={
+      screen === "home"
+        ? "paiia-app-home"
+        : undefined
+    }
     style={{
       minHeight: "100vh",
       background: "#020617",
@@ -1887,7 +1892,60 @@ return (
       fontFamily: "Arial",
     }}
   >
+<style>
+  {`
+    .paiia-app-home {
+      padding-top: 40px !important;
+    }
+    .paiia-topo-home {
+      justify-content: flex-end !important;
+      margin-top: 8px;
+      margin-bottom: 8px !important;
+      border-bottom: none !important;
+      padding-top: 8px;
+      padding-bottom: 4px !important;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+    .paiia-topo-acoes {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+      max-width: 100%;
+    }
+    @media (max-width: 720px) {
+      .paiia-app-home {
+        padding-top: 12px !important;
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+      }
+      .paiia-topo-home {
+        margin-top: 0;
+        padding-top: 0;
+        margin-bottom: 0 !important;
+        padding-bottom: 0 !important;
+      }
+      .paiia-topo-acoes {
+        width: 100%;
+        gap: 8px;
+      }
+      .paiia-topo-acoes button {
+        font-size: 13px;
+        padding: 8px 12px;
+        white-space: nowrap;
+      }
+    }
+  `}
+</style>
 <header
+  className={
+    screen === "home"
+      ? "paiia-topo-home"
+      : undefined
+  }
   style={{
     display: "flex",
     alignItems: "center",
@@ -1899,6 +1957,7 @@ return (
     paddingBottom: "18px",
   }}
 >
+  {screen !== "home" && (
   <div
     style={{
       display: "flex",
@@ -1922,10 +1981,12 @@ return (
       </p>
     </div>
   </div>
+  )}
 
 
 
   <div
+    className="paiia-topo-acoes"
     style={{
       display: "flex",
       gap: "10px",
@@ -1937,9 +1998,24 @@ return (
 
 
     {!usuario ? (
-      <button style={botaoTopo} onClick={() => setScreen("login")}>
-        Login
-      </button>
+      <>
+        <button
+          type="button"
+          style={botaoTopoPlanos}
+          onClick={() =>
+            setScreen("planosPagamentos")
+          }
+        >
+          Planos e Pagamentos
+        </button>
+        <button
+          type="button"
+          style={botaoTopo}
+          onClick={() => setScreen("login")}
+        >
+          Login
+        </button>
+      </>
     ) : (
       <>
         <button
@@ -3185,6 +3261,13 @@ const botaoTopo = {
   color: "#fff",
   fontWeight: "bold",
   cursor: "pointer",
+};
+
+const botaoTopoPlanos = {
+  ...botaoTopo,
+  border: "1px solid rgba(103,232,249,.55)",
+  background: "rgba(8,47,73,.72)",
+  color: "#e0f2fe",
 };
 
 const botaoTopoDestaque = {
