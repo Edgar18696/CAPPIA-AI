@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function Login({
   email,
@@ -8,9 +8,14 @@ export default function Login({
   entrarUsuario,
   cadastrarUsuario,
   cardStyle,
+  iniciarCadastro = false,
 }) {
   const [modoCadastro, setModoCadastro] =
-    useState(false);
+    useState(Boolean(iniciarCadastro));
+
+  useEffect(() => {
+    setModoCadastro(Boolean(iniciarCadastro));
+  }, [iniciarCadastro]);
 
   const [tipoConta, setTipoConta] =
     useState("pf");
@@ -352,7 +357,7 @@ export default function Login({
       >
         {modoCadastro
           ? "🚀 Criar Conta APPIA AI"
-          : "🔐 Login APPIA AI"}
+          : "🔐 Login PAIIA"}
       </h2>
 
       {!modoCadastro ? (
