@@ -109,6 +109,11 @@ const [screen, setScreen] =
   useState("home");
 
 const [
+  abrirLoginEmCadastro,
+  setAbrirLoginEmCadastro,
+] = useState(false);
+
+const [
   anuncioEditando,
   setAnuncioEditando,
 ] = useState(null);
@@ -1942,7 +1947,7 @@ return (
 </style>
 <header
   className={
-    screen === "home"
+    !usuario || screen === "home"
       ? "paiia-topo-home"
       : undefined
   }
@@ -1957,7 +1962,7 @@ return (
     paddingBottom: "18px",
   }}
 >
-  {screen !== "home" && (
+  {usuario && screen !== "home" && (
   <div
     style={{
       display: "flex",
@@ -2010,8 +2015,21 @@ return (
         </button>
         <button
           type="button"
+          style={botaoTopoDestaque}
+          onClick={() => {
+            setAbrirLoginEmCadastro(true);
+            setScreen("login");
+          }}
+        >
+          Criar Conta
+        </button>
+        <button
+          type="button"
           style={botaoTopo}
-          onClick={() => setScreen("login")}
+          onClick={() => {
+            setAbrirLoginEmCadastro(false);
+            setScreen("login");
+          }}
         >
           Login
         </button>
@@ -2074,6 +2092,7 @@ return (
     entrarUsuario={entrarUsuario}
     cadastrarUsuario={cadastrarUsuario}
     cardStyle={cardStyle}
+    iniciarCadastro={abrirLoginEmCadastro}
   />
 )}
 {screen === "marketingAppia" && (
