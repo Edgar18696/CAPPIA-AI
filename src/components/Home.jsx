@@ -2,6 +2,12 @@ import {
   useState,
 } from "react";
 
+const PAIZINHO_HOME =
+  `${import.meta.env.BASE_URL || "/"}assets/paizinho-home.png?v=oficial`.replace(
+    /([^:]\/)\/+/g,
+    "$1"
+  );
+
 export default function Home({
   totalFotos,
   totalBanners,
@@ -56,6 +62,13 @@ export default function Home({
         "Escolha foto, logo e objetivo. A PAIIA cria automaticamente uma arte profissional para divulgação.",
       tela: "bannerStudio",
     },
+    {
+      titulo: "Paizinho — Criar meu Mascote",
+      icone: "👨‍🔧",
+      texto:
+        "Crie o personagem da sua empresa e reutilize em suas campanhas.",
+      tela: "criarMascotePaizinho",
+    },
     
     {
       titulo: "Catálogos",
@@ -84,6 +97,13 @@ export default function Home({
       texto:
         "Gerencie seu plano, créditos e formas de pagamento.",
       tela: "planosPagamentos",
+    },
+        {
+      titulo: "Contas Marketplace",
+      icone: "🔗",
+      texto:
+        "Conecte e gerencie suas contas do Mercado Livre e outros marketplaces.",
+      tela: "contasMarketplace",
     },
   ];
 
@@ -202,6 +222,10 @@ export default function Home({
       style={{
         marginTop: "50px",
         position: "relative",
+        width: "100%",
+        maxWidth: "100%",
+        overflowX: "hidden",
+        boxSizing: "border-box",
       }}
     >
       <h1>🚀 PAIIA AI</h1>
@@ -219,172 +243,345 @@ export default function Home({
           PAIZINHO PAIIA
       ========================== */}
 
-      <div
-        style={{
-          marginTop: "28px",
-          padding: "22px",
-          borderRadius: "22px",
-          border:
-            "1px solid rgba(56,189,248,.45)",
-          background:
-            "linear-gradient(135deg, rgba(15,23,42,.98), rgba(8,47,73,.96))",
-          boxShadow:
-            "0 18px 50px rgba(2,132,199,.16)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent:
-            "space-between",
-          gap: "24px",
-          flexWrap: "wrap",
-          overflow: "hidden",
-          position: "relative",
-        }}
-      >
+      <style>
+        {`
+          .paiia-home-paizinho {
+            margin-top: 18px;
+            padding: 14px 28px 14px 18px;
+            border-radius: 22px;
+            border: 1px solid rgba(56,189,248,.45);
+            background: linear-gradient(135deg, rgba(15,23,42,.98), rgba(8,47,73,.96));
+            box-shadow: 0 18px 50px rgba(2,132,199,.16);
+            display: block;
+            overflow-x: hidden;
+            overflow-y: visible;
+            position: relative;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+          .paiia-home-paizinho-row {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 18px 22px;
+            position: relative;
+            z-index: 2;
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+            overflow-x: hidden;
+          }
+          .paiia-home-paizinho-foto {
+            flex: 0 0 auto;
+            width: auto;
+            max-width: 32%;
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            box-sizing: border-box;
+          }
+          .paiia-home-paizinho-foto img {
+            width: auto;
+            height: 320px;
+            max-width: 100%;
+            max-height: 320px;
+            object-fit: contain;
+            object-position: center;
+            display: block;
+          }
+          .paiia-home-paizinho-texto {
+            flex: 1 1 30%;
+            width: auto;
+            min-width: 0;
+            max-width: 420px;
+            text-align: left;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-start;
+            box-sizing: border-box;
+          }
+          .paiia-home-paizinho-kicker {
+            color: #67e8f9;
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: 1.4px;
+            margin: 0 0 6px;
+          }
+          .paiia-home-paizinho-titulo {
+            margin: 0;
+            color: #fff;
+            font-size: clamp(26px, 2.7vw, 38px);
+            line-height: 1.18;
+            overflow-wrap: break-word;
+            max-width: 100%;
+          }
+          .paiia-home-paizinho-slogan {
+            margin: 10px 0 0;
+            color: #67e8f9;
+            font-size: clamp(20px, 2.2vw, 28px);
+            font-weight: 800;
+            font-style: italic;
+            line-height: 1.2;
+          }
+          .paiia-home-paizinho-beneficios {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 10px;
+            margin: 16px 0 8px;
+            padding: 0;
+            list-style: none;
+            width: 100%;
+          }
+          .paiia-home-paizinho-beneficios li {
+            color: #e0f2fe;
+            background: rgba(14,165,233,.14);
+            border: 1px solid rgba(103,232,249,.35);
+            border-radius: 999px;
+            padding: 7px 12px;
+            font-size: 13px;
+            font-weight: 800;
+            white-space: nowrap;
+          }
+          .paiia-home-paizinho-cta {
+            border: none;
+            border-radius: 12px;
+            padding: 14px 22px;
+            cursor: pointer;
+            color: #020617;
+            font-weight: 900;
+            font-size: 15px;
+            margin-top: 10px;
+            background: linear-gradient(135deg,#67e8f9,#38bdf8);
+            box-shadow: 0 8px 25px rgba(56,189,248,.28);
+          }
+          .paiia-home-paizinho-funcoes {
+            flex: 1 1 38%;
+            min-width: 0;
+            max-width: 100%;
+            box-sizing: border-box;
+            padding: 12px 14px 14px;
+            border-radius: 18px;
+            border: 1px solid rgba(103,232,249,.22);
+            background: rgba(8,47,73,.42);
+          }
+          .paiia-home-paizinho-funcoes-titulo {
+            margin: 0 0 10px;
+            color: #67e8f9;
+            font-size: 13px;
+            font-weight: 900;
+            letter-spacing: .4px;
+            text-align: left;
+          }
+          .paiia-home-paizinho-funcoes-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            width: 100%;
+          }
+          .paiia-home-paizinho-funcao {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            margin: 0;
+            padding: 8px 10px;
+            border-radius: 12px;
+            border: 1px solid rgba(56,189,248,.22);
+            background: rgba(15,23,42,.55);
+            color: #e0f2fe;
+            font-size: 12px;
+            font-weight: 800;
+            line-height: 1.25;
+            overflow-wrap: break-word;
+          }
+          .paiia-home-paizinho-funcao span {
+            flex: 0 0 auto;
+            font-size: 14px;
+          }
+          .paiia-home-paizinho-funcoes-frase {
+            margin: 12px 0 0;
+            color: #bae6fd;
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 1.4;
+          }
+          .paiia-home-paizinho-modal-foto {
+            width: min(280px, 100%);
+            height: auto;
+            flex: 0 1 280px;
+            max-width: 100%;
+            border-radius: 22px;
+            overflow: visible;
+            border: 1px solid rgba(103,232,249,.5);
+            background: #020617;
+            box-sizing: border-box;
+          }
+          .paiia-home-paizinho-modal-foto img {
+            width: 100%;
+            height: auto;
+            object-fit: contain;
+            object-position: center;
+            display: block;
+          }
+          @media (max-width: 980px) {
+            .paiia-home-paizinho {
+              padding: 14px 12px 16px;
+            }
+            .paiia-home-paizinho-row {
+              flex-direction: column;
+              flex-wrap: nowrap;
+              align-items: stretch;
+              justify-content: flex-start;
+              text-align: center;
+              gap: 12px;
+            }
+            .paiia-home-paizinho-foto {
+              width: min(240px, 70vw);
+              max-width: 100%;
+              flex: 0 0 auto;
+              order: 1;
+              margin: 0 auto;
+              justify-content: center;
+            }
+            .paiia-home-paizinho-foto img {
+              width: 100%;
+              height: auto;
+              max-height: 240px;
+            }
+            .paiia-home-paizinho-texto {
+              order: 2;
+              text-align: center;
+              max-width: 100%;
+              width: 100%;
+              flex: 0 0 auto;
+              align-items: center;
+              padding: 0;
+            }
+            .paiia-home-paizinho-titulo {
+              font-size: 24px;
+            }
+            .paiia-home-paizinho-slogan {
+              font-size: 20px;
+            }
+            .paiia-home-paizinho-beneficios {
+              justify-content: center;
+            }
+            .paiia-home-paizinho-funcoes {
+              order: 3;
+              width: 100%;
+              max-width: 100%;
+              flex: 0 0 auto;
+              text-align: left;
+            }
+            .paiia-home-paizinho-funcoes-titulo,
+            .paiia-home-paizinho-funcoes-frase {
+              text-align: center;
+            }
+          }
+          @media (max-width: 480px) {
+            .paiia-home-paizinho-funcoes-grid {
+              grid-template-columns: 1fr;
+            }
+            .paiia-home-paizinho-foto img {
+              max-height: 220px;
+            }
+          }
+        `}
+      </style>
+
+      <div className="paiia-home-paizinho">
         <div
           style={{
             position: "absolute",
-            width: "260px",
-            height: "260px",
+            width: "180px",
+            height: "180px",
             borderRadius: "50%",
             background:
               "rgba(34,211,238,.08)",
-            right: "-70px",
-            top: "-100px",
+            right: "0",
+            top: "-80px",
             filter: "blur(2px)",
             pointerEvents: "none",
           }}
         />
 
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "22px",
-            flex: "1 1 600px",
-            position: "relative",
-            zIndex: 2,
-          }}
-        >
-          <div
-            style={{
-              width: "150px",
-              height: "150px",
-              minWidth: "150px",
-              borderRadius: "22px",
-              overflow: "hidden",
-              background:
-                "linear-gradient(145deg,#0f172a,#082f49)",
-              border:
-                "1px solid rgba(103,232,249,.5)",
-              boxShadow:
-                "0 12px 35px rgba(0,0,0,.35)",
-            }}
-          >
+        <div className="paiia-home-paizinho-row">
+          <div className="paiia-home-paizinho-foto">
             <img
-              src="/paizinho-appia.png"
+              src={PAIZINHO_HOME}
               alt="Paizinho PAIIA"
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                objectPosition:
-                  "center top",
-                display: "block",
-              }}
             />
           </div>
 
-          <div
-            style={{
-              textAlign: "left",
-              maxWidth: "650px",
-            }}
-          >
-            <div
-              style={{
-                color: "#67e8f9",
-                fontSize: "13px",
-                fontWeight: 900,
-                letterSpacing: "1px",
-                marginBottom: "6px",
-              }}
-            >
+          <div className="paiia-home-paizinho-texto">
+            <div className="paiia-home-paizinho-kicker">
               🤖 ASSISTENTE PAIIA
             </div>
 
-            <h2
-              style={{
-                margin: 0,
-                color: "#fff",
-                fontSize: "28px",
-              }}
-            >
+            <h2 className="paiia-home-paizinho-titulo">
               O Paizinho está trabalhando
               com você.
             </h2>
 
-            <p
-              style={{
-                color: "#bfdbfe",
-                lineHeight: 1.55,
-                margin:
-                  "10px 0 18px 0",
-                fontSize: "15px",
-              }}
-            >
-             Da identificação da peça
-até a criação do anúncio,
-foto profissional e banner.
-O Paizinho ajuda a
-transformar o trabalho do
-dia a dia em vendas.
+            <p className="paiia-home-paizinho-slogan">
+              Deixa com o Paizinho!
             </p>
+
+            <ul className="paiia-home-paizinho-beneficios">
+              <li>Cria</li>
+              <li>Organiza</li>
+              <li>Trabalha por você</li>
+            </ul>
 
             <button
               type="button"
+              className="paiia-home-paizinho-cta"
               onClick={() =>
                 setMostrarPaizinho(true)
               }
-              style={{
-                border: "none",
-                borderRadius: "12px",
-                padding:
-                  "12px 18px",
-                cursor: "pointer",
-                color: "#020617",
-                fontWeight: 900,
-                fontSize: "14px",
-                background:
-                  "linear-gradient(135deg,#67e8f9,#38bdf8)",
-                boxShadow:
-                  "0 8px 25px rgba(56,189,248,.22)",
-              }}
             >
               ▶ Conheça o PAIIA
             </button>
           </div>
-        </div>
-      </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: "15px",
-          justifyContent: "center",
-          flexWrap: "wrap",
-          marginTop: "30px",
-        }}
-      >
-        <div style={cardStyle}>
-          📸 Fotos: {totalFotos}
-        </div>
-
-        <div style={cardStyle}>
-          🎨 Banners: {totalBanners}
-        </div>
-
-        <div style={cardStyle}>
-          🎬 Vídeos: {totalVideos}
+          <div className="paiia-home-paizinho-funcoes">
+            <h3 className="paiia-home-paizinho-funcoes-titulo">
+              O que o Paizinho faz por você
+            </h3>
+            <div className="paiia-home-paizinho-funcoes-grid">
+              <p className="paiia-home-paizinho-funcao">
+                <span>🔎</span> Identifica a peça
+              </p>
+              <p className="paiia-home-paizinho-funcao">
+                <span>📝</span> Monta o anúncio
+              </p>
+              <p className="paiia-home-paizinho-funcao">
+                <span>📸</span> Prepara a foto
+              </p>
+              <p className="paiia-home-paizinho-funcao">
+                <span>🎬</span> Cria o Clip
+              </p>
+              <p className="paiia-home-paizinho-funcao">
+                <span>📚</span> Consulta catálogos
+              </p>
+              <p className="paiia-home-paizinho-funcao">
+                <span>💬</span> Ajuda no atendimento
+              </p>
+            </div>
+            <p className="paiia-home-paizinho-funcoes-frase">
+              Você escolhe o que precisa. O Paizinho faz o trabalho.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -401,7 +598,7 @@ dia a dia em vendas.
         style={{
           display: "grid",
           gridTemplateColumns:
-            "repeat(auto-fit, minmax(220px, 1fr))",
+            "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
           gap: "18px",
           marginTop: "20px",
         }}
@@ -631,35 +828,10 @@ dia a dia em vendas.
                 flexWrap: "wrap",
               }}
             >
-              <div
-                style={{
-                  width: "260px",
-                  height: "320px",
-                  flex:
-                    "0 0 260px",
-                  borderRadius:
-                    "22px",
-                  overflow:
-                    "hidden",
-                  border:
-                    "1px solid rgba(103,232,249,.5)",
-                  background:
-                    "#020617",
-                }}
-              >
+              <div className="paiia-home-paizinho-modal-foto">
                 <img
-                  src="/paizinho-appia.png"
+                  src={PAIZINHO_HOME}
                   alt="Paizinho PAIIA"
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit:
-                      "cover",
-                    objectPosition:
-                      "center top",
-                    display:
-                      "block",
-                  }}
                 />
               </div>
 
@@ -750,7 +922,7 @@ dia a dia em vendas.
                     display:
                       "grid",
                     gridTemplateColumns:
-                      "repeat(2, minmax(160px, 1fr))",
+                      "repeat(auto-fit, minmax(min(100%, 160px), 1fr))",
                     gap: "12px",
                   }}
                 >
