@@ -6,6 +6,11 @@ import {
   expandirSinonimosAutomotivos,
 } from "./inteligencia";
 
+import {
+  buscarPecaInternetProvisoria,
+  FONTE_EXTERNA_PROVISORIA,
+} from "./buscaPecaInternetProvisoria";
+
 
 /*
  * ============================================================
@@ -1060,6 +1065,7 @@ export async function preencherAnuncioAutomaticamente({
   codigo,
   oem,
   onProgresso,
+  permitirBuscaInternet = false,
 }) {
   const termoFinal =
     limparCodigo(
@@ -1207,6 +1213,51 @@ export async function preencherAnuncioAutomaticamente({
 
   /*
    * ========================================================
+   * 4. INTERNET — SOMENTE FALLBACK PROVISÓRIO
+   * ========================================================
+   *
+   * Só entra se:
+   * - for código exato
+   * - Base PAIIA e CatCar não encontraram
+   * - o Novo Anúncio pediu busca externa
+   *
+   * Nunca grava no catálogo mestre nem em catalogo_pecas.
+   * ========================================================
+   */
+
+  let buscaInternet = null;
+
+  if (
+    ehCodigo &&
+    (!data || data.length === 0) &&
+    permitirBuscaInternet
+  ) {
+    try {
+      buscaInternet =
+        await buscarPecaInternetProvisoria(
+          termoFinal,
+          onProgresso
+        );
+
+      if (
+        Array.isArray(buscaInternet?.registros) &&
+        buscaInternet.registros.length > 0
+      ) {
+        data = buscaInternet.registros;
+        error = null;
+        tabela = FONTE_EXTERNA_PROVISORIA;
+      }
+    } catch (erroInternet) {
+      console.warn(
+        "⚠️ Busca externa provisória:",
+        erroInternet
+      );
+    }
+  }
+
+
+  /*
+   * ========================================================
    * ERRO REAL
    * ========================================================
    */
@@ -1261,7 +1312,9 @@ export async function preencherAnuncioAutomaticamente({
 
   onProgresso?.(
     35,
-    "🏭 Fabricante identificado. Consultando a Base Mestre PAIIA..."
+    tabela === FONTE_EXTERNA_PROVISORIA
+      ? "🌐 Fontes públicas localizadas. Montando sugestão provisória..."
+      : "🏭 Fabricante identificado. Consultando a Base Mestre PAIIA..."
   );
 
 
@@ -1272,12 +1325,14 @@ export async function preencherAnuncioAutomaticamente({
    */
 
   const resultadosComInteligencia =
-    data.map(
-      (registro) =>
-        enriquecerRegistro(
-          registro
-        )
-    );
+    tabela === FONTE_EXTERNA_PROVISORIA
+      ? data
+      : data.map(
+          (registro) =>
+            enriquecerRegistro(
+              registro
+            )
+        );
 
 
   onProgresso?.(
@@ -1423,6 +1478,24 @@ ${aplicacoesUnicas.join(
   "\n"
 )}`
       : descricaoBase;
+
+  const fonteProvisoria =
+    tabela === FONTE_EXTERNA_PROVISORIA;
+
+  const descricaoFinal = fonteProvisoria
+    ? `⚠️ DADOS PROVISÓRIOS — FONTE externa_provisoria
+Estes dados NÃO vieram do catálogo confiável PAIIA e precisam ser confirmados.
+Não devem ser gravados como dados definitivos do catálogo mestre.
+
+${descricao}`
+    : descricao;
+
+  const problemasAuditoria = fonteProvisoria
+    ? [
+        "Resultado de busca externa provisória. Confirme fabricante, descrição, OEM e aplicações antes de publicar.",
+        ...(buscaInternet?.conflitos || []),
+      ]
+    : [];
 
 
   /*
@@ -1586,18 +1659,27 @@ ${aplicacoesUnicas.join(
 
     confianca: {
       percentual:
-        confiabilidade,
+        fonteProvisoria
+          ? Math.min(confiabilidade, 35)
+          : confiabilidade,
 
       nivel:
-        confiabilidade >=
-        80
-          ? "Alta"
+        fonteProvisoria
+          ? "Baixa"
           : confiabilidade >=
-              60
-            ? "Média"
-            : "Baixa",
+            80
+            ? "Alta"
+            : confiabilidade >=
+                60
+              ? "Média"
+              : "Baixa",
 
-      motivos: [],
+      motivos: fonteProvisoria
+        ? [
+            "Fonte provisória de internet. Aguardando confirmação no catálogo confiável PAIIA.",
+            ...(buscaInternet?.conflitos || []),
+          ]
+        : [],
     },
   };
 
@@ -1616,7 +1698,9 @@ ${aplicacoesUnicas.join(
 
   onProgresso?.(
     100,
-    "✅ Pronto! Seu anúncio foi criado com sucesso."
+    fonteProvisoria
+      ? "⚠️ Sugestão provisória montada. Confirme os dados antes de publicar."
+      : "✅ Pronto! Seu anúncio foi criado com sucesso."
   );
 
 
@@ -1639,13 +1723,26 @@ ${aplicacoesUnicas.join(
 
     titulo,
 
-    descricao,
+    descricao:
+      descricaoFinal,
 
     preco:
       "",
 
     tipoAnuncio:
       "classico",
+
+    fonte:
+      fonteProvisoria
+        ? FONTE_EXTERNA_PROVISORIA
+        : tabela,
+
+    catalogoInterno:
+      !fonteProvisoria &&
+      tabela !== "catcar_indice",
+
+    fallbackExterno:
+      fonteProvisoria,
 
     diagnostico: {
       ...(
@@ -1674,6 +1771,18 @@ ${aplicacoesUnicas.join(
       totalAplicacoes:
         aplicacoes.length,
 
+      arquivoCatalogo:
+        fonteProvisoria
+          ? FONTE_EXTERNA_PROVISORIA
+          : itemPrincipal
+              .origem_catalogo ||
+            "Base PAIIA",
+
+      fonteProvisoria,
+
+      dadosAConfirmar:
+        fonteProvisoria,
+
       baseMestre,
     },
 
@@ -1682,18 +1791,24 @@ ${aplicacoesUnicas.join(
         .auditoria ||
       {
         aprovado:
-          confiabilidade >=
-          80,
+          fonteProvisoria
+            ? false
+            : confiabilidade >=
+              80,
 
         status:
-          confiabilidade >=
-          80
-            ? "APROVADO"
-            : "REVISAR",
+          fonteProvisoria ||
+          confiabilidade < 80
+            ? "REVISAR"
+            : "APROVADO",
 
-        confiabilidade,
+        confiabilidade:
+          fonteProvisoria
+            ? Math.min(confiabilidade, 35)
+            : confiabilidade,
 
-        problemas: [],
+        problemas:
+          problemasAuditoria,
       },
 
     inteligencia:
@@ -1720,6 +1835,9 @@ ${aplicacoesUnicas.join(
 
       tabela_origem:
         tabela,
+
+      fonte_provisoria:
+        fonteProvisoria,
     },
 
     resultadosCatalogo:

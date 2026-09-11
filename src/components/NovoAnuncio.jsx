@@ -1989,6 +1989,7 @@ async function buscarEMontarAnuncio() {
       await preencherAnuncioAutomaticamente({
         codigo: codigoFinal,
         oem,
+        permitirBuscaInternet: true,
 
         onProgresso: (
           progresso,
@@ -4809,6 +4810,26 @@ const custoTotalVenda =
             <h3 style={tituloSecao}>
               🧠 Diagnóstico Técnico
             </h3>
+
+            {diagnostico?.fonteProvisoria && (
+              <div
+                style={{
+                  margin: "12px 0 16px",
+                  padding: "12px 14px",
+                  borderRadius: "12px",
+                  border: "1px solid #f59e0b",
+                  background: "#451a03",
+                  color: "#fde68a",
+                  fontSize: "14px",
+                  lineHeight: 1.5,
+                }}
+              >
+                ⚠️ Dados provisórios — fonte externa_provisoria.
+                O código não foi encontrado no catálogo confiável
+                PAIIA. Não trate estas informações como definitivas
+                e não grave no catálogo mestre.
+              </div>
+            )}
 
             <div style={gradeDiagnostico}>
               <div>
