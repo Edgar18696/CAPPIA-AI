@@ -1,18 +1,18 @@
 import * as pdfjsLib from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?worker";
 
 import {
   createWorker,
   PSM,
 } from "tesseract.js";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  pdfWorker;
+pdfjsLib.GlobalWorkerOptions.workerPort =
+  new PdfWorker();
 
 /*
  * ============================================================
  * APPIA AI
- * LEITOR PDF + OCR MOTRIO
+ * LEITOR PDF + OCR MOTRIO — V11 DETECÇÃO ELECTRONIC SYSTEMS
  * ============================================================
  */
 
@@ -200,24 +200,102 @@ function ehPaginaBicosMarelliDuasColunas({
    * Páginas físicas 1363 até 1379.
    */
 
-  const ehBicosMarelli =
+  /*
+   * ============================================================
+   * V11 — ELECTRONIC SYSTEMS / BUYERS GUIDE
+   * ============================================================
+   *
+   * A regra antiga só ativava duas colunas nas páginas físicas
+   * 1363..1379 de outro catálogo Marelli.
+   *
+   * Parts_Electronics_Systems_EN.pdf tem 732 páginas e o Buyers
+   * Guide de bicos aparece muito antes. Por isso a V10 existia,
+   * mas NUNCA entrava nesse catálogo.
+   *
+   * Agora mantemos a faixa antiga e também detectamos páginas
+   * Marelli de injetores pelo próprio conteúdo.
+   */
+
+  const codigosInjetor =
+    [
+      ...texto.matchAll(
+        /\b(?:IWP|IPM|FEI)[A-Z0-9./-]+\b/g
+      ),
+    ].map(
+      (match) =>
+        match[0]
+    );
+
+  const quantidadeCodigosInjetor =
+    new Set(
+      codigosInjetor
+    ).size;
+
+  const possuiMarcadorInjetor =
+    texto.includes(
+      "FUEL INJECTOR"
+    ) ||
+    texto.includes(
+      "INIETTORE"
+    );
+
+  const possuiGrupoMarelli =
+    texto.includes(
+      "GRUPPO B"
+    ) ||
+    texto.includes(
+      "GROUP B"
+    ) ||
+    texto.includes(
+      "GRUPPO A"
+    ) ||
+    texto.includes(
+      "GROUP A"
+    );
+
+  const ehBicosMarelliFaixaAntiga =
     numero >= 1363 &&
     numero <= 1379 &&
     (
-      /\b(?:IWP|IPM|FEI)[A-Z0-9./-]+\b/.test(
-        texto
-      ) ||
+      quantidadeCodigosInjetor > 0 ||
+      possuiMarcadorInjetor
+    );
+
+  const ehBicosMarelliElectronicSystems =
+    possuiMarcadorInjetor &&
+    quantidadeCodigosInjetor >= 2 &&
+    (
+      possuiGrupoMarelli ||
       texto.includes(
-        "FUEL INJECTOR"
-      ) ||
-      texto.includes(
-        "INIETTORE"
+        "TYPE"
       )
     );
+
+  const ehBicosMarelli =
+    ehBicosMarelliFaixaAntiga ||
+    ehBicosMarelliElectronicSystems;
 
   if (
     ehBicosMarelli
   ) {
+    console.log(
+      `🧭 MARELLI V11 — DUAS COLUNAS DETECTADAS NA PÁGINA ${numero}:`,
+      {
+        faixaAntiga:
+          ehBicosMarelliFaixaAntiga,
+
+        electronicSystems:
+          ehBicosMarelliElectronicSystems,
+
+        codigos:
+          quantidadeCodigosInjetor,
+
+        possuiMarcadorInjetor,
+
+        possuiGrupoMarelli,
+      }
+    );
+
     return true;
   }
 
@@ -296,8 +374,10 @@ function ehPaginaBicosMarelliDuasColunas({
   return false;
 }
 
+
 function organizarItensTextoDuasColunas(
-  itens = []
+  itens = [],
+  larguraPagina = 0
 ) {
   const validos =
     itens
@@ -314,6 +394,11 @@ function organizarItensTextoDuasColunas(
           const x =
             Number(
               transform[4]
+            );
+
+          const y =
+            Number(
+              transform[5]
             );
 
           const largura =
@@ -333,7 +418,22 @@ function organizarItensTextoDuasColunas(
           return {
             item,
 
+            texto,
+
             x,
+
+            y:
+              Number.isFinite(y)
+                ? y
+                : 0,
+
+            largura,
+
+            inicioX:
+              x,
+
+            fimX:
+              x + largura,
 
             centroX:
               x +
@@ -350,66 +450,165 @@ function organizarItensTextoDuasColunas(
   }
 
   /*
-   * Descobre a largura real ocupada
-   * pelo conteúdo da página.
+   * ============================================================
+   * V10 — DIVISÃO PELA LARGURA REAL DA PÁGINA
+   * ============================================================
+   *
+   * A versão anterior calculava o "meio" usando xMin/xMax dos textos.
+   * Isso muda conforme cabeçalhos, rodapés e itens largos da página,
+   * podendo empurrar textos da coluna direita para a esquerda e vice-versa.
+   *
+   * Agora usamos a largura física real da página PDF.
    */
 
-  const xs =
-    validos.map(
-      (registro) =>
-        registro.centroX
+  const larguraReal =
+    Number(
+      larguraPagina
     );
 
-  const xMin =
-    Math.min(
-      ...xs
-    );
-
-  const xMax =
-    Math.max(
-      ...xs
-    );
-
-  const meio =
-    xMin +
-    (
-      xMax -
-      xMin
-    ) / 2;
+  let meio =
+    Number.isFinite(
+      larguraReal
+    ) &&
+    larguraReal > 0
+      ? larguraReal / 2
+      : null;
 
   /*
-   * Separa fisicamente as colunas.
+   * Fallback somente se a largura da página não estiver disponível.
    */
+  if (
+    !meio
+  ) {
+    const xs =
+      validos.map(
+        (registro) =>
+          registro.centroX
+      );
+
+    const xMin =
+      Math.min(
+        ...xs
+      );
+
+    const xMax =
+      Math.max(
+        ...xs
+      );
+
+    meio =
+      xMin +
+      (
+        xMax -
+        xMin
+      ) / 2;
+  }
+
+  /*
+   * Zona neutra ao redor do centro.
+   * Itens muito próximos do vinco podem ser cabeçalho/rodapé,
+   * linhas ou textos que atravessam as duas colunas.
+   *
+   * Para esses itens não forçamos associação a uma coluna.
+   */
+  const margemCentral =
+    Math.max(
+      8,
+      (
+        Number.isFinite(
+          larguraReal
+        ) &&
+        larguraReal > 0
+          ? larguraReal
+          : meio * 2
+      ) *
+      0.025
+    );
+
+  const limiteEsquerda =
+    meio -
+    margemCentral;
+
+  const limiteDireita =
+    meio +
+    margemCentral;
 
   const esquerda =
-    validos
-      .filter(
-        (registro) =>
-          registro.centroX <
-          meio
-      )
-      .map(
-        (registro) =>
-          registro.item
-      );
+    [];
 
   const direita =
-    validos
-      .filter(
-        (registro) =>
-          registro.centroX >=
-          meio
-      )
-      .map(
-        (registro) =>
-          registro.item
+    [];
+
+  const centrais =
+    [];
+
+  for (
+    const registro
+    of validos
+  ) {
+    /*
+     * Se o item inteiro está à esquerda.
+     */
+    if (
+      registro.fimX <=
+      limiteEsquerda
+    ) {
+      esquerda.push(
+        registro.item
       );
 
-  /*
-   * Cada coluna passa separadamente
-   * pelo organizador já aprovado.
-   */
+      continue;
+    }
 
+    /*
+     * Se o item inteiro está à direita.
+     */
+    if (
+      registro.inicioX >=
+      limiteDireita
+    ) {
+      direita.push(
+        registro.item
+      );
+
+      continue;
+    }
+
+    /*
+     * Se o item cruza a região central, classificamos pelo centro
+     * apenas se houver distância suficiente do meio.
+     */
+    if (
+      registro.centroX <
+      limiteEsquerda
+    ) {
+      esquerda.push(
+        registro.item
+      );
+
+      continue;
+    }
+
+    if (
+      registro.centroX >
+      limiteDireita
+    ) {
+      direita.push(
+        registro.item
+      );
+
+      continue;
+    }
+
+    centrais.push(
+      registro
+    );
+  }
+
+  /*
+   * Reaproveita o organizador já aprovado em cada coluna,
+   * preservando Y -> X apenas dentro da própria coluna.
+   */
   const textoEsquerda =
     organizarItensTexto(
       esquerda
@@ -419,6 +618,53 @@ function organizarItensTextoDuasColunas(
     organizarItensTexto(
       direita
     );
+
+  if (
+    centrais.length > 0
+  ) {
+    console.log(
+      "🧭 MARELLI V11 — ITENS CENTRAIS IGNORADOS:",
+      centrais.map(
+        (registro) => ({
+          texto:
+            registro.texto,
+
+          x:
+            registro.x,
+
+          fimX:
+            registro.fimX,
+
+          centroX:
+            registro.centroX,
+
+          y:
+            registro.y,
+        })
+      )
+    );
+  }
+
+  console.log(
+    "🧭 MARELLI V11 — COLUNAS:",
+    {
+      larguraPagina:
+        larguraReal || null,
+
+      meio,
+
+      margemCentral,
+
+      esquerda:
+        esquerda.length,
+
+      direita:
+        direita.length,
+
+      centraisIgnorados:
+        centrais.length,
+    }
+  );
 
   return [
     textoEsquerda,
@@ -1838,6 +2084,18 @@ export async function extrairPaginasPdf({
         conteudo?.items ||
         [];
 
+      const viewportPagina =
+        pagina.getViewport({
+          scale:
+            1,
+        });
+
+      const larguraPagina =
+        Number(
+          viewportPagina
+            ?.width
+        ) || 0;
+
       /*
        * ======================================================
        * MARELLI — DUAS COLUNAS
@@ -1855,7 +2113,8 @@ export async function extrairPaginasPdf({
       let texto =
         usarDuasColunasMarelli
           ? organizarItensTextoDuasColunas(
-              itensTexto
+              itensTexto,
+              larguraPagina
             )
           : organizarItensTexto(
               itensTexto
@@ -1865,7 +2124,7 @@ export async function extrairPaginasPdf({
         usarDuasColunasMarelli
       ) {
         console.log(
-          `💉 Página ${numeroPagina}: leitura Marelli em duas colunas.`
+          `💉 Página ${numeroPagina}: leitura Marelli V11 em duas colunas por largura real.`
         );
       }
 

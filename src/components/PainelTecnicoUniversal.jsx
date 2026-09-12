@@ -176,7 +176,7 @@ const modelos =
   const origem =
     principal.origem_catalogo ||
     principal.arquivo_catalogo ||
-    "Base APPIA";
+    "Base PAIIA";
 
   const confiabilidade =
     Number(principal.confiabilidade) ||
@@ -189,7 +189,7 @@ const modelos =
 
   async function copiarDados() {
     const texto = `
-PAINEL TÉCNICO APPIA AI
+PAINEL TÉCNICO PAIIA AI
 
 CÓDIGO:
 ${codigo}
@@ -244,7 +244,7 @@ ${confiabilidade}%
       <div style={cabecalho}>
         <div>
           <span style={etiqueta}>
-            📚 PAINEL TÉCNICO APPIA AI
+            📚 PAINEL TÉCNICO PAIIA AI
           </span>
 
           <h2 style={titulo}>

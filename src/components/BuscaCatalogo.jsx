@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { preencherAnuncioAutomaticamente } from "../services/preencherAnuncioService";
+import { consultarCatCarOEM } from "../services/catcarService";
 import PainelResumoCatalogo from "./PainelResumoCatalogo";
 import DiagnosticoTecnicoIA from "./DiagnosticoTecnicoIA";
 import FichaTecnicaIA from "./FichaTecnicaIA";
@@ -332,7 +333,7 @@ function agruparResultados(
     const origem =
       String(
         resultado.origem_catalogo ||
-          "Base APPIA"
+          "Base PAIIA"
       ).trim();
 
     const chave =
@@ -362,6 +363,66 @@ function agruparResultados(
   return Array.from(
     mapa.values()
   );
+}
+
+
+function converterRegistroCatCar(
+  registro = {}
+) {
+  const detalhesTecnicos = [
+    registro?.tipo
+      ? `Tipo: ${registro.tipo}`
+      : "",
+    registro?.grupo
+      ? `Grupo: ${registro.grupo}`
+      : "",
+    registro?.subgrupo
+      ? `Subgrupo: ${registro.subgrupo}`
+      : "",
+    registro?.posicao
+      ? `Posição: ${registro.posicao}`
+      : "",
+    registro?.descricao_original ||
+      "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  return {
+    ...registro,
+
+    peca:
+      registro?.codigo_substituto ||
+      registro?.descricao_original ||
+      "Peça automotiva",
+
+    fabricante:
+      "Renault",
+
+    montadora:
+      registro?.montadora ||
+      "Renault",
+
+    codigo_equivalente:
+      "",
+
+    observacao:
+      detalhesTecnicos,
+
+    origem_catalogo:
+      "CatCar Renault",
+
+    pagina_catalogo:
+      registro?.pagina_url ||
+      null,
+
+    fonte_tecnica:
+      "catcar",
+
+    confirmado:
+      registro?.confirmado !==
+      false,
+  };
 }
 
 export default function BuscaCatalogo({
@@ -407,7 +468,11 @@ export default function BuscaCatalogo({
     modoPesquisa,
     setModoPesquisa,
   ] =
-    useState("todos");
+    useState(
+      catalogoSelecionado
+        ? "selecionado"
+        : "todos"
+    );
 
   /*
    * ==========================================================
@@ -434,10 +499,121 @@ export default function BuscaCatalogo({
     setResultados([]);
 
     setProgresso(
-      "🔎 Consultando a base APPIA..."
+      "🔎 Consultando a base PAIIA..."
     );
 
     try {
+      /*
+       * ======================================================
+       * CATCAR LOCAL
+       * ======================================================
+       *
+       * Quando a tela foi aberta pelo card CatCar
+       * e "Apenas CatCar" está selecionado,
+       * usa diretamente o servidor local validado
+       * na porta 8787.
+       * ======================================================
+       */
+
+      const ehCatCarSelecionado =
+        modoPesquisa ===
+          "selecionado" &&
+        String(
+          catalogoSelecionado ||
+          ""
+        )
+          .trim()
+          .toLowerCase() ===
+          "catcar";
+
+      if (ehCatCarSelecionado) {
+        setProgresso(
+          "🚘 Consultando CatCar Renault..."
+        );
+
+        const respostaCatCar =
+          await consultarCatCarOEM(
+            termoBusca
+          );
+
+        if (
+          respostaCatCar?.erro
+        ) {
+          throw new Error(
+            respostaCatCar.erro
+          );
+        }
+
+        const encontradosCatCar =
+          Array.isArray(
+            respostaCatCar?.registros
+          )
+            ? respostaCatCar.registros.map(
+                converterRegistroCatCar
+              )
+            : [];
+
+        const encontradosOrdenados =
+          [...encontradosCatCar].sort(
+            (a, b) => {
+              const pontosA =
+                calcularPontuacaoResultado(
+                  a,
+                  termoBusca
+                );
+
+              const pontosB =
+                calcularPontuacaoResultado(
+                  b,
+                  termoBusca
+                );
+
+              if (
+                pontosA !== pontosB
+              ) {
+                return (
+                  pontosB -
+                  pontosA
+                );
+              }
+
+              const modeloA =
+                String(
+                  a.modelo || ""
+                );
+
+              const modeloB =
+                String(
+                  b.modelo || ""
+                );
+
+              return modeloA.localeCompare(
+                modeloB,
+                "pt-BR"
+              );
+            }
+          );
+
+        setResultados(
+          encontradosOrdenados
+        );
+
+        setProgresso(
+          encontradosOrdenados.length >
+            0
+            ? `✅ CatCar Renault: ${encontradosOrdenados.length} resultado(s) encontrado(s).`
+            : `⚠️ Código "${termoBusca}" não encontrado no CatCar Renault.`
+        );
+
+        return;
+      }
+
+      /*
+       * ======================================================
+       * BASE PAIIA / DEMAIS CATÁLOGOS
+       * ======================================================
+       */
+
       const resposta =
         await preencherAnuncioAutomaticamente({
           termo:
@@ -535,12 +711,6 @@ export default function BuscaCatalogo({
               );
             }
 
-            /*
-             * Em empate:
-             * Disco de Freio, Filtro,
-             * Sensor etc ficam juntos.
-             */
-
             const pecaA =
               String(
                 a.peca || ""
@@ -597,7 +767,7 @@ export default function BuscaCatalogo({
 
       setProgresso(
         error?.message ||
-          "Não foi possível consultar a base APPIA."
+          "Não foi possível consultar a base PAIIA."
       );
     } finally {
       setCarregando(false);
@@ -678,7 +848,7 @@ export default function BuscaCatalogo({
           <p style={subtitulo}>
             Consulte códigos, aplicações e
             equivalências na base universal
-            do APPIA AI.
+            do PAIIA AI.
           </p>
         </div>
 
@@ -760,7 +930,10 @@ export default function BuscaCatalogo({
         <label
           style={label}
         >
-          Pesquisar em toda a base técnica do APPIA AI
+          {modoPesquisa === "selecionado" &&
+          catalogoSelecionado
+            ? `Pesquisar somente em ${catalogoSelecionado}`
+            : "Pesquisar em toda a base técnica do PAIIA AI"}
         </label>
 
         <div
@@ -1074,7 +1247,7 @@ export default function BuscaCatalogo({
                                 }
                               >
                                 {resultado.origem_catalogo ||
-                                  "Base APPIA"}
+                                  "Base PAIIA"}
                               </span>
                             </div>
 

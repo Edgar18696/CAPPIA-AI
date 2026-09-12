@@ -13,7 +13,7 @@ export async function testarInteligencia() {
   );
 
   console.log(
-    "🤖 PAIZINHO APPIA — TESTE 001"
+    "🤖 PAIZINHO PAIIA — TESTE 001"
   );
 
   console.log(

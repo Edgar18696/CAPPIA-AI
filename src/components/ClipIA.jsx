@@ -9,9 +9,19 @@ import {
   marcarClipPronto,
 } from "../services/projetoAtualService";
 
-import { API_PROCESSAR_CLIP } from "./constants/apiConstants";
-import { supabase, supabaseKey } from "../supabase";
+import { supabase } from "../supabase";
 import { baixarClip as baixarClipArquivo } from "./utils/downloadUtils";
+import {
+  buscarMascoteOficial,
+  obterUsuarioMascote,
+} from "../services/mascoteMarcaService";
+import PaizinhoConversa from "./PaizinhoConversa";
+import ClipProduto from "./ClipProduto";
+import {
+  consumirNovaCriacaoMidia,
+  deveIniciarNovaCriacaoMidia,
+  sessaoMidiaDeveContinuar,
+} from "../services/limparEstadoTemporarioMidia";
 const ESTILOS_CLIP = [
   {
     id: "clean",
@@ -38,6 +48,369 @@ const ESTILOS_CLIP = [
     duracao: 15,
   },
 ];
+
+const OBJETIVOS_MIDIA = [
+  {
+    id: "promocao",
+    label: "Promoção",
+  },
+  {
+    id: "produto",
+    label: "Produto",
+  },
+  {
+    id: "lancamento",
+    label: "Lançamento",
+  },
+  {
+    id: "empresa",
+    label: "Empresa/Marca",
+  },
+  {
+    id: "outro",
+    label: "Outro",
+  },
+];
+
+function nomeObjetivoMidia(
+  objetivo,
+  outro
+) {
+  if (objetivo === "promocao") {
+    return "uma promoção";
+  }
+
+  if (objetivo === "produto") {
+    return "um produto";
+  }
+
+  if (objetivo === "lancamento") {
+    return "um lançamento";
+  }
+
+  if (objetivo === "empresa") {
+    return "a empresa e a marca";
+  }
+
+  const texto = String(outro || "")
+    .trim();
+
+  return texto || "a sua divulgação";
+}
+
+function limitarFalaMascote(fala) {
+  const texto = String(fala || "").trim();
+
+  if (texto.length <= 260) {
+    return texto;
+  }
+
+  return `${texto.slice(0, 257)}...`;
+}
+
+function normalizarPedidoPaizinho(pedido) {
+  return String(pedido || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function detectarTomPedido(pedido) {
+  const texto = normalizarPedidoPaizinho(pedido);
+
+  if (
+    /descontra|descolad|divertid|leve|animad|informal/.test(
+      texto
+    )
+  ) {
+    return "descontraido";
+  }
+
+  if (
+    /institucional|formal|serio|profissional/.test(
+      texto
+    )
+  ) {
+    return "institucional";
+  }
+
+  if (/tecnic/.test(texto)) {
+    return "tecnico";
+  }
+
+  if (/curto|reduz/.test(texto)) {
+    return "curto";
+  }
+
+  return "";
+}
+
+function extrairDestaquesBriefing(briefing) {
+  const texto = String(briefing || "").trim();
+  const destacando = texto.match(
+    /destacando\s+(.+?)(?:\.|$)/i
+  );
+
+  if (destacando?.[1]) {
+    return destacando[1].trim();
+  }
+
+  return "";
+}
+
+function extrairMarcaDoBriefing(briefing) {
+  const texto = String(briefing || "").trim();
+  const da = texto.match(
+    /\bda\s+([A-ZÁÉÍÓÚÂÊÔÃÕ][A-Za-zÀ-ÿ0-9]+)/
+  );
+
+  return da?.[1] || "";
+}
+
+function destaquesDoMascote(oficial = {}, briefing = "") {
+  return (
+    extrairDestaquesBriefing(briefing) ||
+    extrairDestaquesBriefing(
+      oficial.caracteristicas ||
+        oficial.descricao_original
+    ) ||
+    [oficial.cores, oficial.estilo_visual]
+      .filter(Boolean)
+      .join(", ") ||
+    "qualidade, confiança e tecnologia"
+  );
+}
+
+function interpretarPedidoPaizinho(pedido) {
+  const texto = normalizarPedidoPaizinho(pedido);
+  const duracaoMatch = texto.match(
+    /(\d+)\s*(s|seg)/
+  );
+
+  return {
+    tom: detectarTomPedido(pedido),
+    duracao: duracaoMatch
+      ? Number(duracaoMatch[1])
+      : null,
+    somente: /somente a fala|so a fala|apenas a fala|mude somente a fala|muda somente a fala/.test(
+      texto
+    )
+      ? "fala"
+      : /somente o roteiro|so o roteiro|apenas o roteiro/.test(
+          texto
+        )
+      ? "roteiro"
+      : /somente a direcao|so a direcao|apenas a direcao/.test(
+          texto
+        )
+      ? "direcao"
+      : "",
+    focoQualidade:
+      /qualidade/.test(texto) &&
+      /fale mais|fala mais|mais sobre|destaque|destaca/.test(
+        texto
+      ),
+    maisForte:
+      /mais forte|mais impacto|mais agressiv|propaganda mais forte|mais poderos/.test(
+        texto
+      ),
+    apresentarProduto:
+      /este produto|apresentar o produto|apresenta o produto|mostrar o produto/.test(
+        texto
+      ),
+  };
+}
+
+function montarTextosDoBriefing({
+  marca,
+  personagem,
+  destaques,
+  tom,
+  temProduto,
+  maisForte,
+  focoQualidade,
+  duracao,
+}) {
+  let dicas =
+    destaques ||
+    "qualidade, confiança e tecnologia";
+
+  if (focoQualidade && !/qualidade/i.test(dicas)) {
+    dicas = `qualidade, ${dicas}`;
+  }
+
+  if (focoQualidade) {
+    dicas = dicas.replace(
+      /qualidade/i,
+      "qualidade em primeiro lugar"
+    );
+  }
+
+  const clima =
+    tom ||
+    (duracao && duracao <= 12 ? "curto" : "") ||
+    (maisForte ? "forte" : "") ||
+    "institucional";
+  const alvo = temProduto
+    ? "este produto"
+    : "a marca";
+
+  if (clima === "descontraido") {
+    return {
+      fala: limitarFalaMascote(
+        temProduto
+          ? `E aí! Eu sou o ${personagem}. Olha este produto da ${marca}: ${dicas} em cada detalhe. ${marca}, pra quem curte automóvel de verdade.`
+          : `E aí! Eu sou o ${personagem}. Na ${marca}, ${dicas} vão com você em cada peça. ${marca}, pra quem curte automóvel de verdade.`
+      ),
+      roteiro: `${personagem} entra descontraído apresentando ${alvo}. Cumprimenta a câmera, destaca ${dicas} com leveza e fecha mostrando a ${marca} em destaque.`,
+      direcao: `${personagem} entra sorrindo, acena, olha para a câmera e apresenta ${alvo} com energia leve. Faz gesto de aprovação e termina com a marca em destaque.`,
+    };
+  }
+
+  if (clima === "tecnico") {
+    return {
+      fala: limitarFalaMascote(
+        `Na ${marca}, cada peça une ${dicas}. ${marca}, especificada para quem entende de automóvel.`
+      ),
+      roteiro: `${personagem} apresenta ${alvo} da ${marca} com foco técnico. Destaca ${dicas} e fecha com a marca em evidência.`,
+      direcao: `${personagem} olha para a câmera, aponta ${alvo}, explica com clareza e faz gesto de aprovação. Câmera suave e final com a marca.`,
+    };
+  }
+
+  if (clima === "curto") {
+    return {
+      fala: limitarFalaMascote(
+        temProduto
+          ? `Este produto é ${marca}: ${dicas} em cada peça.`
+          : `Na ${marca}, ${dicas} em cada peça.`
+      ),
+      roteiro: `${personagem} entra, apresenta ${alvo} e fecha com a ${marca} em destaque.`,
+      direcao: `${personagem} olha para a câmera, apresenta ${alvo} e termina com gesto de aprovação.`,
+    };
+  }
+
+  if (clima === "forte" || maisForte) {
+    return {
+      fala: limitarFalaMascote(
+        temProduto
+          ? `Este é o padrão ${marca}. ${dicas} sem concessões. Feito para quem exige o melhor no automóvel.`
+          : `Na ${marca}, ${dicas} não são discurso: estão em cada peça. ${marca}, para quem não abre mão de resultado.`
+      ),
+      roteiro: `${personagem} entra com presença, apresenta ${alvo} com impacto e reforça ${dicas}. Fecha com a ${marca} em destaque absoluto.`,
+      direcao: `${personagem} entra firme, olha direto para a câmera, aponta ${alvo} e faz gesto de aprovação decisivo. Câmera próxima e final com a marca em evidência.`,
+    };
+  }
+
+  return {
+    fala: limitarFalaMascote(
+      temProduto
+        ? `Olha este produto. Na ${marca}, ${dicas} acompanham você em cada peça. ${marca}, feita para quem entende de automóvel.`
+        : `Na ${marca}, ${dicas} acompanham você em cada peça. ${marca}, feita para quem entende de automóvel.`
+    ),
+    roteiro: `${personagem} entra em cena apresentando ${alvo}. A câmera aproxima suavemente enquanto ele destaca ${dicas} da ${marca}. Finaliza mostrando a marca em destaque.`,
+    direcao: `${personagem} entra sorrindo, olha para a câmera, apresenta ${alvo} e faz gesto de aprovação. Movimento de câmera suave e final com destaque para a marca.`,
+  };
+}
+
+function mesclarCamposPaizinho(atual, novo, somente) {
+  if (somente === "fala") {
+    return {
+      ...atual,
+      fala: novo.fala,
+    };
+  }
+
+  if (somente === "roteiro") {
+    return {
+      ...atual,
+      roteiro: novo.roteiro,
+    };
+  }
+
+  if (somente === "direcao") {
+    return {
+      ...atual,
+      direcao: novo.direcao,
+    };
+  }
+
+  return novo;
+}
+
+function prepararTextosPaizinho({
+  objetivo,
+  outro,
+  empresa,
+  personagem,
+  observacoes,
+  roteiroAtual,
+  falaAtual,
+  direcaoAtual,
+  mascote,
+  temProduto,
+  forcarInicial,
+}) {
+  const pedido = String(observacoes || "").trim();
+  const oficial = mascote || {};
+  const marca =
+    String(empresa || "").trim() ||
+    String(oficial.empresa || "").trim() ||
+    extrairMarcaDoBriefing(pedido) ||
+    extrairMarcaDoBriefing(falaAtual) ||
+    "sua marca";
+  const nomePersonagem =
+    String(personagem || "").trim() ||
+    String(oficial.nome || "").trim() ||
+    "o mascote";
+  const destaques = destaquesDoMascote(
+    oficial,
+    pedido || outro
+  );
+  const interpretacao = interpretarPedidoPaizinho(
+    pedido
+  );
+  const usarProduto =
+    Boolean(temProduto) ||
+    interpretacao.apresentarProduto ||
+    objetivo === "produto";
+  const resumo = usarProduto
+    ? `Divulgação de produto da ${marca} com ${nomePersonagem}, destacando ${destaques}.`
+    : `Divulgação institucional da ${marca} com ${nomePersonagem}, destacando ${destaques}.`;
+  const temTextos = Boolean(
+    String(falaAtual || "").trim() ||
+      String(roteiroAtual || "").trim()
+  );
+  const novo = montarTextosDoBriefing({
+    marca,
+    personagem: nomePersonagem,
+    destaques,
+    tom: interpretacao.tom,
+    temProduto: usarProduto,
+    maisForte: interpretacao.maisForte,
+    focoQualidade: interpretacao.focoQualidade,
+    duracao: interpretacao.duracao,
+  });
+
+  const textos =
+    !forcarInicial && pedido && temTextos
+      ? mesclarCamposPaizinho(
+          {
+            fala: falaAtual,
+            roteiro: roteiroAtual,
+            direcao: direcaoAtual,
+          },
+          novo,
+          interpretacao.somente
+        )
+      : novo;
+
+  return {
+    ...textos,
+    resumo,
+    objetivo: usarProduto ? "produto" : "empresa",
+    duracao: interpretacao.duracao,
+  };
+}
 
 const FORMATOS_CLIP = [
   {
@@ -73,7 +446,7 @@ const FORMATOS_CLIP = [
 const MOVIMENTOS = [
   {
     id: "zoom-in",
-    nome: "Zoom de aproximação",
+    nome: "🔍 Aproximação",
   },
   {
     id: "zoom-out",
@@ -89,13 +462,44 @@ const MOVIMENTOS = [
   },
   {
     id: "orbita",
-    nome: "Órbita suave",
+    nome: "↔️ Órbita lateral",
   },
   {
     id: "detalhe",
-    nome: "Foco nos detalhes",
+    nome: "🔬 Detalhes técnicos",
   },
 ];
+
+const MOVIMENTOS_DESTAQUE = [
+  {
+    id: "giro-360",
+    movimentoId: "orbita",
+    nome: "🔄 Giro 360°",
+    avisoFotoUnica: true,
+  },
+  {
+    id: "aproximacao",
+    movimentoId: "zoom-in",
+    nome: "🔍 Aproximação",
+  },
+  {
+    id: "orbita-lateral",
+    movimentoId: "orbita",
+    nome: "↔️ Órbita lateral",
+  },
+  {
+    id: "detalhes",
+    movimentoId: "detalhe",
+    nome: "🔬 Detalhes técnicos",
+  },
+];
+
+const CHAVE_ESTADO_CRIACAO_CLIP =
+  "paiiaEstadoCriacaoClip";
+const CHAVE_RESTAURAR_CRIACAO_CLIP =
+  "paiiaRestaurarCriacaoClip";
+const CHAVE_VOLTAR_CRIACAO_CLIP =
+  "voltarParaCriacaoClip";
 
 const TRILHAS = [
   {
@@ -155,9 +559,8 @@ function mensagemAmigavelClip(
     )
   ) {
     return (
-      "O provedor de vídeo recusou esta geração pelo filtro automático de conteúdo (E005). " +
-      "Isso pode acontecer mesmo com uma foto normal de autopeça. " +
-      "O APPIA não enviou nada ao Mercado Livre."
+      "O PAIIA recusou esta geração pelo filtro automático de conteúdo. " +
+      "Isso pode acontecer mesmo com uma foto normal de autopeça."
     );
   }
 
@@ -190,7 +593,8 @@ function criarCena(indice = 0) {
 
 
 async function garantirImagemPublicaClip(
-  imagem
+  imagem,
+  opcoes = {}
 ) {
   const valor = String(
     imagem || ""
@@ -236,8 +640,11 @@ async function garantirImagemPublicaClip(
       ? "jpg"
       : "png";
 
-  const caminho =
-    `${usuario.id}/marketing/paizinho-appia.${extensao}`;
+  const caminho = opcoes.mascote
+    ? `${usuario.id}/marketing/mascotes/mascote-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}.${extensao}`
+    : `${usuario.id}/marketing/paizinho-appia.${extensao}`;
 
   const {
     error: erroUpload,
@@ -251,7 +658,7 @@ async function garantirImagemPublicaClip(
           contentType:
             blob.type ||
             "image/png",
-          upsert: true,
+          upsert: !opcoes.mascote,
         }
       );
 
@@ -512,40 +919,39 @@ async function consultarCreditosClip() {
   );
 }
 
-async function debitarCreditoClip() {
+async function chamarGerarClipProduto(body) {
   const {
-    data,
-    error,
-  } = await supabase.rpc(
-    "debitar_credito_clip"
-  );
+    data: sessao,
+    error: erroSessao,
+  } = await supabase.auth.getSession();
 
-  if (error) {
-    const mensagem =
-      String(
-        error?.message || ""
-      ).toUpperCase();
+  const token =
+    sessao?.session?.access_token || "";
 
-    if (
-      mensagem.includes(
-        "CREDITOS_INSUFICIENTES"
-      )
-    ) {
-      throw new Error(
-        "Você não possui créditos suficientes para gerar um novo Clip."
-      );
-    }
-
+  if (erroSessao || !token) {
     throw new Error(
-      "O Clip foi gerado, mas não foi possível registrar o uso do crédito: " +
-        error.message
+      "Faça login para gerar o Clip de Produto."
     );
   }
 
-  return Math.max(
-    0,
-    Number(data || 0)
+  const {
+    data,
+    error,
+  } = await supabase.functions.invoke(
+    "gerar-clip-produto",
+    {
+      body,
+      headers: {
+        Authorization:
+          `Bearer ${token}`,
+      },
+    }
   );
+
+  return {
+    data,
+    error,
+  };
 }
 
 async function salvarClipGeradoNaGaleria({
@@ -829,23 +1235,71 @@ function finalizarClipParaAnuncio({
   });
 }
 
+function BlocoPaizinhoDestaque({
+  titulo = "Crie seu mascote ou prepare seu vídeo",
+  texto = "Você pode começar descrevendo sua ideia. A foto é opcional.",
+}) {
+  return (
+    <div
+      style={{
+        marginBottom: "16px",
+        padding: "18px 18px 16px",
+        borderRadius: "16px",
+        border: "1px solid rgba(34,211,238,.45)",
+        background:
+          "linear-gradient(145deg,#082f49 0%,#0c4a6e 42%,#0f172a 100%)",
+        boxShadow:
+          "0 12px 32px rgba(8,47,73,.35), inset 0 1px 0 rgba(103,232,249,.18)",
+      }}
+    >
+      <div
+        style={{
+          color: "#67e8f9",
+          fontSize: "22px",
+          fontWeight: "bold",
+          letterSpacing: "0.02em",
+          lineHeight: 1.2,
+        }}
+      >
+        🤖 PAIZINHO IA
+      </div>
+      <div
+        style={{
+          marginTop: "8px",
+          color: "#e0f2fe",
+          fontSize: "15px",
+          fontWeight: "bold",
+        }}
+      >
+        {titulo}
+      </div>
+      <p
+        style={{
+          margin: "6px 0 0",
+          color: "#94a3b8",
+          fontSize: "13px",
+          lineHeight: 1.5,
+        }}
+      >
+        {texto}
+      </p>
+    </div>
+  );
+}
+
 export default function ClipIA({
   cardStyle,
   setScreen,
+  embutido = false,
 }) {
   const entradaClipProcessadaRef =
     useRef(false);
 
 const inputFotoClipRef =
   useRef(null);
+  const blocoCriarMascoteRef = useRef(null);
 
-  const [imagemClip, setImagemClip] = useState(() => {
-    return (
-      localStorage.getItem(
-        "imagemClipSelecionada"
-      ) || ""
-    );
-  });
+  const [imagemClip, setImagemClip] = useState("");
 
   const [videosGerados, setVideosGerados] =
     useState([]);
@@ -887,7 +1341,7 @@ const inputFotoClipRef =
     useState(false);
 
   const [modoGeracao, setModoGeracao] =
-    useState("rapido");
+    useState("aguardando");
 
   const [entradaMarketing, setEntradaMarketing] =
     useState(false);
@@ -897,6 +1351,8 @@ const inputFotoClipRef =
 
   const modoMascote =
     modoGeracao === "mascote";
+
+  const modoClipProduto = false;
 
   const [empresaMascote, setEmpresaMascote] =
     useState("");
@@ -908,6 +1364,67 @@ const inputFotoClipRef =
     useState(
       "O mascote olha para a câmera, fala com simpatia e faz gestos naturais de apresentação."
     );
+
+  const [objetivoMidia, setObjetivoMidia] =
+    useState("");
+
+  const [objetivoOutro, setObjetivoOutro] =
+    useState("");
+
+  const [observacoesMidia, setObservacoesMidia] =
+    useState("");
+
+  const [
+    personalizarPaizinho,
+    setPersonalizarPaizinho,
+  ] = useState(false);
+
+  const [abaMidias, setAbaMidias] = useState("produto");
+
+  function escolherAbaMidias(aba) {
+    const valor =
+      aba === "clip" || aba === "produto"
+        ? aba
+        : "paizinho";
+    setAbaMidias(valor);
+    localStorage.setItem("paiiaAbaMidias", valor);
+    if (valor === "clip") {
+      setModoGeracao("mascote");
+    }
+  }
+
+  useEffect(() => {
+    localStorage.setItem("paiiaAbaMidias", "produto");
+  }, []);
+
+  const [
+    resumoCampanhaMascote,
+    setResumoCampanhaMascote,
+  ] = useState("");
+
+  const [roteiroMidia, setRoteiroMidia] =
+    useState("");
+
+  const [
+    roteiroPaizinhoPronto,
+    setRoteiroPaizinhoPronto,
+  ] = useState(false);
+
+  const [opcaoMascoteUi, setOpcaoMascoteUi] =
+    useState("");
+
+  const [mascoteOficial, setMascoteOficial] =
+    useState(null);
+
+  const [
+    movimentoDestaqueUi,
+    setMovimentoDestaqueUi,
+  ] = useState("");
+
+  const [
+    mostrarModalCreditos,
+    setMostrarModalCreditos,
+  ] = useState(false);
 
   const [falaPaizinho, setFalaPaizinho] =
   useState(
@@ -1004,6 +1521,132 @@ const inputFotoClipRef =
 
     entradaClipProcessadaRef.current = true;
 
+    if (
+      deveIniciarNovaCriacaoMidia() &&
+      !sessaoMidiaDeveContinuar()
+    ) {
+      setImagemClip("");
+      setVideosGerados([]);
+      setVideoSelecionadoId("");
+      setClipConfirmado(false);
+      setStatusClip("");
+      setProcessandoClip(false);
+      setRoteiroMidia("");
+      localStorage.removeItem("imagemClipSelecionada");
+      localStorage.removeItem("imagemClipProdutoSelecionada");
+      localStorage.removeItem("abrirClipAutomatico");
+      localStorage.removeItem("retornarParaClipIA");
+      localStorage.removeItem("clipSelecionado");
+      localStorage.removeItem("clipSelecionadoEstilo");
+      consumirNovaCriacaoMidia();
+      return;
+    }
+
+    if (
+      localStorage.getItem(
+        CHAVE_RESTAURAR_CRIACAO_CLIP
+      ) === "true"
+    ) {
+      try {
+        const bruto =
+          localStorage.getItem(
+            CHAVE_ESTADO_CRIACAO_CLIP
+          );
+        const estado = bruto
+          ? JSON.parse(bruto)
+          : null;
+
+        if (estado && typeof estado === "object") {
+          if (estado.imagemClip) {
+            setImagemClip(estado.imagemClip);
+            localStorage.setItem(
+              "imagemClipSelecionada",
+              estado.imagemClip
+            );
+          }
+          if (estado.modoGeracao) {
+            const modoRestaurado =
+              estado.modoGeracao === "rapido" ||
+              estado.modoGeracao === "personalizado"
+                ? "mascote"
+                : estado.modoGeracao;
+            setModoGeracao(modoRestaurado);
+          }
+          if (estado.estiloSelecionado) {
+            setEstiloSelecionado(
+              estado.estiloSelecionado
+            );
+          }
+          if (estado.formatoClip) {
+            setFormatoClip(estado.formatoClip);
+          }
+          if (estado.trilhaClip) {
+            setTrilhaClip(estado.trilhaClip);
+          }
+          if (Array.isArray(estado.cenas) && estado.cenas.length) {
+            setCenas(estado.cenas);
+          }
+          if (estado.roteiroMidia != null) {
+            setRoteiroMidia(estado.roteiroMidia);
+          }
+          if (estado.falaMascote != null) {
+            setFalaMascote(estado.falaMascote);
+          }
+          if (estado.instrucaoMascote != null) {
+            setInstrucaoMascote(
+              estado.instrucaoMascote
+            );
+          }
+          if (estado.empresaMascote != null) {
+            setEmpresaMascote(
+              estado.empresaMascote
+            );
+          }
+          if (estado.observacoesMidia != null) {
+            setObservacoesMidia(
+              estado.observacoesMidia
+            );
+          }
+          if (estado.tituloClip != null) {
+            setTituloClip(estado.tituloClip);
+          }
+          if (estado.subtituloClip != null) {
+            setSubtituloClip(
+              estado.subtituloClip
+            );
+          }
+          if (typeof estado.mostrarTextos === "boolean") {
+            setMostrarTextos(estado.mostrarTextos);
+          }
+          if (estado.opcaoMascoteUi != null) {
+            setOpcaoMascoteUi(
+              estado.opcaoMascoteUi
+            );
+          }
+          if (estado.movimentoDestaqueUi != null) {
+            setMovimentoDestaqueUi(
+              estado.movimentoDestaqueUi
+            );
+          }
+          if (typeof estado.roteiroPaizinhoPronto === "boolean") {
+            setRoteiroPaizinhoPronto(
+              estado.roteiroPaizinhoPronto
+            );
+          }
+        }
+      } catch (erro) {
+        console.error(
+          "Não foi possível restaurar a criação do Clip:",
+          erro
+        );
+      }
+
+      localStorage.removeItem(
+        CHAVE_RESTAURAR_CRIACAO_CLIP
+      );
+      return;
+    }
+
     const abrirPaizinhoMarketing =
       localStorage.getItem(
         "abrirPaizinhoMarketing"
@@ -1076,6 +1719,36 @@ const inputFotoClipRef =
       return;
     }
 
+    const abrirCriacaoIA =
+      localStorage.getItem(
+        "abrirModoCriacaoIA"
+      ) === "true" ||
+      localStorage.getItem(
+        "abrirModoMascoteIA"
+      ) === "true";
+
+    if (abrirCriacaoIA) {
+      setModoGeracao("mascote");
+      setFormatoClip("vertical");
+      setTrilhaClip("sem-musica");
+      setMostrarTextos(false);
+      setCenas([
+        {
+          id: `criacao-${Date.now()}`,
+          nome: "Criação IA",
+          duracao: 8,
+          movimento: "apresentacao",
+        },
+      ]);
+
+      localStorage.removeItem(
+        "abrirModoCriacaoIA"
+      );
+      localStorage.removeItem(
+        "abrirModoMascoteIA"
+      );
+    }
+
     const imagemNova =
       localStorage.getItem(
         "imagemClipSelecionada"
@@ -1087,6 +1760,16 @@ const inputFotoClipRef =
       ) === "true";
 
     if (abrirAutomatico && imagemNova) {
+      if (localStorage.getItem("paiiaAbaMidias") === "produto") {
+        localStorage.setItem(
+          "imagemClipProdutoSelecionada",
+          imagemNova
+        );
+        localStorage.removeItem("abrirClipAutomatico");
+        localStorage.removeItem("retornarParaClipIA");
+        return;
+      }
+
       setImagemClip(imagemNova);
 
       setVideosGerados([]);
@@ -1152,6 +1835,51 @@ const inputFotoClipRef =
     localStorage.removeItem(
       "clipSelecionadoEstilo"
     );
+
+    localStorage.removeItem(
+      "imagemClipProdutoSelecionada"
+    );
+  }, []);
+
+  useEffect(() => {
+    let ativo = true;
+
+    async function carregarMascoteOficial() {
+      try {
+        const usuario = await obterUsuarioMascote();
+        const oficial = await buscarMascoteOficial(
+          usuario.id
+        );
+
+        if (!ativo) {
+          return;
+        }
+
+        setMascoteOficial(oficial || null);
+
+        if (
+          localStorage.getItem(
+            "paiiaUsarMascoteOficial"
+          ) === "true" &&
+          oficial?.imagem_base
+        ) {
+          localStorage.removeItem(
+            "paiiaUsarMascoteOficial"
+          );
+          aplicarImagemMascote(oficial);
+        }
+      } catch {
+        if (ativo) {
+          setMascoteOficial(null);
+        }
+      }
+    }
+
+    carregarMascoteOficial();
+
+    return () => {
+      ativo = false;
+    };
   }, []);
 
 
@@ -1430,6 +2158,12 @@ function importarFotoComputador(
       "retornarParaClipIA",
       "true"
     );
+    localStorage.setItem(
+      "retornoCriacaoMidia",
+      embutido
+        ? "midiasAppia"
+        : "clipIA"
+    );
     localStorage.removeItem(
       "clipSelecionado"
     );
@@ -1437,6 +2171,10 @@ function importarFotoComputador(
       "clipSelecionadoEstilo"
     );
 
+    localStorage.setItem(
+      "paiiaAbaMidias",
+      "clip"
+    );
     if (typeof setScreen === "function") {
       setScreen("galeria");
       return;
@@ -1445,6 +2183,190 @@ function importarFotoComputador(
     alert(
       "Não foi possível abrir a Galeria."
     );
+  }
+
+  function salvarEstadoCriacaoClip() {
+    const estado = {
+      imagemClip,
+      modoGeracao,
+      estiloSelecionado,
+      formatoClip,
+      trilhaClip,
+      cenas,
+      roteiroMidia,
+      falaMascote,
+      instrucaoMascote,
+      empresaMascote,
+      observacoesMidia,
+      tituloClip,
+      subtituloClip,
+      mostrarTextos,
+      opcaoMascoteUi,
+      movimentoDestaqueUi,
+      roteiroPaizinhoPronto,
+    };
+
+    localStorage.setItem(
+      CHAVE_ESTADO_CRIACAO_CLIP,
+      JSON.stringify(estado)
+    );
+
+    if (imagemClip) {
+      localStorage.setItem(
+        "imagemClipSelecionada",
+        imagemClip
+      );
+    }
+  }
+
+  function abrirPlanosCreditos() {
+    // PONTO DE CHECKOUT FUTURO:
+    // conectar aqui o pagamento/recarga real de créditos PAIIA.
+    // Hoje só abre a tela de Planos e Pagamentos, preservando o estado da criação.
+    salvarEstadoCriacaoClip();
+    localStorage.setItem(
+      CHAVE_RESTAURAR_CRIACAO_CLIP,
+      "true"
+    );
+    localStorage.setItem(
+      CHAVE_VOLTAR_CRIACAO_CLIP,
+      embutido ? "midiasAppia" : "clipIA"
+    );
+    localStorage.setItem(
+      "abrirSecaoCreditosVideo",
+      "true"
+    );
+    setMostrarModalCreditos(false);
+    setScreen?.("planosPagamentos");
+  }
+
+  function aplicarSugestaoPaizinho({
+    oficial,
+    forcarInicial = false,
+    temProduto = false,
+    pedido = "",
+  }) {
+    const mascote = oficial || mascoteOficial || {};
+    const textos = prepararTextosPaizinho({
+      objetivo: temProduto
+        ? "produto"
+        : objetivoMidia || "empresa",
+      outro: objetivoOutro || resumoCampanhaMascote,
+      empresa:
+        mascote.empresa ||
+        empresaMascote ||
+        "",
+      personagem: mascote.nome || "o mascote",
+      observacoes: pedido,
+      roteiroAtual: roteiroMidia,
+      falaAtual: falaMascote,
+      direcaoAtual: instrucaoMascote,
+      mascote,
+      temProduto,
+      forcarInicial,
+    });
+
+    setEmpresaMascote(
+      mascote.empresa || empresaMascote || ""
+    );
+    setObjetivoMidia(textos.objetivo);
+    setObjetivoOutro(textos.resumo);
+    setResumoCampanhaMascote(textos.resumo);
+    setFalaMascote(textos.fala);
+    setRoteiroMidia(textos.roteiro);
+    setInstrucaoMascote(textos.direcao);
+    setRoteiroPaizinhoPronto(true);
+
+    if (forcarInicial) {
+      setCenas([
+        {
+          id: `mascote-${Date.now()}`,
+          nome: "Criação IA",
+          duracao: textos.duracao || 8,
+          movimento: "apresentacao",
+        },
+      ]);
+      return;
+    }
+
+    if (textos.duracao) {
+      setCenas((anteriores) => {
+        if (!anteriores.length) {
+          return [
+            {
+              id: `mascote-${Date.now()}`,
+              nome: "Criação IA",
+              duracao: textos.duracao,
+              movimento: "apresentacao",
+            },
+          ];
+        }
+
+        return anteriores.map((cena) => ({
+          ...cena,
+          duracao: textos.duracao,
+        }));
+      });
+    }
+  }
+
+  function aplicarImagemMascote(oficial) {
+    if (!oficial?.imagem_base) {
+      return;
+    }
+
+    const temProduto = Boolean(
+      imagemClip &&
+        imagemClip !== oficial.imagem_base
+    );
+
+    setImagemClip(oficial.imagem_base);
+    localStorage.setItem(
+      "imagemClipSelecionada",
+      oficial.imagem_base
+    );
+    setEmpresaMascote(
+      oficial.empresa || empresaMascote
+    );
+    setModoGeracao("mascote");
+    setOpcaoMascoteUi("usar");
+    setFormatoClip("vertical");
+    setTrilhaClip("sem-musica");
+    setMostrarTextos(false);
+    aplicarSugestaoPaizinho({
+      oficial,
+      forcarInicial: true,
+      temProduto,
+    });
+  }
+
+  function abrirCriarMascote() {
+    blocoCriarMascoteRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+
+  function usarMascoteSalvo() {
+    if (mascoteOficial?.imagem_base) {
+      aplicarImagemMascote(mascoteOficial);
+      return;
+    }
+
+    abrirCriarMascote();
+  }
+
+  function aplicarRoteiroPaizinho() {
+    aplicarSugestaoPaizinho({
+      oficial: mascoteOficial,
+      forcarInicial: !String(
+        observacoesMidia || ""
+      ).trim(),
+      temProduto:
+        objetivoMidia === "produto" ||
+        /produto/i.test(resumoCampanhaMascote),
+      pedido: observacoesMidia,
+    });
   }
 
   function atualizarEtapa(
@@ -1620,97 +2542,37 @@ function importarFotoComputador(
         imagemClip
       );
 
-    const respostaApi = await fetch(
-      API_PROCESSAR_CLIP,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-          apikey: supabaseKey,
-          Authorization:
-            `Bearer ${supabaseKey}`,
-        },
-        body: JSON.stringify({
-          imageUrl:
-            imagemPublica,
-          tipo:
-            modoPaizinho
-              ? "clip_paizinho_appia"
-              : "clip_profissional",
-          modoPaizinho,
-          fala:
-            modoPaizinho
-              ? falaPaizinho
-              : "",
-          estilo: estilo.id,
-          duracao: duracaoTotal,
-          formato:
-            formatoSelecionado.id,
-          largura:
-            formatoSelecionado.largura,
-          altura:
-            formatoSelecionado.altura,
-          proporcao:
-            formatoSelecionado.proporcao,
-          trilha: trilhaClip,
-          titulo:
-            mostrarTextos &&
-            !tentativaNeutra
-              ? tituloClip
-              : "",
-          subtitulo:
-            mostrarTextos &&
-            !tentativaNeutra
-              ? subtituloClip
-              : "",
-          cenas:
-            modoPaizinho
-              ? [
-                  {
-  nome:
-    "Apresentação Sondinha",
-
-  duracao: 15,
-
-  movimento:
-    "apresentacao",
-},
-                ]
-              : tentativaNeutra
-              ? []
-              : cenas,
-          instrucoes,
-        }),
-      }
-    );
-
-    let data = {};
-
-    try {
-      data =
-        await respostaApi.json();
-    } catch {
-      throw new Error(
-        `${estilo.titulo} não retornou uma resposta válida.`
-      );
-    }
+    const {
+      data,
+      error,
+    } = await chamarGerarClipProduto({
+      imageUrl: imagemPublica,
+      estilo: estilo.id,
+      duracao: duracaoTotal,
+      formato:
+        formatoSelecionado.id,
+      instrucoes,
+    });
 
     const videoResultado =
-      data.video_processado ||
-      data.video_url ||
-      data.video ||
-      data.url;
+      data?.video ||
+      data?.video_url ||
+      "";
 
     if (
-      !respostaApi.ok ||
+      error ||
+      !data?.sucesso ||
       !videoResultado
     ) {
       const mensagemOriginal =
-        obterMensagemErro(data);
+        obterMensagemErro(
+          data || {
+            erro:
+              error?.message,
+          }
+        );
 
       if (
-        !modoPaizinho &&
         !tentativaNeutra &&
         estilo.id ===
           "marketplace" &&
@@ -1719,7 +2581,7 @@ function importarFotoComputador(
         )
       ) {
         setStatusClip(
-          "⚠️ O provedor bloqueou a primeira tentativa (E005). Tentando uma apresentação neutra do produto..."
+          "⚠️ O PAIIA recusou a primeira tentativa. Tentando uma apresentação neutra do produto..."
         );
 
         return gerarVersao(
@@ -1729,65 +2591,31 @@ function importarFotoComputador(
       }
 
       throw new Error(
-        `${estilo.titulo}: ${mensagemAmigavelClip(
+        mensagemAmigavelClip(
           mensagemOriginal
-        )}`
+        )
       );
     }
 
-    let videoFinal =
-      videoResultado;
-
-    if (modoPaizinho) {
-      setStatusClip(
-        "🎙️ Gerando a voz do Paizinho..."
+    if (
+      data?.saldo != null
+    ) {
+      setSaldoCreditos(
+        Math.max(
+          0,
+          Number(data.saldo)
+        )
       );
-
-      const audioPaizinho =
-        await gerarVozPaizinhoSeparada(
-          falaPaizinho
-        );
-
-      setStatusClip(
-        "🗣️ Sincronizando voz e movimentos do Paizinho..."
-      );
-
-      videoFinal =
-        await sincronizarPaizinhoSeparado({
-          videoUrl:
-            videoResultado,
-          audioUrl:
-            audioPaizinho,
-          onStatus:
-            setStatusClip,
-        });
     }
 
     return {
       ...estilo,
-      id:
-        modoPaizinho
-          ? "paizinho-appia"
-          : estilo.id,
-      icone:
-        modoPaizinho
-          ? "🤖"
-          : estilo.icone,
-      titulo:
-        modoPaizinho
-          ? "Paizinho APPIA"
-          : estilo.titulo,
-      nome:
-        modoPaizinho
-          ? "Paizinho APPIA"
-          : estilo.nome,
-      video:
-        videoFinal,
+      id: estilo.id,
+      video: videoResultado,
       formato:
         formatoSelecionado,
       duracao: duracaoTotal,
       tentativaNeutra,
-      modoPaizinho,
     };
   }
 
@@ -1795,7 +2623,7 @@ function importarFotoComputador(
   async function gerarClipEmSegundoPlano() {
     if (!imagemClip) {
       alert(
-        "Selecione uma imagem para gerar o Clip."
+        "Escolha uma foto para gerar o vídeo."
       );
       return;
     }
@@ -1913,139 +2741,49 @@ function importarFotoComputador(
           async (
             tentativaNeutra = false
           ) => {
-            const respostaApi =
-              await fetch(
-                API_PROCESSAR_CLIP,
-                {
-                  method:
-                    "POST",
-
-                  headers: {
-                    "Content-Type":
-                      "application/json",
-                    apikey:
-                      supabaseKey,
-                    Authorization:
-                      `Bearer ${supabaseKey}`,
-                  },
-
-                  body:
-                    JSON.stringify({
-                      imageUrl:
-                        dadosGeracao
-                          .imagemClip,
-
-                      tipo:
-                        modoPaizinho
-                          ? "clip_paizinho_appia"
-                          : "clip_profissional",
-
-                      modoPaizinho,
-
-                      fala:
-                        modoPaizinho
-                          ? falaPaizinho
-                          : "",
-
-                      estilo:
-                        dadosGeracao
-                          .estilo.id,
-
-                      duracao:
-                        dadosGeracao
-                          .duracao,
-
-                      formato:
-                        dadosGeracao
-                          .formato.id,
-
-                      largura:
-                        dadosGeracao
-                          .formato
-                          .largura,
-
-                      altura:
-                        dadosGeracao
-                          .formato
-                          .altura,
-
-                      proporcao:
-                        dadosGeracao
-                          .formato
-                          .proporcao,
-
-                      trilha:
-                        dadosGeracao
-                          .trilha,
-
-                      titulo:
-                        tentativaNeutra
-                          ? ""
-                          : dadosGeracao
-                              .titulo,
-
-                      subtitulo:
-                        tentativaNeutra
-                          ? ""
-                          : dadosGeracao
-                              .subtitulo,
-
-                      cenas:
-                        modoPaizinho
-                          ? [
-                            {
-  nome:
-    "Apresentação Sondinha",
-
-  duracao: 15,
-
-  movimento:
-    "apresentacao",
-},
-                            ]
-                          : tentativaNeutra
-                          ? []
-                          : dadosGeracao
-                              .cenas,
-
-                      instrucoes:
-                        tentativaNeutra
-                          ? montarInstrucoesNeutrasMarketplace()
-                          : dadosGeracao
-                              .instrucoes,
-                    }),
-                }
-              );
-
-            let data = {};
-
-            try {
-              data =
-                await respostaApi.json();
-            } catch {
-              throw new Error(
-                "O provedor não retornou uma resposta válida para o Clip."
-              );
-            }
+            const {
+              data,
+              error,
+            } =
+              await chamarGerarClipProduto({
+                imageUrl:
+                  dadosGeracao
+                    .imagemClip,
+                estilo:
+                  dadosGeracao
+                    .estilo.id,
+                duracao:
+                  dadosGeracao
+                    .duracao,
+                formato:
+                  dadosGeracao
+                    .formato.id,
+                instrucoes:
+                  tentativaNeutra
+                    ? montarInstrucoesNeutrasMarketplace()
+                    : dadosGeracao
+                        .instrucoes,
+              });
 
             const videoResultado =
-              data
-                .video_processado ||
-              data.video_url ||
-              data.video ||
-              data.url;
+              data?.video ||
+              data?.video_url ||
+              "";
 
             if (
-              !respostaApi.ok ||
+              error ||
+              !data?.sucesso ||
               !videoResultado
             ) {
               const mensagem =
                 obterMensagemErro(
-                  data
+                  data || {
+                    erro:
+                      error?.message,
+                  }
                 );
 
               if (
-                !modoPaizinho &&
                 !tentativaNeutra &&
                 dadosGeracao
                   .estilo.id ===
@@ -2069,42 +2807,8 @@ function importarFotoComputador(
             return videoResultado;
           };
 
-        let urlClip =
+        const urlClip =
           await gerar(false);
-
-        if (modoPaizinho) {
-          const audioPaizinho =
-            await gerarVozPaizinhoSeparada(
-              falaPaizinho
-            );
-
-          urlClip =
-            await sincronizarPaizinhoSeparado({
-              videoUrl:
-                urlClip,
-              audioUrl:
-                audioPaizinho,
-              onStatus:
-                setStatusClip,
-            });
-        }
-
-        await salvarClipGeradoNaGaleria({
-  usuarioId:
-    usuario.id,
-
-  imagemOriginal:
-    imagemPublica,
-
-  urlClip:
-    urlFinal,
-
-  estilo:
-    "mascote-veo",
-
-  tipo:
-    "mascote",
-});
 
         finalizarClipParaAnuncio({
           urlClip,
@@ -2172,7 +2876,7 @@ function importarFotoComputador(
 
     if (!imagemClip) {
       throw new Error(
-        "Selecione a imagem do seu mascote."
+        "Escolha uma foto para gerar o vídeo."
       );
     }
 
@@ -2194,22 +2898,26 @@ function importarFotoComputador(
       );
     }
 
-    const usuario =
-      await obterUsuarioAtualClip();
-
     setStatusClip(
-      "🎭 Publicando a imagem do mascote..."
+      "🎭 Publicando a imagem..."
     );
 
     atualizarEtapa("analise");
 
     const imagemPublica =
       await garantirImagemPublicaClip(
-        imagemClip
+        imagemClip,
+        {
+          mascote: true,
+        }
       );
 
+    setImagemClip(
+      imagemPublica
+    );
+
     setStatusClip(
-      "🎬 Enviando seu mascote para o Veo 3.1..."
+      "🎬 Iniciando a Criação IA..."
     );
 
     atualizarEtapa("roteiro");
@@ -2218,17 +2926,22 @@ function importarFotoComputador(
       data: inicio,
       error: erroInicio,
     } = await supabase.functions.invoke(
-      "iniciar-mascote-veo",
+      "gerar-criacao-ia",
       {
         body: {
-          imagemUrl:
-            imagemPublica,
+          etapa: "iniciar",
+          imagemUrl: imagemPublica,
           fala,
           empresa,
           instrucao:
-            String(
-              instrucaoMascote || ""
-            ).trim(),
+            [
+              mascoteOficial?.prompt_base || "",
+              String(
+                instrucaoMascote || ""
+              ).trim(),
+            ]
+              .filter(Boolean)
+              .join(" "),
           formato:
             formatoSelecionado
               .proporcao === "16:9"
@@ -2238,34 +2951,22 @@ function importarFotoComputador(
       }
     );
 
-    if (erroInicio) {
-      throw new Error(
-        "Não foi possível iniciar o Mascote IA: " +
-          (
-            erroInicio.message ||
-            "erro na função iniciar-mascote-veo."
-          )
-      );
-    }
-
     if (
+      erroInicio ||
       !inicio?.sucesso ||
-      !inicio?.operation_name
+      !inicio?.operacao
     ) {
       throw new Error(
         inicio?.erro ||
-          "O Veo não retornou o identificador da geração."
+          erroInicio?.message ||
+          "Não foi possível iniciar a Criação IA."
       );
     }
 
     atualizarEtapa("movimento");
 
-    const operationName =
-      inicio.operation_name;
-
-    let videoUrl = "";
-    let videoBase64 = "";
-    let mimeType = "video/mp4";
+    let urlFinal = "";
+    let saldoFinal = null;
 
     for (
       let tentativa = 0;
@@ -2281,7 +2982,7 @@ function importarFotoComputador(
       );
 
       setStatusClip(
-        `🎭 Veo criando seu mascote... ${
+        `🎭 PAIIA gerando sua Criação IA... ${
           tentativa + 1
         }`
       );
@@ -2290,156 +2991,107 @@ function importarFotoComputador(
         data: consulta,
         error: erroConsulta,
       } = await supabase.functions.invoke(
-        "consultar-mascote-veo",
+        "gerar-criacao-ia",
         {
           body: {
-            operation_name:
-              operationName,
+            etapa: "consultar",
+            operacao:
+              inicio.operacao,
+            imagemUrl:
+              imagemPublica,
           },
         }
       );
 
-      if (erroConsulta) {
-        throw new Error(
-          "Não foi possível consultar a geração do Mascote IA: " +
-            (
-              erroConsulta.message ||
-              "erro ao consultar o Veo."
-            )
-        );
-      }
-
-      if (!consulta?.sucesso) {
+      if (
+        erroConsulta ||
+        !consulta?.sucesso
+      ) {
         throw new Error(
           consulta?.erro ||
-            "O Veo retornou erro durante a geração."
+            erroConsulta?.message ||
+            "Não foi possível concluir a Criação IA."
         );
       }
 
-      if (!consulta?.concluido) {
+      if (consulta?.pendente) {
         continue;
       }
 
-      videoUrl =
+      urlFinal =
+        consulta?.video ||
         consulta?.video_url ||
         "";
 
-      videoBase64 =
-        consulta?.video_base64 ||
-        "";
-
-      mimeType =
-        consulta?.mime_type ||
-        "video/mp4";
+      if (consulta?.saldo != null) {
+        saldoFinal = Number(
+          consulta.saldo
+        );
+      }
 
       break;
     }
 
-    if (
-      !videoUrl &&
-      !videoBase64
-    ) {
+    if (!urlFinal) {
       throw new Error(
-        "O Veo demorou mais que o esperado ou não retornou o vídeo final."
+        "A Criação IA demorou mais que o esperado. Nenhum crédito PAIIA foi usado."
       );
     }
 
-    let urlFinal =
-      videoUrl;
+    const videoOriginal = urlFinal;
 
-    if (videoBase64) {
-      setStatusClip(
-        "💾 Salvando o vídeo do mascote no PAIIA..."
+    setStatusClip(
+      "🗣️ Gerando a voz da fala..."
+    );
+
+    const audioUrl =
+      await gerarVozPaizinhoSeparada(
+        fala
       );
 
-      const binario =
-        atob(videoBase64);
+    setStatusClip(
+      "🗣️ Sincronizando a fala no vídeo..."
+    );
 
-      const bytes =
-        new Uint8Array(
-          binario.length
-        );
-
-      for (
-        let i = 0;
-        i < binario.length;
-        i++
-      ) {
-        bytes[i] =
-          binario.charCodeAt(i);
-      }
-
-      const blob =
-        new Blob(
-          [bytes],
-          {
-            type: mimeType,
-          }
-        );
-
-      const caminhoVideo =
-        `${usuario.id}/marketing/mascotes/veo-${Date.now()}.mp4`;
-
-      const {
-        error: erroUploadVideo,
-      } = await supabase.storage
-        .from("imagens")
-        .upload(
-          caminhoVideo,
-          blob,
-          {
-            contentType:
-              "video/mp4",
-            upsert: false,
-          }
-        );
-
-      if (erroUploadVideo) {
-        throw new Error(
-          "O vídeo foi criado, mas não foi possível salvá-lo no Storage: " +
-            erroUploadVideo.message
-        );
-      }
-
-      const {
-        data: dadosPublicosVideo,
-      } = supabase.storage
-        .from("imagens")
-        .getPublicUrl(
-          caminhoVideo
-        );
-
-      urlFinal =
-        dadosPublicosVideo?.publicUrl ||
-        "";
-    }
+    urlFinal =
+      await sincronizarPaizinhoSeparado({
+        videoUrl: videoOriginal,
+        audioUrl,
+        onStatus: setStatusClip,
+      });
 
     if (!urlFinal) {
       throw new Error(
-        "O Mascote IA foi concluído sem uma URL válida de vídeo."
+        "A sincronização terminou, mas não retornou o vídeo com áudio."
       );
     }
 
-    atualizarEtapa("render");
+    const usuarioGaleria =
+      await obterUsuarioAtualClip();
 
     await salvarClipGeradoNaGaleria({
-      usuarioId:
-        usuario.id,
-      imagemOriginal:
-        imagemPublica,
-      urlClip:
-        urlFinal,
-      estilo:
-        "mascote-veo",
+      usuarioId: usuarioGaleria.id,
+      imagemOriginal: imagemPublica,
+      urlClip: urlFinal,
+      estilo: "criacao-ia",
+      tipo: "mascote",
     });
+
+    atualizarEtapa("render");
+
+    if (saldoFinal != null) {
+      setSaldoCreditos(
+        Math.max(0, saldoFinal)
+      );
+    }
 
     return {
       id:
-        `mascote-veo-${Date.now()}`,
+        `criacao-ia-${Date.now()}`,
       icone:
         "🎭",
       titulo:
-        "Mascote IA",
+        "Criação IA",
       nome:
         empresa,
       video:
@@ -2454,10 +3106,21 @@ function importarFotoComputador(
   }
 
   async function gerarClipsIA() {
+    if (processandoClip) {
+      return;
+    }
+
     if (!imagemClip) {
       alert(
-        "Selecione uma imagem para gerar o Clip."
+        "Escolha uma foto para gerar o vídeo."
       );
+      return;
+    }
+
+    if (
+      modoGeracao === "rapido" ||
+      modoGeracao === "personalizado"
+    ) {
       return;
     }
 
@@ -2468,6 +3131,16 @@ function importarFotoComputador(
       return;
     }
 
+    if (
+      saldoCreditos !== null &&
+      saldoCreditos < 1
+    ) {
+      setMostrarModalCreditos(true);
+      return;
+    }
+
+    setProcessandoClip(true);
+
     try {
       setCarregandoCreditos(true);
 
@@ -2477,9 +3150,8 @@ function importarFotoComputador(
       setSaldoCreditos(saldoAtual);
 
       if (saldoAtual < 1) {
-        alert(
-          "💎 Seus créditos de Clip IA terminaram. Compre novos créditos para gerar outro Clip."
-        );
+        setMostrarModalCreditos(true);
+        setProcessandoClip(false);
         return;
       }
     } catch (erro) {
@@ -2490,14 +3162,14 @@ function importarFotoComputador(
 
       alert(
         erro?.message ||
-          "Não foi possível verificar seus créditos."
+          "Não foi possível verificar seus créditos PAIIA."
       );
+      setProcessandoClip(false);
       return;
     } finally {
       setCarregandoCreditos(false);
     }
 
-    setProcessandoClip(true);
     setVideosGerados([]);
     setVideoSelecionadoId("");
     setClipConfirmado(false);
@@ -2513,18 +3185,11 @@ function importarFotoComputador(
     try {
       if (modoMascote) {
         setStatusClip(
-          "🎭 Preparando seu Mascote IA..."
+          "🎭 Preparando sua Criação IA..."
         );
 
         const resultadoMascote =
           await gerarMascoteVeo();
-
-        const novoSaldo =
-          await debitarCreditoClip();
-
-        setSaldoCreditos(
-          novoSaldo
-        );
 
         setVideosGerados([
           resultadoMascote,
@@ -2535,7 +3200,7 @@ function importarFotoComputador(
         );
 
         setStatusClip(
-          "✅ Mascote IA pronto com voz e sincronização."
+          "✅ Criação IA pronta."
         );
 
         return;
@@ -2624,13 +3289,6 @@ function importarFotoComputador(
         );
       }
 
-      const novoSaldo =
-        await debitarCreditoClip();
-
-      setSaldoCreditos(
-        novoSaldo
-      );
-
       atualizarEtapa("render");
 
       setVideosGerados(
@@ -2663,7 +3321,7 @@ function importarFotoComputador(
         erroSensivelE005(
           mensagemErro
         )
-          ? "❌ O provedor de vídeo recusou esta geração pelo filtro automático (E005). Nenhum dado foi enviado ao Mercado Livre. Tente outra foto da peça ou outro estilo."
+          ? "❌ O PAIIA recusou esta geração pelo filtro automático de conteúdo. Tente outra foto da peça ou outro estilo."
           : `❌ ${mensagemErro}`
       );
     } finally {
@@ -2746,11 +3404,11 @@ function importarFotoComputador(
 
       setClipConfirmado(true);
       setStatusClip(
-        "✅ Clip salvo na Galeria APPIA."
+        "✅ Clip salvo na Galeria PAIIA."
       );
 
       alert(
-        "✅ Clip salvo na Galeria APPIA."
+        "✅ Clip salvo na Galeria PAIIA."
       );
     } catch (erro) {
       console.error(
@@ -2797,13 +3455,15 @@ function importarFotoComputador(
   return (
     <div
       style={{
-        marginTop: "24px",
+        marginTop: embutido ? "0" : "24px",
         width: "100%",
         maxWidth: "1240px",
         marginLeft: "auto",
         marginRight: "auto",
+        marginBottom: embutido ? "16px" : "0",
       }}
     >
+      {!embutido && (
       <div
         style={{
           display: "flex",
@@ -2860,7 +3520,9 @@ function importarFotoComputador(
             : "Aguardando foto"}
         </div>
       </div>
+      )}
 
+      {!embutido && (
       <header
         style={{
           textAlign: "center",
@@ -2874,8 +3536,22 @@ function importarFotoComputador(
             fontSize: "34px",
           }}
         >
-          🎬 APPIA Clip Studio
-        </h2>
+  🎬 Clip Premium
+</h2>
+<div
+  style={{
+    marginTop: "10px",
+    padding: "14px 16px",
+    borderRadius: "12px",
+    border: "1px solid rgba(56,189,248,0.35)",
+    background: "rgba(15,23,42,0.65)",
+    color: "#cbd5e1",
+    fontSize: "14px",
+    lineHeight: "1.6",
+  }}
+>
+  Vídeo profissional do seu produto, pronto para anunciar.
+</div>
 
         <p
           style={{
@@ -2884,12 +3560,14 @@ function importarFotoComputador(
             marginBottom: 0,
           }}
         >
-          Transforme fotos de autopeças em vídeos profissionais.
+          Transforme a foto da peça em um vídeo profissional para anúncio.
         </p>
       </header>
+      )}
 
       <div
         style={{
+          display: "none",
           marginBottom: "18px",
           padding: "14px 18px",
           borderRadius: "14px",
@@ -2908,7 +3586,7 @@ function importarFotoComputador(
           flexWrap: "wrap",
         }}
       >
-        <div>
+        <div style={{ minWidth: 0, flex: "1 1 180px" }}>
           <strong
             style={{
               color:
@@ -2918,7 +3596,7 @@ function importarFotoComputador(
               fontSize: "15px",
             }}
           >
-            💎 Créditos disponíveis:{" "}
+            💎 Créditos PAIIA:{" "}
             {carregandoCreditos
               ? "..."
               : saldoCreditos ?? "—"}
@@ -2931,257 +3609,161 @@ function importarFotoComputador(
               fontSize: "12px",
             }}
           >
-            1 novo Clip gerado com IA = 1 crédito.
-            Reutilizar um Clip salvo não consome créditos.
+            1 geração = 1 crédito PAIIA.
           </div>
         </div>
 
-        {saldoCreditos === 0 && (
-          <button
-            type="button"
-            onClick={() =>
-              setScreen?.(
-                "planosPagamentos"
-              )
-            }
-            style={{
-              padding: "10px 14px",
-              borderRadius: "10px",
-              border: "none",
-              background:
-                "linear-gradient(135deg,#2563eb,#22d3ee)",
-              color: "#ffffff",
-              fontWeight: "bold",
-              cursor: "pointer",
-            }}
-          >
-            💎 Comprar créditos
-          </button>
-        )}
-      </div>
-
-      {!imagemClip && (
-        <section
+        <button
+          type="button"
+          onClick={abrirPlanosCreditos}
           style={{
-            ...estiloCard,
-            padding: "32px 28px",
-            textAlign: "center",
-            border: "1px solid #334155",
+            padding: "10px 14px",
+            borderRadius: "10px",
+            border: "none",
             background:
-              "linear-gradient(135deg,#0f172a 0%,#111c33 100%)",
+              "linear-gradient(135deg,#2563eb,#22d3ee)",
+            color: "#ffffff",
+            fontWeight: "bold",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
           }}
         >
-          <div
-            style={{
-              width: "64px",
-              height: "64px",
-              margin: "0 auto 14px",
-              borderRadius: "18px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "#082f49",
-              border: "1px solid #0ea5e9",
-              fontSize: "30px",
-            }}
-          >
-            🎬
-          </div>
+          Comprar créditos
+        </button>
+      </div>
 
-          <h3
+      <div
             style={{
-              color: "#f8fafc",
-              fontSize: "22px",
-              margin: "0 0 8px",
-            }}
-          >
-            Crie um novo Clip
-          </h3>
-
-          <p
-            style={{
-              color: "#94a3b8",
-              lineHeight: 1.55,
-              margin: "0 auto 22px",
-              maxWidth: "620px",
-            }}
-          >
-            Escolha uma foto para criar um novo Clip ou reutilize um
-            vídeo já salvo nas Mídias APPIA.
-          </p>
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "12px",
-              flexWrap: "wrap",
+              display: "none",
+              gridTemplateColumns: "1fr 1fr 1fr",
+              gap: "10px",
+              marginBottom: "18px",
             }}
           >
             <button
               type="button"
-              onClick={trocarFoto}
+              onClick={() => escolherAbaMidias("paizinho")}
               style={{
-                minWidth: "190px",
-                padding: "13px 22px",
-                borderRadius: "11px",
-                border: "none",
+                padding: "12px 14px",
+                borderRadius: "12px",
+                border:
+                  abaMidias === "paizinho"
+                    ? "2px solid #22d3ee"
+                    : "1px solid #334155",
                 background:
-                  "linear-gradient(135deg,#15803d,#22c55e)",
-                color: "#ffffff",
-                fontWeight: "bold",
-                cursor: "pointer",
-              }}
-            >
-              🖼️ Escolher Foto
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setMostrarUltimosClips((atual) => !atual)
-              }
-              style={{
-                minWidth: "190px",
-                padding: "13px 22px",
-                borderRadius: "11px",
-                border: "1px solid #38bdf8",
-                background: mostrarUltimosClips
-                  ? "#082f49"
-                  : "#0f172a",
+                  abaMidias === "paizinho"
+                    ? "#083344"
+                    : "#0f172a",
                 color: "#e0f2fe",
                 fontWeight: "bold",
                 cursor: "pointer",
               }}
             >
-              {mostrarUltimosClips
-                ? "✖️ Fechar Últimos Clips"
-                : "🎬 Abrir Últimos Clips"}
+              🎨 Criar com o Paizinho
+            </button>
+            <button
+              type="button"
+              onClick={() => escolherAbaMidias("clip")}
+              style={{
+                padding: "12px 14px",
+                borderRadius: "12px",
+                border:
+                  abaMidias === "clip"
+                    ? "2px solid #22d3ee"
+                    : "1px solid #334155",
+                background:
+                  abaMidias === "clip"
+                    ? "#083344"
+                    : "#0f172a",
+                color: "#e0f2fe",
+                fontWeight: "bold",
+                cursor: "pointer",
+              }}
+            >
+              🎬 Criar Clip
+            </button>
+            <button
+              type="button"
+              onClick={() => escolherAbaMidias("produto")}
+              style={{
+                padding: "12px 14px",
+                borderRadius: "12px",
+                border:
+                  abaMidias === "produto"
+                    ? "2px solid #22d3ee"
+                    : "1px solid #334155",
+                background:
+                  abaMidias === "produto"
+                    ? "#083344"
+                    : "#0f172a",
+                color: "#e0f2fe",
+                fontWeight: "bold",
+                cursor: "pointer",
+              }}
+            >
+              🎬 Clip de Produto
             </button>
           </div>
 
-          {mostrarUltimosClips &&
-            carregandoUltimosClips && (
-              <div
-                style={{
-                  marginTop: "22px",
-                  color: "#94a3b8",
-                  fontWeight: "bold",
-                }}
-              >
-                ⏳ Carregando últimos Clips...
-              </div>
+          <div
+            ref={blocoCriarMascoteRef}
+            style={{
+              display: "none",
+            }}
+          >
+            {false && (
+            <PaizinhoConversa
+              cardStyle={estiloCard}
+              mascoteOficial={mascoteOficial}
+              personalizarAberto={personalizarPaizinho}
+              onPersonalizarAberto={setPersonalizarPaizinho}
+              onMascoteSalvo={(oficial) => {
+                setMascoteOficial(oficial || null);
+              }}
+              onIrParaClip={(payload) => {
+                escolherAbaMidias("clip");
+                if (payload?.mascote?.imagem_base) {
+                  aplicarImagemMascote(payload.mascote);
+                  return;
+                }
+                if (payload?.referencia && !imagemClip) {
+                  setImagemClip(payload.referencia);
+                }
+              }}
+            />
             )}
+          </div>
 
-          {mostrarUltimosClips &&
-            !carregandoUltimosClips &&
-            ultimosClips.length > 0 && (
-              <div
-                style={{
-                  width: "100%",
-                  maxWidth: "1050px",
-                  margin: "26px auto 0",
-                  textAlign: "left",
-                  paddingTop: "22px",
-                  borderTop: "1px solid #334155",
-                }}
-              >
-                <h3
-                  style={{
-                    color: "#67e8f9",
-                    textAlign: "center",
-                    margin: "0 0 6px",
-                  }}
-                >
-                  🎬 Últimos Clips
-                </h3>
+          <div
+            style={{
+              display: "block",
+            }}
+          >
+            <ClipProduto
+              cardStyle={estiloCard}
+              setScreen={setScreen}
+              embutido={embutido}
+            />
+          </div>
 
-                <p
-                  style={{
-                    color: "#94a3b8",
-                    textAlign: "center",
-                    margin: "0 0 16px",
-                    fontSize: "13px",
-                  }}
-                >
-                  Reutilize um Clip já gerado sem gastar novos créditos.
-                </p>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(170px, 1fr))",
-                    gap: "12px",
-                  }}
-                >
-                  {ultimosClips.map((item) => (
-                    <div
-                      key={item.id}
-                      style={{
-                        padding: "10px",
-                        borderRadius: "12px",
-                        border: "1px solid #334155",
-                        background: "#020617",
-                      }}
-                    >
-                      <video
-                        src={item.imagem_processada}
-                        controls
-                        muted
-                        playsInline
-                        preload="metadata"
-                        style={{
-                          width: "100%",
-                          aspectRatio: "1 / 1",
-                          objectFit: "contain",
-                          borderRadius: "9px",
-                          background: "#000000",
-                        }}
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => usarClipExistente(item)}
-                        style={{
-                          width: "100%",
-                          marginTop: "9px",
-                          padding: "10px 8px",
-                          borderRadius: "9px",
-                          border: "none",
-                          background:
-                            "linear-gradient(135deg,#15803d,#22c55e)",
-                          color: "#ffffff",
-                          fontWeight: "bold",
-                          cursor: "pointer",
-                        }}
-                      >
-                        ✅ Usar este Clip
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          {mostrarUltimosClips &&
-            !carregandoUltimosClips &&
-            ultimosClips.length === 0 && (
-              <div
-                style={{
-                  marginTop: "22px",
-                  color: "#94a3b8",
-                  fontWeight: "bold",
-                }}
-              >
-                Nenhum Clip salvo foi encontrado ainda.
-              </div>
-            )}
-        </section>
-      )}
-
-      {imagemClip && !clipConfirmado && (
+      {!clipConfirmado && (
         <>
+          <div
+            style={{
+              display: "none",
+            }}
+          >
+          <h3
+            style={{
+              color: "#67e8f9",
+              margin: "0 0 14px",
+              fontSize: "18px",
+            }}
+          >
+            🎬 CRIAR CLIP
+          </h3>
+
           <div
             style={{
               display: "grid",
@@ -3201,12 +3783,14 @@ function importarFotoComputador(
             >
               <h3
                 style={{
-                  color: "#22c55e",
+                  color: imagemClip ? "#22c55e" : "#67e8f9",
                   marginTop: 0,
                   textAlign: "center",
                 }}
               >
-                ✅ Foto selecionada
+                {imagemClip
+                  ? "✅ Foto selecionada"
+                  : "Foto"}
               </h3>
 
               <div
@@ -3221,6 +3805,7 @@ function importarFotoComputador(
                     "center",
                 }}
               >
+                {imagemClip ? (
                 <img
                   src={imagemClip}
                   alt="Peça selecionada"
@@ -3232,6 +3817,17 @@ function importarFotoComputador(
                     borderRadius: "10px",
                   }}
                 />
+                ) : (
+                  <div
+                    style={{
+                      color: "#64748b",
+                      textAlign: "center",
+                      fontSize: "14px",
+                    }}
+                  >
+                    Nenhuma foto selecionada
+                  </div>
+                )}
               </div>
 
              <input
@@ -3270,7 +3866,7 @@ function importarFotoComputador(
     cursor: "pointer",
   }}
 >
-  📁 Importar Foto
+  💻 Importar Foto
 </button>
 
 <button
@@ -3296,6 +3892,7 @@ function importarFotoComputador(
   🖼️ Escolher da Galeria
 </button>
 
+              {imagemClip ? (
               <div
                 style={{
                   marginTop: "14px",
@@ -3321,6 +3918,7 @@ function importarFotoComputador(
                 {cenas.length} cena(s) •{" "}
                 {duracaoTotal}s
               </div>
+              ) : null}
             </section>
 
             <section
@@ -3333,59 +3931,20 @@ function importarFotoComputador(
                 style={{
                   color: "#67e8f9",
                   marginTop: 0,
+                  fontSize: embutido ? "15px" : undefined,
+                  fontWeight: embutido ? "bold" : undefined,
                 }}
               >
-                ⚙️ Configuração do Clip
+                Tipo de clip
               </h3>
 
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns:
-                    "repeat(3, 1fr)",
+                  gridTemplateColumns: "1fr",
                   gap: "10px",
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setModoGeracao(
-                      "rapido"
-                    )
-                  }
-                  style={botaoSelecao(
-                    modoGeracao ===
-                      "rapido"
-                  )}
-                >
-                  ⚡ Modo Rápido
-                  <small
-                    style={smallStyle}
-                  >
-                    IA gera 1 versão otimizada
-                  </small>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setModoGeracao(
-                      "personalizado"
-                    )
-                  }
-                  style={botaoSelecao(
-                    modoGeracao ===
-                      "personalizado"
-                  )}
-                >
-                  🎛 Personalizado
-                  <small
-                    style={smallStyle}
-                  >
-                    Gera um estilo
-                  </small>
-                </button>
-
                 <button
                   type="button"
                   onClick={() => {
@@ -3406,47 +3965,156 @@ function importarFotoComputador(
                         id:
                           `mascote-${Date.now()}`,
                         nome:
-                          "Mascote IA",
+                          "Criação IA",
                         duracao: 8,
                         movimento:
                           "apresentacao",
                       },
                     ]);
+                    if (mascoteOficial?.imagem_base) {
+                      aplicarImagemMascote(
+                        mascoteOficial
+                      );
+                    }
                   }}
                   style={botaoSelecao(
                     modoMascote
                   )}
                 >
-                  🎭 Mascote IA
+                  🤖 Clip com Mascote
                   <small
-                    style={smallStyle}
+                    style={{
+                      ...smallStyle,
+                      fontSize: "11px",
+                      lineHeight: 1.4,
+                      whiteSpace: "normal",
+                    }}
                   >
-                    Seu mascote falando — Veo 3.1
+                    Propaganda em vídeo com personagem/mascote, roteiro e fala.
                   </small>
                 </button>
               </div>
 
               {modoMascote && (
+              <>
                 <div
                   style={{
-                    marginTop: "14px",
-                    padding: "16px",
-                    borderRadius: "14px",
-                    border:
-                      "1px solid rgba(34,211,238,.35)",
-                    background:
-                      "linear-gradient(135deg,rgba(8,47,73,.65),rgba(15,23,42,.95))",
+                    marginTop: "18px",
+                    marginBottom: "4px",
                   }}
                 >
-                  <strong
+                  <div
                     style={{
                       color: "#67e8f9",
-                      display: "block",
-                      marginBottom: "12px",
+                      fontSize: "13px",
+                      fontWeight: "bold",
+                      marginBottom: "8px",
                     }}
                   >
-                    🎭 Crie a propaganda da sua empresa
-                  </strong>
+                    🤖 Clip com Mascote
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: "8px",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={usarMascoteSalvo}
+                      style={botaoSelecao(
+                        opcaoMascoteUi === "usar"
+                      )}
+                    >
+                      ⭐ Usar meu mascote
+                    </button>
+                    <button
+                      type="button"
+                      onClick={abrirCriarMascote}
+                      style={botaoSelecao(false)}
+                    >
+                      🎨 Criar novo mascote
+                    </button>
+                  </div>
+                  {mascoteOficial?.imagem_base ? (
+                    <button
+                      type="button"
+                      onClick={usarMascoteSalvo}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        width: "100%",
+                        marginTop: "10px",
+                        padding: "8px",
+                        borderRadius: "10px",
+                        background: "#020617",
+                        border:
+                          opcaoMascoteUi === "usar"
+                            ? "2px solid #22d3ee"
+                            : "1px solid #334155",
+                        cursor: "pointer",
+                        textAlign: "left",
+                      }}
+                    >
+                      <img
+                        src={mascoteOficial.imagem_base}
+                        alt={
+                          mascoteOficial.nome ||
+                          "Mascote oficial"
+                        }
+                        style={{
+                          width: "48px",
+                          height: "48px",
+                          objectFit: "contain",
+                          borderRadius: "8px",
+                          background: "#ffffff",
+                        }}
+                      />
+                      <div>
+                        <strong
+                          style={{
+                            color: "#e0f2fe",
+                            fontSize: "13px",
+                          }}
+                        >
+                          {mascoteOficial.nome ||
+                            "Mascote oficial"}
+                        </strong>
+                        <div
+                          style={{
+                            color: "#94a3b8",
+                            fontSize: "11px",
+                          }}
+                        >
+                          {mascoteOficial.empresa ||
+                            "Pronto para o Clip"}
+                        </div>
+                      </div>
+                    </button>
+                  ) : (
+                    <p
+                      style={{
+                        color: "#94a3b8",
+                        fontSize: "12px",
+                        margin: "8px 0 0",
+                      }}
+                    >
+                      Você ainda não tem um mascote oficial. Crie um com o Paizinho.
+                    </p>
+                  )}
+                </div>
+
+              <div
+                  style={{
+                    marginTop: "16px",
+                    padding: "16px",
+                    borderRadius: "14px",
+                    border: "1px solid #334155",
+                    background: "#020617",
+                  }}
+                >
 
                   <label
                     style={{
@@ -3469,16 +4137,34 @@ function importarFotoComputador(
                     placeholder="Ex.: Tsunani Auto Parts"
                     style={{
                       width: "100%",
-                      boxSizing: "border-box",
-                      padding: "11px 12px",
-                      borderRadius: "10px",
+                      boxSizing:
+                        "border-box",
+                      padding:
+                        "11px 12px",
+                      borderRadius:
+                        "10px",
                       border:
                         "1px solid #334155",
-                      background: "#020617",
+                      background:
+                        "#020617",
                       color: "#e2e8f0",
-                      marginBottom: "12px",
+                      marginBottom:
+                        "12px",
                     }}
                   />
+
+                  {resumoCampanhaMascote ? (
+                    <p
+                      style={{
+                        margin: "0 0 12px",
+                        color: "#7dd3fc",
+                        fontSize: "13px",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {resumoCampanhaMascote}
+                    </p>
+                  ) : null}
 
                   <label
                     style={{
@@ -3488,27 +4174,145 @@ function importarFotoComputador(
                       marginBottom: "6px",
                     }}
                   >
-                    Fala do mascote
+                    🤖 O que você quer mudar? (opcional)
+                  </label>
+
+                  <p
+                    style={{
+                      margin: "0 0 8px",
+                      color: "#94a3b8",
+                      fontSize: "12px",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    O Paizinho já preparou uma sugestão. Se quiser, peça qualquer alteração.
+                  </p>
+
+                  <textarea
+                    value={
+                      observacoesMidia
+                    }
+                    onChange={(event) =>
+                      setObservacoesMidia(
+                        event.target
+                          .value
+                      )
+                    }
+                    rows={3}
+                    placeholder="Deixe mais descontraído. Faça em 10 segundos. Fale mais sobre qualidade. Mude somente a fala."
+                    style={{
+                      width: "100%",
+                      boxSizing:
+                        "border-box",
+                      padding:
+                        "11px 12px",
+                      borderRadius:
+                        "10px",
+                      border:
+                        "1px solid #334155",
+                      background:
+                        "#020617",
+                      color: "#e2e8f0",
+                      resize: "vertical",
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={
+                      aplicarRoteiroPaizinho
+                    }
+                    style={{
+                      width: "100%",
+                      marginTop: "12px",
+                      padding: "12px",
+                      borderRadius:
+                        "10px",
+                      border: "none",
+                      background:
+                        "linear-gradient(135deg,#0284c7,#22d3ee)",
+                      color: "#ffffff",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✨ Pedir alteração ao Paizinho
+                  </button>
+
+                  <label
+                    style={{
+                      color: "#cbd5e1",
+                      display: "block",
+                      fontSize: "13px",
+                      marginTop: "14px",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Roteiro
+                  </label>
+
+                  <textarea
+                    value={roteiroMidia}
+                    onChange={(event) =>
+                      setRoteiroMidia(
+                        event.target
+                          .value
+                      )
+                    }
+                    rows={3}
+                    placeholder="O Paizinho monta o roteiro aqui. Você pode editar."
+                    style={{
+                      width: "100%",
+                      boxSizing:
+                        "border-box",
+                      padding:
+                        "11px 12px",
+                      borderRadius:
+                        "10px",
+                      border:
+                        "1px solid #334155",
+                      background:
+                        "#020617",
+                      color: "#e2e8f0",
+                      resize: "vertical",
+                    }}
+                  />
+
+                  <label
+                    style={{
+                      color: "#cbd5e1",
+                      display: "block",
+                      fontSize: "13px",
+                      marginTop: "12px",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Fala
                   </label>
 
                   <textarea
                     value={falaMascote}
                     onChange={(event) =>
                       setFalaMascote(
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     maxLength={260}
-                    rows={5}
-                    placeholder="Escreva exatamente o que o mascote deve falar em português..."
+                    rows={4}
+                    placeholder="A fala aparece aqui para você revisar."
                     style={{
                       width: "100%",
-                      boxSizing: "border-box",
-                      padding: "11px 12px",
-                      borderRadius: "10px",
+                      boxSizing:
+                        "border-box",
+                      padding:
+                        "11px 12px",
+                      borderRadius:
+                        "10px",
                       border:
                         "1px solid #334155",
-                      background: "#020617",
+                      background:
+                        "#020617",
                       color: "#e2e8f0",
                       resize: "vertical",
                     }}
@@ -3518,14 +4322,16 @@ function importarFotoComputador(
                     style={{
                       textAlign: "right",
                       color:
-                        falaMascote.length > 230
+                        falaMascote.length >
+                        230
                           ? "#fbbf24"
                           : "#64748b",
                       fontSize: "11px",
                       marginTop: "4px",
                     }}
                   >
-                    {falaMascote.length}/260 caracteres
+                    {falaMascote.length}
+                    /260 caracteres
                   </div>
 
                   <label
@@ -3541,74 +4347,103 @@ function importarFotoComputador(
                   </label>
 
                   <textarea
-                    value={instrucaoMascote}
+                    value={
+                      instrucaoMascote
+                    }
                     onChange={(event) =>
                       setInstrucaoMascote(
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     rows={3}
-                    placeholder="Ex.: começa cansado e termina alegre apontando para a loja."
+                    placeholder="A direção da cena aparece aqui para você revisar."
                     style={{
                       width: "100%",
-                      boxSizing: "border-box",
-                      padding: "11px 12px",
-                      borderRadius: "10px",
+                      boxSizing:
+                        "border-box",
+                      padding:
+                        "11px 12px",
+                      borderRadius:
+                        "10px",
                       border:
                         "1px solid #334155",
-                      background: "#020617",
+                      background:
+                        "#020617",
                       color: "#e2e8f0",
                       resize: "vertical",
                     }}
                   />
-
-                  <div
-                    style={{
-                      color: "#94a3b8",
-                      marginTop: "10px",
-                      fontSize: "12px",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    Use a imagem do mascote da própria empresa. O PAIIA envia a imagem e a fala para o Veo 3.1, que cria um vídeo de aproximadamente 8 segundos com voz e sincronização labial nativas.
-                  </div>
                 </div>
+              </>
               )}
 
               {modoGeracao ===
                 "personalizado" && (
                 <div
                   style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(3, 1fr)",
-                    gap: "8px",
-                    marginTop: "12px",
+                    marginTop: "14px",
                   }}
                 >
-                  {ESTILOS_CLIP.map(
-                    (estilo) => (
-                      <button
-                        key={estilo.id}
-                        type="button"
-                        onClick={() =>
-                          setEstiloSelecionado(
-                            estilo.id
-                          )
-                        }
-                        style={botaoSelecao(
-                          estiloSelecionado ===
-                            estilo.id
-                        )}
-                      >
-                        {estilo.icone}{" "}
-                        {estilo.titulo}
-                      </button>
-                    )
+                  <h4 style={tituloSecao}>
+                    Movimentos
+                  </h4>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(2, 1fr)",
+                      gap: "8px",
+                    }}
+                  >
+                    {MOVIMENTOS_DESTAQUE.map(
+                      (item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            setMovimentoDestaqueUi(
+                              item.id
+                            );
+                            setCenas(
+                              (anteriores) =>
+                                anteriores.map(
+                                  (cena) => ({
+                                    ...cena,
+                                    movimento:
+                                      item.movimentoId,
+                                  })
+                                )
+                            );
+                          }}
+                          style={botaoSelecao(
+                            movimentoDestaqueUi ===
+                              item.id
+                          )}
+                        >
+                          {item.nome}
+                        </button>
+                      )
+                    )}
+                  </div>
+                  {movimentoDestaqueUi ===
+                    "giro-360" && (
+                    <p
+                      style={{
+                        margin: "8px 0 0",
+                        color: "#94a3b8",
+                        fontSize: "11px",
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      Com uma única foto, o giro é uma simulação visual de apresentação. Não é um 360° técnico fiel.
+                    </p>
                   )}
                 </div>
               )}
 
+              {modoClipProduto && (
+                <>
               <h4 style={tituloSecao}>
                 📐 Formato
               </h4>
@@ -3774,6 +4609,7 @@ function importarFotoComputador(
                             "#ffffff",
                         }}
                       >
+                        {imagemClip ? (
                         <img
                           src={imagemClip}
                           alt=""
@@ -3784,6 +4620,7 @@ function importarFotoComputador(
                               "contain",
                           }}
                         />
+                        ) : null}
                       </div>
 
                       <select
@@ -3939,15 +4776,15 @@ function importarFotoComputador(
               >
                 ➕ Adicionar Cena
               </button>
+                </>
+              )}
 
               {!processandoClip && (
                 <button
                   type="button"
                   onClick={gerarClipsIA}
                   disabled={
-                    carregandoCreditos ||
-                    saldoCreditos === null ||
-                    saldoCreditos < 1
+                    carregandoCreditos
                   }
                   style={{
                     width: "100%",
@@ -3958,25 +4795,17 @@ function importarFotoComputador(
                       "13px",
                     border: "none",
                     background:
-                      saldoCreditos !== null &&
-                      saldoCreditos > 0
-                        ? "linear-gradient(135deg,#2563eb,#22d3ee)"
-                        : "#334155",
+                      "linear-gradient(135deg,#2563eb,#22d3ee)",
                     color: "#ffffff",
                     fontWeight:
                       "bold",
                     cursor:
-                      saldoCreditos !== null &&
-                      saldoCreditos > 0 &&
-                      !carregandoCreditos
-                        ? "pointer"
-                        : "not-allowed",
+                      carregandoCreditos
+                        ? "wait"
+                        : "pointer",
                     fontSize: "16px",
                     boxShadow:
-                      saldoCreditos !== null &&
-                      saldoCreditos > 0
-                        ? "0 14px 34px rgba(34,211,238,.2)"
-                        : "none",
+                      "0 14px 34px rgba(34,211,238,.2)",
                     opacity:
                       carregandoCreditos
                         ? 0.7
@@ -3985,14 +4814,11 @@ function importarFotoComputador(
                 >
                   {carregandoCreditos
                     ? "💎 Verificando créditos..."
-                    : saldoCreditos !== null &&
-                      saldoCreditos > 0
-                    ? modoMascote
-                      ? "🎭 Gerar Mascote IA — 1 crédito"
-                      : modoPaizinho
-                      ? "🤖 Gerar Clip do Paizinho — 1 crédito"
-                      : "🎬 Gerar Clip — 1 crédito"
-                    : "💎 Créditos insuficientes"}
+                    : modoMascote
+                    ? "🎭 Gerar Criação IA — 1 crédito PAIIA"
+                    : modoPaizinho
+                    ? "🤖 Gerar Clip de Produto — 1 crédito PAIIA"
+                    : "🎬 Gerar Clip de Produto — 1 crédito PAIIA"}
                 </button>
               )}
 
@@ -4058,8 +4884,9 @@ function importarFotoComputador(
               )}
             </section>
           </div>
+          </div>
 
-          {statusClip && (
+          {statusClip && abaMidias === "clip" && (
             <div
               style={{
                 ...estiloCard,
@@ -4074,7 +4901,8 @@ function importarFotoComputador(
             </div>
           )}
 
-          {videosGerados.length >
+          {abaMidias === "clip" &&
+            videosGerados.length >
             0 && (
             <section
               style={{
@@ -4253,6 +5081,7 @@ function importarFotoComputador(
       )}
 
       {clipConfirmado &&
+        abaMidias === "clip" &&
         videoSelecionado && (
           <section
             style={{
@@ -4294,7 +5123,7 @@ function importarFotoComputador(
                 lineHeight: 1.5,
               }}
             >
-              Seu Clip profissional foi salvo na Galeria APPIA.
+              Seu Clip profissional foi salvo na Galeria PAIIA.
               <br />
               Você pode exportar o MP4 ou criar outro Clip.
             </p>
@@ -4363,6 +5192,80 @@ function importarFotoComputador(
             </div>
           </section>
         )}
+      {mostrarModalCreditos && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 80,
+            background: "rgba(2,6,23,.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "420px",
+              padding: "24px",
+              borderRadius: "16px",
+              border: "1px solid #38bdf8",
+              background: "#0f172a",
+              textAlign: "center",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 18px",
+                color: "#f8fafc",
+                fontSize: "16px",
+                lineHeight: 1.5,
+                fontWeight: "bold",
+              }}
+            >
+              Seus créditos acabaram. Adicione créditos para continuar.
+            </p>
+            <button
+              type="button"
+              onClick={abrirPlanosCreditos}
+              style={{
+                width: "100%",
+                padding: "13px 16px",
+                borderRadius: "11px",
+                border: "none",
+                background:
+                  "linear-gradient(135deg,#2563eb,#22d3ee)",
+                color: "#ffffff",
+                fontWeight: "bold",
+                cursor: "pointer",
+              }}
+            >
+              Comprar créditos
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setMostrarModalCreditos(false)
+              }
+              style={{
+                width: "100%",
+                marginTop: "10px",
+                padding: "11px 16px",
+                borderRadius: "11px",
+                border: "1px solid #334155",
+                background: "#020617",
+                color: "#cbd5e1",
+                fontWeight: "bold",
+                cursor: "pointer",
+              }}
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

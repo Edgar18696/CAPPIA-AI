@@ -85,7 +85,7 @@ export default function ParecerTecnico({
   return (
     <div style={painel}>
       <h2 style={titulo}>
-        👨‍🔧 Parecer Técnico APPIA AI
+        👨‍🔧 Parecer Técnico PAIIA AI
       </h2>
 
       <p style={texto}>
@@ -112,7 +112,7 @@ export default function ParecerTecnico({
 
       <div style={caixa}>
         <strong>
-          💡 Recomendação APPIA
+          💡 Recomendação PAIIA
         </strong>
 
         <p style={recomendacao}>

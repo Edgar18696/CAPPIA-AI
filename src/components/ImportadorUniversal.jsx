@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { pesquisarCatalogoUniversal } from "../services/catalogos/pesquisarCatalogoUniversal";
+import { consultarCatCarOEM } from "../services/catcarService";
 
 export default function ImportadorUniversal({
   cardStyle,
@@ -24,6 +25,11 @@ export default function ImportadorUniversal({
   const [
     resultadoPesquisa,
     setResultadoPesquisa,
+  ] = useState(null);
+
+  const [
+    resultadoCatCar,
+    setResultadoCatCar,
   ] = useState(null);
 
   const [
@@ -84,84 +90,79 @@ export default function ImportadorUniversal({
   }
 
   async function consultarCodigo() {
-  const codigo =
-    String(
-      codigoPesquisa || ""
-    )
-      .trim()
-      .toUpperCase();
+    const codigo =
+      String(
+        codigoPesquisa || ""
+      )
+        .trim()
+        .toUpperCase();
 
-  if (!codigo) {
-    setErro(
-      "Informe um código para consultar."
-    );
-
-    return;
-  }
-
-  try {
-    setConsultando(true);
-
-    setErro("");
-
-    setResultadoPesquisa(null);
-
-    const resposta =
-      await pesquisarCatalogoUniversal(
-        {
-          codigo,
-          fabricante: "todos",
-        }
+    if (!codigo) {
+      setErro(
+        "Informe um código para consultar."
       );
 
-    console.log(
-      "🚨 RESPOSTA RECEBIDA NO IMPORTADOR:",
-      resposta
-    );
+      return;
+    }
 
-    console.table(
-      Array.isArray(resposta?.registros)
-        ? resposta.registros.map(
-            (item) => ({
-              codigo_oem:
-                item?.codigo_oem,
+    try {
+      setConsultando(true);
 
-              codigo_equivalente:
-                item?.codigo_equivalente,
+      setErro("");
 
-              fabricante:
-                item?.fabricante,
+      setResultadoPesquisa(null);
+      setResultadoCatCar(null);
 
-              montadora:
-                item?.montadora,
+      const [
+        respostaBase,
+        respostaCatCar,
+      ] = await Promise.all([
+        pesquisarCatalogoUniversal(
+          {
+            codigo,
+            fabricante: "todos",
+          }
+        ),
 
-              modelo:
-                item?.modelo,
-            })
-          )
-        : []
-    );
+        consultarCatCarOEM(
+          codigo
+        ),
+      ]);
 
-    setResultadoPesquisa(
-      resposta
-    );
-  } catch (
-    erroPesquisa
-  ) {
-    console.error(
-      "Erro ao consultar código:",
+      console.log(
+        "🚨 RESPOSTA BASE PAIIA:",
+        respostaBase
+      );
+
+      console.log(
+        "🚗 RESPOSTA CATCAR:",
+        respostaCatCar
+      );
+
+      setResultadoPesquisa(
+        respostaBase
+      );
+
+      setResultadoCatCar(
+        respostaCatCar
+      );
+    } catch (
       erroPesquisa
-    );
+    ) {
+      console.error(
+        "Erro ao consultar código:",
+        erroPesquisa
+      );
 
-    setErro(
-      erroPesquisa instanceof Error
-        ? erroPesquisa.message
-        : "Erro ao consultar código."
-    );
-  } finally {
-    setConsultando(false);
+      setErro(
+        erroPesquisa instanceof Error
+          ? erroPesquisa.message
+          : "Erro ao consultar código."
+      );
+    } finally {
+      setConsultando(false);
+    }
   }
-}
 
   function consultarChassi() {
     setErro("");
@@ -186,7 +187,7 @@ export default function ImportadorUniversal({
     );
 
     setMensagemChassi(
-      `🚗 Chassi ${validacao.chassi} validado. A consulta VIN está pronta para integração com a base de compatibilidade APPIA.`
+      `🚗 Chassi ${validacao.chassi} validado. A consulta VIN está pronta para integração com a base de compatibilidade PAIIA.`
     );
   }
 
@@ -195,6 +196,20 @@ export default function ImportadorUniversal({
       resultadoPesquisa?.registros
     )
       ? resultadoPesquisa.registros
+      : [];
+
+  const aplicacoesCatCar =
+    Array.isArray(
+      resultadoCatCar?.aplicacoes
+    )
+      ? resultadoCatCar.aplicacoes
+      : [];
+
+  const registrosCatCar =
+    Array.isArray(
+      resultadoCatCar?.registros
+    )
+      ? resultadoCatCar.registros
       : [];
 
   return (
@@ -235,7 +250,7 @@ export default function ImportadorUniversal({
           >
             Consulte aplicações e
             compatibilidades pela Base
-            APPIA.
+            PAIIA.
           </div>
         </div>
 
@@ -310,6 +325,10 @@ export default function ImportadorUniversal({
               );
 
               setResultadoPesquisa(
+                null
+              );
+
+              setResultadoCatCar(
                 null
               );
 
@@ -402,7 +421,7 @@ export default function ImportadorUniversal({
               {registrosPesquisa.length >
               0
                 ? `✅ ${registrosPesquisa.length} registro(s) encontrado(s).`
-                : "⚠️ Código não encontrado na Base APPIA."}
+                : "⚠️ Produto ainda não encontrado na Base PAIIA."}
             </div>
 
             {registrosPesquisa.length >
@@ -595,6 +614,248 @@ export default function ImportadorUniversal({
                     )
                   )}
               </div>
+            )}
+          </div>
+        )}
+
+        {resultadoCatCar && (
+          <div
+            style={{
+              marginTop: "18px",
+              padding: "16px",
+              borderRadius: "12px",
+              background:
+                resultadoCatCar.encontrado
+                  ? "#082f49"
+                  : "#1e293b",
+              border:
+                resultadoCatCar.encontrado
+                  ? "1px solid #22d3ee"
+                  : "1px solid #475569",
+            }}
+          >
+            <div
+              style={{
+                color:
+                  resultadoCatCar.encontrado
+                    ? "#67e8f9"
+                    : "#cbd5e1",
+                fontWeight: "bold",
+                fontSize: "16px",
+              }}
+            >
+              {resultadoCatCar.encontrado
+                ? `✅ CatCar Renault confirmado — ${resultadoCatCar.total_aplicacoes_consolidadas || aplicacoesCatCar.length} aplicação(ões) consolidada(s).`
+                : "⚠️ Código não encontrado no CatCar Renault."}
+            </div>
+
+            {resultadoCatCar.encontrado && (
+              <>
+                <div
+                  style={{
+                    marginTop: "10px",
+                    color: "#cbd5e1",
+                    fontSize: "13px",
+                  }}
+                >
+                  <b>OEM pesquisado:</b>{" "}
+                  {resultadoCatCar.codigo_pesquisado || "-"}
+                </div>
+
+                {Array.isArray(
+                  resultadoCatCar.substitutos
+                ) &&
+                  resultadoCatCar.substitutos.length >
+                    0 && (
+                    <div
+                      style={{
+                        marginTop: "8px",
+                        color: "#94a3b8",
+                        fontSize: "13px",
+                      }}
+                    >
+                      <b>
+                        Referências relacionadas:
+                      </b>{" "}
+                      {resultadoCatCar.substitutos
+                        .slice(0, 10)
+                        .join(" | ")}
+                    </div>
+                  )}
+
+                <div
+                  style={{
+                    marginTop: "14px",
+                    maxHeight: "460px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {aplicacoesCatCar
+                    .slice(0, 100)
+                    .map(
+                      (
+                        item,
+                        index
+                      ) => (
+                        <div
+                          key={`${item.modelo || "modelo"}-${item.tipo || "tipo"}-${index}`}
+                          style={{
+                            marginBottom: "10px",
+                            padding: "14px",
+                            borderRadius: "10px",
+                            background: "#0f172a",
+                            border:
+                              "1px solid #334155",
+                            textAlign: "left",
+                          }}
+                        >
+                          <div
+                            style={{
+                              color: "#67e8f9",
+                              fontWeight: "bold",
+                              marginBottom: "8px",
+                            }}
+                          >
+                            🚗 {item.modelo || "Modelo não informado"}
+                            {item.tipo
+                              ? ` — ${item.tipo}`
+                              : ""}
+                          </div>
+
+                          {Array.isArray(
+                            item.subgrupos
+                          ) &&
+                            item.subgrupos.length >
+                              0 && (
+                              <div
+                                style={{
+                                  color:
+                                    "#cbd5e1",
+                                  fontSize:
+                                    "13px",
+                                  marginBottom:
+                                    "6px",
+                                }}
+                              >
+                                <b>
+                                  Subgrupo:
+                                </b>{" "}
+                                {item.subgrupos.join(
+                                  " | "
+                                )}
+                              </div>
+                            )}
+
+                          {Array.isArray(
+                            item.posicoes
+                          ) &&
+                            item.posicoes.length >
+                              0 && (
+                              <div
+                                style={{
+                                  color:
+                                    "#cbd5e1",
+                                  fontSize:
+                                    "13px",
+                                  marginBottom:
+                                    "6px",
+                                }}
+                              >
+                                <b>
+                                  Posição:
+                                </b>{" "}
+                                {item.posicoes.join(
+                                  ", "
+                                )}
+                              </div>
+                            )}
+
+                          {Array.isArray(
+                            item.descricoes
+                          ) &&
+                            item.descricoes.length >
+                              0 && (
+                              <div
+                                style={{
+                                  color:
+                                    "#94a3b8",
+                                  fontSize:
+                                    "12px",
+                                  marginBottom:
+                                    "8px",
+                                }}
+                              >
+                                <b>
+                                  Descrição:
+                                </b>{" "}
+                                {item.descricoes
+                                  .slice(0, 2)
+                                  .join(" | ")}
+                              </div>
+                            )}
+
+                          <div
+                            style={{
+                              color: "#94a3b8",
+                              fontSize: "12px",
+                            }}
+                          >
+                            <b>
+                              Ocorrências:
+                            </b>{" "}
+                            {item.quantidade || 1}
+                          </div>
+
+                          {Array.isArray(
+                            item.paginas
+                          ) &&
+                            item.paginas.length >
+                              0 && (
+                              <a
+                                href={
+                                  item.paginas[0]
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display:
+                                    "inline-block",
+                                  marginTop:
+                                    "10px",
+                                  color:
+                                    "#38bdf8",
+                                  fontWeight:
+                                    "bold",
+                                  fontSize:
+                                    "12px",
+                                  textDecoration:
+                                    "none",
+                                }}
+                              >
+                                🔗 Abrir no CatCar
+                              </a>
+                            )}
+                        </div>
+                      )
+                    )}
+                </div>
+
+                {registrosCatCar.length >
+                  0 && (
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      color: "#64748b",
+                      fontSize: "11px",
+                    }}
+                  >
+                    Fonte: CatCar Renault •
+                    {resultadoCatCar.confirmado
+                      ? " aplicação confirmada"
+                      : " resultado não confirmado"}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

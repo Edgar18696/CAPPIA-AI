@@ -56,7 +56,7 @@ const iniciouAnalise =
         textAlign: "center",
       }}
     >
-      <h3 style={{ color: "#67e8f9" }}>🧠 APPIA AI</h3>
+      <h3 style={{ color: "#67e8f9" }}>🧠 PAIIA AI</h3>
 
       <p
         style={{
@@ -83,11 +83,11 @@ return (
       }}
     >
       <h3 style={{ color: "#67e8f9", marginBottom: "8px" }}>
-        🧠 Análise APPIA AI
+        🧠 Análise PAIIA AI
       </h3>
 
       <p style={{ color: "#94a3b8", marginBottom: "16px" }}>
-        O APPIA AI analisa automaticamente os dados do anúncio e mostra o que
+        O PAIIA AI analisa automaticamente os dados do anúncio e mostra o que
         já está pronto.
       </p>
 

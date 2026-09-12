@@ -32,7 +32,7 @@ export default function Admin({
           marginBottom: "10px",
         }}
       >
-        ⚙ Administração APPIA AI
+        ⚙ Administração PAIIA AI
       </h2>
 
       <p style={{ color: "#cbd5e1" }}>
@@ -98,7 +98,7 @@ export default function Admin({
             setScreen("dashboardAppia")
           }
         >
-          📊 Dashboard APPIA
+          📊 Dashboard PAIIA
         </button>
 
         <button
@@ -134,7 +134,7 @@ export default function Admin({
             setScreen("marketingAppia")
           }
         >
-          📢 Marketing APPIA
+          📢 Marketing PAIIA
         </button>
       </div>
     </div>

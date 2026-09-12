@@ -382,111 +382,273 @@ export default function CentralPublicacao({
         pecaEncontrada
       );
 
+    const fotosCompletas = [
+      ...(Array.isArray(
+        anuncio?.fotos
+      )
+        ? anuncio.fotos
+        : []),
+      ...(Array.isArray(
+        anuncio?.banners
+      )
+        ? anuncio.banners
+        : []),
+    ];
+
+    const fotosUrls =
+      fotosCompletas
+        .map(obterUrlFoto)
+        .filter(Boolean);
+
+    const bannersUrls =
+      (Array.isArray(
+        anuncio?.banners
+      )
+        ? anuncio.banners
+        : [])
+        .map(obterUrlFoto)
+        .filter(Boolean);
+
+    const clips =
+      Array.isArray(
+        anuncio?.clips
+      )
+        ? anuncio.clips
+        : [];
+
+    const videos =
+      clips.length > 0
+        ? clips
+        : anuncio?.clip
+          ? [anuncio.clip]
+          : [];
+
+    /*
+     * Mantém o anúncio COMPLETO somente em memória.
+     * Assim fotos, banners e aplicações não estouram
+     * a quota do localStorage.
+     */
+    window.__paiiaAnuncioSimulador = {
+      codigo:
+        anuncio?.codigo || "",
+
+      oem:
+        anuncio?.oem || "",
+
+      titulo:
+        tituloEditavel || "",
+
+      descricao:
+        anuncio?.descricao || "",
+
+      preco:
+        anuncio?.preco || "",
+
+      tipoAnuncio:
+        anuncio?.tipoAnuncio ||
+        "classico",
+
+      fotos:
+        fotosCompletas,
+
+      imagens:
+        fotosCompletas,
+
+      banners:
+        Array.isArray(
+          anuncio?.banners
+        )
+          ? anuncio.banners
+          : [],
+
+      clip:
+        anuncio?.clip || "",
+
+      clips,
+
+      videos,
+
+      pecaEncontrada,
+
+      fabricante,
+
+      marca:
+        fabricante,
+
+      aplicacoes,
+
+      compatibilidades,
+
+      totalCompatibilidades:
+        aplicacoes.length,
+
+      status:
+        "rascunho_teste",
+    };
+
     localStorage.setItem(
       "mlModoTeste",
       "true"
     );
 
-    localStorage.setItem(
-      "mlAnuncioTeste",
-      JSON.stringify({
-        codigo:
-          anuncio?.codigo || "",
+    /*
+     * localStorage recebe SOMENTE uma versão leve.
+     * Fotos são reduzidas às URLs e o objeto técnico
+     * é reduzido aos campos usados pelo simulador.
+     */
+    const pecaEncontradaLeve =
+      pecaEncontrada
+        ? {
+            peca:
+              pecaEncontrada?.peca ||
+              "",
+            familia:
+              pecaEncontrada?.familia ||
+              "",
+            fabricante:
+              pecaEncontrada?.fabricante ||
+              pecaEncontrada?.marca ||
+              "",
+            marca:
+              pecaEncontrada?.marca ||
+              pecaEncontrada?.fabricante ||
+              "",
+            codigo_oem:
+              pecaEncontrada?.codigo_oem ||
+              "",
+            codigo_equivalente:
+              pecaEncontrada?.codigo_equivalente ||
+              "",
+            aplicacoes,
+          }
+        : null;
 
-        oem:
-          anuncio?.oem || "",
+    const anuncioLeve = {
+      codigo:
+        anuncio?.codigo || "",
 
-        titulo:
-          tituloEditavel || "",
+      oem:
+        anuncio?.oem || "",
 
-        descricao:
-          anuncio?.descricao || "",
+      titulo:
+        tituloEditavel || "",
 
-        preco:
-          anuncio?.preco || "",
+      descricao:
+        anuncio?.descricao || "",
 
-        tipoAnuncio:
-          anuncio?.tipoAnuncio ||
-          "classico",
+      preco:
+        anuncio?.preco || "",
 
-        fotos: [
-          ...(Array.isArray(
-            anuncio?.fotos
-          )
-            ? anuncio.fotos
-            : []),
-          ...(Array.isArray(
-            anuncio?.banners
-          )
-            ? anuncio.banners
-            : []),
-        ],
+      tipoAnuncio:
+        anuncio?.tipoAnuncio ||
+        "classico",
 
-        imagens: [
-          ...(Array.isArray(
-            anuncio?.fotos
-          )
-            ? anuncio.fotos
-            : []),
-          ...(Array.isArray(
-            anuncio?.banners
-          )
-            ? anuncio.banners
-            : []),
-        ],
+      fotos:
+        fotosUrls,
 
-        banners:
-          Array.isArray(
-            anuncio?.banners
-          )
-            ? anuncio.banners
-            : [],
+      imagens:
+        fotosUrls,
 
-        clip:
-          anuncio?.clip || "",
+      banners:
+        bannersUrls,
 
-        clips:
-          Array.isArray(
-            anuncio?.clips
-          )
-            ? anuncio.clips
-            : [],
+      clip:
+        anuncio?.clip || "",
 
-        videos:
-          Array.isArray(
-            anuncio?.clips
-          )
-            ? anuncio.clips
-            : anuncio?.clip
-              ? [anuncio.clip]
-              : [],
+      clips,
 
-        pecaEncontrada,
+      videos,
 
+      pecaEncontrada:
+        pecaEncontradaLeve,
+
+      fabricante,
+
+      marca:
         fabricante,
 
-        marca:
-          fabricante,
+      aplicacoes,
 
-        aplicacoes,
+      compatibilidades,
 
-        compatibilidades,
+      totalCompatibilidades:
+        aplicacoes.length,
 
-        totalCompatibilidades:
-          aplicacoes.length,
+      status:
+        "rascunho_teste",
+    };
 
-        status:
-          "rascunho_teste",
-      })
-    );
+    try {
+      localStorage.setItem(
+        "mlAnuncioTeste",
+        JSON.stringify(
+          anuncioLeve
+        )
+      );
+    } catch (erroStorage) {
+      console.warn(
+        "mlAnuncioTeste não coube no localStorage. O simulador usará a cópia em memória.",
+        erroStorage
+      );
 
-    if (typeof setScreen !== "function") {
+      /*
+       * Último fallback: salva apenas os campos essenciais.
+       * O anúncio completo continua disponível em
+       * window.__paiiaAnuncioSimulador.
+       */
+      try {
+        localStorage.setItem(
+          "mlAnuncioTeste",
+          JSON.stringify({
+            codigo:
+              anuncio?.codigo || "",
+            oem:
+              anuncio?.oem || "",
+            titulo:
+              tituloEditavel || "",
+            descricao:
+              anuncio?.descricao || "",
+            preco:
+              anuncio?.preco || "",
+            tipoAnuncio:
+              anuncio?.tipoAnuncio ||
+              "classico",
+            fotos:
+              fotosUrls,
+            imagens:
+              fotosUrls,
+            banners:
+              bannersUrls,
+            fabricante,
+            marca:
+              fabricante,
+            compatibilidades,
+            totalCompatibilidades:
+              aplicacoes.length,
+            status:
+              "rascunho_teste",
+          })
+        );
+      } catch (erroStorageMinimo) {
+        console.warn(
+          "Não foi possível salvar nem a versão mínima do simulador no localStorage.",
+          erroStorageMinimo
+        );
+      }
+    }
+
+    if (
+      typeof setScreen !==
+      "function"
+    ) {
       console.error(
         "CentralPublicacao: setScreen não foi recebido."
       );
+
       alert(
         "Não foi possível abrir o simulador."
       );
+
       return;
     }
 
@@ -970,7 +1132,7 @@ export default function CentralPublicacao({
                 "0 0 8px 0",
             }}
           >
-            Paizinho APPIA
+            Paizinho PAIIA
           </h3>
 
           <p

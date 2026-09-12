@@ -4,6 +4,10 @@ import {
   carregarAnuncioTemporario,
   limparAnuncioTemporario,
 } from "../services/anunciosService";
+import {
+  consumirNovaCriacaoMidia,
+  deveIniciarNovaCriacaoMidia,
+} from "../services/limparEstadoTemporarioMidia";
 
 export default function useNovoAnuncio({
   anuncioEditando,
@@ -96,6 +100,28 @@ export default function useNovoAnuncio({
             ? anuncioEditando.fotos
             : []
         );
+      }
+
+      return;
+    }
+
+    if (deveIniciarNovaCriacaoMidia()) {
+      consumirNovaCriacaoMidia();
+
+      const vazio = criarAnuncioVazio() || {};
+
+      setCodigo(vazio.codigo || "");
+      setOem(vazio.oem || "");
+      setTitulo(vazio.titulo || "");
+      setDescricao(vazio.descricao || "");
+      setPreco(vazio.preco || "");
+      setTipoAnuncio(vazio.tipoAnuncio || "classico");
+      setPecaEncontrada(null);
+      setDiagnostico(null);
+      setAuditoria(null);
+
+      if (podeAtualizarFotos) {
+        setFotosAnuncio([]);
       }
 
       return;

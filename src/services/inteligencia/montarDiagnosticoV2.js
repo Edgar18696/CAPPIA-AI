@@ -74,7 +74,7 @@ export function montarDiagnosticoV2({
 
   return {
     titulo:
-      "Diagnóstico Técnico APPIA AI",
+      "Diagnóstico Técnico PAIIA AI",
 
     codigoOriginal,
 

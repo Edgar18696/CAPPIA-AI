@@ -41,7 +41,7 @@ export default function BannerIA({
           marginBottom: "25px",
         }}
       >
-        <h3 style={{ color: "#38bdf8" }}>💡 Dica do APPIA</h3>
+        <h3 style={{ color: "#38bdf8" }}>💡 Dica do PAIIA</h3>
 
         <p style={{ color: "#cbd5e1", lineHeight: "1.7" }}>
           1️⃣ Escolha uma imagem da galeria ou use a imagem enviada pela Foto IA.

@@ -356,7 +356,7 @@ export default function Login({
         }}
       >
         {modoCadastro
-          ? "🚀 Criar Conta APPIA AI"
+          ? "🚀 Criar Conta PAIIA AI"
           : "🔐 Login PAIIA"}
       </h2>
 
@@ -418,7 +418,7 @@ export default function Login({
         <>
           <p style={textoAuxiliar}>
             Preencha seus dados para criar
-            sua conta na APPIA.
+            sua conta na PAIIA.
           </p>
 
           <div
@@ -768,7 +768,7 @@ export default function Login({
               />
 
               Aceito os Termos de Uso
-              da APPIA.
+              da PAIIA.
             </label>
 
             <label style={checkLabel}>

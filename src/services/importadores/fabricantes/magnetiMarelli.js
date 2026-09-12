@@ -817,44 +817,53 @@ if (
   );
 
   /*
-   * =======================================================
-   * VALIDAÇÃO RÁPIDA DOS BICOS
-   * =======================================================
-   */
+ * =======================================================
+ * VALIDAÇÃO RÁPIDA — SISTEMAS ELETRÔNICOS / BICOS
+ * =======================================================
+ */
 
-  if (
-    tipoCatalogo ===
-      "sistemas_eletronicos" &&
-    subTipoCatalogo ===
-      "bicos_injetores"
-  ) {
-    const iwp099 =
-      registrosUnicos.filter(
-        (registro) =>
-          String(
+if (
+  tipoCatalogo ===
+  "sistemas_eletronicos"
+) {
+  const testeIwp058 =
+    registrosUnicos.filter(
+      (registro) => {
+        const texto =
+          JSON.stringify(
             registro
-              ?.codigo_oem ||
-            ""
           )
-            .toUpperCase()
-            .replace(
-              /[^A-Z0-9]/g,
-              ""
-            ) ===
-          "IWP099"
-      );
+            .toUpperCase();
 
-    console.log(
-      "💉 IWP099 — REGISTROS:",
-      iwp099.length
+        return (
+          texto.includes(
+            "805000347507"
+          ) ||
+          texto.includes(
+            "IWP058"
+          )
+        );
+      }
     );
 
-    console.log(
-      "💉 IWP099 — APLICAÇÕES:",
-      iwp099
-    );
-  }
+  console.log(
+    "=========================================="
+  );
 
+  console.log(
+    "💉 MARELLI IWP058 — REGISTROS:",
+    testeIwp058.length
+  );
+
+  console.log(
+    "💉 MARELLI IWP058 — APLICAÇÕES:",
+    testeIwp058
+  );
+
+  console.log(
+    "=========================================="
+  );
+}
   /*
    * =======================================================
    * VALIDAÇÃO RÁPIDA EGR

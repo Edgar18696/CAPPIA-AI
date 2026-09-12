@@ -118,7 +118,7 @@ export default function DiagnosticoTecnico({
   return (
     <div style={painel}>
       <h2 style={titulo}>
-        🧠 Diagnóstico APPIA AI
+        🧠 Diagnóstico PAIIA AI
       </h2>
 
       <div style={mensagem}>
@@ -129,7 +129,7 @@ export default function DiagnosticoTecnico({
             </strong>
 
             <p style={resumo}>
-              O APPIA AI identificou{" "}
+              O PAIIA AI identificou{" "}
               <b>{totalAplicacoes}</b>
               <b>{resultados.length}</b>{" "}
               aplicação(ões), distribuída(s) em{" "}
@@ -205,7 +205,7 @@ export default function DiagnosticoTecnico({
           titulo="Catálogo"
           valor={
             principal.origem_catalogo ||
-            "Base APPIA"
+            "Base PAIIA"
           }
         />
 

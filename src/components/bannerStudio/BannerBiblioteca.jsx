@@ -167,8 +167,8 @@ const LOGOS = [
   },
   {
     id: "logo-appia",
-    nome: "APPIA AI",
-    sigla: "APPIA AI",
+    nome: "PAIIA AI",
+    sigla: "PAIIA AI",
     fundo: "#020617",
     cor: "#67e8f9",
   },

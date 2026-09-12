@@ -1,17 +1,17 @@
-/*
+﻿/*
  * ============================================================
  * APPIA AI
- * PARSER UNIVERSAL MAGNETI MARELLI
+ * PARSER UNIVERSAL MAGNETI MARELLI — V6 + DIAGNOSTICO V7
  * ============================================================
  *
  * Objetivo:
  *
- * Interpretar catálogos Magneti Marelli que seguem estrutura
+ * Interpretar catÃ¡logos Magneti Marelli que seguem estrutura
  * semelhante sem precisar criar um parser gigante para cada
  * nova categoria.
  *
- * Os parsers específicos já aprovados continuam funcionando.
- * Este parser será usado como fallback para novos catálogos.
+ * Os parsers especÃ­ficos jÃ¡ aprovados continuam funcionando.
+ * Este parser serÃ¡ usado como fallback para novos catÃ¡logos.
  * ============================================================
  */
 
@@ -37,12 +37,32 @@ function normalizarCodigo(valor = "") {
 }
 
 function normalizarCodigoEquivalente(valor = "") {
-  return String(valor || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/\s+/g, "")
-    .replace(/[^A-Z0-9.\-]/g, "")
+  let codigo =
+    String(valor || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/\s+/g, "")
+      .trim();
+
+  /*
+   * Bicos Marelli:
+   * IWP049/1 -> IWP049
+   * IWP 049  -> IWP049
+   */
+  if (/^IWP/i.test(codigo)) {
+    codigo =
+      codigo.replace(
+        /\/\d+$/i,
+        ""
+      );
+  }
+
+  return codigo
+    .replace(
+      /[^A-Z0-9.\-]/g,
+      ""
+    )
     .trim();
 }
 
@@ -56,7 +76,7 @@ function numeroOuNull(valor) {
 
 /*
  * ============================================================
- * MARCADORES DE PÁGINA
+ * MARCADORES DE PÃGINA
  * ============================================================
  */
 
@@ -209,7 +229,7 @@ function extrairAnos(linha = "") {
 
 /*
  * ============================================================
- * CÓDIGOS
+ * CÃ“DIGOS
  * ============================================================
  */
 
@@ -289,7 +309,7 @@ function extrairCodigos(linha = "") {
 
 /*
  * ============================================================
- * DETECÇÃO DE LINHAS INÚTEIS
+ * DETECÃ‡ÃƒO DE LINHAS INÃšTEIS
  * ============================================================
  */
 
@@ -342,7 +362,7 @@ function ehCabecalho(linha = "") {
 
 /*
  * ============================================================
- * TIPO DE PEÇA
+ * TIPO DE PEÃ‡A
  * ============================================================
  */
 
@@ -359,16 +379,16 @@ function identificarPeca(
 
   const mapa = {
     bombas_agua:
-      "Bomba de Água",
+      "Bomba de Ãgua",
 
     termostatos:
       "Termostato",
 
     timing_chain_kit:
-      "Kit Corrente de Distribuição",
+      "Kit Corrente de DistribuiÃ§Ã£o",
 
     kits_distribuicao:
-      "Kit de Distribuição",
+      "Kit de DistribuiÃ§Ã£o",
 
     discos_freio:
       "Disco de Freio",
@@ -386,10 +406,10 @@ function identificarPeca(
       "Alternador / Motor de Partida",
 
     sistema_combustivel:
-      "Sistema de Combustível",
+      "Sistema de CombustÃ­vel",
 
     sistemas_eletronicos:
-      "Sistema Eletrônico",
+      "Sistema EletrÃ´nico",
 
     sensores:
       "Sensor",
@@ -398,37 +418,37 @@ function identificarPeca(
       "Vela Aquecedora",
 
     velas_ignicao:
-      "Vela de Ignição",
+      "Vela de IgniÃ§Ã£o",
 
     cabos_ignicao:
-      "Cabo de Ignição",
+      "Cabo de IgniÃ§Ã£o",
 
     iluminacao:
-      "Iluminação",
+      "IluminaÃ§Ã£o",
 
     amortecedores:
       "Amortecedor",
 
     molas_pneumaticas:
-      "Mola Pneumática",
+      "Mola PneumÃ¡tica",
 
     compressores_pneumaticos:
-      "Compressor Pneumático",
+      "Compressor PneumÃ¡tico",
 
     retrovisores:
       "Retrovisor",
 
     sistemas_termicos:
-      "Sistema Térmico",
+      "Sistema TÃ©rmico",
 
     corrente_distribuicao:
-      "Kit Corrente de Distribuição",
+      "Kit Corrente de DistribuiÃ§Ã£o",
 
     bracos_suspensao:
-      "Braço de Suspensão",
+      "BraÃ§o de SuspensÃ£o",
 
     maquinas_vidro:
-      "Máquina de Vidro",
+      "MÃ¡quina de Vidro",
 
     sistema_limpador:
       "Sistema Limpador",
@@ -437,10 +457,10 @@ function identificarPeca(
       "Palheta",
 
     comandos_eletricos:
-      "Comando Elétrico",
+      "Comando ElÃ©trico",
 
     transmissao:
-      "Componente de Transmissão",
+      "Componente de TransmissÃ£o",
 
     coxins:
       "Coxim",
@@ -455,18 +475,164 @@ function identificarPeca(
       "Carburador",
 
     oleos:
-      "Óleo",
+      "Ã“leo",
   };
 
   return (
     mapa[tipo] ||
-    "Peça Automotiva"
+    "PeÃ§a Automotiva"
   );
 }
 
 /*
  * ============================================================
- * SISTEMAS ELETRÔNICOS MARELLI
+ * DETECÇÃO CONSERVADORA — MODELO / MOTOR / PERÍODO
+ * ============================================================
+ *
+ * Estas funções são usadas pelo parser universal e pelo fluxo
+ * sequencial de Electronic Systems. Elas precisam existir antes
+ * das rotinas abaixo para evitar ReferenceError em tempo de execução.
+ */
+
+function pareceMotor(linha = "") {
+  const texto = limparTexto(linha);
+  const normalizado = normalizarTexto(texto);
+
+  if (!texto) {
+    return false;
+  }
+
+  if (
+    ehMarcadorPagina(texto) ||
+    identificarMontadora(texto) ||
+    ehCabecalho(texto) ||
+    extrairCodigoLongoMarelli(texto)
+  ) {
+    return false;
+  }
+
+  // Combustível / configuração típica de motor.
+  if (
+    /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\b/i.test(
+      texto
+    )
+  ) {
+    return true;
+  }
+
+  // Cilindrada: 1.0, 1.4, 1.6, 2.0, 1,6 etc.
+  if (
+    /\b\d(?:[.,]\d{1,2})\b/.test(texto)
+  ) {
+    return true;
+  }
+
+  // Características comuns: 8V, 16V, 20V, 1000 cc, 74 kW etc.
+  if (
+    /\b\d{1,2}\s*V\b/i.test(texto) ||
+    /\b\d{3,4}\s*CC\b/i.test(texto) ||
+    /\b\d{2,3}\s*KW\b/i.test(texto)
+  ) {
+    return true;
+  }
+
+  // Códigos de motor alfanuméricos curtos, sem tratar qualquer código
+  // de peça como motor. Ex.: K4M, F4R, TU5JP4, 1NZFE.
+  const compacto = normalizarCodigo(texto);
+  if (
+    texto.split(/\s+/).length <= 3 &&
+    compacto.length >= 3 &&
+    compacto.length <= 10 &&
+    /[A-Z]/.test(compacto) &&
+    /\d/.test(compacto) &&
+    !pareceCodigo(texto) &&
+    !/^(TB|48CPD|FEI|IPM|IWP|PAS|IAW|MJD|MMK|KWP|MCK)/i.test(
+      compacto
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    normalizado === "ENGINE" ||
+    normalizado === "MOTOR"
+  );
+}
+
+function pareceModelo(linha = "") {
+  const texto = limparTexto(linha);
+
+  if (!texto) {
+    return false;
+  }
+
+  if (
+    ehMarcadorPagina(texto) ||
+    identificarMontadora(texto) ||
+    ehCabecalho(texto) ||
+    pareceMotor(texto) ||
+    extrairCodigoLongoMarelli(texto) ||
+    ehDescricaoTecnicaSistemasEletronicos(texto)
+  ) {
+    return false;
+  }
+
+  if (
+    /^\d+$/.test(texto) ||
+    /^\d{1,2}\/\d{2}(?:\s+\d{1,2}\/\d{2})?$/.test(texto)
+  ) {
+    return false;
+  }
+
+  const palavras = texto.split(/\s+/).filter(Boolean);
+
+  return (
+    palavras.length >= 1 &&
+    palavras.length <= 8 &&
+    /[A-Za-zÀ-ÿ]/.test(texto)
+  );
+}
+
+function extrairPeriodoBicoMarelli(linha = "") {
+  const texto = limparTexto(linha);
+
+  const converterAno2Digitos = (anoTexto) => {
+    const ano = Number(anoTexto);
+
+    if (!Number.isFinite(ano)) {
+      return null;
+    }
+
+    return ano <= 79
+      ? 2000 + ano
+      : 1900 + ano;
+  };
+
+  const periodos = [
+    ...texto.matchAll(
+      /\b(?:0?[1-9]|1[0-2])\/(\d{2})\b/g
+    ),
+  ]
+    .map((match) => converterAno2Digitos(match[1]))
+    .filter((ano) => Number.isFinite(ano));
+
+  if (periodos.length > 0) {
+    return {
+      ano_inicio: periodos[0] ?? null,
+      ano_fim:
+        periodos.length > 1
+          ? periodos[periodos.length - 1]
+          : null,
+    };
+  }
+
+  // Fallback para anos escritos com quatro dígitos.
+  return extrairAnos(texto);
+}
+
+/*
+ * ============================================================
+ * SISTEMAS ELETRÃ”NICOS MARELLI
  * ============================================================
  */
 
@@ -523,6 +689,7 @@ function ehDescricaoTecnicaSistemasEletronicos(
       texto.includes(termo)
   );
 }
+
 function identificarPecaSistemasEletronicos(
   linha = "",
   codigoCurto = ""
@@ -536,12 +703,6 @@ function identificarPecaSistemasEletronicos(
     normalizarCodigo(
       codigoCurto
     );
-
-  /*
-   * ========================================================
-   * CORPO DE BORBOLETA
-   * ========================================================
-   */
 
   if (
     texto.includes(
@@ -560,23 +721,6 @@ function identificarPecaSistemasEletronicos(
     return "Corpo de Borboleta";
   }
 
-  /*
-   * ========================================================
-   * BICOS INJETORES
-   * ========================================================
-   *
-   * Catálogo Magneti Marelli:
-   *
-   * FEIxxx
-   * IPMxxx
-   * IWPxxx
-   *
-   * Todos pertencem ao grupo:
-   *
-   * INIETTORE / FUEL INJECTOR
-   * ========================================================
-   */
-
   if (
     texto.includes(
       "FUEL INJECTOR"
@@ -594,14 +738,8 @@ function identificarPecaSistemasEletronicos(
       codigo
     )
   ) {
-    return "Injetor de Combustível";
+    return "Injetor de CombustÃ­vel";
   }
-
-  /*
-   * ========================================================
-   * MÓDULO DE INJEÇÃO
-   * ========================================================
-   */
 
   if (
     texto.includes(
@@ -620,14 +758,8 @@ function identificarPecaSistemasEletronicos(
       codigo
     )
   ) {
-    return "Módulo de Injeção";
+    return "MÃ³dulo de InjeÃ§Ã£o";
   }
-
-  /*
-   * ========================================================
-   * SENSOR PEDAL ACELERADOR
-   * ========================================================
-   */
 
   if (
     texto.includes(
@@ -680,7 +812,7 @@ function identificarPecaSistemasEletronicos(
       "REGOLATORE VALVOLE CONDOTTO ASPIRAZIONE"
     )
   ) {
-    return "Atuador do Coletor de Admissão";
+    return "Atuador do Coletor de AdmissÃ£o";
   }
 
   /*
@@ -697,12 +829,12 @@ function identificarPecaSistemasEletronicos(
       "VALVOLA CANISTER"
     )
   ) {
-    return "Válvula Canister";
+    return "VÃ¡lvula Canister";
   }
 
   /*
    * ========================================================
-   * COLETOR ADMISSÃO
+   * COLETOR ADMISSÃƒO
    * ========================================================
    */
 
@@ -714,7 +846,7 @@ function identificarPecaSistemasEletronicos(
       "MODULO COLLETTORE ASPIRAZIONE"
     )
   ) {
-    return "Coletor de Admissão";
+    return "Coletor de AdmissÃ£o";
   }
 
   /*
@@ -748,15 +880,15 @@ function identificarPecaSistemasEletronicos(
       "TUBETTO RACCORDO"
     )
   ) {
-    return "Tubo de Conexão";
+    return "Tubo de ConexÃ£o";
   }
 
-  return "Sistema Eletrônico";
+  return "Sistema EletrÃ´nico";
 }
 
 /*
  * ============================================================
- * CÓDIGO LONGO MAGNETI MARELLI
+ * CÃ“DIGO LONGO MAGNETI MARELLI
  * ============================================================
  */
 
@@ -784,7 +916,7 @@ function extrairCodigoLongoMarelli(
 
 /*
  * ============================================================
- * CÓDIGO CURTO SISTEMAS ELETRÔNICOS
+ * CÃ“DIGO CURTO SISTEMAS ELETRÃ”NICOS
  * ============================================================
  */
 
@@ -797,50 +929,15 @@ function extrairCodigoCurtoSistemasEletronicos(
       linha
     );
 
-  /*
-   * Ordem importante:
-   *
-   * primeiro códigos específicos,
-   * depois padrões genéricos.
-   */
-
   const padroes = [
-    /*
-     * Corpo de borboleta
-     */
-
     /\bTB\d{4}-?\d\b/i,
-
     /\b48CPD[A-Z0-9.-]*\b/i,
-
-    /*
-     * Bicos injetores
-     */
-
-    /\bFEI[A-Z0-9.-]+\b/i,
-
-    /\bIPM[A-Z0-9.-]+\b/i,
-
-    /\bIWP[A-Z0-9.-]+\b/i,
-
-    /*
-     * Pedal
-     */
-
+    /\bFEI[A-Z0-9.\/-]+\b/i,
+    /\bIPM[A-Z0-9.\/-]+\b/i,
+    /\bIWP[A-Z0-9.\/-]+\b/i,
     /\bPAS[A-Z0-9.-]+\b/i,
-
-    /*
-     * ECU
-     */
-
     /\bIAW[A-Z0-9.-]+\b/i,
-
     /\bMJD[A-Z0-9.-]+\b/i,
-
-    /*
-     * Atuador
-     */
-
     /\bB\d{3,}[A-Z0-9.-]*\b/i,
   ];
 
@@ -862,12 +959,6 @@ function extrairCodigoCurtoSistemasEletronicos(
     }
   }
 
-  /*
-   * ========================================================
-   * FALLBACK
-   * ========================================================
-   */
-
   const codigos =
     extrairCodigos(
       linha
@@ -886,10 +977,6 @@ function extrairCodigoCurtoSistemasEletronicos(
         )
     ) || "";
 
-  /*
-   * TB00131 -> TB0013-1
-   */
-
   if (
     /^TB\d{5}$/i.test(
       candidato
@@ -903,12 +990,22 @@ function extrairCodigoCurtoSistemasEletronicos(
     )}`;
   }
 
+  if (
+    /^IWP/i.test(
+      candidato
+    )
+  ) {
+    return candidato
+      .replace(/\s+/g, "")
+      .replace(/\/1$/i, "");
+  }
+
   return candidato;
 }
 
 /*
  * ============================================================
- * IDENTIFICA CÓDIGO CURTO DE SISTEMAS ELETRÔNICOS
+ * IDENTIFICA CÃ“DIGO CURTO DE SISTEMAS ELETRÃ”NICOS
  * ============================================================
  */
 
@@ -983,1164 +1080,10 @@ function extrairMotorSistemasEletronicos(
     partes[0]
   );
 }
-/*
- * ============================================================
- * BICOS INJETORES MARELLI 2016
- * ============================================================
- *
- * Layout real das páginas 1363-1379:
- *
- * IWP099
- * INIETTORE
- * FUEL INJECTOR
- * RENAULT
- * CLIO II (BB0/1/2_, CB0/1/2_)
- * 1.2 16V (...)
- * Petrol 55 06/01 à
- * ENGINE: D4F712...
- *
- * O objetivo é transformar esse bloco em:
- *
- * código
- * montadora
- * modelo
- * motor
- * período
- * aplicação
- * ============================================================
- */
-
-function extrairCodigoBicoMarelli(
-  linha = ""
-) {
-  const texto =
-    limparTexto(
-      linha
-    )
-      .toUpperCase();
-
-  const encontrado =
-    texto.match(
-      /\b(?:IWP|IPM|FEI)[A-Z0-9./-]+\b/i
-    )?.[0] || "";
-
-  return encontrado
-    ? encontrado.toUpperCase()
-    : "";
-}
-
-function ehCodigoBicoMarelli(
-  linha = ""
-) {
-  const texto =
-    limparTexto(
-      linha
-    )
-      .toUpperCase();
-
-  const codigo =
-    extrairCodigoBicoMarelli(
-      texto
-    );
-
-  if (!codigo) {
-    return false;
-  }
-
-  /*
-   * Catálogo 2016:
-   *
-   * dependendo da extração do PDF, o código pode chegar como:
-   *
-   * IWP099
-   * IWP099 INIETTORE
-   * IWP099 FUEL INJECTOR
-   * IWP099 INIETTORE FUEL INJECTOR
-   *
-   * ou acompanhado de pequenos resíduos de cabeçalho.
-   *
-   * Como este teste roda somente dentro do parser dedicado
-   * aos bicos, podemos aceitar linhas curtas que contenham
-   * um código FEI / IPM / IWP sem tratar aplicações como código.
-   */
-
-  if (
-    texto === codigo ||
-    texto === `${codigo} INIETTORE` ||
-    texto === `${codigo} FUEL INJECTOR` ||
-    texto ===
-      `${codigo} INIETTORE FUEL INJECTOR`
-  ) {
-    return true;
-  }
-
-  /*
-   * Não aceitar linhas de aplicação/equivalência.
-   */
-
-  if (
-    texto.length > 80 ||
-    identificarMontadora(
-      texto
-    ) ||
-    /\b(?:ENGINE|PETROL|DIESEL|BENZINA|GASOLINE|KW)\b/i.test(
-      texto
-    )
-  ) {
-    return false;
-  }
-
-  const codigosBico = [
-    ...texto.matchAll(
-      /\b(?:IWP|IPM|FEI)[A-Z0-9./-]+\b/gi
-    ),
-  ].map(
-    (match) =>
-      String(
-        match[0] || ""
-      ).toUpperCase()
-  );
-
-  /*
-   * Se existe somente um código de bico na linha curta,
-   * tratamos como início de bloco.
-   */
-
-  return (
-    codigosBico.length === 1 &&
-    codigosBico[0] === codigo
-  );
-}
-function normalizarCodigoBicoMarelli(
-  valor = ""
-) {
-  return limparTexto(
-    valor
-  )
-    .toUpperCase()
-    .replace(
-      /\s+/g,
-      ""
-    );
-}
-
-function ehMontadoraBicoMarelli(
-  linha = ""
-) {
-  const texto =
-    normalizarTexto(
-      linha
-    );
-
-  return MONTADORAS.some(
-    (montadora) =>
-      texto ===
-      normalizarTexto(
-        montadora
-      )
-  );
-}
-
-function extrairModeloBicoMarelli(
-  linha = ""
-) {
-  const texto =
-    limparTexto(
-      linha
-    );
-
-  if (!texto) {
-    return "";
-  }
-
-  /*
-   * Exemplos válidos:
-   *
-   * CLIO II (BB0/1/2_, CB0/1/2_)
-   * KANGOO (KC0/1_)
-   * KANGOO Express (FC0/1_)
-   * THALIA I (LB0/1/2_)
-   * TWINGO I (C06_)
-   */
-
-  if (
-    !/[A-ZÀ-Ü]/i.test(
-      texto
-    ) ||
-    !texto.includes("(") ||
-    !texto.includes(")")
-  ) {
-    return "";
-  }
-
-  /*
-   * Não confundir motor/versão:
-   *
-   * 1.2 16V (BB05...)
-   * 2.0 Turbo (KG0S...)
-   */
-
-  if (
-    /^\s*\d/.test(
-      texto
-    )
-  ) {
-    return "";
-  }
-
-  if (
-    /^ENGINE\s*:/i.test(
-      texto
-    )
-  ) {
-    return "";
-  }
-
-  if (
-    /^(PETROL|DIESEL|BENZINA|GASOLINE)\b/i.test(
-      texto
-    )
-  ) {
-    return "";
-  }
-
-  const modelo =
-    texto
-      .replace(
-        /\s*\([^)]*\)\s*$/,
-        ""
-      )
-      .trim();
-
-  if (
-    !modelo ||
-    modelo.length < 2
-  ) {
-    return "";
-  }
-
-  return modelo;
-}
-
-function converterAnoCurtoMarelli(
-  valor
-) {
-  const numero =
-    Number(
-      valor
-    );
-
-  if (
-    !Number.isFinite(
-      numero
-    )
-  ) {
-    return null;
-  }
-
-  return numero >= 70
-    ? 1900 + numero
-    : 2000 + numero;
-}
-
-function extrairPeriodoBicoMarelli(
-  texto = ""
-) {
-  const encontrados = [
-    ...String(
-      texto || ""
-    ).matchAll(
-      /\b(\d{2})\/(\d{2})\b/g
-    ),
-  ];
-
-  if (
-    encontrados.length === 0
-  ) {
-    return {
-      ano_inicio: null,
-      ano_fim: null,
-    };
-  }
-
-  const primeiro =
-    encontrados[0];
-
-  const anoInicio =
-    converterAnoCurtoMarelli(
-      primeiro[2]
-    );
-
-  if (
-    encontrados.length === 1
-  ) {
-    return {
-      ano_inicio:
-        anoInicio,
-
-      ano_fim:
-        null,
-    };
-  }
-
-  const ultimo =
-    encontrados[
-      encontrados.length - 1
-    ];
-
-  return {
-    ano_inicio:
-      anoInicio,
-
-    ano_fim:
-      converterAnoCurtoMarelli(
-        ultimo[2]
-      ),
-  };
-}
-
-function extrairMotorBicoMarelli(
-  texto = ""
-) {
-  const original =
-    limparTexto(
-      texto
-    );
-
-  /*
-   * Pega somente a descrição base.
-   *
-   * Exemplos:
-   *
-   * 1.2 16V
-   * 1.6 16V
-   * 2.0 16V Turbo
-   * 1100
-   */
-
-  const encontrado =
-    original.match(
-      /\b(?:\d[.,]\d|[789]\d{2}|1\d{3}|2\d{3})(?:\s+(?:6V|8V|12V|16V|20V|24V))?(?:\s+(?:TURBO|JTD|JTDM|TDI|HDI|TSI|TFSI|MPI))?/i
-    )?.[0] || "";
-
-  return limparTexto(
-    encontrado
-  );
-}
-
-function extrairCodigosMotorBicoMarelli(
-  texto = ""
-) {
-  const original =
-    limparTexto(
-      texto
-    );
-
-  const parteEngine =
-    original.match(
-      /ENGINE\s*:\s*(.+)$/i
-    )?.[1] || "";
-
-  if (
-    !parteEngine
-  ) {
-    return [];
-  }
-
-  return [
-    ...new Set(
-      parteEngine
-        .split(
-          /[\s,;/]+/
-        )
-        .map(
-          (item) =>
-            limparTexto(
-              item
-            )
-              .replace(
-                /[^A-Z0-9.-]/gi,
-                ""
-              )
-              .toUpperCase()
-        )
-        .filter(
-          (item) =>
-            item &&
-            /[A-Z]/.test(
-              item
-            ) &&
-            /\d/.test(
-              item
-            )
-        )
-    ),
-  ];
-}
-
-function ehLinhaEstruturalBicoMarelli(
-  linha = ""
-) {
-  const texto =
-    normalizarTexto(
-      linha
-    );
-
-  if (!texto) {
-    return true;
-  }
-
-  return (
-    texto === "INIETTORE" ||
-    texto === "FUEL INJECTOR" ||
-    texto === "B" ||
-    texto === "KW" ||
-    texto === "B KW" ||
-    texto === "TYPE" ||
-    texto === "TYPE TYPE" ||
-    texto === "GROUP C" ||
-    texto === "GRUPPO C" ||
-    texto === "MAGNETI MARELLI"
-  );
-}
-
-function parserBicosInjetoresMarelli2016({
-  linhas = [],
-  configuracao = {},
-  nomeArquivo = "",
-}) {
-  const registros =
-    [];
-
-  let codigoAtual =
-    "";
-
-  let montadoraAtual =
-    "";
-
-  let modeloAtual =
-    "";
-
-  let linhasAplicacao =
-    [];
-
-  /*
-   * ========================================================
-   * FINALIZA UM VEÍCULO
-   * ========================================================
-   */
-
-  function finalizarModelo() {
-    if (
-      !codigoAtual ||
-      !montadoraAtual ||
-      !modeloAtual
-    ) {
-      linhasAplicacao = [];
-
-      return;
-    }
-
-    const textoAplicacao =
-      limparTexto(
-        linhasAplicacao.join(
-          " "
-        )
-      );
-
-    /*
-     * Modelo sem informação técnica
-     * não será gravado.
-     */
-
-    if (
-      !textoAplicacao
-    ) {
-      linhasAplicacao = [];
-
-      return;
-    }
-
-    const {
-      ano_inicio,
-      ano_fim,
-    } =
-      extrairPeriodoBicoMarelli(
-        textoAplicacao
-      );
-
-    const motor =
-      extrairMotorBicoMarelli(
-        textoAplicacao
-      );
-
-    const codigosMotor =
-      extrairCodigosMotorBicoMarelli(
-        textoAplicacao
-      );
-
-    const codigoOriginal =
-      normalizarCodigoBicoMarelli(
-        codigoAtual
-      );
-
-    const codigoCompacto =
-      normalizarCodigo(
-        codigoAtual
-      );
-
-    const observacoes = [
-      textoAplicacao,
-
-      codigosMotor.length
-        ? `Códigos motor: ${codigosMotor.join(
-            ", "
-          )}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join(" | ");
-
-    registros.push({
-      peca:
-        "Injetor de Combustível",
-
-      descricao:
-        "Injetor de Combustível",
-
-      /*
-       * Pesquisa principal:
-       *
-       * IWP099
-       * IWP1161
-       */
-
-      codigo_oem:
-        codigoCompacto,
-
-      /*
-       * Mantemos a grafia original
-       * para códigos como IWP116/1.
-       */
-
-      codigo_equivalente:
-        codigoOriginal,
-
-      equivalentes: [
-        codigoOriginal,
-        codigoCompacto,
-      ].filter(Boolean),
-
-      fabricante:
-        "Magneti Marelli",
-
-      montadora:
-        montadoraAtual,
-
-      modelo:
-        modeloAtual,
-
-      motor:
-        motor ||
-        null,
-
-      ano_inicio,
-
-      ano_fim,
-
-      aplicacao:
-        textoAplicacao,
-
-      observacao:
-        observacoes,
-
-      origem_catalogo:
-        configuracao
-          ?.origemCatalogo ||
-        "Catálogo Magneti Marelli Bicos Injetores 2016",
-
-      arquivo_catalogo:
-        nomeArquivo ||
-        null,
-
-      tipo_catalogo:
-        "sistemas_eletronicos",
-
-      ativo:
-        true,
-    });
-
-    linhasAplicacao =
-      [];
-  }
-
-  /*
-   * ========================================================
-   * LEITURA
-   * ========================================================
-   */
-
-  for (
-    let indice = 0;
-    indice <
-    linhas.length;
-    indice += 1
-  ) {
-    const linha =
-      limparTexto(
-        linhas[indice]
-      );
-
-    if (
-      !linha ||
-      ehMarcadorPagina(
-        linha
-      )
-    ) {
-      continue;
-    }
-
-    /*
-     * ======================================================
-     * NOVO CÓDIGO DE BICO
-     * ======================================================
-     */
-
-    if (
-      ehCodigoBicoMarelli(
-        linha
-      )
-    ) {
-      finalizarModelo();
-
-      codigoAtual =
-        extrairCodigoBicoMarelli(
-          linha
-        );
-
-      montadoraAtual =
-        "";
-
-      modeloAtual =
-        "";
-
-      linhasAplicacao =
-        [];
-
-      continue;
-    }
-
-    if (
-      !codigoAtual
-    ) {
-      continue;
-    }
-
-    /*
-     * ======================================================
-     * IGNORA CABEÇALHOS
-     * ======================================================
-     */
-
-    if (
-      ehLinhaEstruturalBicoMarelli(
-        linha
-      )
-    ) {
-      continue;
-    }
-
-    /*
-     * ======================================================
-     * MONTADORA
-     * ======================================================
-     */
-
-    if (
-      ehMontadoraBicoMarelli(
-        linha
-      )
-    ) {
-      finalizarModelo();
-
-      montadoraAtual =
-        identificarMontadora(
-          linha
-        );
-
-      modeloAtual =
-        "";
-
-      linhasAplicacao =
-        [];
-
-      continue;
-    }
-
-    /*
-     * ======================================================
-     * MODELO
-     * ======================================================
-     */
-
-    const modelo =
-      extrairModeloBicoMarelli(
-        linha
-      );
-
-    if (
-      modelo
-    ) {
-      finalizarModelo();
-
-      modeloAtual =
-        modelo;
-
-      linhasAplicacao =
-        [];
-
-      continue;
-    }
-
-    /*
-     * ======================================================
-     * CONTEÚDO DA APLICAÇÃO
-     * ======================================================
-     *
-     * Depois que temos:
-     *
-     * código
-     * montadora
-     * modelo
-     *
-     * tudo até o próximo modelo pertence
-     * à aplicação atual.
-     * ======================================================
-     */
-
-    if (
-      montadoraAtual &&
-      modeloAtual
-    ) {
-      linhasAplicacao.push(
-        linha
-      );
-    }
-  }
-
-  finalizarModelo();
-
-  const registrosUnicos =
-    removerDuplicados(
-      registros
-    );
-
-  /*
-   * ========================================================
-   * DIAGNÓSTICO
-   * ========================================================
-   */
-
-  const testeIwp099 =
-    registrosUnicos.filter(
-      (registro) =>
-        normalizarCodigo(
-          registro.codigo_oem
-        ) ===
-        "IWP099"
-    );
-
-  console.log(
-    "=========================================="
-  );
-
-  console.log(
-    "💉 PARSER BICOS MARELLI 2016"
-  );
-
-  console.log(
-    "TOTAL:",
-    registrosUnicos.length
-  );
-
-  console.log(
-    "IWP099:",
-    testeIwp099
-  );
-
-  console.log(
-    "=========================================="
-  );
-
-  return registrosUnicos;
-}
-
- 
-/*
- * ============================================================
- * MODELO / MOTOR
- * ============================================================
- */
-
-function pareceModelo(linha = "") {
-  const texto =
-    limparTexto(linha);
-
-  if (
-    !texto ||
-    texto.length < 2 ||
-    texto.length > 120
-  ) {
-    return false;
-  }
-
-  if (
-    ehMarcadorPagina(texto)
-  ) {
-    return false;
-  }
-
-  if (
-    /^\d+$/.test(texto)
-  ) {
-    return false;
-  }
-
-  if (
-    identificarMontadora(texto)
-  ) {
-    return false;
-  }
-
-  if (
-    ehCabecalho(texto)
-  ) {
-    return false;
-  }
-
-  const textoNormalizado =
-    normalizarTexto(texto);
-
-  /*
-   * ========================================================
-   * PALAVRA REPETIDA
-   * ========================================================
-   *
-   * BOSCH BOSCH BOSCH
-   * BREMBO BREMBO BREMBO
-   * TRW TRW
-   * ATE ATE ATE
-   *
-   * Não são modelos.
-   * ========================================================
-   */
-
-  const palavras =
-    textoNormalizado
-      .split(/\s+/)
-      .filter(Boolean);
-
-  if (
-    palavras.length >= 2
-  ) {
-    const primeira =
-      palavras[0];
-
-    const todasIguais =
-      palavras.every(
-        (palavra) =>
-          palavra === primeira
-      );
-
-    if (todasIguais) {
-      return false;
-    }
-  }
-
-  /*
-   * ========================================================
-   * FABRICANTES / MARCAS
-   * ========================================================
-   */
-
-  const fabricantes = [
-    "BOSCH",
-    "BREMBO",
-    "TRW",
-    "ATE",
-    "DELPHI",
-    "FERODO",
-    "TEXTAR",
-    "PAGID",
-    "VALEO",
-    "MAGNETI MARELLI",
-    "MARELLI",
-    "JURID",
-    "REMSA",
-    "ROADHOUSE",
-    "ZIMMERMANN",
-    "FEBI",
-    "MEYLE",
-    "SKF",
-  ];
-
-  if (
-    fabricantes.includes(
-      textoNormalizado
-    )
-  ) {
-    return false;
-  }
-
-  /*
-   * ========================================================
-   * LINHA FORMADA POR CÓDIGOS
-   * ========================================================
-   */
-
-  const tokens =
-    texto
-      .split(
-        /[\s,;|/()[\]{}]+/
-      )
-      .map(
-        (item) =>
-          limparTexto(item)
-      )
-      .filter(Boolean);
-
-  const tokensCodigo =
-    tokens.filter(
-      (token) => {
-        const codigo =
-          normalizarCodigo(
-            token
-          );
-
-        if (
-          codigo.length < 5 ||
-          codigo.length > 25
-        ) {
-          return false;
-        }
-
-        /*
-         * Código numérico longo
-         *
-         * 0986479173
-         * 34111164539
-         */
-
-        if (
-          /^\d{6,25}$/.test(
-            codigo
-          )
-        ) {
-          return true;
-        }
-
-        /*
-         * Código alfanumérico
-         *
-         * 5N0615301
-         * MBD0679
-         * DF1455
-         */
-
-        if (
-          /[A-Z]/.test(codigo) &&
-          /\d/.test(codigo) &&
-          codigo.length >= 5
-        ) {
-          return true;
-        }
-
-        return false;
-      }
-    );
-
-  /*
-   * Se toda ou quase toda a linha
-   * é formada por códigos,
-   * não é modelo.
-   */
-
-  if (
-    tokensCodigo.length >= 2
-  ) {
-    return false;
-  }
-
-  if (
-    tokens.length === 1 &&
-    tokensCodigo.length === 1
-  ) {
-    return false;
-  }
-
-  /*
-   * ========================================================
-   * TERMOS ESTRUTURAIS
-   * ========================================================
-   */
-
-  const termosEstruturais = [
-    "LONG SHORT",
-    "SHORT LONG",
-    "LIFE-TIME-FILTER",
-    "LIFETIME FILTER",
-    "TECHNICAL DATA",
-    "DIMENSIONS",
-    "IMAGE",
-    "IMAGES",
-    "ILLUSTRATION",
-    "ILLUSTRATIVE",
-    "FILTERS ACTUAL SHAPE",
-
-    /*
-     * Brake Discs
-     */
-
-    "BRAKE DISC",
-    "BRAKE DISCS",
-    "BRAKE DISK",
-    "BRAKE DISKS",
-    "DISCO FRENO",
-    "DISCHI FRENO",
-    "CROSS REFERENCE",
-    "CROSS REFERENCES",
-    "OE NUMBER",
-    "OE NUMBERS",
-    "OES NUMBER",
-    "OES NUMBERS",
-    "PART NUMBER",
-    "PART NUMBERS",
-    "REFERENCE",
-    "REFERENCES",
-
-    /*
-     * Electronic Systems
-     */
-
-    "PARTS",
-    "OTHER PARTS",
-    "SERVICE PART",
-    "SERVICE PARTS",
-    "THROTTLE BODY",
-    "CORPO FARFALLATO",
-    "FUEL INJECTOR",
-    "INIETTORE",
-    "ENGINE CONTROL UNIT",
-    "CENTRALINA CONTROLLO MOTORE",
-    "CENTRALINA ELETTRONICA",
-    "STEPPER MOTOR",
-    "IDLE SPEED CONTROL ACTUATOR",
-    "ATTUATORE CONTROLLO MINIMO",
-    "ACCELERATOR PEDAL SENSOR",
-    "SENSORE PEDALE ACCELERATORE",
-    "SWIRL FLAP ACTUATOR",
-    "CANISTER VALVE",
-    "INTAKE MANIFOLD",
-    "TYPE TYPE",
-    "KW TYPE",
-    "TYPE",
-    "GROUP A",
-    "GROUP B",
-    "GROUP C",
-    "GROUP D",
-  ];
-
-  if (
-    termosEstruturais.some(
-      (termo) =>
-        textoNormalizado === termo ||
-        textoNormalizado.startsWith(
-          `${termo} `
-        )
-    )
-  ) {
-    return false;
-  }
-
-  /*
-   * ========================================================
-   * BATTERIES
-   * ========================================================
-   */
-
-  const cabecalhosBateria = [
-    "HEIGHT [MM]",
-    "HEIGHT MM",
-    "LENGTH [MM]",
-    "LENGTH MM",
-    "WIDTH [MM]",
-    "WIDTH MM",
-    "PART NUMBER",
-    "PART NUMBER SHORT",
-    "SHORT",
-    "AH",
-    "A (EN)",
-    "A EN",
-    "BOX TYPE",
-    "HOLD DOWN",
-    "POLARITY",
-    "TERMINAL",
-    "TERMINALS",
-  ];
-
-  if (
-    cabecalhosBateria.some(
-      (cabecalho) =>
-        textoNormalizado ===
-          cabecalho ||
-        textoNormalizado.startsWith(
-          `${cabecalho} `
-        )
-    )
-  ) {
-    return false;
-  }
-
-  return true;
-}
-function pareceMotor(linha = "") {
-  const texto =
-    normalizarTexto(linha);
-
-  if (!texto) {
-    return false;
-  }
-
-  if (
-    ehMarcadorPagina(texto)
-  ) {
-    return false;
-  }
-
-  return (
-    /\b\d[.,]\d\b/.test(texto) ||
-    /\b\d{3,4}\s?CC\b/.test(texto) ||
-    /\bV6\b/.test(texto) ||
-    /\bV8\b/.test(texto) ||
-    /\bV10\b/.test(texto) ||
-    /\bV12\b/.test(texto) ||
-    /\bTDI\b/.test(texto) ||
-    /\bHDI\b/.test(texto) ||
-    /\bJTD\b/.test(texto) ||
-    /\bJTDM\b/.test(texto) ||
-    /\bTDCI\b/.test(texto) ||
-    /\bCDI\b/.test(texto) ||
-    /\bTSI\b/.test(texto) ||
-    /\bTFSI\b/.test(texto) ||
-    /\bMPI\b/.test(texto) ||
-    /\b16V\b/.test(texto) ||
-    /\b8V\b/.test(texto)
-  );
-}
 
 /*
  * ============================================================
- * CRIAÇÃO DO REGISTRO PADRÃO APPIA
+ * CRIAÃ‡ÃƒO DO REGISTRO
  * ============================================================
  */
 
@@ -2163,6 +1106,7 @@ function criarRegistro({
     );
 
   if (
+    !codigoLimpo ||
     !pareceCodigo(
       codigoLimpo
     )
@@ -2181,9 +1125,10 @@ function criarRegistro({
   const {
     ano_inicio,
     ano_fim,
-  } = extrairAnos(
-    linha
-  );
+  } =
+    extrairAnos(
+      linha
+    );
 
   const peca =
     limparTexto(
@@ -2208,8 +1153,9 @@ function criarRegistro({
       .filter(
         (item) =>
           item &&
-          normalizarCodigo(item) !==
-            codigoLimpo
+          normalizarCodigo(
+            item
+          ) !== codigoLimpo
       );
 
   const modeloLimpo =
@@ -2280,6 +1226,7 @@ function criarRegistro({
       null,
 
     ano_inicio,
+
     ano_fim,
 
     aplicacao:
@@ -2296,7 +1243,7 @@ function criarRegistro({
       configuracao
         ?.origemCatalogo ||
       nomeArquivo ||
-      "Catálogo Magneti Marelli",
+      "CatÃ¡logo Magneti Marelli",
 
     arquivo_catalogo:
       nomeArquivo ||
@@ -2307,13 +1254,14 @@ function criarRegistro({
         ?.tipoCatalogo ||
       "catalogo_geral",
 
-    ativo: true,
+    ativo:
+      true,
   };
 }
 
 /*
  * ============================================================
- * REMOÇÃO DE DUPLICADOS
+ * REMOÃ‡ÃƒO DE DUPLICADOS
  * ============================================================
  */
 
@@ -2369,126 +1317,2976 @@ function removerDuplicados(
 
 /*
  * ============================================================
- * LEITURA DE UMA SEÇÃO
+ * LEITURA DE UMA SEÃ‡ÃƒO
  * ============================================================
  */
 
 function transformarEmLinhas(
   texto = ""
 ) {
-  return String(
-    texto || ""
-  )
-    .split(/\r?\n/)
-    .map(
-      limparTexto
-    )
-    .filter(
-      (linha) =>
+  const bruto =
+    String(
+      texto || ""
+    );
+
+  /*
+   * O Electronic Systems traz um efeito da extraÃ§Ã£o:
+   * em vÃ¡rias pÃ¡ginas o cabeÃ§alho visual da pÃ¡gina
+   * (montadora e Ã s vezes o primeiro modelo)
+   * aparece no FINAL do texto extraÃ­do.
+   *
+   * Como o motor injeta marcadores:
+   * --- PÃGINA 102 ---
+   *
+   * tratamos pÃ¡gina por pÃ¡gina antes de achatar as linhas.
+   */
+
+  const partes =
+    bruto.split(
+      /---\s*P[ÃA]GINA\s+\d+\s*---/i
+    );
+
+  const resultado = [];
+
+  for (
+    const parte
+    of partes
+  ) {
+    let linhas =
+      String(
+        parte || ""
+      )
+        .split(/\r?\n/)
+        .map(
+          limparTexto
+        )
+        .filter(Boolean);
+
+    if (
+      linhas.length === 0
+    ) {
+      continue;
+    }
+
+    /*
+     * NÃºmero impresso da pÃ¡gina nÃ£o Ã© aplicaÃ§Ã£o.
+     */
+    linhas =
+      linhas.filter(
+        (linha) =>
+          !/^\d{1,4}$/.test(
+            linha
+          )
+      );
+
+    /*
+     * Procura montadora somente muito perto do fim.
+     * Quando encontrada ali, move o cabeÃ§alho para o comeÃ§o.
+     */
+
+    let indiceCabecalho =
+      -1;
+
+    for (
+      let indice =
+        linhas.length - 1;
+      indice >= 0;
+      indice -= 1
+    ) {
+      if (
+        identificarMontadora(
+          linhas[indice]
+        )
+      ) {
+        indiceCabecalho =
+          indice;
+
+        break;
+      }
+
+      if (
+        linhas.length - indice >
+        3
+      ) {
+        break;
+      }
+    }
+
+    if (
+      indiceCabecalho >= 0
+    ) {
+      const cabecalho =
+        linhas.slice(
+          indiceCabecalho
+        );
+
+      const corpo =
+        linhas.slice(
+          0,
+          indiceCabecalho
+        );
+
+      linhas = [
+        ...cabecalho,
+        ...corpo,
+      ];
+    }
+
+    for (
+      const linha
+      of linhas
+    ) {
+      if (
         linha &&
         !ehMarcadorPagina(
           linha
         )
-    );
+      ) {
+        resultado.push(
+          linha
+        );
+      }
+    }
+  }
+
+  return resultado;
+}
+
+
+/*
+ * ============================================================
+ * ELECTRONIC SYSTEMS — ORDEM NATURAL DAS PÁGINAS
+ * ============================================================
+ *
+ * O catálogo Electronic Systems já traz, na própria linha da aplicação,
+ * o código Marelli correspondente. Para este catálogo NÃO devemos mover
+ * cabeçalhos encontrados no fim da página para o começo, porque isso pode
+ * antecipar o próximo modelo e fazer uma referência da linha anterior
+ * receber o modelo seguinte (ex.: IWP049 -> BX/BX Break).
+ */
+function transformarEmLinhasElectronicSystems(
+  texto = ""
+) {
+  const bruto = String(texto || "");
+
+  const partes = bruto.split(
+    /---\s*P[ÃA]GINA\s+\d+\s*---/i
+  );
+
+  const resultado = [];
+
+  for (const parte of partes) {
+    const linhas = String(parte || "")
+      .split(/\r?\n/)
+      .map(limparTexto)
+      .filter(Boolean)
+      .filter(
+        (linha) =>
+          !ehMarcadorPagina(linha)
+      );
+
+    for (
+      let indice = 0;
+      indice < linhas.length;
+      indice += 1
+    ) {
+      const linha =
+        linhas[indice];
+
+      if (!/^\d{1,4}$/.test(linha)) {
+        resultado.push(linha);
+        continue;
+      }
+
+      const proximaUtil =
+        linhas
+          .slice(indice + 1)
+          .find(Boolean) || "";
+
+      if (/^\d+\.\d+/.test(proximaUtil)) {
+        resultado.push(linha);
+      }
+    }
+  }
+
+  return resultado;
 }
 
 /*
  * ============================================================
- * PARSER UNIVERSAL
+ * SISTEMAS ELETRÃ”NICOS â€” PARSER SEQUENCIAL
  * ============================================================
  */
 
-export async function parserMagnetiMarelliUniversal({
-  textoReferencias = "",
-  textoAplicacoes = "",
-  textoEquivalencias = "",
-  nomeArquivo = "",
+function extrairCodigoCurtoSequencialMarelli(
+  linha = ""
+) {
+  const texto =
+    limparTexto(
+      linha
+    );
+
+  if (!texto) {
+    return "";
+  }
+
+  const conhecido =
+    extrairCodigoCurtoSistemasEletronicos(
+      texto
+    );
+
+  if (conhecido) {
+    return conhecido;
+  }
+
+  const primeiroToken =
+    texto
+      .split(/\s+/)
+      .map(
+        (item) =>
+          limparTexto(
+            item
+          )
+      )
+      .find(Boolean) || "";
+
+  if (
+    !primeiroToken ||
+    /^\d{12}$/.test(
+      normalizarCodigo(
+        primeiroToken
+      )
+    )
+  ) {
+    return "";
+  }
+
+  const compacto =
+    normalizarCodigo(
+      primeiroToken
+    );
+
+  if (
+    compacto.length < 3 ||
+    compacto.length > 20 ||
+    !/[A-Z]/.test(
+      compacto
+    ) ||
+    !/\d/.test(
+      compacto
+    )
+  ) {
+    return "";
+  }
+
+  if (
+    /^(PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|ENGINE)$/i.test(
+      primeiroToken
+    )
+  ) {
+    return "";
+  }
+
+  return normalizarCodigoEquivalente(
+    primeiroToken
+  );
+}
+
+function ehModeloSistemasEletronicosMarelli(
+  linha = ""
+) {
+  const texto =
+    limparTexto(
+      linha
+    );
+
+  if (
+    !texto ||
+    !texto.includes("(") ||
+    !texto.includes(")") ||
+    (
+      /^\s*\d/.test(
+        texto
+      ) &&
+      !/^\s*\d{3,4}\s+.*\([^)]*\)/.test(
+        texto
+      )
+    ) ||
+    identificarMontadora(
+      texto
+    ) ||
+    ehCabecalho(
+      texto
+    ) ||
+    ehDescricaoTecnicaSistemasEletronicos(
+      texto
+    ) ||
+    extrairCodigoLongoMarelli(
+      texto
+    ) ||
+    /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i.test(
+      texto
+    ) ||
+    /\b\d{2}\/\d{2}\b/.test(
+      texto
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function ehLinhaAplicacaoSistemasEletronicosMarelli(
+  linha = ""
+) {
+  const texto =
+    limparTexto(
+      linha
+    );
+
+  if (!texto) {
+    return false;
+  }
+
+  if (
+    /^Ã /i.test(
+      texto
+    ) ||
+    /^\d(?:[.,]\d|\d{2,3})\b/.test(
+      texto
+    ) ||
+    /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i.test(
+      texto
+    ) ||
+    /\b\d{2}\/\d{2}\b/.test(
+      texto
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function criarMapaSequencialSistemasEletronicosMarelli(
+  linhas = []
+) {
+  const mapa =
+    new Map();
+
+  for (
+    let indice = 0;
+    indice < linhas.length;
+    indice += 1
+  ) {
+    const linha =
+      limparTexto(
+        linhas[indice]
+      );
+
+    if (!linha) {
+      continue;
+    }
+
+    const codigoLongo =
+      extrairCodigoLongoMarelli(
+        linha
+      );
+
+    if (!codigoLongo) {
+      continue;
+    }
+
+    let codigoCurto =
+      extrairCodigoCurtoSistemasEletronicos(
+        linha,
+        codigoLongo
+      );
+
+    /*
+     * =====================================================
+     * LINHA TÉCNICA SEGURA
+     * =====================================================
+     *
+     * Não carregamos automaticamente uma linha inteira
+     * para outro ponto do catálogo.
+     */
+    let linhaTecnica =
+      "";
+
+    /*
+     * Se longo + curto já estão na mesma linha,
+     * essa linha é segura.
+     */
+    if (
+      codigoCurto
+    ) {
+      linhaTecnica =
+        linha;
+    }
+
+    /*
+     * Se o código curto não estiver na mesma linha,
+     * podemos olhar no máximo as 2 próximas linhas.
+     *
+     * Mas abandonamos imediatamente se surgir:
+     * - outro código longo;
+     * - montadora;
+     * - modelo;
+     * - aplicação.
+     */
+    if (
+      !codigoCurto
+    ) {
+      for (
+        let deslocamento = 1;
+        deslocamento <= 2;
+        deslocamento += 1
+      ) {
+        const proximaLinha =
+          limparTexto(
+            linhas[
+              indice +
+              deslocamento
+            ] || ""
+          );
+
+        if (!proximaLinha) {
+          break;
+        }
+
+        const outroCodigoLongo =
+          extrairCodigoLongoMarelli(
+            proximaLinha
+          );
+
+        /*
+         * Se apareceu qualquer código longo,
+         * não atravessamos para o próximo produto.
+         */
+        if (
+          outroCodigoLongo
+        ) {
+          break;
+        }
+
+        if (
+          identificarMontadora(
+            proximaLinha
+          ) ||
+          ehModeloSistemasEletronicosMarelli(
+            proximaLinha
+          ) ||
+          ehLinhaAplicacaoSistemasEletronicosMarelli(
+            proximaLinha
+          )
+        ) {
+          break;
+        }
+
+        const candidato =
+          extrairCodigoCurtoSequencialMarelli(
+            proximaLinha
+          );
+
+        if (
+          candidato
+        ) {
+          codigoCurto =
+            candidato;
+
+          /*
+           * Guardamos a linha apenas se não houver
+           * nenhum código longo concorrente nela.
+           */
+          linhaTecnica =
+            proximaLinha;
+
+          break;
+        }
+      }
+    }
+
+    /*
+     * =====================================================
+     * VALIDAÇÃO FINAL DA LINHA TÉCNICA
+     * =====================================================
+     */
+
+    if (
+      linhaTecnica
+    ) {
+      const longosEncontrados =
+        [
+          ...linhaTecnica.matchAll(
+            /\b8\d{11}\b/g
+          ),
+        ].map(
+          (resultado) =>
+            resultado[0]
+        );
+
+      const longosDiferentes =
+        longosEncontrados.filter(
+          (codigo) =>
+            codigo !==
+            codigoLongo
+        );
+
+      /*
+       * Exemplo proibido:
+       *
+       * registro atual:
+       * 805000003010 / PAS003
+       *
+       * linha técnica:
+       * PAS004 - 805000004010
+       *
+       * Nesse caso descartamos a linha técnica.
+       */
+      if (
+        longosDiferentes.length >
+        0
+      ) {
+        linhaTecnica =
+          "";
+      }
+    }
+
+    /*
+     * =====================================================
+     * MAPA
+     * =====================================================
+     *
+     * Primeira associação válida vence.
+     * Mas nunca armazenamos linha contaminada.
+     */
+
+    if (
+      !mapa.has(
+        codigoLongo
+      )
+    ) {
+      mapa.set(
+        codigoLongo,
+        {
+          codigoCurto:
+            codigoCurto || "",
+
+          linhaTecnica:
+            linhaTecnica || "",
+        }
+      );
+    }
+  }
+
+  return mapa;
+}
+function extrairBaseMotorSistemasEletronicos(
+  linha = ""
+) {
+  const texto =
+    limparTexto(
+      linha
+    );
+
+  if (!texto) {
+    return "";
+  }
+
+  const partes =
+    texto.split(
+      /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i
+    );
+
+  if (
+    partes.length > 1
+  ) {
+    return limparTexto(
+      partes[0]
+    );
+  }
+
+  if (
+    !/\b\d{2}\/\d{2}\b/.test(
+      texto
+    ) &&
+    pareceMotor(
+      texto
+    )
+  ) {
+    return texto;
+  }
+
+  return "";
+}
+
+
+/*
+ * ============================================================
+ * ELECTRONIC SYSTEMS — V6
+ * BUYERS GUIDE / APLICAÇÃO POR CÓDIGO
+ * ============================================================
+ *
+ * Regra de segurança:
+ * Para Electronic Systems, a fonte principal passa a ser a seção
+ * "Applicazione per codice / Buyers guide" do catálogo Marelli.
+ *
+ * Nessa seção cada bloco começa com:
+ *   IWP049/1 – 805000347304
+ * e, logo abaixo, aparecem SOMENTE as aplicações daquele código.
+ *
+ * Isso elimina a associação por posição de colunas da seção
+ * "Vehicle application guide", que pode sair deslocada na extração
+ * de texto do PDF.
+ */
+function parserSistemasEletronicosMarelli({
+  linhas = [],
+  linhasReferencias = [],
+  linhasEquivalencias = [],
   configuracao = {},
+  nomeArquivo = "",
   onProgresso,
 }) {
-  const tipoCatalogo =
-    configuracao
-      ?.tipoCatalogo ||
-    "catalogo_geral";
+  const fonteBuyersGuideBase =
+    linhasReferencias.length > 0
+      ? linhasReferencias
+      : linhas;
 
-  const ehSistemasEletronicos =
-    tipoCatalogo ===
-    "sistemas_eletronicos";
-const subTipoCatalogo =
-  configuracao
-    ?.subTipoCatalogo ||
-  "";
+  function recomporCombustivelQuebradoBuyersGuide(
+    linhasFonte = []
+  ) {
+    const resultado = [];
 
-const ehBicosInjetores =
-  ehSistemasEletronicos &&
-  subTipoCatalogo ===
-    "bicos_injetores";
+    for (
+      let indice = 0;
+      indice < linhasFonte.length;
+      indice += 1
+    ) {
+      const atual =
+        limparTexto(
+          linhasFonte[indice]
+        );
 
-  const ehBaterias2024 =
-    tipoCatalogo ===
-    "baterias_2024";
+      const proxima =
+        limparTexto(
+          linhasFonte[indice + 1] ||
+          ""
+        );
 
-  onProgresso?.(
-    `🧠 Parser Universal Magneti Marelli: ${tipoCatalogo}...`
+      if (
+        /^(?:PETROL|DIESEL)\/$/i.test(
+          atual
+        ) &&
+        /^(?:CNG|LPG|ETHANOL)\b/i.test(
+          proxima
+        )
+      ) {
+        resultado.push(
+          `${atual}${proxima}`
+        );
+        indice += 1;
+        continue;
+      }
+
+      if (atual) {
+        resultado.push(
+          atual
+        );
+      }
+    }
+
+    return resultado;
+  }
+
+  function ehAplicacaoCompletaLinhaBuyersGuide(
+    linha = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (!texto) {
+      return false;
+    }
+
+    return (
+      /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG|ETHANOL)\b/i.test(
+        texto
+      ) &&
+      /\b(?:0?[1-9]|1[0-2])\/\d{2}\b/.test(
+        texto
+      )
+    );
+  }
+
+  function ehMotorIncompletoBuyersGuide(
+    linha = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (!texto || !/^\d/.test(texto)) {
+      return false;
+    }
+
+    if (
+      ehAplicacaoCompletaLinhaBuyersGuide(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function ehContinuacaoMotorBuyersGuide(
+    linha = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (!texto) {
+      return false;
+    }
+
+    if (
+      /^(?:POWER|BIPOWER|BLUPOWER|TWINAIR|MULTIAIR|T-JET|TJET)$/i.test(
+        texto
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /^\([A-Z0-9][A-Z0-9._-]{3,}\)$/i.test(
+        texto
+      ) &&
+      !texto.includes(",")
+    ) {
+      return true;
+    }
+
+    if (
+      /^\d+x\d+/i.test(
+        texto
+      ) &&
+      texto.includes("(") &&
+      !ehAplicacaoCompletaLinhaBuyersGuide(
+        texto
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      /^[A-Z0-9]{4,}[A-Z0-9._]*[,)]?$/i.test(
+        texto
+      ) &&
+      !ehAplicacaoCompletaLinhaBuyersGuide(
+        texto
+      )
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function recomporMotorQuebradoBuyersGuide(
+    linhasFonte = []
+  ) {
+    const resultado = [];
+
+    for (
+      let indice = 0;
+      indice < linhasFonte.length;
+      indice += 1
+    ) {
+      let atual =
+        limparTexto(
+          linhasFonte[indice]
+        );
+
+      if (!atual) {
+        continue;
+      }
+
+      if (
+        ehMotorIncompletoBuyersGuide(
+          atual
+        )
+      ) {
+        while (
+          indice + 1 <
+          linhasFonte.length
+        ) {
+          const proxima =
+            limparTexto(
+              linhasFonte[
+                indice + 1
+              ]
+            );
+
+          if (
+            !ehContinuacaoMotorBuyersGuide(
+              proxima
+            )
+          ) {
+            break;
+          }
+
+          atual =
+            `${atual} ${proxima}`;
+          indice += 1;
+        }
+      }
+
+      resultado.push(atual);
+    }
+
+    return resultado;
+  }
+
+  const fonteBuyersGuide =
+    recomporMotorQuebradoBuyersGuide(
+      recomporCombustivelQuebradoBuyersGuide(
+        fonteBuyersGuideBase
+          .map((linha) => limparTexto(linha))
+          .filter(Boolean)
+      )
+    );
+
+  console.log(
+    "🧭 V6 FONTE BUYERS GUIDE:",
+    linhasReferencias.length > 0
+      ? "linhasReferencias"
+      : "fallback linhas",
+    "linhas:",
+    fonteBuyersGuide.length
   );
 
-  const linhasAplicacoes =
-    transformarEmLinhas(
-      textoAplicacoes
-    );
+  function ehCodigoAlfanumericoProdutoBuyersGuide(
+    valor = ""
+  ) {
+    const compacto =
+      normalizarCodigo(
+        valor
+      );
 
-  const linhasReferencias =
-    transformarEmLinhas(
-      textoReferencias
-    );
-/*
- * ============================================================
- * BICOS INJETORES 2016
- * ============================================================
- */
+    if (
+      compacto.length < 4 ||
+      compacto.length > 20
+    ) {
+      return false;
+    }
 
-if (
-  ehBicosInjetores
+    if (
+      !/[A-Z]/.test(
+        compacto
+      ) ||
+      !/\d/.test(
+        compacto
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      /^(?:19|20)\d{2}$/.test(
+        compacto
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  function extrairCodigoCurtoFronteiraProdutoBuyersGuide(
+    linha = "",
+    codigoLongo = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    const match =
+      texto.match(
+        /^(.+?)\s*[–—−-]\s*(\d{12})\s*$/
+      );
+
+    if (!match) {
+      return "";
+    }
+
+    if (
+      normalizarCodigo(
+        match[2]
+      ) !==
+      normalizarCodigo(
+        codigoLongo
+      )
+    ) {
+      return "";
+    }
+
+    const esquerda =
+      limparTexto(
+        match[1]
+      ).replace(
+        /^KIT\s+/i,
+        ""
+      );
+
+    const candidato =
+      esquerda
+        .split(/\s+/)
+        .map(
+          (token) =>
+            limparTexto(
+              token
+            )
+        )
+        .find(
+          (token) =>
+            ehCodigoAlfanumericoProdutoBuyersGuide(
+              token
+            )
+        ) || "";
+
+    if (!candidato) {
+      return "";
+    }
+
+    return normalizarCodigoEquivalente(
+      candidato
+    );
+  }
+
+  function extrairCabecalhoReferencia(
+    linha = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (!texto) {
+      return null;
+    }
+
+    if (
+      /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\b/i.test(
+        texto
+      )
+    ) {
+      return null;
+    }
+
+    const codigoLongo =
+      extrairCodigoLongoMarelli(
+        texto
+      );
+
+    if (!codigoLongo) {
+      return null;
+    }
+
+    let codigoCurto =
+      extrairCodigoCurtoSistemasEletronicos(
+        texto,
+        codigoLongo
+      );
+
+    if (
+      !codigoCurto ||
+      !ehCodigoCurtoSistemasEletronicos(
+        codigoCurto
+      )
+    ) {
+      codigoCurto =
+        extrairCodigoCurtoFronteiraProdutoBuyersGuide(
+          texto,
+          codigoLongo
+        );
+    }
+
+    if (!codigoCurto) {
+      return null;
+    }
+
+    return {
+      codigoLongo:
+        normalizarCodigo(
+          codigoLongo
+        ),
+
+      codigoCurto:
+        normalizarCodigoEquivalente(
+          codigoCurto
+        ),
+    };
+  }
+
+  function ehLinhaTecnicaBuyersGuide(
+    linha = ""
+  ) {
+    const texto =
+      normalizarTexto(linha);
+
+    if (!texto) {
+      return true;
+    }
+
+    return (
+      ehMarcadorPagina(linha) ||
+      ehCabecalho(linha) ||
+      /^(?:GRUPPO|GROUP)\s+[A-D]\b/.test(
+        texto
+      ) ||
+      texto === "TYPE" ||
+      texto === "TYPE TYPE" ||
+      texto === "KW" ||
+      texto === "KW TYPE" ||
+      texto.includes(
+        "APPLICAZIONE PER CODICE"
+      ) ||
+      texto.includes(
+        "BUYERS GUIDE"
+      ) ||
+      texto.includes(
+        "FUEL INJECTOR"
+      ) ||
+      texto.includes(
+        "INIETTORE"
+      ) ||
+      texto.includes(
+        "THROTTLE BODY"
+      ) ||
+      texto.includes(
+        "CORPO FARFALLATO"
+      ) ||
+      texto.includes(
+        "STEPPER MOTOR"
+      ) ||
+      texto.includes(
+        "IDLE SPEED CONTROL ACTUATOR"
+      ) ||
+      texto.includes(
+        "ENGINE CONTROL UNIT"
+      ) ||
+      texto.includes(
+        "INTAKE MANIFOLD"
+      ) ||
+      texto.includes(
+        "ACCELERATOR PEDAL SENSOR"
+      ) ||
+      /^SENSORE\b/.test(
+        texto
+      ) ||
+      /^VALVOLA\b/.test(
+        texto
+      ) ||
+      /^MODULO COLLETTORE\b/.test(
+        texto
+      ) ||
+      /^CABLAGGIO\b/.test(
+        texto
+      ) ||
+      /^CABLE FOR\b/.test(
+        texto
+      ) ||
+      texto.includes(
+        "OTHER PARTS"
+      )
+    );
+  }
+
+  function ehAplicacaoCompletaBuyersGuide(
+  linha = "",
+  codigoLongoAtual = "",
+  codigoCurtoAtual = ""
 ) {
-  onProgresso?.(
-    "💉 Magneti Marelli: lendo bicos injetores..."
-  );
+  const texto =
+    limparTexto(
+      linha
+    );
 
-  const linhasBicos = [
-    ...linhasReferencias,
-    ...linhasAplicacoes,
-  ];
+  if (!texto) {
+    return false;
+  }
 
-  const registrosBicos =
-    parserBicosInjetoresMarelli2016({
-      linhas:
-        linhasBicos,
+  const temCombustivel =
+    /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\b/i.test(
+      texto
+    );
 
-      configuracao,
+  const temPeriodo =
+    /\b(?:0?[1-9]|1[0-2])\/\d{2}\b/.test(
+      texto
+    );
 
-      nomeArquivo,
-    });
+  if (
+    !temCombustivel ||
+    !temPeriodo
+  ) {
+    return false;
+  }
 
-  console.log(
-    "💉 BICOS MARELLI 2016:",
-    registrosBicos.length
-  );
+  const codigoLongoLinha =
+    extrairCodigoLongoMarelli(
+      texto
+    );
 
-  console.log(
-    "💉 EXEMPLO:",
-    registrosBicos[0]
-  );
+  const codigoCurtoLinha =
+    extrairCodigoCurtoSistemasEletronicos(
+      texto,
+      codigoLongoLinha
+    );
 
-  onProgresso?.(
-    `✅ Magneti Marelli Bicos: ${registrosBicos.length} registro(s) encontrado(s).`
-  );
+  const longoAtual =
+    normalizarCodigo(
+      codigoLongoAtual || ""
+    );
 
-  return registrosBicos;
+  const curtoAtual =
+    normalizarCodigo(
+      codigoCurtoAtual || ""
+    );
+
+  const longoLinha =
+    normalizarCodigo(
+      codigoLongoLinha || ""
+    );
+
+  const curtoLinha =
+    normalizarCodigo(
+      codigoCurtoLinha || ""
+    );
+
+  if (
+    longoLinha &&
+    longoAtual &&
+    longoLinha !==
+      longoAtual
+  ) {
+    return false;
+  }
+
+  if (
+    curtoLinha &&
+    curtoAtual &&
+    curtoLinha !==
+      curtoAtual
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
-  const linhasEquivalencias =
-    transformarEmLinhas(
-      textoEquivalencias
+  function extrairTokenTipoAplicacaoBuyersGuide(
+    linha = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (
+      !/^\d+\.\d+/.test(
+        texto
+      )
+    ) {
+      return "";
+    }
+
+    const comCombustivel =
+      texto.match(
+        /^(\d+\.\d+\b.*?)(?=\s+(?:Petrol|Diesel|Benzina|Gasoline|Gasolina|Flex|CNG|LPG|Ethanol|Hybrid)\b)/i
+      );
+
+    if (comCombustivel) {
+      return limparTexto(
+        comCombustivel[1]
+      );
+    }
+
+    if (
+      !/\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\b/i.test(
+        texto
+      )
+    ) {
+      return texto;
+    }
+
+    return "";
+  }
+
+  function ehAplicacaoCompletaComTipoKwPeriodoBuyersGuide(
+    linha = ""
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (
+      !/^\d+\.\d+/.test(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !ehAplicacaoCompletaBuyersGuide(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !/\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\s+\d{1,4}\b/i.test(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    return Boolean(
+      extrairTokenTipoAplicacaoBuyersGuide(
+        texto
+      )
+    );
+  }
+
+  function proximaLinhaUtilBuyersGuide(
+    indiceAtual
+  ) {
+    if (
+      typeof indiceAtual !==
+      "number"
+    ) {
+      return "";
+    }
+
+    for (
+      let indiceProximo =
+        indiceAtual + 1;
+      indiceProximo <
+      fonteBuyersGuide.length;
+      indiceProximo += 1
+    ) {
+      const proxima =
+        limparTexto(
+          fonteBuyersGuide[
+            indiceProximo
+          ]
+        );
+
+      if (proxima) {
+        return proxima;
+      }
+    }
+
+    return "";
+  }
+
+  function anteriorLinhaUtilBuyersGuide(
+    indiceAtual
+  ) {
+    if (
+      typeof indiceAtual !==
+      "number"
+    ) {
+      return "";
+    }
+
+    for (
+      let indiceAnterior =
+        indiceAtual - 1;
+      indiceAnterior >= 0;
+      indiceAnterior -= 1
+    ) {
+      const anterior =
+        limparTexto(
+          fonteBuyersGuide[
+            indiceAnterior
+          ]
+        );
+
+      if (anterior) {
+        return anterior;
+      }
+    }
+
+    return "";
+  }
+
+  function ehNomeComercialAntesDeTipoBuyersGuide(
+    linha = "",
+    indiceAtual
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (
+      !texto ||
+      /^\d+\.\d+/.test(
+        texto
+      ) ||
+      !/[A-Za-zÀ-ÿ]/.test(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    const anterior =
+      anteriorLinhaUtilBuyersGuide(
+        indiceAtual
+      );
+
+    if (
+      anterior.includes("(") &&
+      !anterior.includes(")")
+    ) {
+      return false;
+    }
+
+    return /^\d{1,2}\.\d/.test(
+      proximaLinhaUtilBuyersGuide(
+        indiceAtual
+      )
+    );
+  }
+
+  function ehModeloNumericoBuyersGuide(
+    linha = "",
+    indiceAtual
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (
+      !/^\d{1,4}$/.test(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    return /^\d+\.\d+/.test(
+      proximaLinhaUtilBuyersGuide(
+        indiceAtual
+      )
+    );
+  }
+
+  function pareceInicioAplicacaoSemPeriodo(
+    linha = "",
+    indiceAtual
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (
+      !texto ||
+      identificarMontadora(
+        texto
+      ) ||
+      extrairCabecalhoReferencia(
+        texto
+      ) ||
+      ehLinhaTecnicaBuyersGuide(
+        texto
+      ) ||
+      ehModeloNumericoBuyersGuide(
+        texto,
+        indiceAtual
+      ) ||
+      ehNomeComercialAntesDeTipoBuyersGuide(
+        texto,
+        indiceAtual
+      )
+    ) {
+      return false;
+    }
+
+    const cilindradaLitros =
+      /^\d+\.\d+/.test(
+        texto
+      );
+
+    return (
+      /^\d/.test(texto) &&
+      !(
+        texto.includes("(") &&
+        texto.includes(")") &&
+        !cilindradaLitros &&
+        !/\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\b/i.test(
+          texto
+        )
+      )
+    );
+  }
+
+  function ehModeloBuyersGuide(
+    linha = "",
+    indiceAtual
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (
+      !texto ||
+      identificarMontadora(
+        texto
+      ) ||
+      extrairCabecalhoReferencia(
+        texto
+      ) ||
+      ehLinhaTecnicaBuyersGuide(
+        texto
+      ) ||
+      ehAplicacaoCompletaBuyersGuide(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      ehModeloNumericoBuyersGuide(
+        texto,
+        indiceAtual
+      ) ||
+      ehNomeComercialAntesDeTipoBuyersGuide(
+        texto,
+        indiceAtual
+      )
+    ) {
+      return true;
+    }
+
+    const textoModelo =
+      normalizarTexto(
+        texto
+      );
+
+    if (
+      textoModelo ===
+        "OTHER" ||
+      textoModelo ===
+        "OTHERS"
+    ) {
+      return false;
+    }
+
+    if (
+      /^[A-Z0-9._]+\)\s*$/.test(
+        texto
+      ) &&
+      !texto.includes("(")
+    ) {
+      return false;
+    }
+
+    if (
+      /^\d+\.\d+/.test(
+        texto
+      ) ||
+      /^\d+x\d+/i.test(
+        texto
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      texto.includes("(") &&
+      texto.includes(")")
+    ) {
+      return true;
+    }
+
+    return (
+      /[A-Za-zÀ-ÿ]/.test(
+        texto
+      ) &&
+      !/^\d(?:[.,]\d|\s)/.test(
+        texto
+      ) &&
+      texto.split(/\s+/).length <=
+        10
+    );
+  }
+
+  function criarRegistroBuyersGuide({
+    codigoLongo,
+    codigoCurto,
+    montadora,
+    modelo,
+    aplicacao,
+  }) {
+    if (
+      !codigoLongo ||
+      !codigoCurto ||
+      !montadora ||
+      !modelo ||
+      !aplicacao
+    ) {
+      return null;
+    }
+
+    const motor =
+      extrairMotorSistemasEletronicos(
+        aplicacao
+      ) ||
+      limparTexto(
+        aplicacao.split(
+          /\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|FLEX|CNG|LPG)\b/i
+        )[0] || ""
+      );
+
+    const periodo =
+      extrairPeriodoBicoMarelli(
+        aplicacao
+      );
+
+    const peca =
+      identificarPecaSistemasEletronicos(
+        codigoCurto,
+        codigoCurto
+      );
+
+    const observacao =
+      limparTexto(
+        [
+          aplicacao,
+          codigoLongo,
+          codigoCurto,
+          "Buyers Guide",
+        ]
+          .filter(Boolean)
+          .join(" | ")
+      );
+
+    const registro =
+      criarRegistro({
+        codigo:
+          codigoLongo,
+
+        equivalentes: [
+          codigoCurto,
+        ],
+
+        codigoEquivalenteForcado:
+          codigoCurto,
+
+        preservarFormatoEquivalentes:
+          true,
+
+        montadora,
+
+        modelo,
+
+        motor,
+
+        linha:
+          observacao,
+
+        configuracao,
+
+        nomeArquivo,
+
+        pecaForcada:
+          peca,
+      });
+
+    if (!registro) {
+      return null;
+    }
+
+    registro.ano_inicio =
+      periodo.ano_inicio;
+
+    registro.ano_fim =
+      periodo.ano_fim;
+
+    registro.aplicacao =
+      aplicacao;
+
+    registro.observacao =
+      observacao;
+
+    return registro;
+  }
+
+  const registrosBuyersGuide = [];
+
+  let cabecalhosReconhecidosV6 = 0;
+  let cabecalhosIwp058V6 = 0;
+  let cabecalhosIwp049V6 = 0;
+
+  let codigoLongoAtual = "";
+  let codigoCurtoAtual = "";
+  let montadoraAtual = "";
+  let modeloAtual = "";
+  let prefixoAplicacaoAtual = "";
+  let ultimoTokenTipoAplicacao = "";
+  let primeiraUtilAposRuidoPagina = false;
+
+  let encontrouBuyersGuide =
+    false;
+
+  function marcarRuidoDePaginaBuyersGuide() {
+    if (modeloAtual) {
+      primeiraUtilAposRuidoPagina =
+        true;
+    }
+  }
+
+  function aplicarTipoEncerradoAposRuidoBuyersGuide(
+    linha = ""
+  ) {
+    if (
+      !primeiraUtilAposRuidoPagina
+    ) {
+      return;
+    }
+
+    primeiraUtilAposRuidoPagina =
+      false;
+
+    if (
+      !modeloAtual ||
+      !ehAplicacaoCompletaComTipoKwPeriodoBuyersGuide(
+        linha
+      )
+    ) {
+      return;
+    }
+
+    const token =
+      extrairTokenTipoAplicacaoBuyersGuide(
+        linha
+      );
+
+    if (
+      token &&
+      token ===
+        ultimoTokenTipoAplicacao
+    ) {
+      modeloAtual = "";
+      prefixoAplicacaoAtual = "";
+    }
+  }
+
+  function ehFragmentoTipoOuAplicacaoBuyersGuide(
+    linha = "",
+    indiceAtual
+  ) {
+    const texto =
+      limparTexto(linha);
+
+    if (!texto) {
+      return false;
+    }
+
+    if (
+      ehAplicacaoCompletaBuyersGuide(
+        texto
+      ) ||
+      pareceInicioAplicacaoSemPeriodo(
+        texto,
+        indiceAtual
+      )
+    ) {
+      return true;
+    }
+
+    return (
+      /^(?:PETROL|DIESEL|LPG|CNG|ETHANOL)\b/i.test(
+        texto
+      ) ||
+      /^\([^)]*\)$/.test(
+        texto
+      )
+    );
+  }
+
+  function ehCabecalhoChromeDePagina(
+    indiceAtual
+  ) {
+    if (
+      !codigoLongoAtual ||
+      !codigoCurtoAtual
+    ) {
+      return false;
+    }
+
+    let viuGrupoDePagina =
+      false;
+
+    for (
+      let indiceProximo =
+        indiceAtual + 1;
+      indiceProximo <
+      fonteBuyersGuide.length;
+      indiceProximo += 1
+    ) {
+      const proxima =
+        limparTexto(
+          fonteBuyersGuide[
+            indiceProximo
+          ]
+        );
+
+      if (!proxima) {
+        continue;
+      }
+
+      if (
+        extrairCabecalhoReferencia(
+          proxima
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        /^(?:GRUPPO|GROUP)\s+[A-D]\b/i.test(
+          proxima
+        )
+      ) {
+        viuGrupoDePagina =
+          true;
+        continue;
+      }
+
+      if (
+        ehLinhaTecnicaBuyersGuide(
+          proxima
+        ) ||
+        identificarMontadora(
+          proxima
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        ehFragmentoTipoOuAplicacaoBuyersGuide(
+          proxima,
+          indiceProximo
+        )
+      ) {
+        return true;
+      }
+
+      if (
+        ehModeloBuyersGuide(
+          proxima,
+          indiceProximo
+        )
+      ) {
+        return viuGrupoDePagina;
+      }
+
+      return false;
+    }
+
+    return false;
+  }
+
+  function ehMontadoraChromeDePagina(
+    indiceAtual
+  ) {
+    if (
+      !modeloAtual ||
+      !codigoCurtoAtual
+    ) {
+      return false;
+    }
+
+    let viuEstruturaDePagina =
+      false;
+
+    for (
+      let indiceProximo =
+        indiceAtual + 1;
+      indiceProximo <
+      fonteBuyersGuide.length;
+      indiceProximo += 1
+    ) {
+      const proxima =
+        limparTexto(
+          fonteBuyersGuide[
+            indiceProximo
+          ]
+        );
+
+      if (!proxima) {
+        continue;
+      }
+
+      if (
+        extrairCabecalhoReferencia(
+          proxima
+        ) ||
+        ehLinhaTecnicaBuyersGuide(
+          proxima
+        )
+      ) {
+        viuEstruturaDePagina =
+          true;
+        continue;
+      }
+
+      if (
+        identificarMontadora(
+          proxima
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        ehFragmentoTipoOuAplicacaoBuyersGuide(
+          proxima,
+          indiceProximo
+        )
+      ) {
+        return viuEstruturaDePagina;
+      }
+
+      if (
+        ehModeloBuyersGuide(
+          proxima,
+          indiceProximo
+        )
+      ) {
+        if (
+          ehModeloChromeDePagina(
+            indiceProximo
+          )
+        ) {
+          return true;
+        }
+
+        return viuEstruturaDePagina;
+      }
+
+      return false;
+    }
+
+    return viuEstruturaDePagina;
+  }
+
+  function ehModeloChromeDePagina(
+    indiceAtual
+  ) {
+    let viuEstruturaDePagina =
+      false;
+
+    for (
+      let indiceProximo =
+        indiceAtual + 1;
+      indiceProximo <
+      fonteBuyersGuide.length;
+      indiceProximo += 1
+    ) {
+      const proxima =
+        limparTexto(
+          fonteBuyersGuide[
+            indiceProximo
+          ]
+        );
+
+      if (!proxima) {
+        continue;
+      }
+
+      if (
+        extrairCabecalhoReferencia(
+          proxima
+        ) ||
+        ehLinhaTecnicaBuyersGuide(
+          proxima
+        ) ||
+        identificarMontadora(
+          proxima
+        )
+      ) {
+        viuEstruturaDePagina =
+          true;
+        continue;
+      }
+
+      if (
+        ehFragmentoTipoOuAplicacaoBuyersGuide(
+          proxima,
+          indiceProximo
+        ) ||
+        ehModeloBuyersGuide(
+          proxima,
+          indiceProximo
+        )
+      ) {
+        return viuEstruturaDePagina;
+      }
+
+      return false;
+    }
+
+    return viuEstruturaDePagina;
+  }
+
+  for (
+    let indice = 0;
+    indice < fonteBuyersGuide.length;
+    indice += 1
+  ) {
+    const linha =
+      limparTexto(
+        fonteBuyersGuide[indice]
+      );
+
+    if (!linha) {
+      continue;
+    }
+
+    const cabecalho =
+      extrairCabecalhoReferencia(
+        linha
+      );
+
+    if (cabecalho) {
+      encontrouBuyersGuide =
+        true;
+
+      cabecalhosReconhecidosV6 +=
+        1;
+
+      if (
+        normalizarCodigo(
+          cabecalho.codigoCurto
+        ) === "IWP058"
+      ) {
+        cabecalhosIwp058V6 +=
+          1;
+      }
+
+      if (
+        normalizarCodigo(
+          cabecalho.codigoCurto
+        ) === "IWP049"
+      ) {
+        cabecalhosIwp049V6 +=
+          1;
+      }
+
+      const mesmoProduto =
+        Boolean(
+          codigoLongoAtual
+        ) &&
+        Boolean(
+          codigoCurtoAtual
+        ) &&
+        normalizarCodigo(
+          cabecalho.codigoLongo
+        ) ===
+          normalizarCodigo(
+            codigoLongoAtual
+          ) &&
+        normalizarCodigo(
+          cabecalho.codigoCurto
+        ) ===
+          normalizarCodigo(
+            codigoCurtoAtual
+          );
+
+      if (mesmoProduto) {
+        marcarRuidoDePaginaBuyersGuide();
+        continue;
+      }
+
+      if (
+        ehCabecalhoChromeDePagina(
+          indice
+        )
+      ) {
+        marcarRuidoDePaginaBuyersGuide();
+        continue;
+      }
+
+      codigoLongoAtual =
+        cabecalho.codigoLongo;
+
+      codigoCurtoAtual =
+        cabecalho.codigoCurto;
+
+      montadoraAtual = "";
+      modeloAtual = "";
+      prefixoAplicacaoAtual = "";
+      ultimoTokenTipoAplicacao = "";
+      primeiraUtilAposRuidoPagina =
+        false;
+
+      continue;
+    }
+
+    if (
+      !codigoLongoAtual ||
+      !codigoCurtoAtual
+    ) {
+      continue;
+    }
+
+    const montadora =
+      identificarMontadora(
+        linha
+      );
+
+    if (montadora) {
+      const mesmaMontadora =
+        Boolean(
+          montadoraAtual
+        ) &&
+        normalizarTexto(
+          montadora
+        ) ===
+          normalizarTexto(
+            montadoraAtual
+          );
+
+      if (mesmaMontadora) {
+        marcarRuidoDePaginaBuyersGuide();
+        continue;
+      }
+
+      if (
+        ehMontadoraChromeDePagina(
+          indice
+        )
+      ) {
+        marcarRuidoDePaginaBuyersGuide();
+        continue;
+      }
+
+      montadoraAtual =
+        montadora;
+
+      modeloAtual = "";
+      prefixoAplicacaoAtual = "";
+      ultimoTokenTipoAplicacao = "";
+      primeiraUtilAposRuidoPagina =
+        false;
+
+      continue;
+    }
+
+    if (
+      ehLinhaTecnicaBuyersGuide(
+        linha
+      )
+    ) {
+      marcarRuidoDePaginaBuyersGuide();
+      continue;
+    }
+
+    if (
+      /^\([^)]*\)$/.test(
+        linha
+      )
+    ) {
+      aplicarTipoEncerradoAposRuidoBuyersGuide(
+        linha
+      );
+
+      if (prefixoAplicacaoAtual) {
+        prefixoAplicacaoAtual =
+          limparTexto(
+            `${prefixoAplicacaoAtual} ${linha}`
+          );
+        continue;
+      }
+
+      if (modeloAtual) {
+        modeloAtual =
+          limparTexto(
+            `${modeloAtual} ${linha}`
+          );
+        continue;
+      }
+    }
+
+    if (
+      ehAplicacaoCompletaBuyersGuide(
+        linha
+      )
+    ) {
+      aplicarTipoEncerradoAposRuidoBuyersGuide(
+        linha
+      );
+
+      const prefixoLimpo =
+  limparTexto(
+    prefixoAplicacaoAtual || ""
+  );
+
+const codigoLongoPrefixo =
+  extrairCodigoLongoMarelli(
+    prefixoLimpo
+  );
+
+const codigoCurtoPrefixo =
+  extrairCodigoCurtoSistemasEletronicos(
+    prefixoLimpo,
+    codigoLongoPrefixo
+  );
+
+const codigoLongoAtualNormalizado =
+  normalizarCodigo(
+    codigoLongoAtual || ""
+  );
+
+const codigoCurtoAtualNormalizado =
+  normalizarCodigo(
+    codigoCurtoAtual || ""
+  );
+
+const codigoLongoPrefixoNormalizado =
+  normalizarCodigo(
+    codigoLongoPrefixo || ""
+  );
+
+const codigoCurtoPrefixoNormalizado =
+  normalizarCodigo(
+    codigoCurtoPrefixo || ""
+  );
+
+const prefixoPertenceOutroProduto =
+  (
+    codigoLongoPrefixoNormalizado &&
+    codigoLongoPrefixoNormalizado !==
+      codigoLongoAtualNormalizado
+  ) ||
+  (
+    codigoCurtoPrefixoNormalizado &&
+    codigoCurtoPrefixoNormalizado !==
+      codigoCurtoAtualNormalizado
+  );
+
+const prefixoSeguro =
+  prefixoPertenceOutroProduto
+    ? ""
+    : prefixoLimpo;
+
+const aplicacao =
+  limparTexto(
+    [
+      prefixoSeguro,
+      linha,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+      const registro =
+        criarRegistroBuyersGuide({
+          codigoLongo:
+            codigoLongoAtual,
+
+          codigoCurto:
+            codigoCurtoAtual,
+
+          montadora:
+            montadoraAtual,
+
+          modelo:
+            modeloAtual,
+
+          aplicacao,
+        });
+
+      if (registro) {
+        registrosBuyersGuide.push(
+          registro
+        );
+
+        const tokenTipo =
+          extrairTokenTipoAplicacaoBuyersGuide(
+            aplicacao
+          );
+
+        if (tokenTipo) {
+          ultimoTokenTipoAplicacao =
+            tokenTipo;
+        }
+      }
+
+      prefixoAplicacaoAtual = "";
+
+      continue;
+    }
+
+    if (
+  pareceInicioAplicacaoSemPeriodo(
+    linha,
+    indice
+  )
+) {
+  const codigoLongoLinha =
+    extrairCodigoLongoMarelli(
+      linha
+    );
+
+  const codigoCurtoLinha =
+    extrairCodigoCurtoSistemasEletronicos(
+      linha,
+      codigoLongoLinha
+    );
+
+  const codigoLongoAtualNormalizado =
+    normalizarCodigo(
+      codigoLongoAtual
+    );
+
+  const codigoCurtoAtualNormalizado =
+    normalizarCodigo(
+      codigoCurtoAtual
+    );
+
+  const codigoLongoLinhaNormalizado =
+    normalizarCodigo(
+      codigoLongoLinha
+    );
+
+  const codigoCurtoLinhaNormalizado =
+    normalizarCodigo(
+      codigoCurtoLinha
+    );
+
+  const pertenceOutroProduto =
+    (
+      codigoLongoLinhaNormalizado &&
+      codigoLongoLinhaNormalizado !==
+        codigoLongoAtualNormalizado
+    ) ||
+    (
+      codigoCurtoLinhaNormalizado &&
+      codigoCurtoLinhaNormalizado !==
+        codigoCurtoAtualNormalizado
+    );
+
+  aplicarTipoEncerradoAposRuidoBuyersGuide(
+    linha
+  );
+
+  if (
+    !pertenceOutroProduto
+  ) {
+    prefixoAplicacaoAtual =
+      linha;
+
+    const tokenTipo =
+      extrairTokenTipoAplicacaoBuyersGuide(
+        linha
+      );
+
+    if (tokenTipo) {
+      ultimoTokenTipoAplicacao =
+        tokenTipo;
+    }
+  }
+
+  continue;
+}
+
+    if (
+      ehModeloBuyersGuide(
+        linha,
+        indice
+      )
+    ) {
+      if (
+        ehModeloChromeDePagina(
+          indice
+        )
+      ) {
+        marcarRuidoDePaginaBuyersGuide();
+        continue;
+      }
+
+      aplicarTipoEncerradoAposRuidoBuyersGuide(
+        linha
+      );
+
+      modeloAtual =
+        linha;
+
+      prefixoAplicacaoAtual = "";
+      ultimoTokenTipoAplicacao = "";
+      primeiraUtilAposRuidoPagina =
+        false;
+
+      continue;
+    }
+  }
+
+  const registrosBuyersGuideUnicos =
+    removerDuplicados(
+      registrosBuyersGuide
+    );
+
+  if (
+    encontrouBuyersGuide &&
+    registrosBuyersGuideUnicos.length >
+      50
+  ) {
+    const testeIwp049 =
+      registrosBuyersGuideUnicos.filter(
+        (registro) =>
+          normalizarCodigo(
+            registro
+              ?.codigo_equivalente ||
+            ""
+          ) ===
+          "IWP049"
+      );
+
+    const suspeitosIwp049 =
+      testeIwp049.filter(
+        (registro) => {
+          const alvo =
+            normalizarTexto(
+              `${registro?.montadora || ""} ${registro?.modelo || ""}`
+            );
+
+          return (
+            alvo.includes(
+              "BX (XB"
+            ) ||
+            alvo.includes(
+              "BX BREAK"
+            ) ||
+            alvo.includes(
+              "PORSCHE"
+            ) ||
+            alvo.includes(
+              "SEAT AROSA"
+            ) ||
+            alvo.includes(
+              "CITROEN CADDY"
+            )
+          );
+        }
+      );
+
+    console.log(
+      "=========================================="
+    );
+
+    console.log(
+      "🧠 MARELLI ELECTRONIC SYSTEMS — BUYERS GUIDE V6"
+    );
+
+    console.log(
+      "🧩 CABEÇALHOS V6:",
+      {
+        total:
+          cabecalhosReconhecidosV6,
+
+        IWP049:
+          cabecalhosIwp049V6,
+
+        IWP058:
+          cabecalhosIwp058V6,
+      }
+    );
+
+    console.log(
+      "TOTAL:",
+      registrosBuyersGuideUnicos.length
+    );
+
+    console.log(
+      "IWP049:",
+      testeIwp049.length,
+      testeIwp049
+    );
+
+    console.log(
+      "IWP049 SUSPEITOS V6:",
+      suspeitosIwp049.length,
+      suspeitosIwp049
+    );
+
+    console.log(
+      "=========================================="
+    );
+
+    onProgresso?.(
+      `✅ Magneti Marelli Electronic Systems (Buyers Guide): ${registrosBuyersGuideUnicos.length} registro(s) encontrado(s).`
+    );
+
+    return registrosBuyersGuideUnicos;
+  }
+
+  console.warn(
+    "⚠️ Electronic Systems: Buyers Guide não detectado/insuficiente. Usando parser legado."
+  );
+
+  return parserSistemasEletronicosMarelliLegado({
+    linhas,
+    linhasReferencias,
+    linhasEquivalencias,
+    configuracao,
+    nomeArquivo,
+    onProgresso,
+  });
+}
+
+function parserSistemasEletronicosMarelliLegado({
+  linhas = [],
+  linhasReferencias = [],
+  linhasEquivalencias = [],
+  configuracao = {},
+  nomeArquivo = "",
+  onProgresso,
+}) {
+  const registros = [];
+
+  const todasAsLinhas = [
+    ...linhasReferencias,
+    ...linhasEquivalencias,
+    ...linhas,
+  ];
+
+  const mapaSequencial =
+    criarMapaSequencialSistemasEletronicosMarelli(
+      todasAsLinhas
+    );
+
+  let montadoraAtual = "";
+  let modeloAtual = "";
+  let motorBaseAtual = "";
+
+  let linhasAplicacaoAtual = [];
+
+  let aplicacaoTemCodigo = false;
+
+  function limparAplicacaoAtual() {
+    linhasAplicacaoAtual = [];
+    aplicacaoTemCodigo = false;
+  }
+
+  function textoAplicacaoAtual() {
+    return limparTexto(
+      linhasAplicacaoAtual
+        .filter(Boolean)
+        .join(" ")
+    );
+  }
+
+  for (
+    let indice = 0;
+    indice < linhas.length;
+    indice += 1
+  ) {
+    const linha =
+      limparTexto(
+        linhas[indice]
+      );
+
+    if (
+      !linha ||
+      ehMarcadorPagina(
+        linha
+      ) ||
+      ehCabecalho(
+        linha
+      )
+    ) {
+      continue;
+    }
+
+    const montadora =
+      identificarMontadora(
+        linha
+      );
+
+    if (montadora) {
+      montadoraAtual =
+        montadora;
+
+      modeloAtual = "";
+      motorBaseAtual = "";
+
+      limparAplicacaoAtual();
+
+      continue;
+    }
+
+    if (
+      ehModeloSistemasEletronicosMarelli(
+        linha
+      )
+    ) {
+      modeloAtual =
+        limparTexto(
+          linha
+        );
+
+      motorBaseAtual = "";
+
+      limparAplicacaoAtual();
+
+      continue;
+    }
+
+    const motorBaseLinha =
+      extrairBaseMotorSistemasEletronicos(
+        linha
+      );
+
+    if (
+      motorBaseLinha &&
+      !extrairCodigoLongoMarelli(
+        linha
+      ) &&
+      !/\b(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i.test(
+        linha
+      )
+    ) {
+      motorBaseAtual =
+        motorBaseLinha;
+
+      limparAplicacaoAtual();
+
+      continue;
+    }
+
+    const codigoLongo =
+      extrairCodigoLongoMarelli(
+        linha
+      );
+
+    if (!codigoLongo) {
+      const codigoCurtoSolto =
+        extrairCodigoCurtoSequencialMarelli(
+          linha
+        );
+
+      if (
+        codigoCurtoSolto ||
+        ehDescricaoTecnicaSistemasEletronicos(
+          linha
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        ehLinhaAplicacaoSistemasEletronicosMarelli(
+          linha
+        )
+      ) {
+        if (
+          /^Ã /i.test(
+            linha
+          )
+        ) {
+          linhasAplicacaoAtual.push(
+            linha
+          );
+
+          continue;
+        }
+
+        if (
+          /^(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i.test(
+            linha
+          )
+        ) {
+          if (
+            !aplicacaoTemCodigo &&
+            linhasAplicacaoAtual.length >
+              0
+          ) {
+            linhasAplicacaoAtual.push(
+              linha
+            );
+          } else {
+            linhasAplicacaoAtual = [
+              motorBaseAtual,
+              linha,
+            ].filter(Boolean);
+
+            aplicacaoTemCodigo =
+              false;
+          }
+
+          continue;
+        }
+
+        const motorExplicito =
+          extrairMotorSistemasEletronicos(
+            linha
+          );
+
+        if (
+          motorExplicito
+        ) {
+          motorBaseAtual =
+            motorExplicito;
+        }
+
+        linhasAplicacaoAtual = [
+          linha,
+        ];
+
+        aplicacaoTemCodigo =
+          false;
+
+        continue;
+      }
+
+      continue;
+    }
+
+    const indiceCodigo =
+      linha.indexOf(
+        codigoLongo
+      );
+
+    const prefixoCodigo =
+      indiceCodigo >= 0
+        ? limparTexto(
+            linha.slice(
+              0,
+              indiceCodigo
+            )
+          )
+        : "";
+
+    if (
+      prefixoCodigo &&
+      ehLinhaAplicacaoSistemasEletronicosMarelli(
+        prefixoCodigo
+      )
+    ) {
+      if (
+        /^Ã /i.test(
+          prefixoCodigo
+        )
+      ) {
+        linhasAplicacaoAtual.push(
+          prefixoCodigo
+        );
+      } else if (
+        /^(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i.test(
+          prefixoCodigo
+        )
+      ) {
+        if (
+          !aplicacaoTemCodigo &&
+          linhasAplicacaoAtual.length >
+            0
+        ) {
+          linhasAplicacaoAtual.push(
+            prefixoCodigo
+          );
+        } else {
+          linhasAplicacaoAtual = [
+            motorBaseAtual,
+            prefixoCodigo,
+          ].filter(Boolean);
+        }
+      } else {
+        const motorExplicito =
+          extrairMotorSistemasEletronicos(
+            prefixoCodigo
+          );
+
+        if (
+          motorExplicito
+        ) {
+          motorBaseAtual =
+            motorExplicito;
+        }
+
+        linhasAplicacaoAtual = [
+          prefixoCodigo,
+        ];
+      }
+
+      aplicacaoTemCodigo =
+        false;
+    }
+
+    let aplicacao =
+      textoAplicacaoAtual();
+
+    if (
+      aplicacao &&
+      motorBaseAtual &&
+      /^(?:PETROL|DIESEL|BENZINA|GASOLINE|GASOLINA|CNG|LPG)\b/i.test(
+        aplicacao
+      )
+    ) {
+      aplicacao =
+        limparTexto(
+          `${motorBaseAtual} ${aplicacao}`
+        );
+    }
+
+    if (
+      !montadoraAtual ||
+      !modeloAtual ||
+      !aplicacao
+    ) {
+      continue;
+    }
+
+    const infoMapa =
+      mapaSequencial.get(
+        codigoLongo
+      ) || {
+        codigoCurto: "",
+        linhaTecnica: "",
+      };
+
+    const codigoCurtoLinha =
+      extrairCodigoCurtoSistemasEletronicos(
+        linha,
+        codigoLongo
+      );
+
+    const codigoCurto =
+      codigoCurtoLinha ||
+      infoMapa.codigoCurto ||
+      "";
+
+    const linhaTecnica =
+      limparTexto(
+        infoMapa.linhaTecnica ||
+        linha
+      );
+
+    const textoTipoPeca =
+      limparTexto(
+        `${linha} ${linhaTecnica}`
+      );
+
+    const peca =
+      identificarPecaSistemasEletronicos(
+        textoTipoPeca,
+        codigoCurto
+      );
+
+    let motor =
+      extrairMotorSistemasEletronicos(
+        aplicacao
+      );
+
+    if (
+      !motor
+    ) {
+      motor =
+        motorBaseAtual;
+    }
+
+    const periodo =
+      extrairPeriodoBicoMarelli(
+        aplicacao
+      );
+
+    const equivalentes = [
+      ...new Set(
+        [
+          codigoCurto,
+          normalizarCodigo(
+            codigoCurto
+          ),
+        ].filter(Boolean)
+      ),
+    ];
+
+   const linhaTecnicaLimpa =
+  limparTexto(
+    linhaTecnica || ""
+  );
+
+const codigoCurtoNormalizado =
+  normalizarCodigo(
+    codigoCurto || ""
+  );
+
+const codigoLongoNormalizado =
+  normalizarCodigo(
+    codigoLongo || ""
+  );
+
+const codigosCurtosLinhaTecnica =
+  [
+    ...linhaTecnicaLimpa
+      .toUpperCase()
+      .matchAll(
+        /\b(?:IWP|IPM|FEI|PAS|TB)[A-Z0-9./-]*\b/g
+      ),
+  ]
+    .map(
+      (match) =>
+        normalizarCodigo(
+          match[0]
+        )
+    )
+    .filter(Boolean);
+
+const oemsLinhaTecnica =
+  [
+    ...linhaTecnicaLimpa
+      .toUpperCase()
+      .matchAll(
+        /\b8\d{11}\b/g
+      ),
+  ]
+    .map(
+      (match) =>
+        normalizarCodigo(
+          match[0]
+        )
+    )
+    .filter(Boolean);
+
+const temCodigoCurtoDiferente =
+  codigosCurtosLinhaTecnica.some(
+    (codigo) =>
+      codigo !==
+      codigoCurtoNormalizado
+  );
+
+const temOemDiferente =
+  oemsLinhaTecnica.some(
+    (codigo) =>
+      codigo !==
+      codigoLongoNormalizado
+  );
+
+const incluirLinhaTecnica =
+  linhaTecnicaLimpa &&
+  linhaTecnicaLimpa !==
+    limparTexto(linha) &&
+  !temCodigoCurtoDiferente &&
+  !temOemDiferente;
+
+const observacao =
+  limparTexto(
+    [
+      aplicacao,
+      codigoLongo,
+      codigoCurto,
+      incluirLinhaTecnica
+        ? linhaTecnicaLimpa
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" | ")
+  );
+    const registro =
+      criarRegistro({
+        codigo:
+          codigoLongo,
+
+        equivalentes,
+
+        codigoEquivalenteForcado:
+          codigoCurto ||
+          codigoLongo,
+
+        preservarFormatoEquivalentes:
+          true,
+
+        montadora:
+          montadoraAtual,
+
+        modelo:
+          modeloAtual,
+
+        motor,
+
+        linha:
+          observacao,
+
+        configuracao,
+
+        nomeArquivo,
+
+        pecaForcada:
+          peca,
+      });
+
+    if (
+      registro
+    ) {
+      registro.ano_inicio =
+        periodo.ano_inicio;
+
+      registro.ano_fim =
+        periodo.ano_fim;
+
+      registro.aplicacao =
+        aplicacao;
+
+      registro.observacao =
+        observacao;
+
+      registros.push(
+        registro
+      );
+
+      aplicacaoTemCodigo =
+        true;
+    }
+  }
+
+  const registrosUnicos =
+    removerDuplicados(
+      registros
+    );
+
+  const testeIwp049 =
+    registrosUnicos.filter(
+      (registro) =>
+        normalizarCodigo(
+          registro
+            ?.codigo_equivalente ||
+          ""
+        ) ===
+          "IWP049" ||
+        registro
+          ?.equivalentes
+          ?.some(
+            (codigo) =>
+              normalizarCodigo(
+                codigo
+              ) ===
+              "IWP049"
+          )
+    );
+
+  const suspeitosIwp049Bx =
+    testeIwp049.filter(
+      (registro) => {
+        const modelo = normalizarTexto(
+          registro?.modelo || ""
+        );
+
+        return (
+          modelo === "BX (XB-_)" ||
+          modelo === "BX BREAK (XB-_)" ||
+          modelo.startsWith("BX BREAK")
+        );
+      }
     );
 
   console.log(
@@ -2496,44 +4294,194 @@ if (
   );
 
   console.log(
-    "🧠 PARSER UNIVERSAL MAGNETI MARELLI"
+    "ðŸ§  MARELLI ELECTRONIC SYSTEMS â€” SEQUENCIAL"
   );
 
   console.log(
-    "TIPO:",
-    tipoCatalogo
-  );
-  console.log(
-    "ARQUIVO:",
-    nomeArquivo
+    "TOTAL:",
+    registrosUnicos.length
   );
 
   console.log(
-    "APLICAÇÕES:",
-    linhasAplicacoes.length
+    "IWP049:",
+    testeIwp049.length,
+    testeIwp049
   );
 
   console.log(
-    "REFERÊNCIAS:",
-    linhasReferencias.length
+    "IWP049 SUSPEITOS BX/BX BREAK:",
+    suspeitosIwp049Bx.length,
+    suspeitosIwp049Bx
   );
 
   console.log(
-    "EQUIVALÊNCIAS:",
-    linhasEquivalencias.length
+    "=========================================="
   );
 
-  const mapaCodigosSistemasEletronicos =
-    ehSistemasEletronicos
-      ? criarMapaCodigosSistemasEletronicos([
-          ...linhasReferencias,
-          ...linhasEquivalencias,
-        ])
-      : new Map();
+  onProgresso?.(
+    `âœ… Magneti Marelli Electronic Systems: ${registrosUnicos.length} registro(s) encontrado(s).`
+  );
+
+  return registrosUnicos;
+}
+/*
+ * ============================================================
+ * PARSER UNIVERSAL MAGNETI MARELLI
+ * ============================================================
+ */
+
+export async function parserMagnetiMarelliUniversal({
+  texto = "",
+  textoAplicacoes = "",
+  textoReferencias = "",
+  textoEquivalencias = "",
+  configuracao = {},
+  nomeArquivo = "",
+  onProgresso,
+}) {
+  const tipoCatalogo =
+    String(
+      configuracao?.tipoCatalogo ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
 
   /*
    * ========================================================
-   * ÍNDICE DE EQUIVALÊNCIAS
+   * TEXTOS
+   * ========================================================
+   */
+
+  const usarOrdemNaturalElectronicSystems =
+    tipoCatalogo ===
+      "sistemas_eletronicos" ||
+    tipoCatalogo ===
+      "electronic_systems" ||
+    tipoCatalogo ===
+      "sistemas_eletronicos_ignicao";
+
+  const transformarLinhasCatalogo =
+    usarOrdemNaturalElectronicSystems
+      ? transformarEmLinhasElectronicSystems
+      : transformarEmLinhas;
+
+  const textoPrincipal =
+    textoAplicacoes ||
+    texto ||
+    "";
+
+  const linhas =
+    transformarLinhasCatalogo(
+      textoPrincipal
+    );
+
+  const linhasReferencias =
+    transformarLinhasCatalogo(
+      textoReferencias
+    );
+
+  const linhasEquivalencias =
+    transformarLinhasCatalogo(
+      textoEquivalencias
+    );
+
+  /*
+   * ========================================================
+   * IDENTIFICAÃ‡ÃƒO DO CATÃLOGO
+   * ========================================================
+   */
+
+  const ehSistemasEletronicos =
+    usarOrdemNaturalElectronicSystems;
+
+  const ehBaterias2024 =
+    tipoCatalogo ===
+      "baterias_2024" ||
+    tipoCatalogo ===
+      "batteries_2024";
+
+  /*
+   * ========================================================
+   * ELECTRONIC SYSTEMS
+   * ========================================================
+   */
+
+  if (
+    ehSistemasEletronicos
+  ) {
+    return parserSistemasEletronicosMarelli({
+      linhas,
+      linhasReferencias,
+      linhasEquivalencias,
+      configuracao,
+      nomeArquivo,
+      onProgresso,
+    });
+  }
+
+  /*
+   * ========================================================
+   * BICOS INJETORES MARELLI
+   * ========================================================
+   */
+
+  const textoNormalizado =
+    normalizarTexto(
+      [
+        texto,
+        textoReferencias,
+        textoEquivalencias,
+        nomeArquivo,
+        configuracao
+          ?.origemCatalogo,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+  const ehCatalogoBicos2016 =
+    (
+      textoNormalizado.includes(
+        "FUEL INJECTOR"
+      ) ||
+      textoNormalizado.includes(
+        "INIETTORE"
+      )
+    ) &&
+    (
+      textoNormalizado.includes(
+        "IWP"
+      ) ||
+      textoNormalizado.includes(
+        "IPM"
+      ) ||
+      textoNormalizado.includes(
+        "FEI"
+      )
+    ) &&
+    (
+      tipoCatalogo ===
+        "bicos_injetores" ||
+      tipoCatalogo ===
+        "injetores" ||
+      tipoCatalogo ===
+        "fuel_injectors"
+    );
+
+  if (
+    ehCatalogoBicos2016
+  ) {
+    return parserBicosInjetoresMarelli2016({
+      linhas,
+      configuracao,
+      nomeArquivo,
+    });
+  }
+
+  /*
+   * ========================================================
+   * MAPA DE EQUIVALÃŠNCIAS
    * ========================================================
    */
 
@@ -2555,45 +4503,44 @@ if (
       continue;
     }
 
+    const codigoPrincipal =
+      codigos[0];
+
+    if (
+      !mapaEquivalencias.has(
+        codigoPrincipal
+      )
+    ) {
+      mapaEquivalencias.set(
+        codigoPrincipal,
+        new Set()
+      );
+    }
+
+    const conjunto =
+      mapaEquivalencias.get(
+        codigoPrincipal
+      );
+
     for (
       const codigo
-      of codigos
+      of codigos.slice(1)
     ) {
       if (
-        !mapaEquivalencias.has(
-          codigo
-        )
+        codigo &&
+        codigo !==
+          codigoPrincipal
       ) {
-        mapaEquivalencias.set(
-          codigo,
-          new Set()
-        );
-      }
-
-      const conjunto =
-        mapaEquivalencias.get(
+        conjunto.add(
           codigo
         );
-
-      for (
-        const equivalente
-        of codigos
-      ) {
-        if (
-          equivalente !==
-          codigo
-        ) {
-          conjunto.add(
-            equivalente
-          );
-        }
       }
     }
   }
 
   /*
    * ========================================================
-   * CÓDIGOS DO GUIA DE REFERÊNCIAS
+   * CÃ“DIGOS DO GUIA DE REFERÃŠNCIAS
    * ========================================================
    */
 
@@ -2621,7 +4568,7 @@ if (
 
   /*
    * ========================================================
-   * APLICAÇÕES
+   * APLICAÃ‡Ã•ES â€” PARSER UNIVERSAL
    * ========================================================
    */
 
@@ -2633,12 +4580,11 @@ if (
 
   for (
     let indice = 0;
-    indice <
-    linhasAplicacoes.length;
+    indice < linhas.length;
     indice += 1
   ) {
     const linha =
-      linhasAplicacoes[
+      linhas[
         indice
       ];
 
@@ -2684,129 +4630,6 @@ if (
 
     /*
      * ======================================================
-     * ELECTRONIC SYSTEMS
-     * ======================================================
-     */
-
-    if (
-      ehSistemasEletronicos
-    ) {
-      const codigoLongo =
-        extrairCodigoLongoMarelli(
-          linha
-        );
-
-      if (
-        codigoLongo
-      ) {
-        const codigoCurtoLinha =
-          extrairCodigoCurtoSistemasEletronicos(
-            linha,
-            codigoLongo
-          );
-
-        const codigoCurtoMapa =
-          mapaCodigosSistemasEletronicos.get(
-            codigoLongo
-          ) || "";
-
-        const codigoCurto =
-          codigoCurtoLinha ||
-          codigoCurtoMapa ||
-          "";
-
-        const codigoCurtoCompacto =
-          normalizarCodigo(
-            codigoCurto
-          );
-
-        const peca =
-          identificarPecaSistemasEletronicos(
-            linha,
-            codigoCurto
-          );
-
-        const equivalentes = [
-          ...new Set(
-            [
-              codigoCurto,
-              codigoCurtoCompacto,
-            ].filter(Boolean)
-          ),
-        ];
-
-        const motorRegistro =
-          extrairMotorSistemasEletronicos(
-            linha
-          ) ||
-          motorAtual;
-
-        const registro =
-          criarRegistro({
-            codigo:
-              codigoLongo,
-
-            equivalentes,
-
-            codigoEquivalenteForcado:
-              codigoCurto ||
-              codigoLongo,
-
-            preservarFormatoEquivalentes:
-              true,
-
-            montadora:
-              montadoraAtual,
-
-            modelo:
-              modeloAtual,
-
-            motor:
-              motorRegistro,
-
-            linha,
-            configuracao,
-
-            nomeArquivo,
-
-            pecaForcada:
-              peca,
-          });
-
-        if (
-          registro
-        ) {
-          registros.push(
-            registro
-          );
-        }
-
-        continue;
-      }
-
-      /*
-       * Código curto solto não vira
-       * produto independente.
-       */
-
-      const codigosCurtosSoltos =
-  codigos.filter(
-    (codigo) =>
-      ehCodigoCurtoSistemasEletronicos(
-        codigo
-      )
-  );
-
-      if (
-        codigosCurtosSoltos.length >
-        0
-      ) {
-        continue;
-      }
-    }
-
-    /*
-     * ======================================================
      * BATTERIES 2024
      * ======================================================
      */
@@ -2832,7 +4655,9 @@ if (
       ) {
         const equivalentes =
           codigoCurto
-            ? [codigoCurto]
+            ? [
+                codigoCurto,
+              ]
             : [];
 
         const registro =
@@ -2861,7 +4686,7 @@ if (
               ...configuracao,
 
               origemCatalogo:
-                "Catálogo Magneti Marelli Batteries 2024",
+                "CatÃ¡logo Magneti Marelli Batteries 2024",
             },
 
             nomeArquivo,
@@ -2873,16 +4698,14 @@ if (
         if (
           registro
         ) {
-          /*
-           * Segurança extra:
-           * Batteries 2024 nunca deve
-           * herdar cabeçalho como modelo.
-           */
-          registro.modelo = null;
-          registro.motor = null;
+          registro.modelo =
+            null;
+
+          registro.motor =
+            null;
 
           registro.origem_catalogo =
-            "Catálogo Magneti Marelli Batteries 2024";
+            "CatÃ¡logo Magneti Marelli Batteries 2024";
 
           registros.push(
             registro
@@ -2892,6 +4715,12 @@ if (
         continue;
       }
     }
+
+    /*
+     * ======================================================
+     * CANDIDATOS
+     * ======================================================
+     */
 
     let candidatos =
       codigos.filter(
@@ -2910,7 +4739,7 @@ if (
 
     /*
      * ======================================================
-     * LINHA SEM CÓDIGO
+     * LINHA SEM CÃ“DIGO
      * ======================================================
      */
 
@@ -2936,11 +4765,19 @@ if (
         modeloAtual =
           linha;
 
+        motorAtual = "";
+
         continue;
       }
 
       continue;
     }
+
+    /*
+     * ======================================================
+     * CÃ“DIGO PRINCIPAL
+     * ======================================================
+     */
 
     const codigoPrincipal =
       candidatos[0];
@@ -2953,7 +4790,7 @@ if (
 
     /*
      * ======================================================
-     * EQUIVALÊNCIAS
+     * EQUIVALÃŠNCIAS
      * ======================================================
      */
 
@@ -2982,7 +4819,6 @@ if (
 
     const equivalenciasMapeadas =
       !ehKitDistribuicao &&
-      !ehSistemasEletronicos &&
       mapaEquivalencias.has(
         codigoPrincipal
       )
@@ -3000,6 +4836,12 @@ if (
       ]),
     ];
 
+    /*
+     * ======================================================
+     * MOTOR
+     * ======================================================
+     */
+
     let motorRegistro =
       motorAtual;
 
@@ -3011,6 +4853,12 @@ if (
       motorRegistro =
         linha;
     }
+
+    /*
+     * ======================================================
+     * REGISTRO
+     * ======================================================
+     */
 
     const registro =
       criarRegistro({
@@ -3040,7 +4888,7 @@ if (
                 ...configuracao,
 
                 origemCatalogo:
-                  "Catálogo Magneti Marelli Batteries 2024",
+                  "CatÃ¡logo Magneti Marelli Batteries 2024",
               }
             : configuracao,
 
@@ -3058,11 +4906,14 @@ if (
       if (
         ehBaterias2024
       ) {
-        registro.modelo = null;
-        registro.motor = null;
+        registro.modelo =
+          null;
+
+        registro.motor =
+          null;
 
         registro.origem_catalogo =
-          "Catálogo Magneti Marelli Batteries 2024";
+          "CatÃ¡logo Magneti Marelli Batteries 2024";
       }
 
       registros.push(
@@ -3073,19 +4924,21 @@ if (
 
   /*
    * ========================================================
-   * FALLBACK REFERÊNCIAS
+   * FALLBACK REFERÃŠNCIAS
    * ========================================================
    */
 
   if (
     registros.length === 0 &&
-    linhasReferencias.length > 0
+    linhasReferencias.length >
+      0
   ) {
     for (
       const linha
       of linhasReferencias
     ) {
       if (
+        !linha ||
         ehMarcadorPagina(
           linha
         )
@@ -3093,102 +4946,7 @@ if (
         continue;
       }
 
-      if (
-        ehSistemasEletronicos
-      ) {
-        const codigoLongo =
-          extrairCodigoLongoMarelli(
-            linha
-          );
-
-        if (
-          codigoLongo
-        ) {
-          const codigoCurto =
-            extrairCodigoCurtoSistemasEletronicos(
-              linha,
-              codigoLongo
-            ) ||
-            mapaCodigosSistemasEletronicos.get(
-              codigoLongo
-            ) ||
-            "";
-
-          const codigoCurtoCompacto =
-            normalizarCodigo(
-              codigoCurto
-            );
-
-          const peca =
-            identificarPecaSistemasEletronicos(
-              linha,
-              codigoCurto
-            );
-
-          const equivalentes = [
-            ...new Set(
-              [
-                codigoCurto,
-                codigoCurtoCompacto,
-              ].filter(Boolean)
-            ),
-          ];
-
-          const registro =
-            criarRegistro({
-              codigo:
-                codigoLongo,
-
-              equivalentes,
-
-              codigoEquivalenteForcado:
-                codigoCurto ||
-                codigoLongo,
-
-              preservarFormatoEquivalentes:
-                true,
-
-              linha,
-
-              configuracao,
-
-              nomeArquivo,
-
-              pecaForcada:
-                peca,
-            });
-
-          if (
-            registro
-          ) {
-            registros.push(
-              registro
-            );
-          }
-
-          continue;
-        }
-
-        const codigosLinha =
-          extrairCodigos(
-            linha
-          );
-
-        const possuiCodigoCurto =
-  codigosLinha.some(
-    (codigo) =>
-      ehCodigoCurtoSistemasEletronicos(
-        codigo
-      )
-  );
-
-        if (
-          possuiCodigoCurto
-        ) {
-          continue;
-        }
-      }
-            const codigos =
+      const codigos =
         extrairCodigos(
           linha
         );
@@ -3220,7 +4978,7 @@ if (
                   ...configuracao,
 
                   origemCatalogo:
-                    "Catálogo Magneti Marelli Batteries 2024",
+                    "CatÃ¡logo Magneti Marelli Batteries 2024",
                 }
               : configuracao,
 
@@ -3238,11 +4996,14 @@ if (
         if (
           ehBaterias2024
         ) {
-          registro.modelo = null;
-          registro.motor = null;
+          registro.modelo =
+            null;
+
+          registro.motor =
+            null;
 
           registro.origem_catalogo =
-            "Catálogo Magneti Marelli Batteries 2024";
+            "CatÃ¡logo Magneti Marelli Batteries 2024";
         }
 
         registros.push(
@@ -3260,114 +5021,20 @@ if (
 
   if (
     registros.length === 0 &&
-    linhasEquivalencias.length > 0
+    linhasEquivalencias.length >
+      0
   ) {
     for (
       const linha
       of linhasEquivalencias
     ) {
       if (
+        !linha ||
         ehMarcadorPagina(
           linha
         )
       ) {
         continue;
-      }
-
-      if (
-        ehSistemasEletronicos
-      ) {
-        const codigoLongo =
-          extrairCodigoLongoMarelli(
-            linha
-          );
-
-        if (
-          codigoLongo
-        ) {
-          const codigoCurto =
-            extrairCodigoCurtoSistemasEletronicos(
-              linha,
-              codigoLongo
-            ) ||
-            mapaCodigosSistemasEletronicos.get(
-              codigoLongo
-            ) ||
-            "";
-
-          const codigoCurtoCompacto =
-            normalizarCodigo(
-              codigoCurto
-            );
-
-          const peca =
-            identificarPecaSistemasEletronicos(
-              linha,
-              codigoCurto
-            );
-
-          const equivalentes = [
-            ...new Set(
-              [
-                codigoCurto,
-                codigoCurtoCompacto,
-              ].filter(Boolean)
-            ),
-          ];
-
-          const registro =
-            criarRegistro({
-              codigo:
-                codigoLongo,
-
-              equivalentes,
-
-              codigoEquivalenteForcado:
-                codigoCurto ||
-                codigoLongo,
-
-              preservarFormatoEquivalentes:
-                true,
-
-              linha,
-
-              configuracao,
-
-              nomeArquivo,
-
-              pecaForcada:
-                peca,
-            });
-
-          if (
-            registro
-          ) {
-            registros.push(
-              registro
-            );
-          }
-
-          continue;
-        }
-
-        const codigosLinha =
-          extrairCodigos(
-            linha
-          );
-
-        const possuiCodigoCurto =
-          codigosLinha.some(
-            (codigo) =>
-              /^(TB|FEI|PAS|IAW|MJD|B\d|48CPD)/i.test(
-                codigo
-              )
-          );
-
-        if (
-          possuiCodigoCurto
-        ) {
-          continue;
-        }
       }
 
       const codigos =
@@ -3384,13 +5051,15 @@ if (
       const codigoPrincipal =
         codigos[0];
 
+      const equivalentes =
+        codigos.slice(1);
+
       const registro =
         criarRegistro({
           codigo:
             codigoPrincipal,
 
-          equivalentes:
-            codigos.slice(1),
+          equivalentes,
 
           linha,
 
@@ -3400,7 +5069,7 @@ if (
                   ...configuracao,
 
                   origemCatalogo:
-                    "Catálogo Magneti Marelli Batteries 2024",
+                    "CatÃ¡logo Magneti Marelli Batteries 2024",
                 }
               : configuracao,
 
@@ -3418,11 +5087,14 @@ if (
         if (
           ehBaterias2024
         ) {
-          registro.modelo = null;
-          registro.motor = null;
+          registro.modelo =
+            null;
+
+          registro.motor =
+            null;
 
           registro.origem_catalogo =
-            "Catálogo Magneti Marelli Batteries 2024";
+            "CatÃ¡logo Magneti Marelli Batteries 2024";
         }
 
         registros.push(
@@ -3432,10 +5104,20 @@ if (
     }
   }
 
+  /*
+   * ========================================================
+   * RESULTADO FINAL
+   * ========================================================
+   */
+
   const registrosUnicos =
     removerDuplicados(
       registros
     );
+
+  console.log(
+    "=========================================="
+  );
 
   console.log(
     "MARELLI UNIVERSAL ENCONTRADOS:",
@@ -3443,7 +5125,7 @@ if (
   );
 
   console.log(
-    "MARELLI UNIVERSAL ÚNICOS:",
+    "MARELLI UNIVERSAL ÃšNICOS:",
     registrosUnicos.length
   );
 
@@ -3457,7 +5139,7 @@ if (
   );
 
   onProgresso?.(
-    `✅ Magneti Marelli Universal: ${registrosUnicos.length} registro(s) encontrado(s).`
+    `âœ… Magneti Marelli Universal: ${registrosUnicos.length} registro(s) encontrado(s).`
   );
 
   return registrosUnicos;

@@ -8,32 +8,154 @@ function removerDuplicados(registros = []) {
   const mapa = new Map();
 
   for (const registro of registros) {
+    /*
+     * =====================================================
+     * REGRA PAIIA
+     * =====================================================
+     *
+     * Mesmo código NÃO significa registro duplicado.
+     *
+     * Só consideramos duplicado quando coincidirem:
+     *
+     * - código
+     * - aplicação
+     * - montadora
+     * - modelo
+     * - motor
+     * - anos
+     * - descrição da peça
+     * - origem do catálogo
+     *
+     * Assim um catálogo futuro mais completo pode trazer
+     * o mesmo código com motor, anos ou outra aplicação
+     * sem perdermos informação.
+     * =====================================================
+     */
+
     const chave = [
-      registro.peca || "",
       registro.codigo_oem || "",
       registro.codigo_equivalente || "",
+
       registro.montadora || "",
       registro.modelo || "",
       registro.motor || "",
+
       registro.ano_inicio || "",
       registro.ano_fim || "",
+
       registro.aplicacao || "",
+
+      registro.descricao || "",
+      registro.peca || "",
+
+      registro.origem_catalogo || "",
     ]
       .map((valor) =>
         String(valor)
           .trim()
           .toLowerCase()
+          .replace(/\s+/g, " ")
       )
       .join("|");
 
+    /*
+     * Só elimina quando for realmente
+     * o mesmo registro completo.
+     */
     if (!mapa.has(chave)) {
-      mapa.set(chave, registro);
+      mapa.set(
+        chave,
+        registro
+      );
+      continue;
+    }
+
+    /*
+     * =====================================================
+     * SE HOUVER DUAS CÓPIAS EXATAS
+     * =====================================================
+     *
+     * Mantemos a mais completa.
+     * =====================================================
+     */
+
+    const existente =
+      mapa.get(chave);
+
+    const pontuarRegistro = (
+      item
+    ) => {
+      let pontos = 0;
+
+      if (item?.codigo_oem) {
+        pontos += 10;
+      }
+
+      if (item?.montadora) {
+        pontos += 10;
+      }
+
+      if (item?.modelo) {
+        pontos += 10;
+      }
+
+      if (item?.motor) {
+        pontos += 10;
+      }
+
+      if (item?.ano_inicio) {
+        pontos += 10;
+      }
+
+      if (item?.ano_fim) {
+        pontos += 10;
+      }
+
+      if (item?.aplicacao) {
+        pontos += 10;
+      }
+
+      if (item?.descricao) {
+        pontos += 10;
+      }
+
+      if (item?.origem_catalogo) {
+        pontos += 5;
+      }
+
+      pontos +=
+        Number(
+          item?.confianca || 0
+        ) / 10;
+
+      return pontos;
+    };
+
+    const pontosExistente =
+      pontuarRegistro(
+        existente
+      );
+
+    const pontosNovo =
+      pontuarRegistro(
+        registro
+      );
+
+    if (
+      pontosNovo >
+      pontosExistente
+    ) {
+      mapa.set(
+        chave,
+        registro
+      );
     }
   }
 
-  return Array.from(mapa.values());
+  return Array.from(
+    mapa.values()
+  );
 }
-
 function normalizarTexto(valor = "") {
   return String(valor || "")
     .normalize("NFD")
@@ -74,7 +196,11 @@ function identificarTipoCatalogo({
   ) {
     return "gasolina_2025";
   }
-
+if (
+  tipoCatalogo === "gasolina_2023"
+) {
+  return "gasolina_2023";
+}
   if (
     textoIdentificacao.includes(
       "alternadores"
@@ -103,11 +229,13 @@ function identificarTipoCatalogo({
 
   return tipoCatalogo;
 }
-
 function obterMensagemProgresso(
   tipoCatalogo
 ) {
   const mensagens = {
+    gasolina_2023:
+      "⛽ Importando Bosch Ignition and Gasoline Injection Product Portfolio 2023...",
+
     gasolina_2025:
       "⛽ Importando Bosch Gasoline System Product Portfolio 2025...",
 
@@ -177,7 +305,10 @@ function obterNomeArquivoPadrao(
   }
 
   const arquivosPadrao = {
-    gasolina_2025:
+    gasolina_2023:
+  "Bosch Ignition and Gasoline Injection Parts and Sensors Product Portfolio 2023",
+    
+  gasolina_2025:
       "Bosch Gasoline System Product Portfolio 2025",
 
     sondas:

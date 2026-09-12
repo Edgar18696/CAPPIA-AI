@@ -409,7 +409,7 @@ export async function preencherAnuncioAutomaticamente({
 
   onProgresso?.(
     15,
-    "🔎 Pesquisando o código na base APPIA..."
+    "🔎 Pesquisando o código na base PAIIA..."
   );
 
   let data = [];
@@ -467,13 +467,13 @@ export async function preencherAnuncioAutomaticamente({
     );
 
     throw new Error(
-      "Erro ao consultar a base técnica do APPIA."
+      "Erro ao consultar a base técnica do PAIIA."
     );
   }
 
   if (!data.length) {
     throw new Error(
-      `O código ${codigoFinal} ainda não está cadastrado na base APPIA.`
+      `O código ${codigoFinal} ainda não está cadastrado na base PAIIA.`
     );
   }
 
@@ -541,7 +541,7 @@ export async function preencherAnuncioAutomaticamente({
     resultadoPrincipal: {
       arquivo:
         item.origem_catalogo ||
-        "Base APPIA",
+        "Base PAIIA",
 
       pagina:
         item.pagina_catalogo ||

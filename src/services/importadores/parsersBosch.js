@@ -11,6 +11,7 @@ import { parserBoschAlternadores } from "./parsers/parserBoschAlternadores";
 import { parserBoschABS } from "./parsers/parserBoschABS";
 import { parserBoschBicosGasolina } from "./parsers/parserBoschBicosGasolina";
 import { parserBoschBateriasMoto } from "./parsers/parserBoschBateriasMoto";
+import { parserBoschGasolina2023 } from "./parsers/parserBoschGasolina2023";
 
 export const PARSERS_BOSCH = {
   sondas: parserBoschSondas,
@@ -26,5 +27,6 @@ export const PARSERS_BOSCH = {
   alternador: parserBoschAlternadores,
   abs: parserBoschABS,
   bicos_gasolina: parserBoschBicosGasolina,
+  gasolina_2023: parserBoschGasolina2023,
   baterias_moto: parserBoschBateriasMoto,
 };

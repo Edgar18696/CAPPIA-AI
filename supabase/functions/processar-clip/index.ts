@@ -44,6 +44,86 @@ function normalizarDuracao(
   return duracao <= 5 ? 5 : 10;
 }
 
+const PROMPT_CLIP_PRODUTO_360 = [
+  "Image-to-video of the exact automotive part shown in the start image.",
+  "Camera 100% locked: identical distance, framing and scale from the first frame to the last frame.",
+  "The product stays 100% centered and fully visible in every frame.",
+  "The only allowed visual transformation is the product rotating around its own central axis, like a studio turntable.",
+  "Do not change geometry, cable, connector, tip, proportions, color or original details.",
+  "Do not add new parts or elements.",
+].join(" ");
+
+const NEGATIVE_CLIP_PRODUTO_360 = [
+  "deformed product",
+  "distorted geometry",
+  "changed proportions",
+  "changed colors",
+  "changed materials",
+  "extra components",
+  "missing components",
+  "invented components",
+  "wrong connectors",
+  "wrong pins",
+  "wrong holes",
+  "wrong screws",
+  "changed engravings",
+  "changed labels",
+  "invented hidden side",
+  "cropped product",
+  "cut off product",
+  "text",
+  "logo",
+  "watermark",
+  "frame",
+  "hands",
+  "people",
+  "tools",
+  "vehicle",
+  "packaging",
+  "extra objects",
+  "cartoon",
+  "illustration",
+  "CGI",
+  "3D render",
+  "flicker",
+  "camera shake",
+  "heavy motion blur",
+  "low quality",
+  "zoom",
+  "dolly",
+  "dolly in",
+  "dolly out",
+  "push-in",
+  "push-out",
+  "tracking",
+  "camera movement",
+  "pan",
+  "tilt",
+  "camera orbit",
+  "camera rotation",
+  "reframing",
+].join(", ");
+
+function montarDiretorClipProduto360(
+  instrucoes: unknown,
+  duracao: unknown
+) {
+  return {
+    prompt: [
+      PROMPT_CLIP_PRODUTO_360,
+      String(instrucoes || "").trim(),
+    ]
+      .filter(Boolean)
+      .join(" "),
+    negativePrompt: NEGATIVE_CLIP_PRODUTO_360,
+    duracao: normalizarDuracao(duracao),
+    familia: "clip_produto_360",
+    estilo: "360",
+    movimentos: ["rotacao no eixo da peca"],
+    focoDetalhes: ["camera fixa", "plataforma giratoria"],
+  };
+}
+
 function extrairVideo(
   output: unknown
 ): string {
@@ -198,6 +278,7 @@ Deno.serve(async (req) => {
       modoPaizinho = false,
       fala = "",
       tipo = "clip_profissional",
+      movimentoProdutoVisual = "",
     } = await req.json();
 
     if (
@@ -279,6 +360,10 @@ Deno.serve(async (req) => {
       String(tipo || "") ===
         "clip_paizinho_appia";
 
+    const modoClipProduto360 =
+      String(movimentoProdutoVisual || "") ===
+      "360";
+
     const diretor = ehPaizinho
       ? {
           prompt: [
@@ -340,6 +425,11 @@ Deno.serve(async (req) => {
             "identidade APPIA",
           ],
         }
+      : modoClipProduto360
+      ? montarDiretorClipProduto360(
+          instrucoes,
+          duracao
+        )
       : motorDiretorIA({
           descricao: String(descricao || ""),
           categoria: String(categoria || ""),

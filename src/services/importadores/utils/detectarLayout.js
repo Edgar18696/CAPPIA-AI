@@ -83,7 +83,7 @@ export default function detectarLayout({
    * =====================================================
    */
 
-  const pareceCatalogoBicos2016 =
+ const pareceCatalogoBicos2016 =
   !textoArquivo.includes(
     "map"
   ) &&
@@ -92,8 +92,16 @@ export default function detectarLayout({
     [
       "parts electronic systems and ignition en",
       "parts electronic systems and ignition",
+
+      // PDF separado do Buyers Guide
+      "magneti marelli buyers guide section1 correto",
+      "magneti marelli buyers guide section1",
+      "buyers guide section1 correto",
+      "buyers guide section1",
+      "buyers guide section 1",
     ]
   );
+  
   if (
     pareceCatalogoBicos2016 &&
     ehMagnetiMarelli

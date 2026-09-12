@@ -6,7 +6,7 @@ import {
 } from "react";
 
 export default function LoadingAppia({
-  titulo = "🤖 APPIA AI",
+  titulo = "🤖 PAIIA AI",
   mensagem = "Processando...",
 }) {
   const [segundos, setSegundos] =
@@ -159,7 +159,7 @@ const etapa = obterEtapa();
 >
   <img
     src={logoAppia}
-    alt="APPIA AI"
+    alt="PAIIA AI"
     style={{
       width: "90px",
       height: "90px",

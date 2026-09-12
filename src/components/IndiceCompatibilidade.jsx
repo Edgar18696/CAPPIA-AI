@@ -204,7 +204,7 @@ export default function IndiceCompatibilidade({
       <div style={cabecalho}>
         <div>
           <span style={etiqueta}>
-            🛡 ÍNDICE APPIA
+            🛡 ÍNDICE PAIIA
           </span>
 
           <h2 style={titulo}>

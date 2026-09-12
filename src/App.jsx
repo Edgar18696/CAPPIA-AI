@@ -36,6 +36,7 @@ import GaleriaScreen from "./components/screens/GaleriaScreen";
 import Admin from "./components/Admin";
 import MarketingAppia from "./components/MarketingAppia";
 import HomeScreen from "./components/screens/HomeScreen";
+import { usuarioEhAdministrador } from "./services/usuarioEhAdministrador";
 import Projetos from "./components/Projetos";
 import Login from "./components/Login";
 import Footer from "./components/Footer";
@@ -47,6 +48,7 @@ import MercadoLivreTeste from "./components/MercadoLivreTeste";
 import PublicacaoSite from "./components/PublicacaoSite";
 import MidiasAppia from "./components/MidiasAppia";
 import PlanosPagamentos from "./components/PlanosPagamentos";
+import CriarMascotePaizinho from "./components/CriarMascotePaizinho";
 import {
   cardStyle,
   buttonBlue,
@@ -95,8 +97,13 @@ import {
   removerProcessamentosSelecionados,
 } from "./services/processamentosService";
 import { vincularImagensProjeto } from "./services/projetoImagensService";
+import {
+  consumirNovaCriacaoMidia,
+  deveIniciarNovaCriacaoMidia,
+  prepararNovaCriacaoMidia,
+} from "./services/limparEstadoTemporarioMidia";
 // =====================================================
-// APPIA AI
+// PAIIA AI
 // Organização do projeto
 // As telas serão movidas para /src/components/screens
 // Gradualmente, sem alterar o funcionamento.
@@ -107,6 +114,11 @@ export default function App() {
 
 const [screen, setScreen] =
   useState("home");
+
+const [
+  mostrarPaizinho,
+  setMostrarPaizinho,
+] = useState(false);
 
 const [
   abrirLoginEmCadastro,
@@ -450,6 +462,33 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+  if (screen === "home") {
+    prepararNovaCriacaoMidia();
+    limparTelaFoto();
+    setFotosAnuncio([]);
+    setAnuncioEditando(null);
+    setImagemBanner(null);
+    setProdutoCopilot("");
+    setCategoriaFoto("autopecas");
+    setTipoFundoFoto("branco");
+    setQualidadeFoto("alta");
+    return;
+  }
+
+  if (
+    screen === "foto" &&
+    deveIniciarNovaCriacaoMidia() &&
+    localStorage.getItem("abrirFotoAutomatico") !== "true"
+  ) {
+    limparTelaFoto();
+    setCategoriaFoto("autopecas");
+    setTipoFundoFoto("branco");
+    setQualidadeFoto("alta");
+    consumirNovaCriacaoMidia();
+  }
+}, [screen]);
+
+useEffect(() => {
   async function carregarResumoComercial() {
     const resumo =
       await obterResumoComercial();
@@ -482,6 +521,17 @@ useEffect(() => {
 
   carregarResumoBase();
 }, []);
+
+const ehAdministrador = usuarioEhAdministrador(usuario);
+
+useEffect(() => {
+  if (
+    screen === "admin" &&
+    !ehAdministrador
+  ) {
+    setScreen("home");
+  }
+}, [screen, ehAdministrador]);
 
 useEffect(() => {
   async function recuperarSessao() {
@@ -749,7 +799,7 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
           .includes("seconds")
       ) {
         alert(
-          "⏳ Aguarde alguns segundos antes de tentar novamente. A APPIA está protegendo seu cadastro contra envios repetidos."
+          "⏳ Aguarde alguns segundos antes de tentar novamente. A PAIIA está protegendo seu cadastro contra envios repetidos."
         );
         return;
       }
@@ -763,7 +813,7 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
           .includes("already been registered")
       ) {
         alert(
-          "ℹ️ Este e-mail já possui uma conta na APPIA. Use a opção Entrar."
+          "ℹ️ Este e-mail já possui uma conta na PAIIA. Use a opção Entrar."
         );
         return;
       }
@@ -782,7 +832,7 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
     }
 
     alert(
-      "✅ Conta criada com sucesso!\n\nEnviamos um e-mail de confirmação. Abra sua caixa de entrada e clique no botão para ativar sua conta APPIA."
+      "✅ Conta criada com sucesso!\n\nEnviamos um e-mail de confirmação. Abra sua caixa de entrada e clique no botão para ativar sua conta PAIIA."
     );
 
     setScreen("login");
@@ -1492,7 +1542,10 @@ async function excluirImagem(item) {
     setPreview("");
     setUrlPublica("");
     setResultadoIA("");
+    setResultadosFotos([]);
+    setArquivosFotos([]);
     setStatusProcesso("");
+    setProcessando(false);
   }
 
 async function processarBannerIA() {
@@ -1921,6 +1974,16 @@ return (
       min-width: 0;
       max-width: 100%;
     }
+    .paiia-topo-paizinho {
+      padding: 10px 16px;
+      border-radius: 999px;
+      border: 1px solid #67e8f9;
+      background: linear-gradient(135deg,#0369a1,#22d3ee);
+      color: #fff;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(34,211,238,.28);
+    }
     @media (max-width: 720px) {
       .paiia-app-home {
         padding-top: 12px !important;
@@ -1941,6 +2004,12 @@ return (
         font-size: 13px;
         padding: 8px 12px;
         white-space: nowrap;
+      }
+      .paiia-topo-paizinho {
+        padding: 9px 14px;
+        font-size: 13px;
+        order: -1;
+        flex: 0 0 auto;
       }
     }
   `}
@@ -1972,13 +2041,13 @@ return (
   >
     <img
       src={logoAppia}
-      alt="APPIA AI"
+      alt="PAIIA AI"
       style={{ width: "70px" }}
     />
 
     <div style={{ textAlign: "left" }}>
       <h2 style={{ margin: 0, color: "#67e8f9" }}>
-        APPIA AI
+        PAIIA AI
       </h2>
 
       <p style={{ margin: 0, color: "#94a3b8" }}>
@@ -2004,6 +2073,16 @@ return (
 
     {!usuario ? (
       <>
+        <button
+          type="button"
+          className="paiia-topo-paizinho"
+          onClick={() => {
+            setScreen("home");
+            setMostrarPaizinho(true);
+          }}
+        >
+          Paizinho IA
+        </button>
         <button
           type="button"
           style={botaoTopoPlanos}
@@ -2042,6 +2121,17 @@ return (
           onClick={() => setScreen("home")}
         >
           🏠 Home
+        </button>
+
+        <button
+          type="button"
+          className="paiia-topo-paizinho"
+          onClick={() => {
+            setScreen("home");
+            setMostrarPaizinho(true);
+          }}
+        >
+          Paizinho IA
         </button>
 
         <button
@@ -2108,6 +2198,9 @@ return (
     totalVideos={totalVideos}
     cardStyle={cardStyle}
     setScreen={setScreen}
+    ehAdministrador={ehAdministrador}
+    mostrarPaizinho={mostrarPaizinho}
+    setMostrarPaizinho={setMostrarPaizinho}
   />
 )}
 
@@ -2267,6 +2360,13 @@ return (
 
 {screen === "midiasAppia" && (
   <MidiasAppia
+    cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "criarMascotePaizinho" && (
+  <CriarMascotePaizinho
     cardStyle={cardStyle}
     setScreen={setScreen}
   />
@@ -2435,7 +2535,7 @@ return (
   }}
 >
   <h3 style={{ color: "#38bdf8" }}>
-    🤖 APPIA Copilot
+    🤖 PAIIA Copilot
   </h3>
 
   <p style={{ color: "#cbd5e1" }}>
@@ -2588,7 +2688,7 @@ Gere respostas profissionais para clientes, verifique compatibilidade de peças 
       fontWeight: "600",
     }}
   >
-🤖 APPIA Think analisou sua mensagem
+🤖 PAIIA Think analisou sua mensagem
     <span style={{ color: "white" }}>
       {" "}
 <>
@@ -2803,7 +2903,7 @@ setEspecialistaAtendimento("marketing");
         fontSize: "18px",
       }}
     >
-      🤖 APPIA Copilot
+      🤖 PAIIA Copilot
     </h3>
 
     <p
@@ -3155,7 +3255,7 @@ setQualidadeFoto={setQualidadeFoto}
   />
 )}
 
-{screen === "admin" && (
+{screen === "admin" && ehAdministrador && (
 <Admin
   totalFotos={totalFotos}
   cardStyle={cardStyle}
@@ -3261,7 +3361,7 @@ setQualidadeFoto={setQualidadeFoto}
 )}
 {processando && (
   <LoadingAppia
-    titulo="🤖 APPIA AI"
+    titulo="🤖 PAIIA AI"
     mensagem={
       statusProcesso ||
       "Processando imagem com IA..."

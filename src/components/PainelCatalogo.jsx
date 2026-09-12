@@ -23,7 +23,7 @@ function QualidadeBadge({
           color: "#67e8f9",
         }}
       >
-        🧠 Inteligência APPIA
+        🧠 Inteligência PAIIA
       </h4>
 
       <div
@@ -141,7 +141,7 @@ export default function PainelCatalogo({
   <span style={{ color: "#ffffff" }}>
     {diagnostico?.arquivoCatalogo ||
       pecaEncontrada.origem_catalogo ||
-      "Base APPIA"}
+      "Base PAIIA"}
   </span>
 </div>
 
@@ -257,15 +257,21 @@ export default function PainelCatalogo({
   }}
 >
   <InteligenciaAppia
-    baseMestre={
-      pecaEncontrada?.baseMestre
-    }
-    diagnostico={diagnostico}
-    confianca={
-      pecaEncontrada?.baseMestre
-        ?.confianca
-    }
-  />
+  baseMestre={
+    diagnostico?.baseMestre ||
+    pecaEncontrada?.baseMestre ||
+    null
+  }
+  diagnostico={diagnostico}
+  confianca={
+    diagnostico?.baseMestre
+      ?.confianca ||
+    pecaEncontrada?.baseMestre
+      ?.confianca ||
+    diagnostico?.confianca ||
+    null
+  }
+/>
 </div>
 
           {diagnostico?.paginaCatalogo && (
@@ -344,11 +350,17 @@ export default function PainelCatalogo({
     </div>
 
     <span style={valorStyle}>
-      {pecaEncontrada.confiabilidade ||
-        diagnostico?.confiabilidade ||
-        0}
-      % — Catálogo Oficial APPIA
-    </span>
+  {pecaEncontrada?.fonte_tecnica === "catcar" &&
+  pecaEncontrada?.confirmado === true
+    ? 100
+    : pecaEncontrada?.confiabilidade ||
+      diagnostico?.confiabilidade ||
+      0}
+  % —{" "}
+  {pecaEncontrada?.fonte_tecnica === "catcar"
+    ? "CatCar Renault — Fonte Confirmada"
+    : "Catálogo Oficial PAIIA"}
+</span>
   </div>
 </div>
           <Linha

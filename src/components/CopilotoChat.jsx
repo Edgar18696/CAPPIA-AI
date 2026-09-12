@@ -24,7 +24,7 @@ export default function CopilotoChat({
         autor: "ia",
         texto:
           parecerIA?.texto ||
-          "Olá! Sou o Copiloto IA do APPIA. Como posso ajudar?",
+          "Olá! Sou o Copiloto IA do PAIIA. Como posso ajudar?",
         especialistas: {},
       },
     ]);

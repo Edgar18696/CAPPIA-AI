@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { supabaseKey } from "../supabase";
+import { prepararNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 export default function Copilot({
   cardStyle,
   setScreen,
@@ -14,11 +15,13 @@ const gerarDescricao = () => gerarAnuncio("descricao");
 const gerarAplicacao = () => gerarAnuncio("aplicacao");
 
 const gerarFoto = () => {
+  prepararNovaCriacaoMidia();
   setProdutoCopilot(texto);
   setScreen("foto");
 };
 
 const gerarBanner = () => {
+  prepararNovaCriacaoMidia();
   setProdutoCopilot(texto);
   setScreen("banner");
 };
@@ -67,7 +70,7 @@ async function gerarAnuncio(tipo = "completo") {
     <div style={{ marginTop: "40px" }}>
       <div style={cardStyle}>
         <h2 style={{ color: "#67e8f9", fontSize: "32px" }}>
-          ✨ APPIA Copilot
+          ✨ PAIIA Copilot
         </h2>
 
         <p style={{ color: "#cbd5e1", fontSize: "18px" }}>

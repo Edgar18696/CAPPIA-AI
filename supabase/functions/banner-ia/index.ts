@@ -31,6 +31,18 @@ function normalizarFormato(
     .toLowerCase();
 
   if (
+    texto.includes("mercadolivre") ||
+    texto.includes("mercado_livre") ||
+    texto.includes("mercado livre")
+  ) {
+    return {
+      nome: "Mercado Livre Técnico",
+      size: "1024x1024",
+      orientacao: "quadrado",
+    };
+  }
+
+  if (
     texto.includes("story") ||
     texto.includes("reel") ||
     texto.includes("vertical")
@@ -244,7 +256,6 @@ function extrairPreco(
     ? `R$ ${valor}`
     : `R$ ${valor.replace(".", ",")}`;
 }
-
 function montarPrompt({
   descricao,
   paleta,
@@ -252,6 +263,7 @@ function montarPrompt({
   variacao,
   modelo,
   temLogo,
+  temDetalheTecnico,
 }: {
   descricao: string;
   paleta: string;
@@ -259,6 +271,7 @@ function montarPrompt({
   variacao: number;
   modelo: string;
   temLogo: boolean;
+  temDetalheTecnico: boolean;
 }) {
   const dadosFormato =
     normalizarFormato(
@@ -278,7 +291,128 @@ function montarPrompt({
   const pedido =
     String(descricao || "")
       .trim()
-      .slice(0, 1600);
+      .slice(0, 2600);
+
+  const modoTecnico =
+    formato ===
+      "mercadoLivre" ||
+    /MODO MERCADO LIVRE TÉCNICO/i.test(
+      pedido
+    );
+
+  /*
+   * =========================================
+   * MERCADO LIVRE TÉCNICO
+   * =========================================
+   */
+  if (modoTecnico) {
+    return `
+Crie uma IMAGEM TÉCNICA PROFISSIONAL DE AUTOPEÇA para complementar um anúncio no Mercado Livre.
+
+A PRIMEIRA IMAGEM enviada é a FOTO REAL DO PRODUTO PRINCIPAL.
+
+${
+  temDetalheTecnico
+    ? `A SEGUNDA IMAGEM enviada é uma FOTO DE DETALHE DA MESMA PEÇA.
+Ela pode mostrar conector, terminais, pinos, fios, ponta, furos, encaixe, rosca ou outro detalhe técnico.
+NÃO trate essa segunda imagem como um segundo produto.`
+    : "Nenhuma foto técnica adicional foi enviada."
+}
+
+${
+  temLogo
+    ? temDetalheTecnico
+      ? "A TERCEIRA IMAGEM enviada é o LOGOTIPO REAL DA EMPRESA."
+      : "A SEGUNDA IMAGEM enviada é o LOGOTIPO REAL DA EMPRESA."
+    : "Nenhum logotipo foi enviado."
+}
+
+OBJETIVO:
+Criar uma imagem quadrada técnica, extremamente limpa, profissional e fácil de conferir antes da compra.
+
+FORMATO VISUAL:
+- quadrado;
+- composição equivalente a 1200x1200;
+- fundo branco;
+- iluminação de estúdio limpa;
+- aparência de catálogo técnico automotivo;
+- produto principal grande e centralizado;
+- informações técnicas organizadas ao redor da peça;
+- excelente legibilidade;
+- bastante espaço visual;
+- sem poluição.
+
+INFORMAÇÕES FORNECIDAS PELO USUÁRIO:
+${pedido || "Sem informações técnicas adicionais."}
+
+REGRAS ABSOLUTAS SOBRE O PRODUTO:
+- Preserve fielmente a peça real enviada.
+- NÃO mudar formato físico.
+- NÃO alterar quantidade de fios.
+- NÃO alterar quantidade de pinos.
+- NÃO inventar furos.
+- NÃO inventar conectores.
+- NÃO inventar terminais.
+- NÃO inventar roscas.
+- NÃO inventar encaixes.
+- NÃO inventar códigos.
+- NÃO inventar medidas.
+- NÃO inventar especificações.
+- NÃO inventar aplicações.
+- Se uma informação não foi fornecida ou não é claramente visível, simplesmente não mostrar.
+- É melhor omitir uma informação do que apresentar uma informação técnica incorreta.
+
+FOTO DE DETALHE:
+${
+  temDetalheTecnico
+    ? `- Usar a segunda foto somente como ampliação visual da mesma peça.
+- Pode criar um quadro circular ou retangular de detalhe.
+- Pode usar uma linha discreta apontando do produto principal para o detalhe.
+- Preservar exatamente o conector, terminal, ponta, furos ou encaixe mostrado na foto.
+- NÃO duplicar a peça como se fossem dois produtos.`
+    : "- Não criar detalhe técnico que não esteja visível na foto principal."
+}
+
+TEXTOS:
+- Mostrar somente as informações técnicas realmente fornecidas pelo usuário.
+- Textos curtos.
+- Tipografia limpa e profissional.
+- Alta legibilidade.
+- Não criar frases promocionais.
+
+NÃO MOSTRAR:
+- preço;
+- promoção;
+- desconto;
+- telefone;
+- WhatsApp;
+- e-mail;
+- endereço;
+- CTA comercial;
+- “compre agora”;
+- “oferta”;
+- “pronta entrega”;
+- aplicações não informadas.
+
+LOGOTIPO:
+${
+  temLogo
+    ? `- Usar o logotipo enviado de forma pequena e discreta.
+- Preservar identidade, proporção e cores.
+- O logotipo nunca deve competir visualmente com a peça.`
+    : "- Não inventar logotipo nem nome de empresa."
+}
+
+RESULTADO:
+Uma imagem técnica automotiva profissional, limpa e confiável, pronta para complementar as fotos de um anúncio do Mercado Livre.
+`;
+  }
+
+  /*
+   * =========================================
+   * BANNER EXPRESS NORMAL
+   * =========================================
+   */
 
   const preco =
     extrairPreco(
@@ -304,9 +438,12 @@ function montarPrompt({
 Crie um BANNER PUBLICITÁRIO AUTOMOTIVO COMPLETO, profissional, moderno, vibrante e comercial.
 
 A PRIMEIRA IMAGEM enviada é a FOTO REAL DO PRODUTO.
-${temLogo
-  ? "A SEGUNDA IMAGEM enviada é o LOGOTIPO REAL DA EMPRESA."
-  : "Nenhum logotipo foi enviado."}
+
+${
+  temLogo
+    ? "A SEGUNDA IMAGEM enviada é o LOGOTIPO REAL DA EMPRESA."
+    : "Nenhum logotipo foi enviado."
+}
 
 MISSÃO:
 Transformar a foto real do produto em uma campanha publicitária de autopeças com direção de arte comparável a um anúncio profissional criado por designer experiente.
@@ -332,9 +469,11 @@ ${pedido || "Sem informações adicionais."}
 TEXTOS PRINCIPAIS:
 - Headline sugerida: "${dadosModelo.headline}"
 - Apoio sugerido: "${dadosModelo.apoio}"
-${preco
-  ? `- PREÇO EXATO OBRIGATÓRIO: "${preco}"`
-  : "- Não há preço informado. NÃO invente preço."}
+${
+  preco
+    ? `- PREÇO EXATO OBRIGATÓRIO: "${preco}"`
+    : "- Não há preço informado. NÃO invente preço."
+}
 
 REGRAS IMPORTANTES SOBRE A FOTO DO PRODUTO:
 - Preserve fielmente o produto fornecido.
@@ -347,12 +486,14 @@ REGRAS IMPORTANTES SOBRE A FOTO DO PRODUTO:
 - Não criar outro produto diferente do original.
 
 REGRAS IMPORTANTES SOBRE O LOGOTIPO:
-${temLogo
-  ? `- Usar o logotipo enviado como referência visual.
+${
+  temLogo
+    ? `- Usar o logotipo enviado como referência visual.
 - Preservar ao máximo desenho, proporção, cores e identidade.
 - Colocar o logo em posição premium, sem competir com produto e preço.
 - NÃO inventar outro nome de empresa.`
-  : "- Não inventar logotipo ou nome de empresa."}
+    : "- Não inventar logotipo ou nome de empresa."
+}
 
 REGRAS DE TEXTO:
 - Pouco texto.
@@ -399,7 +540,6 @@ Não gere quadro em branco.
 Não escreva explicações fora do banner.
 `;
 }
-
 async function fonteParaBlob(
   fonte: string,
   nomePadrao: string
@@ -577,17 +717,23 @@ Deno.serve(
         );
 
       const imagemProduto =
-        String(
-          body?.imagemProduto ||
-            body?.imagem ||
-            ""
-        );
+  String(
+    body?.imagemProduto ||
+      body?.imagem ||
+      ""
+  );
 
-      const logo =
-        String(
-          body?.logo ||
-            ""
-        );
+const imagemDetalheTecnico =
+  String(
+    body?.imagemDetalheTecnico ||
+      ""
+  );
+
+const logo =
+  String(
+    body?.logo ||
+      ""
+  );
 
       if (
         !imagemProduto
@@ -617,6 +763,10 @@ Deno.serve(
           modelo,
           temLogo:
             Boolean(logo),
+          temDetalheTecnico:
+            Boolean(
+              imagemDetalheTecnico
+            ),
         });
 
       console.log(
@@ -631,6 +781,10 @@ Deno.serve(
           variacao,
           temLogo:
             Boolean(logo),
+          temDetalheTecnico:
+            Boolean(
+              imagemDetalheTecnico
+            ),
           temPreco:
             Boolean(
               extrairPreco(
@@ -641,14 +795,28 @@ Deno.serve(
       );
 
       const produtoArquivo =
-        await fonteParaBlob(
-          imagemProduto,
-          "produto.png"
-        );
+  await fonteParaBlob(
+    imagemProduto,
+    "produto.png"
+  );
 
-      let logoArquivo:
-        File | null =
-        null;
+let detalheTecnicoArquivo:
+  File | null =
+  null;
+
+if (
+  imagemDetalheTecnico
+) {
+  detalheTecnicoArquivo =
+    await fonteParaBlob(
+      imagemDetalheTecnico,
+      "detalhe-tecnico.png"
+    );
+}
+
+let logoArquivo:
+  File | null =
+  null;
 
       if (logo) {
         logoArquivo =
@@ -691,6 +859,16 @@ Deno.serve(
         produtoArquivo,
         produtoArquivo.name
       );
+
+      if (
+        detalheTecnicoArquivo
+      ) {
+        form.append(
+          "image[]",
+          detalheTecnicoArquivo,
+          detalheTecnicoArquivo.name
+        );
+      }
 
       if (
         logoArquivo

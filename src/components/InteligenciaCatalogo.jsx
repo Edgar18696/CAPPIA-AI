@@ -35,7 +35,7 @@ export default function InteligenciaCatalogo({ cardStyle }) {
             marginBottom: "25px",
           }}
         >
-          O APPIA AI aprende continuamente quais códigos ainda não existem na
+          O PAIIA AI aprende continuamente quais códigos ainda não existem na
           base e ajuda a definir prioridades de importação.
         </p>
 

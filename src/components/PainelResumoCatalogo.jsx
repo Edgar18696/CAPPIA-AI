@@ -95,7 +95,7 @@ export default function PainelResumoCatalogo({
       <div style={cabecalho}>
         <div>
           <h2 style={titulo}>
-            🧠 Resumo Técnico APPIA AI
+            🧠 Resumo Técnico PAIIA AI
           </h2>
 
           <p style={subtitulo}>

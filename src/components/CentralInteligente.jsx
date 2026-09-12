@@ -10,7 +10,7 @@ export default function CentralInteligente({ setScreen, cardStyle }) {
   return (
     <div style={{ marginTop: "50px" }}>
       <h2 style={{ color: "#67e8f9", fontSize: "34px" }}>
-        🧠 Central de Pesquisa APPIA
+        🧠 Central de Pesquisa PAIIA
       </h2>
 
       <p style={{ color: "#93c5fd", marginBottom: "30px", fontSize: "18px" }}>

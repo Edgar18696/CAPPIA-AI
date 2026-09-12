@@ -30,7 +30,7 @@ export default function DiagnosticoTecnicoIA({
   return (
     <div style={painel}>
       <h2 style={titulo}>
-        🤖 Diagnóstico Técnico APPIA AI
+        🤖 Diagnóstico Técnico PAIIA AI
       </h2>
 
       <p style={texto}>
@@ -76,7 +76,7 @@ export default function DiagnosticoTecnicoIA({
       </div>
 
       <div style={blocoVerde}>
-        💡 Recomendação APPIA AI
+        💡 Recomendação PAIIA AI
 
         <div style={{ marginTop: 8 }}>
           Utilize o registro principal como base para

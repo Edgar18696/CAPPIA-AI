@@ -55,7 +55,7 @@ export default function MeusAnuncios({
         </h2>
 
         <p style={{ color: "#cbd5e1" }}>
-          Lista dos anúncios salvos no APPIA AI.
+          Lista dos anúncios salvos no PAIIA AI.
         </p>
 
         {carregando && (

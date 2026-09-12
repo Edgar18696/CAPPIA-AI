@@ -1,4 +1,4 @@
-import {
+ import {
   useEffect,
   useMemo,
   useRef,
@@ -6,6 +6,10 @@ import {
 } from "react";
 
 import { supabase } from "../supabase";
+import {
+  consumirNovaCriacaoMidia,
+  deveIniciarNovaCriacaoMidia,
+} from "../services/limparEstadoTemporarioMidia";
 
 const FORMATOS = {
   instagram: {
@@ -21,17 +25,33 @@ const FORMATOS = {
     icone: "⬜",
   },
   story: {
-    nome: "Story / Reels",
+    nome: "Stories / Status",
     largura: 1080,
     altura: 1920,
     icone: "📱",
-  },
+   },
+
   facebook: {
     nome: "Facebook Feed",
     largura: 1200,
     altura: 1500,
     icone: "👍",
   },
+
+  mercadoLivre: {
+    nome: "Mercado Livre",
+    largura: 1200,
+    altura: 1200,
+    icone: "🔧",
+  },
+
+  whatsapp: {
+    nome: "WhatsApp Status",
+    largura: 1080,
+    altura: 1920,
+    icone: "💬",
+  },
+
 };
 
 const OBJETIVOS = [
@@ -97,14 +117,85 @@ const MODELOS_DESCRICAO = [
     texto:
       "Crie um comunicado profissional e limpo com a marca em destaque e uma mensagem objetiva para os clientes.",
   },
-  {
+    {
     id: "qualidade",
     nome: "🏆 Qualidade / Confiança",
     texto:
       "Crie um banner profissional com a mensagem Qualidade que seu carro merece. Destaque o produto, transmita confiança, qualidade e credibilidade, use pouco texto e uma chamada comercial elegante.",
   },
+  
 ];
+const CAMPOS_TECNICOS = {
+  sonda: {
+    nome: "Sonda Lambda",
+    campos: [
+      "Quantidade de fios",
+      "Quantidade de pinos / vias",
+      "Comprimento do chicote",
+      "Conector / terminal",
+    ],
+  },
 
+  bico: {
+    nome: "Bico Injetor",
+    campos: [
+      "Quantidade de furos",
+      "Tipo de conector",
+      "Encaixe / O-ring",
+      "Detalhe técnico",
+    ],
+  },
+
+  vela: {
+    nome: "Vela de Ignição",
+    campos: [
+      "Rosca",
+      "Medida da chave",
+      "Comprimento da rosca",
+      "Tipo de eletrodo",
+    ],
+  },
+
+  bomba: {
+    nome: "Bomba de Combustível",
+    campos: [
+      "Conexão de entrada",
+      "Conexão de saída",
+      "Conector elétrico",
+      "Diâmetro / medida",
+    ],
+  },
+
+  sensor: {
+    nome: "Sensor",
+    campos: [
+      "Quantidade de pinos",
+      "Tipo de conector",
+      "Tipo de fixação",
+      "Detalhe técnico",
+    ],
+  },
+
+  bobina: {
+    nome: "Bobina de Ignição",
+    campos: [
+      "Quantidade de pinos",
+      "Tipo de conector",
+      "Tipo de encaixe",
+      "Detalhe técnico",
+    ],
+  },
+
+  generico: {
+    nome: "Outro produto",
+    campos: [
+      "Detalhe técnico 1",
+      "Detalhe técnico 2",
+      "Detalhe técnico 3",
+      "Detalhe técnico 4",
+    ],
+  },
+};
 const PALETAS = {
   azul: {
     nome: "Azul Elétrico",
@@ -151,7 +242,7 @@ const PALETAS = {
 
 /*
  * =====================================================
- * MOTOR BANNER EXPRESS IA — FÓRMULA APPIA
+ * MOTOR BANNER EXPRESS IA — FÓRMULA PAIIA
  * =====================================================
  *
  * O usuário informa somente:
@@ -234,7 +325,7 @@ const COPYS_AUTOMATICAS = {
       cta: "CONSULTE APLICAÇÕES",
     },
     {
-      chamada: "DESTAQUE APPIA",
+      chamada: "DESTAQUE PAIIA",
       titulo: "A PEÇA CERTA PARA O SEU CARRO",
       apoio: "Confira compatibilidade antes da compra",
       cta: "CONSULTE AGORA",
@@ -378,6 +469,12 @@ useEffect(() => {
   const [pedidoAppia, setPedidoAppia] =
     useState("");
 
+  const [modeloSelecionado, setModeloSelecionado] =
+    useState("");
+
+  const [mostrarExtras, setMostrarExtras] =
+    useState(false);
+
   const [precoPedido, setPrecoPedido] =
     useState("");
 
@@ -390,6 +487,9 @@ useEffect(() => {
   const [fundoIA, setFundoIA] =
     useState("");
 
+  const [bannerSalvo, setBannerSalvo] =
+    useState(false);
+
   const [gerandoFundoIA, setGerandoFundoIA] =
     useState(false);
 
@@ -397,11 +497,153 @@ useEffect(() => {
     useState("");
 
   const [imagemSelecionada, setImagemSelecionada] =
-    useState("");
+  useState("");
 
   const [mostrarGaleria, setMostrarGaleria] =
     useState(false);
+const [
+  tipoPecaTecnica,
+  setTipoPecaTecnica,
+] = useState("generico");
 
+const [
+  detalhesTecnicos,
+  setDetalhesTecnicos,
+] = useState([
+  "",
+  "",
+  "",
+  "",
+  "",
+]);
+const [
+  fotoDetalheTecnico,
+  setFotoDetalheTecnico,
+] = useState(null);
+
+function detectarTipoPecaTecnica() {
+  try {
+    const salvo =
+      localStorage.getItem(
+        "rascunhoNovoAnuncioTemp"
+      );
+
+    const rascunho =
+      salvo
+        ? JSON.parse(salvo)
+        : {};
+
+    const texto = JSON.stringify(
+      rascunho
+    )
+      .normalize("NFD")
+      .replace(
+        /[\u0300-\u036f]/g,
+        ""
+      )
+      .toLowerCase();
+
+    if (
+      /sonda|lambda|oxigenio/.test(
+        texto
+      )
+    ) {
+      return "sonda";
+    }
+
+    if (
+      /bico injetor|injetor|injector/.test(
+        texto
+      )
+    ) {
+      return "bico";
+    }
+
+    if (
+      /vela de ignicao|vela ignicao|spark plug/.test(
+        texto
+      )
+    ) {
+      return "vela";
+    }
+
+    if (
+      /bomba de combustivel|fuel pump/.test(
+        texto
+      )
+    ) {
+      return "bomba";
+    }
+
+    if (
+      /bobina de ignicao|bobina|ignition coil/.test(
+        texto
+      )
+    ) {
+      return "bobina";
+    }
+
+    if (
+      /sensor/.test(texto)
+    ) {
+      return "sensor";
+    }
+
+    return "generico";
+  } catch {
+    return "generico";
+  }
+}
+function selecionarFotoDetalheTecnico(
+  event
+) {
+  const arquivo =
+    event.target.files?.[0];
+
+  if (!arquivo) {
+    return;
+  }
+
+  if (
+    !arquivo.type.startsWith(
+      "image/"
+    )
+  ) {
+    alert(
+      "Selecione uma imagem válida."
+    );
+    return;
+  }
+
+  const leitor =
+    new FileReader();
+
+  leitor.onload = () => {
+    setFotoDetalheTecnico({
+      arquivo,
+      url: leitor.result,
+      nome: arquivo.name,
+    });
+
+    setAprovado(false);
+    setBannerSalvo(false);
+  };
+
+  leitor.onerror = () => {
+    alert(
+      "Não foi possível carregar a foto de detalhe."
+    );
+  };
+
+  leitor.readAsDataURL(
+    arquivo
+  );
+
+  event.target.value = "";
+}
+  const [carregandoGaleria, setCarregandoGaleria] =
+  useState(false);
+  
 useEffect(() => {
   console.log("ESTADO DA GALERIA:", mostrarGaleria);
 }, [mostrarGaleria]);
@@ -474,6 +716,30 @@ useEffect(() => {
       () => normalizarGaleria(galeria),
       [galeria]
     );
+useEffect(() => {
+  if (!mostrarGaleria) {
+    setCarregandoGaleria(false);
+    return;
+  }
+
+  if (imagensDisponiveis.length > 0) {
+    setCarregandoGaleria(false);
+    return;
+  }
+
+  setCarregandoGaleria(true);
+
+  const timer = window.setTimeout(() => {
+    setCarregandoGaleria(false);
+  }, 4000);
+
+  return () => {
+    window.clearTimeout(timer);
+  };
+}, [
+  mostrarGaleria,
+  imagensDisponiveis.length,
+]);
 
   const dadosFormato =
     FORMATOS[formato];
@@ -491,38 +757,61 @@ useEffect(() => {
   const cores =
     PALETAS[paleta];
 
-  useEffect(() => {
-    /*
-     * ABERTURA LIMPA DO BANNER EXPRESS
-     *
-     * Sempre que a tela for aberta, o APPIA começa
-     * um novo banner sem reaproveitar o rascunho anterior.
-     *
-     * Mantemos apenas o Kit da Marca salvo separadamente.
-     */
-    setImagemSelecionada("");
-    setVersaoIA(0);
-    setLayout(1);
-    setAprovado(false);
-    setStatus("");
-    setPedidoAppia("");
-    setPrecoPedido("");
-    setCopyPedido(null);
-    setBannerGerado(false);
-    setFundoIA("");
-    setGerandoFundoIA(false);
-    setErroFundoIA("");
-
-    setMarca((atual) => ({
-      ...atual,
-      logo: "",
-      nome: "",
-    }));
-
-    localStorage.removeItem(
+ useEffect(() => {
+  const continuarGaleria =
+    localStorage.getItem(
+      "abrirBannerAutomatico"
+    ) === "true";
+  const novaCriacao =
+    deveIniciarNovaCriacaoMidia();
+  const imagemDaGaleria =
+    localStorage.getItem(
       "imagemBannerSelecionada"
     );
-  }, []);
+
+  if (
+    (continuarGaleria || !novaCriacao) &&
+    imagemDaGaleria
+  ) {
+    setImagemSelecionada(
+      imagemDaGaleria
+    );
+  } else {
+    setImagemSelecionada("");
+  }
+
+  if (novaCriacao) {
+    consumirNovaCriacaoMidia();
+    setObjetivo("oferta");
+    setFormato("instagram");
+    setPaleta("azul");
+  }
+
+  if (continuarGaleria) {
+    localStorage.removeItem(
+      "abrirBannerAutomatico"
+    );
+  }
+
+  setVersaoIA(0);
+  setLayout(1);
+  setAprovado(false);
+  setStatus("");
+  setPedidoAppia("");
+  setPrecoPedido("");
+  setCopyPedido(null);
+  setBannerGerado(false);
+  setFundoIA("");
+  setBannerSalvo(false);
+  setGerandoFundoIA(false);
+  setErroFundoIA("");
+
+  setMarca((atual) => ({
+    ...atual,
+    logo: "",
+    nome: "",
+  }));
+}, []);
 
   useEffect(() => {
     localStorage.setItem(
@@ -533,6 +822,7 @@ useEffect(() => {
 
   useEffect(() => {
     setAprovado(false);
+    setBannerSalvo(false);
   }, [
     objetivo,
     formato,
@@ -741,10 +1031,112 @@ useEffect(() => {
 
  function montarPedidoCompleto() {
   const partes = [
-    String(pedidoAppia || "").trim(),
+    String(
+      pedidoAppia || ""
+    ).trim(),
   ];
 
-  if (precoPedido?.trim()) {
+  /*
+   * =========================================
+   * MERCADO LIVRE TÉCNICO
+   * =========================================
+   */
+  if (
+    formato ===
+    "mercadoLivre"
+  ) {
+    const configuracaoTecnica =
+      CAMPOS_TECNICOS[
+        tipoPecaTecnica
+      ] ||
+      CAMPOS_TECNICOS.generico;
+
+    const linhasTecnicas =
+      configuracaoTecnica.campos
+        .map(
+          (
+            nomeCampo,
+            indice
+          ) => {
+            const valor =
+              String(
+                detalhesTecnicos[
+                  indice
+                ] || ""
+              ).trim();
+
+            if (!valor) {
+              return "";
+            }
+
+            return `${nomeCampo}: ${valor}`;
+          }
+        )
+        .filter(Boolean);
+
+    const descricaoLivre =
+      String(
+        detalhesTecnicos[4] ||
+          ""
+      ).trim();
+
+    partes.push(
+      `
+MODO MERCADO LIVRE TÉCNICO.
+
+Produto:
+${configuracaoTecnica.nome}
+
+FORMATO:
+- Imagem quadrada 1200x1200.
+- Fundo branco.
+- Visual técnico, limpo e profissional.
+- Produto principal em grande destaque no centro.
+- Organizar os detalhes técnicos ao redor do produto.
+- Manter excelente legibilidade.
+
+REGRAS OBRIGATÓRIAS:
+- Não mostrar preço.
+- Não mostrar promoção.
+- Não mostrar telefone ou WhatsApp.
+- Não mostrar e-mail.
+- Não mostrar endereço.
+- Não criar chamada comercial.
+- Não inventar especificações técnicas.
+- Não alterar características físicas da peça.
+- Manter fidelidade visual ao produto original.
+
+INFORMAÇÕES TÉCNICAS:
+${
+  linhasTecnicas.length
+    ? linhasTecnicas.join(
+        "\n"
+      )
+    : "Nenhuma informação técnica adicional preenchida."
+}
+
+DESCRIÇÃO TÉCNICA DO USUÁRIO:
+${
+  descricaoLivre ||
+  "Nenhuma descrição adicional."
+}
+      `.trim()
+    );
+
+    return partes
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  /*
+   * =========================================
+   * BANNERS NORMAIS
+   * =========================================
+   */
+
+  if (
+    precoPedido?.trim()
+  ) {
     partes.push(
       `Preço informado pelo usuário: ${formatarPreco(
         precoPedido
@@ -752,19 +1144,25 @@ useEffect(() => {
     );
   }
 
-  if (marca.telefone?.trim()) {
+  if (
+    marca.telefone?.trim()
+  ) {
     partes.push(
       `Telefone/WhatsApp informado pelo usuário: ${marca.telefone.trim()}.`
     );
   }
 
-  if (marca.email?.trim()) {
+  if (
+    marca.email?.trim()
+  ) {
     partes.push(
       `E-mail informado pelo usuário: ${marca.email.trim()}.`
     );
   }
 
-  if (marca.endereco?.trim()) {
+  if (
+    marca.endereco?.trim()
+  ) {
     partes.push(
       `Localização informada pelo usuário: ${marca.endereco.trim()}.`
     );
@@ -778,93 +1176,94 @@ useEffect(() => {
   async function gerarComIA() {
     if (!imagemSelecionada) {
       alert(
-        "Escolha uma foto da Galeria APPIA antes de gerar o banner."
+        "Escolha uma foto da Galeria PAIIA antes de gerar o banner."
       );
       return;
     }
 
     const interpretado =
-      interpretarPedidoAppia();
+  formato === "mercadoLivre"
+    ? {
+        objetivo: "produto",
+        paleta: "clean",
+        formato:
+          "mercadoLivre",
+        preco: "",
+      }
+    : interpretarPedidoAppia();
 
-    setBannerGerado(false);
-    setAprovado(false);
-    setGerandoFundoIA(true);
-    setErroFundoIA("");
+setBannerGerado(false);
+setAprovado(false);
+setBannerSalvo(false);
+setFundoIA("");
+setGerandoFundoIA(true);
+setErroFundoIA("");
 
     const proximaVersao =
       versaoIA + 1;
 
     setStatus(
-      "🎨 APPIA criando direção de arte profissional..."
+      "🎨 PAIIA criando direção de arte profissional..."
     );
 
     try {
       const { data, error } =
-        await supabase.functions.invoke(
-          "banner-ia",
-          {
-            body: {
-              descricao:
-                montarPedidoCompleto(),
+  await supabase.functions.invoke(
+    "banner-ia",
+    {
+   body: {
+  descricao:
+    montarPedidoCompleto(),
 
-              /*
-               * A nova Edge Function precisa receber
-               * a imagem real do produto.
-               */
-              imagemProduto:
-                imagemSelecionada,
+  imagemProduto:
+    imagemSelecionada,
 
-              /*
-               * Logo é opcional.
-               */
-              logo:
-                marca.logo || "",
+  imagemDetalheTecnico:
+    fotoDetalheTecnico?.url || "",
 
-              /*
-               * O modelo pode ser inferido pelo objetivo
-               * escolhido/interpretado pelo APPIA.
-               */
-              modelo:
-                interpretado?.objetivo ||
-                objetivo ||
-                "produto",
+  logo:
+    marca.logo || "",
 
-              paleta:
-                interpretado?.paleta ||
-                paleta,
+  modelo:
+    interpretado?.objetivo ||
+    objetivo ||
+    "produto",
 
-              formato:
-                interpretado?.formato ||
-                formato,
+  paleta:
+    interpretado?.paleta ||
+    paleta,
 
-              variacao:
-                proximaVersao,
-            },
-          }
-        );
+  formato:
+    interpretado?.formato ||
+    formato,
 
-      if (error) {
-        throw error;
-      }
+  variacao:
+    proximaVersao,
+},
+    }
+  );
 
-      if (
-        !data?.sucesso ||
-        !data?.imagem
-      ) {
-        throw new Error(
-          data?.erro ||
-            "A IA não retornou o fundo do banner."
-        );
-      }
+if (error) {
+  throw error;
+}
 
-      setFundoIA(
-        data.imagem
-      );
+if (
+  !data?.sucesso ||
+  !data?.imagem
+) {
+  throw new Error(
+    data?.erro ||
+      "A IA não retornou o fundo do banner."
+  );
+}
 
-      setVersaoIA(
-        proximaVersao
-      );
+setFundoIA(
+  data.imagem
+);
 
+setVersaoIA(
+  proximaVersao
+);
       setLayout(
         (atual) =>
           atual >= 3
@@ -875,7 +1274,7 @@ useEffect(() => {
       setBannerGerado(true);
 
       setStatus(
-        "✨ Fundo profissional criado. APPIA aplicou produto, logo, preço e chamada."
+        "✨ Fundo profissional criado. PAIIA aplicou produto, logo, preço e chamada."
       );
     } catch (erro) {
       console.error(
@@ -902,41 +1301,163 @@ useEffect(() => {
       setGerandoFundoIA(false);
     }
   }
+async function aprovarBanner() {
+  if (gerandoFundoIA) {
+    alert(
+      "Aguarde o PAIIA terminar a criação do banner."
+    );
+    return;
+  }
 
-  function aprovarBanner() {
-    if (gerandoFundoIA) {
-      alert(
-        "Aguarde o APPIA terminar a criação do banner."
+  if (!bannerGerado || !fundoIA) {
+    alert(
+      "Gere o banner com IA antes de aprovar."
+    );
+    return;
+  }
+
+  if (
+    objetivo !== "horario" &&
+    objetivo !== "institucional" &&
+    !imagemSelecionada
+  ) {
+    alert(
+      "Escolha uma foto antes de aprovar."
+    );
+    return;
+  }
+
+  try {
+    setStatus(
+      "⏳ Salvando banner..."
+    );
+
+    if (!bannerSalvo) {
+      await salvarBannerNasMidias(
+        fundoIA
       );
-      return;
+
+      setBannerSalvo(true);
     }
 
-    if (!bannerGerado) {
-      alert(
-        "Gere o banner com IA antes de aprovar."
-      );
-      return;
-    }
+    // =====================================================
+    // ADICIONA O BANNER NAS FOTOS DO ANÚNCIO
+    // =====================================================
 
-    if (
-      objetivo !== "horario" &&
-      objetivo !==
-        "institucional" &&
-      !imagemSelecionada
-    ) {
-      alert(
-        "Escolha uma foto antes de aprovar."
+    try {
+      const salvas =
+        localStorage.getItem(
+          "fotosSelecionadasAnuncio"
+        );
+
+      let fotosAtuais =
+        salvas
+          ? JSON.parse(salvas)
+          : [];
+
+      if (
+        !Array.isArray(
+          fotosAtuais
+        )
+      ) {
+        fotosAtuais = [];
+      }
+
+      const jaExiste =
+        fotosAtuais.some(
+          (foto) => {
+            const url =
+              typeof foto === "string"
+                ? foto
+                : foto?.imagem_processada ||
+                  foto?.imagem_original ||
+                  foto?.url ||
+                  "";
+
+            return url === fundoIA;
+          }
+        );
+
+      if (!jaExiste) {
+        fotosAtuais.push({
+          id:
+            `banner-${Date.now()}`,
+
+          imagem_processada:
+            fundoIA,
+
+          imagem_original:
+            fundoIA,
+
+          tipo:
+            "banner",
+
+          created_at:
+            new Date().toISOString(),
+        });
+      }
+
+      localStorage.setItem(
+        "fotosSelecionadasAnuncio",
+        JSON.stringify(
+          fotosAtuais
+        )
       );
-      return;
+
+      // Também atualiza o rascunho
+      // temporário do Criar Anúncio.
+      const rascunhoSalvo =
+        localStorage.getItem(
+          "rascunhoNovoAnuncioTemp"
+        );
+
+      const rascunho =
+        rascunhoSalvo
+          ? JSON.parse(
+              rascunhoSalvo
+            )
+          : {};
+
+      localStorage.setItem(
+        "rascunhoNovoAnuncioTemp",
+        JSON.stringify({
+          ...rascunho,
+          fotos:
+            fotosAtuais,
+        })
+      );
+    } catch (erroFotos) {
+      console.error(
+        "Erro ao adicionar banner às fotos do anúncio:",
+        erroFotos
+      );
     }
 
     setAprovado(true);
 
+    window.dispatchEvent(
+      new Event(
+        "appia:banner-pronto"
+      )
+    );
+
     setStatus(
-      "✅ Banner aprovado. Agora você pode baixar o PNG."
+      "✅ Banner aprovado e adicionado às fotos do anúncio."
+    );
+  } catch (erro) {
+    console.error(
+      "❌ SALVAR BANNER:",
+      erro
+    );
+
+    setStatus("");
+
+    alert(
+      erro?.message ||
+        "Não foi possível salvar o banner."
     );
   }
-
+}
   async function importarLogo(
     event
   ) {
@@ -964,7 +1485,133 @@ useEffect(() => {
       );
     }
   }
-async function salvarBannerNaGaleria(urlBanner) {
+async function criarBlobMiniaturaBanner(
+  blobOriginal
+) {
+  const urlTemporaria =
+    URL.createObjectURL(
+      blobOriginal
+    );
+
+  try {
+    const imagem =
+      await new Promise(
+        (resolve, reject) => {
+          const img = new Image();
+
+          img.onload = () =>
+            resolve(img);
+
+          img.onerror = () =>
+            reject(
+              new Error(
+                "Não foi possível ler o banner para a miniatura."
+              )
+            );
+
+          img.src = urlTemporaria;
+        }
+      );
+
+    const maximo = 500;
+    const escala = Math.min(
+      1,
+      maximo /
+        Math.max(
+          imagem.naturalWidth ||
+            imagem.width,
+          imagem.naturalHeight ||
+            imagem.height
+        )
+    );
+
+    const canvas =
+      document.createElement(
+        "canvas"
+      );
+
+    canvas.width = Math.max(
+      1,
+      Math.round(
+        (imagem.naturalWidth ||
+          imagem.width) * escala
+      )
+    );
+
+    canvas.height = Math.max(
+      1,
+      Math.round(
+        (imagem.naturalHeight ||
+          imagem.height) * escala
+      )
+    );
+
+    const contexto =
+      canvas.getContext("2d");
+
+    if (!contexto) {
+      throw new Error(
+        "Não foi possível criar a miniatura do banner."
+      );
+    }
+
+    contexto.drawImage(
+      imagem,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+
+    const blobWebp =
+      await new Promise(
+        (resolve) => {
+          canvas.toBlob(
+            resolve,
+            "image/webp",
+            0.8
+          );
+        }
+      );
+
+    if (blobWebp && blobWebp.size > 0) {
+      return {
+        blob: blobWebp,
+        contentType: "image/webp",
+        extensao: "webp",
+      };
+    }
+
+    const blobJpeg =
+      await new Promise(
+        (resolve) => {
+          canvas.toBlob(
+            resolve,
+            "image/jpeg",
+            0.82
+          );
+        }
+      );
+
+    if (!blobJpeg || blobJpeg.size < 1) {
+      throw new Error(
+        "Não foi possível gerar a miniatura do banner."
+      );
+    }
+
+    return {
+      blob: blobJpeg,
+      contentType: "image/jpeg",
+      extensao: "jpg",
+    };
+  } finally {
+    URL.revokeObjectURL(
+      urlTemporaria
+    );
+  }
+}
+
+async function salvarBannerNasMidias(urlBanner) {
   if (!urlBanner) {
     throw new Error(
       "Banner sem imagem para salvar."
@@ -977,6 +1624,72 @@ async function salvarBannerNaGaleria(urlBanner) {
     );
   }
 
+  const resposta =
+    await fetch(urlBanner);
+
+  const blob =
+    await resposta.blob();
+
+  const carimbo = Date.now();
+
+  const nomeArquivo =
+    `${usuario.id}/banners/paiia-banner-${carimbo}.png`;
+
+  const {
+    error: erroUpload,
+  } = await supabase.storage
+    .from("imagens")
+    .upload(
+      nomeArquivo,
+      blob,
+      {
+        contentType: "image/png",
+        upsert: true,
+      }
+    );
+
+  if (erroUpload) {
+    throw erroUpload;
+  }
+
+  try {
+    const miniatura =
+      await criarBlobMiniaturaBanner(
+        blob
+      );
+
+    await supabase.storage
+      .from("imagens")
+      .upload(
+        `${usuario.id}/banners/paiia-banner-${carimbo}-thumb.${miniatura.extensao}`,
+        miniatura.blob,
+        {
+          contentType:
+            miniatura.contentType,
+          upsert: true,
+        }
+      );
+  } catch {
+    // A miniatura é só para o card. O original segue.
+  }
+
+  const {
+    data: dadosPublicos,
+  } = supabase.storage
+    .from("imagens")
+    .getPublicUrl(
+      nomeArquivo
+    );
+
+  const urlPublica =
+    dadosPublicos?.publicUrl;
+
+  if (!urlPublica) {
+    throw new Error(
+      "Não foi possível obter a URL do banner."
+    );
+  }
+
   const { error } = await supabase
     .from("processamentos")
     .insert([
@@ -984,7 +1697,8 @@ async function salvarBannerNaGaleria(urlBanner) {
         user_id: usuario.id,
         imagem_original:
           imagemSelecionada || null,
-        imagem_processada: urlBanner,
+        imagem_processada:
+          urlPublica,
         status: "finalizado",
         tipo: "banner",
         modelo_banner: formato,
@@ -993,11 +1707,227 @@ async function salvarBannerNaGaleria(urlBanner) {
 
   if (error) {
     throw new Error(
-      "Não foi possível salvar o banner na Galeria: " +
+      "Não foi possível salvar o banner em Mídias PAIIA: " +
         error.message
     );
   }
 }
+  async function exportarVersaoDestino(
+    chaveDestino
+  ) {
+    if (
+      !bannerGerado ||
+      !aprovado ||
+      !fundoIA
+    ) {
+      alert(
+        "Aprove o banner antes de criar versões para outros canais."
+      );
+      return;
+    }
+
+    const destino =
+      FORMATOS[chaveDestino];
+
+    if (!destino) {
+      return;
+    }
+
+    try {
+      setStatus(
+        `⏳ Formatando para ${destino.nome}...`
+      );
+
+      const resposta =
+        await fetch(fundoIA);
+
+      if (!resposta.ok) {
+        throw new Error(
+          "Não foi possível carregar a arte aprovada."
+        );
+      }
+
+      const blob =
+        await resposta.blob();
+
+      const urlImagem =
+        URL.createObjectURL(blob);
+
+      const imagem =
+        new Image();
+
+      await new Promise(
+        (resolve, reject) => {
+          imagem.onload =
+            resolve;
+
+          imagem.onerror =
+            () =>
+              reject(
+                new Error(
+                  "Não foi possível preparar a arte."
+                )
+              );
+
+          imagem.src =
+            urlImagem;
+        }
+      );
+
+      const canvas =
+        document.createElement(
+          "canvas"
+        );
+
+      canvas.width =
+        destino.largura;
+
+      canvas.height =
+        destino.altura;
+
+      const contexto =
+        canvas.getContext(
+          "2d"
+        );
+
+      if (!contexto) {
+        throw new Error(
+          "Não foi possível criar a versão."
+        );
+      }
+
+      contexto.imageSmoothingEnabled =
+        true;
+
+      contexto.imageSmoothingQuality =
+        "high";
+
+      // Mantém a arte inteira, sem esticar e sem cortar textos/produto.
+      // A sobra do canvas vira margem de segurança do canal.
+      contexto.fillStyle =
+        chaveDestino ===
+        "mercadoLivre"
+          ? "#ffffff"
+          : "#0f172a";
+
+      contexto.fillRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      const escala =
+        Math.min(
+          canvas.width /
+            imagem.naturalWidth,
+          canvas.height /
+            imagem.naturalHeight
+        );
+
+      const larguraFinal =
+        Math.round(
+          imagem.naturalWidth *
+            escala
+        );
+
+      const alturaFinal =
+        Math.round(
+          imagem.naturalHeight *
+            escala
+        );
+
+      const x =
+        Math.round(
+          (canvas.width -
+            larguraFinal) /
+            2
+        );
+
+      const y =
+        Math.round(
+          (canvas.height -
+            alturaFinal) /
+            2
+        );
+
+      contexto.drawImage(
+        imagem,
+        x,
+        y,
+        larguraFinal,
+        alturaFinal
+      );
+
+      URL.revokeObjectURL(
+        urlImagem
+      );
+
+      const png =
+        await new Promise(
+          (resolve) =>
+            canvas.toBlob(
+              resolve,
+              "image/png",
+              1
+            )
+        );
+
+      if (!png) {
+        throw new Error(
+          "Não foi possível gerar o PNG."
+        );
+      }
+
+      const urlDownload =
+        URL.createObjectURL(
+          png
+        );
+
+      const link =
+        document.createElement(
+          "a"
+        );
+
+      link.href =
+        urlDownload;
+
+      link.download =
+        `paiia-${chaveDestino}-${destino.largura}x${destino.altura}-${Date.now()}.png`;
+
+      document.body.appendChild(
+        link
+      );
+
+      link.click();
+      link.remove();
+
+      window.setTimeout(
+        () =>
+          URL.revokeObjectURL(
+            urlDownload
+          ),
+        1500
+      );
+
+      setStatus(
+        `✅ Versão ${destino.nome} pronta em ${destino.largura} × ${destino.altura}, sem gerar outra arte com IA.`
+      );
+    } catch (erro) {
+      console.error(
+        "Erro ao formatar banner:",
+        erro
+      );
+
+      setStatus("");
+
+      alert(
+        erro?.message ||
+          "Não foi possível formatar o banner."
+      );
+    }
+  }
+
   async function exportarPng() {
     /*
      * Quando a IA já devolveu a arte completa em PNG,
@@ -1042,17 +1972,11 @@ async function salvarBannerNaGaleria(urlBanner) {
           1500
         );
 
-       await salvarBannerNaGaleria(fundoIA);
+        setStatus(
+          "✅ PNG baixado. O banner permanece salvo em Mídias PAIIA."
+        );
 
-console.log(
-  "✅ BANNER SALVO NA GALERIA"
-);
-
-setStatus(
-  "✅ Banner baixado e salvo na Galeria."
-);
-
-return;
+        return;
       } catch (erro) {
         console.error(
           "❌ DOWNLOAD PNG IA:",
@@ -1329,8 +2253,8 @@ return;
       style={{
         ...cardStyle,
         minHeight: "100vh",
-        padding: "24px",
-        background: "#020617",
+        padding: "10px 14px 12px",
+        background: "linear-gradient(180deg,#020617 0%,#07111f 100%)",
       }}
     >
       <div
@@ -1338,10 +2262,10 @@ return;
           display: "flex",
           justifyContent:
             "space-between",
-          gap: "18px",
+          gap: "12px",
           alignItems: "center",
           flexWrap: "wrap",
-          marginBottom: "22px",
+          marginBottom: "10px",
         }}
       >
         <div>
@@ -1349,21 +2273,12 @@ return;
             style={{
               color: "#67e8f9",
               margin: 0,
+              fontSize: "22px",
+              lineHeight: 1.15,
             }}
           >
             ⚡ Banner Express IA
           </h1>
-
-          <p
-            style={{
-              color: "#94a3b8",
-              margin:
-                "7px 0 0",
-            }}
-          >
-            Foto + logo + pedido.
-            O APPIA cria a direção de arte e monta o banner para aprovação.
-          </p>
         </div>
 
         <button
@@ -1371,247 +2286,644 @@ return;
           onClick={() =>
             setScreen?.("home")
           }
-          style={botaoSecundario}
+          style={{
+            ...botaoSecundario,
+            padding: "8px 12px",
+            fontSize: "13px",
+          }}
         >
           ← Voltar
         </button>
       </div>
 
+      <style>
+        {`
+          .banner-express-layout {
+            display: grid;
+            grid-template-columns: minmax(300px, 1.05fr) minmax(210px, 260px) minmax(280px, 1.15fr);
+            gap: 12px;
+            align-items: start;
+          }
+          .banner-express-preview {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+          }
+          .banner-express-formatos {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 6px;
+          }
+          .banner-express-estilos {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+          }
+          .banner-express-foto-moldura {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 220px;
+            max-height: calc(100vh - 210px);
+            padding: 10px;
+            border-radius: 14px;
+            border: 1px solid #38bdf8;
+            background: #020617;
+            box-sizing: border-box;
+          }
+          .banner-express-foto-moldura img {
+            width: 100%;
+            height: 100%;
+            max-height: calc(100vh - 230px);
+            object-fit: contain;
+            display: block;
+          }
+          .banner-express-preview-moldura {
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            padding: 10px;
+            border-radius: 16px;
+            border: 1px solid rgba(103,232,249,.45);
+            background: linear-gradient(180deg,rgba(8,145,178,.10),rgba(2,6,23,.55));
+          }
+          @media (max-width: 1100px) {
+            .banner-express-layout {
+              grid-template-columns: minmax(280px, 1fr) minmax(0, 1.1fr);
+            }
+            .banner-express-foto {
+              grid-column: 1;
+            }
+            .banner-express-preview {
+              grid-column: 2;
+              grid-row: 1 / span 2;
+            }
+          }
+          @media (max-width: 860px) {
+            .banner-express-layout {
+              grid-template-columns: 1fr;
+            }
+            .banner-express-foto,
+            .banner-express-preview {
+              grid-column: auto;
+              grid-row: auto;
+            }
+            .banner-express-formatos {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .banner-express-foto-moldura {
+              max-height: 240px;
+              min-height: 180px;
+            }
+            .banner-express-foto-moldura img {
+              max-height: 220px;
+            }
+          }
+          @media (max-width: 520px) {
+            .banner-express-formatos {
+              grid-template-columns: 1fr 1fr;
+            }
+          }
+        `}
+      </style>
+
+      <div className="banner-express-layout">
+        <aside
+          style={{
+            ...painelStyle,
+            padding: "12px",
+          }}
+        >
+          <div style={secaoCompactaStyle}>
+            <div style={secaoTituloCompacto}>
+              Formato
+            </div>
+
+            <div className="banner-express-formatos">
+              {Object.entries(FORMATOS).map(([chave, item]) => (
+                <button
+                  key={chave}
+                  type="button"
+                  onClick={() => {
+                    setFormato(chave);
+                    setAprovado(false);
+                    setBannerSalvo(false);
+
+                    if (chave === "mercadoLivre") {
+                      setObjetivo("produto");
+                      setPaleta("clean");
+                      setPrecoPedido("");
+                      setTipoPecaTecnica(detectarTipoPecaTecnica());
+                    }
+                  }}
+                  style={{
+                    ...formatoCardStyle,
+                    border:
+                      formato === chave
+                        ? "2px solid #67e8f9"
+                        : "1px solid #334155",
+                    background:
+                      formato === chave
+                        ? "rgba(8,145,178,.28)"
+                        : "#020617",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontWeight: 800,
+                      fontSize: "11px",
+                      lineHeight: 1.2,
+                      color: "#f8fafc",
+                    }}
+                  >
+                    {item.nome}
+                  </span>
+                  <span
+                    style={{
+                      color: formato === chave ? "#a5f3fc" : "#94a3b8",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.largura}×{item.altura}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={secaoCompactaStyle}>
+            <div style={secaoTituloCompacto}>
+              Estilo
+            </div>
+            <div className="banner-express-estilos">
+              {MODELOS_DESCRICAO.map(
+                (modelo) => (
+                  <button
+                    key={modelo.id}
+                    type="button"
+                    onClick={() => {
+  setModeloSelecionado(modelo.id);
+  setPedidoAppia(
+    modelo.texto
+  );
+
+ if (
+  modelo.id ===
+  "mercado_livre_tecnico"
+) {
+  setFormato(
+    "mercadoLivre"
+  );
+
+  setObjetivo(
+    "produto"
+  );
+
+  setPaleta(
+    "clean"
+  );
+
+  setPrecoPedido(
+    ""
+  );
+
+  setTipoPecaTecnica(
+    detectarTipoPecaTecnica()
+  );
+
+  setDetalhesTecnicos([
+  "",
+  "",
+  "",
+  "",
+  "",
+]);
+  setMarca(
+    (atual) => ({
+      ...atual,
+      telefone: "",
+      email: "",
+      endereco: "",
+    })
+  );
+
+  setAprovado(
+    false
+  );
+
+  setBannerSalvo(
+    false
+  );
+}
+}}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "999px",
+                      cursor: "pointer",
+                      color: "#e2e8f0",
+                      fontSize: "12px",
+                      fontWeight: 800,
+                      border:
+                        modeloSelecionado === modelo.id
+                          ? "2px solid #67e8f9"
+                          : "1px solid #334155",
+                      background:
+                        modeloSelecionado === modelo.id
+                          ? "rgba(8,145,178,.22)"
+                          : "#020617",
+                    }}
+                  >
+                    {modelo.nome}
+                  </button>
+                )
+              )}
+            </div>
+
+            <div style={{ ...secaoTituloCompacto, marginTop: "8px" }}>
+              Fundo
+            </div>
+            <div className="banner-express-estilos">
+              {[
+                ["azul", "Azul"],
+                ["vermelho", "Oferta"],
+                ["escuro", "Dark"],
+                ["clean", "Clean"],
+              ].map(([chave, nome]) => (
+                <button
+                  key={chave}
+                  type="button"
+                  onClick={() =>
+                    setPaleta(chave)
+                  }
+                  style={{
+                    padding: "5px 9px",
+                    borderRadius: "999px",
+                    cursor: "pointer",
+                    color: "#e2e8f0",
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    border:
+                      paleta === chave
+                        ? "2px solid #67e8f9"
+                        : "1px solid #334155",
+                    background:
+                      paleta === chave
+                        ? "rgba(8,145,178,.22)"
+                        : "#020617",
+                  }}
+                >
+                  {nome}
+                </button>
+              ))}
+            </div>
+
+            <label
+              style={{
+                ...botaoSecundario,
+                display: "block",
+                textAlign: "center",
+                cursor: "pointer",
+                marginTop: "8px",
+                padding: "8px 10px",
+                fontSize: "12px",
+              }}
+            >
+              {marca.logo ? "Trocar logo" : "Adicionar logo"}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={importarLogo}
+                style={{ display: "none" }}
+              />
+            </label>
+          </div>
+
+          <div style={secaoCompactaStyle}>
+            <button
+              type="button"
+              onClick={() =>
+                setMostrarExtras((aberto) => !aberto)
+              }
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+                padding: "4px 0",
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                textAlign: "left",
+                color: "#67e8f9",
+                fontWeight: 800,
+                fontSize: "13px",
+              }}
+            >
+              <span>+ Informações extras</span>
+              <span>
+                {formato === "mercadoLivre" || mostrarExtras ? "−" : "+"}
+              </span>
+            </button>
+
+            {(formato === "mercadoLivre" || mostrarExtras) && (
+          <div style={{ marginTop: "14px" }}>
+            <div style={passoTitulo}>
+              {formato === "mercadoLivre"
+                ? "Informações técnicas"
+                : "Campos opcionais"}
+            </div>
+
+  {formato === "mercadoLivre" ? (
+    <div
+      style={{
+        display: "grid",
+        gap: "9px",
+      }}
+    >
+      <select
+        value={tipoPecaTecnica}
+        onChange={(event) => {
+          setTipoPecaTecnica(
+            event.target.value
+          );
+
+          setDetalhesTecnicos([
+  "",
+  "",
+  "",
+  "",
+  "",
+]);
+        }}
+        style={inputStyle}
+      >
+        {Object.entries(
+          CAMPOS_TECNICOS
+        ).map(
+          ([chave, config]) => (
+            <option
+              key={chave}
+              value={chave}
+            >
+              {config.nome}
+            </option>
+          )
+        )}
+      </select>
+
+      {CAMPOS_TECNICOS[
+        tipoPecaTecnica
+      ].campos.map(
+        (nomeCampo, indice) => (
+          <input
+            key={nomeCampo}
+            type="text"
+            value={
+              detalhesTecnicos[
+                indice
+              ] || ""
+            }
+            onChange={(event) => {
+              const novos = [
+                ...detalhesTecnicos,
+              ];
+
+              novos[indice] =
+                event.target.value;
+
+              setDetalhesTecnicos(
+                novos
+              );
+            }}
+            placeholder={`🔧 ${nomeCampo}`}
+            style={inputStyle}
+          />
+        )
+      )}
+<textarea
+  value={
+    detalhesTecnicos[4] || ""
+  }
+  onChange={(event) => {
+    const novos = [
+      ...detalhesTecnicos,
+    ];
+
+    novos[4] =
+      event.target.value;
+
+    setDetalhesTecnicos(
+      novos
+    );
+  }}
+  placeholder="✍️ Descrição técnica adicional — escreva aqui qualquer detalhe importante que queira destacar na imagem."
+  rows={4}
+  style={{
+    ...inputStyle,
+    resize: "vertical",
+    minHeight: "90px",
+    lineHeight: 1.45,
+  }}
+/>
+{/* FOTO DE DETALHE TÉCNICO */}
+<div
+  style={{
+    marginTop: "4px",
+    padding: "10px",
+    borderRadius: "10px",
+    border: "1px solid #334155",
+    background: "#020617",
+  }}
+>
+  <div
+    style={{
+      color: "#cbd5e1",
+      fontSize: "12px",
+      fontWeight: "bold",
+      marginBottom: "8px",
+    }}
+  >
+    📷 Foto de detalhe técnico (opcional)
+  </div>
+
+  <label
+    style={{
+      ...botaoSecundario,
+      display: "block",
+      textAlign: "center",
+      cursor: "pointer",
+    }}
+  >
+    📂 Escolher foto de detalhe
+
+    <input
+      type="file"
+      accept="image/*"
+      onChange={
+        selecionarFotoDetalheTecnico
+      }
+      style={{
+        display: "none",
+      }}
+    />
+  </label>
+
+  {fotoDetalheTecnico?.url && (
+    <div
+      style={{
+        marginTop: "10px",
+      }}
+    >
+      <img
+        src={fotoDetalheTecnico.url}
+        alt="Detalhe técnico"
+        style={{
+          width: "100%",
+          height: "130px",
+          objectFit: "contain",
+          background: "#ffffff",
+          borderRadius: "10px",
+          display: "block",
+        }}
+      />
+
+      <button
+        type="button"
+        onClick={() => {
+          setFotoDetalheTecnico(null);
+          setAprovado(false);
+          setBannerSalvo(false);
+        }}
+        style={{
+          ...botaoSecundario,
+          width: "100%",
+          marginTop: "8px",
+        }}
+      >
+        🗑️ Remover foto
+      </button>
+    </div>
+  )}
+
+  <div
+    style={{
+      color: "#64748b",
+      fontSize: "10px",
+      lineHeight: 1.4,
+      marginTop: "8px",
+    }}
+  >
+    Use para mostrar conector, terminais,
+    ponta, encaixe, furos ou outro detalhe
+    da mesma peça.
+  </div>
+</div>
+
+      <div
+        style={{
+          color: "#67e8f9",
+          fontSize: "11px",
+          lineHeight: 1.45,
+          padding: "8px 10px",
+          borderRadius: "9px",
+          border:
+            "1px solid rgba(34,211,238,.25)",
+          background:
+            "rgba(8,145,178,.08)",
+        }}
+      >
+        🤖 O PAIIA tenta identificar
+        automaticamente o tipo da peça.
+        Você só completa as informações
+        que forem importantes.
+      </div>
+    </div>
+  ) : (
+    <>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns:
-            "minmax(290px,360px) minmax(340px,1fr)",
-          gap: "22px",
-          alignItems: "start",
+          gap: "9px",
         }}
       >
-        <aside
-          style={painelStyle}
-        >
-          <div style={passoTitulo}>
-            1. Foto do produto
-          </div>
+        <input
+          type="text"
+          value={precoPedido}
+          onChange={(event) =>
+            setPrecoPedido(
+              event.target.value
+            )
+          }
+          placeholder="💰 Preço — Ex.: R$ 149,90"
+          style={inputStyle}
+        />
 
-          <button
-            type="button"
-            onClick={() => {
-  console.log("ABRINDO GALERIA DO BANNER");
-  setMostrarGaleria(true);
-}}
-            style={{
-              ...botaoPrincipal,
-              width: "100%",
-            }}
-          >
-            🖼️ Buscar Foto na Galeria
-          </button>
+        <input
+          type="text"
+          value={marca.telefone || ""}
+          onChange={(event) =>
+            setMarca((atual) => ({
+              ...atual,
+              telefone:
+                event.target.value,
+            }))
+          }
+          placeholder="📱 Telefone / WhatsApp"
+          style={inputStyle}
+        />
 
-          {imagemSelecionada && (
-            <div
-              style={{
-                marginTop: "10px",
-                padding: "8px",
-                border: "1px solid #334155",
-                borderRadius: "12px",
-                background: "#020617",
-              }}
-            >
-              <img
-                src={imagemSelecionada}
-                alt="Produto"
-                style={{
-                  display: "block",
-                  width: "100%",
-                  height: "145px",
-                  objectFit: "contain",
-                }}
-              />
-            </div>
-          )}
+        <input
+          type="email"
+          value={marca.email || ""}
+          onChange={(event) =>
+            setMarca((atual) => ({
+              ...atual,
+              email:
+                event.target.value,
+            }))
+          }
+          placeholder="✉️ E-mail"
+          style={inputStyle}
+        />
 
-          <div style={separador} />
+        <input
+          type="text"
+          value={marca.endereco || ""}
+          onChange={(event) =>
+            setMarca((atual) => ({
+              ...atual,
+              endereco:
+                event.target.value,
+            }))
+          }
+          placeholder="📍 Localização"
+          style={inputStyle}
+        />
+      </div>
 
-          <div style={passoTitulo}>
-            2. Logo
-          </div>
-
-          <label
-            style={{
-              ...botaoSecundario,
-              display: "block",
-              textAlign: "center",
-              cursor: "pointer",
-            }}
-          >
-            📂 Buscar Logo no Computador
-            <input
-              type="file"
-              accept="image/*"
-              onChange={importarLogo}
-              style={{ display: "none" }}
-            />
-          </label>
-
-          {marca.logo && (
-            <img
-              src={marca.logo}
-              alt="Logo"
-              style={{
-                marginTop: "10px",
-                width: "100%",
-                height: "70px",
-                objectFit: "contain",
-                background: "#ffffff",
-                borderRadius: "10px",
-              }}
-            />
-          )}
-
-          <div style={separador} />
-
-          <div style={passoTitulo}>
-            3. Escolha o fundo
-          </div>
-
-          <div style={gradeDois}>
-            {[
-              ["azul", "A", "Azul Premium"],
-              ["vermelho", "B", "Oferta Forte"],
-              ["escuro", "C", "Dark Automotivo"],
-              ["clean", "D", "Clean Premium"],
-            ].map(([chave, letra, nome]) => (
-              <button
-                key={chave}
-                type="button"
-                onClick={() =>
-                  setPaleta(chave)
-                }
-                style={{
-                  ...opcaoStyle,
-                  border:
-                    paleta === chave
-                      ? "2px solid #67e8f9"
-                      : "1px solid #334155",
-                }}
-              >
-                <strong>
-                  {letra} • {nome}
-                </strong>
-              </button>
-            ))}
-          </div>
-
-          <div style={separador} />
-
-          <div style={passoTitulo}>
-            4. Modelo rápido
-          </div>
-
-          <div style={gradeDois}>
-            {MODELOS_DESCRICAO.map(
-              (modelo) => (
-                <button
-                  key={modelo.id}
-                  type="button"
-                  onClick={() =>
-                    setPedidoAppia(
-                      modelo.texto
-                    )
-                  }
-                  style={{
-                    ...opcaoStyle,
-                    minHeight: "58px",
-                  }}
-                >
-                  <strong>
-                    {modelo.nome}
-                  </strong>
-                </button>
-              )
+      <div
+        style={{
+          color: "#64748b",
+          fontSize: "11px",
+          lineHeight: 1.4,
+          marginTop: "7px",
+        }}
+      >
+        Preencha somente o que quiser mostrar.
+        Campos vazios não entram na arte.
+      </div>
+    </>
+  )}
+</div>
             )}
           </div>
 
-          <div style={{ marginTop: "14px" }}>
-            <div style={passoTitulo}>
-              5. Informações opcionais
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gap: "9px",
-              }}
-            >
-              <input
-  type="text"
-  value={precoPedido}
-  onChange={(event) =>
-    setPrecoPedido(
-      event.target.value
-    )
-  }
-  placeholder="💰 Preço — Ex.: R$ 149,90"
-  style={inputStyle}
-/>
-              <input
-                type="text"
-                value={marca.telefone || ""}
-                onChange={(event) =>
-                  setMarca((atual) => ({
-                    ...atual,
-                    telefone:
-                      event.target.value,
-                  }))
-                }
-                placeholder="📱 Telefone / WhatsApp"
-                style={inputStyle}
-              />
-
-              <input
-                type="email"
-                value={marca.email || ""}
-                onChange={(event) =>
-                  setMarca((atual) => ({
-                    ...atual,
-                    email:
-                      event.target.value,
-                  }))
-                }
-                placeholder="✉️ E-mail"
-                style={inputStyle}
-              />
-
-              <input
-                type="text"
-                value={marca.endereco || ""}
-                onChange={(event) =>
-                  setMarca((atual) => ({
-                    ...atual,
-                    endereco:
-                      event.target.value,
-                  }))
-                }
-                placeholder="📍 Localização"
-                style={inputStyle}
-              />
-            </div>
-
-            <div
-              style={{
-                color: "#64748b",
-                fontSize: "11px",
-                lineHeight: 1.4,
-                marginTop: "7px",
-              }}
-            >
-              Preencha somente o que quiser mostrar. Campos vazios não entram na arte.
-            </div>
-          </div>
-
-          <div style={{ marginTop: "14px" }}>
-            <div style={passoTitulo}>
-              6. Diga ao APPIA o que deseja
+          <div style={secaoCompactaStyle}>
+            <div style={secaoTituloCompacto}>
+              O que você quer no banner?
             </div>
 
             <textarea
@@ -1621,75 +2933,123 @@ return;
                   event.target.value
                 )
               }
-              rows={7}
-             placeholder="Faça uma promoção. Destaque o produto, use visual forte e limpo, pronta entrega e chamada para comprar."
+              rows={3}
+             placeholder="Crie uma promoção premium, destaque o preço e pronta entrega."
               style={{
                 ...inputStyle,
-                minHeight: "145px",
+                minHeight: "72px",
+                maxHeight: "92px",
                 resize: "vertical",
-                lineHeight: 1.45,
+                lineHeight: 1.4,
+                fontSize: "13px",
+                marginTop: "4px",
+                padding: "8px 10px",
               }}
             />
           </div>
 
-          <button
-            type="button"
-            onClick={gerarComIA}
-            disabled={gerandoFundoIA}
-            style={{
-              ...botaoPrincipal,
-              width: "100%",
-              marginTop: "16px",
-              padding: "15px 18px",
-              fontSize: "15px",
-              opacity:
-                gerandoFundoIA
-                  ? 0.65
-                  : 1,
-              cursor:
-                gerandoFundoIA
-                  ? "wait"
-                  : "pointer",
-            }}
-          >
-            {gerandoFundoIA
-              ? "🎨 Criando arte profissional..."
-              : fundoIA
-                ? "🔄 Gerar Outra Arte com IA"
-                : "✨ Gerar Banner com IA"}
-          </button>
+                 </aside>
 
-          <button
-            type="button"
-            onClick={aprovarBanner}
-            style={{
-              ...botaoAprovar,
-              width: "100%",
-              marginTop: "10px",
-              padding: "14px 18px",
-            }}
-          >
-            ✅ Aprovar Banner
-          </button>
-        </aside>
+        <section
+          className="banner-express-foto"
+          style={{
+            ...painelStyle,
+            padding: "12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+          }}
+        >
+          <div style={secaoTituloCompacto}>
+            Foto do produto
+          </div>
+
+          {imagemSelecionada ? (
+            <>
+              <div className="banner-express-foto-moldura">
+                <img
+                  src={imagemSelecionada}
+                  alt="Produto"
+                />
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "8px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMostrarGaleria(true);
+                  }}
+                  style={{
+                    ...botaoPrincipal,
+                    padding: "9px 10px",
+                    fontSize: "13px",
+                  }}
+                >
+                  Trocar foto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImagemSelecionada("");
+                    setAprovado(false);
+                    setBannerSalvo(false);
+                  }}
+                  style={{
+                    ...botaoSecundario,
+                    padding: "9px 10px",
+                    fontSize: "13px",
+                  }}
+                >
+                  Remover
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setMostrarGaleria(true);
+              }}
+              style={{
+                ...botaoPrincipal,
+                width: "100%",
+                minHeight: "140px",
+                padding: "16px",
+                fontSize: "14px",
+              }}
+            >
+              🖼️ Buscar foto na Galeria
+            </button>
+          )}
+        </section>
 
         <main
-          style={previewPainel}
+          className="banner-express-preview"
+          style={{
+            ...previewPainel,
+            padding: "12px",
+          }}
         >
           {gerandoFundoIA && (
             <div
               style={{
-                marginBottom: "14px",
-                padding: "12px 14px",
-                borderRadius: "12px",
+                marginBottom: "8px",
+                padding: "8px 10px",
+                borderRadius: "10px",
                 border: "1px solid #22d3ee",
                 background: "rgba(8,145,178,.10)",
                 color: "#a5f3fc",
                 fontWeight: "800",
                 textAlign: "center",
+                fontSize: "12px",
               }}
             >
-              🎨 O APPIA está criando uma direção de arte única para este banner...
+              🎨 Criando direção de arte...
             </div>
           )}
 
@@ -1709,6 +3069,7 @@ return;
             </div>
           )}
 
+          <div className="banner-express-preview-moldura">
           <div
             style={{
               display: "flex",
@@ -1716,30 +3077,31 @@ return;
                 "space-between",
               alignItems:
                 "center",
-              gap: "12px",
+              gap: "8px",
               flexWrap: "wrap",
               marginBottom:
-                "14px",
+                "8px",
             }}
           >
             <div>
               <strong
                 style={{
                   color:
-                    "#e2e8f0",
+                    "#67e8f9",
+                  fontSize: "13px",
                 }}
               >
-                Preview
+                Este é o seu banner
               </strong>
 
               <div
                 style={{
                   color:
-                    "#64748b",
+                    "#94a3b8",
                   fontSize:
-                    "12px",
+                    "11px",
                   marginTop:
-                    "3px",
+                    "2px",
                 }}
               >
                 {
@@ -1765,7 +3127,9 @@ return;
               }
               disabled={!bannerGerado || !aprovado}
               style={{
-                ...botaoPrincipal,
+                ...botaoSecundario,
+                padding: "7px 10px",
+                fontSize: "12px",
                 opacity:
                   bannerGerado && aprovado
                     ? 1
@@ -1777,16 +3141,9 @@ return;
               }}
             >
               {bannerGerado && aprovado
-                ? "⬇️ Baixar Arte PNG"
-                : "🔒 Aprove para baixar"}
+                ? "⬇️ PNG"
+                : "🔒 PNG"}
             </button>
-            <button
-  type="button"
-  onClick={() => setScreen?.("galeria")}
-  style={botaoPrincipal}
->
-  🖼️ Galeria
-</button>
           </div>
 
           <div
@@ -1798,15 +3155,16 @@ return;
               overflow: "visible",
             }}
           >
-            <div
+           
+                       <div
               ref={previewRef}
               id="preview-banner-appia"
               style={{
-                width: `min(100%, calc((100vh - 245px) * ${
+                width: `min(100%, calc(min(52vh, 420px) * ${
                   dadosFormato.largura / dadosFormato.altura
                 }))`,
                 maxWidth: "100%",
-                maxHeight: "calc(100vh - 245px)",
+                maxHeight: "min(52vh, 420px)",
                 aspectRatio: proporcaoPreview,
                 flex: "0 0 auto",
                 position:
@@ -1843,7 +3201,7 @@ return;
               {fundoIA && (
                 <img
                   src={fundoIA}
-                  alt="Banner criado pelo APPIA"
+                  alt="Banner criado pelo PAIIA"
                   style={{
                     position: "absolute",
                     inset: 0,
@@ -2363,24 +3721,25 @@ return;
                 >
                   {marca.site ||
                     marca.endereco ||
-                    "APPIA AI"}
+                    "PAIIA AI"}
                 </div>
               </div>
                 </>
               )}
             </div>
           </div>
+          </div>
 
           <div
             style={{
-              marginTop: "14px",
+              marginTop: "8px",
               display: "flex",
               justifyContent: "center",
             }}
           >
             <div
               style={{
-                padding: "8px 14px",
+                padding: "4px 10px",
                 borderRadius: "999px",
                 border: aprovado
                   ? "1px solid #22c55e"
@@ -2392,7 +3751,7 @@ return;
                   ? "#86efac"
                   : "#fde68a",
                 fontWeight: "900",
-                fontSize: "12px",
+                fontSize: "11px",
               }}
             >
               {!bannerGerado
@@ -2406,11 +3765,11 @@ return;
           {status && (
             <div
               style={{
-                marginTop: "14px",
+                marginTop: "8px",
                 padding:
-                  "11px 14px",
+                  "8px 10px",
                 borderRadius:
-                  "10px",
+                  "8px",
                 border:
                   "1px solid #334155",
                 background:
@@ -2420,12 +3779,262 @@ return;
                 textAlign:
                   "center",
                 fontSize:
-                  "13px",
+                  "12px",
               }}
             >
               {status}
             </div>
           )}
+
+                    <div
+            style={{
+              marginTop: "8px",
+              display: "grid",
+              gridTemplateColumns:
+                "1fr 1fr",
+              gap: "8px",
+            }}
+          >
+            <button
+              type="button"
+              onClick={gerarComIA}
+              disabled={gerandoFundoIA}
+              style={{
+                ...botaoPrincipal,
+                width: "100%",
+                padding: "11px 12px",
+                fontSize: "13px",
+                opacity:
+                  gerandoFundoIA
+                    ? 0.65
+                    : 1,
+                cursor:
+                  gerandoFundoIA
+                    ? "wait"
+                    : "pointer",
+              }}
+            >
+              {gerandoFundoIA
+                ? "🎨 Criando..."
+                : fundoIA
+                  ? "🔄 Gerar Banner com IA"
+                  : "✨ Gerar Banner com IA"}
+            </button>
+
+            <button
+              type="button"
+              onClick={aprovarBanner}
+              disabled={
+                gerandoFundoIA ||
+                !bannerGerado
+              }
+              style={{
+                ...botaoAprovar,
+                width: "100%",
+                padding: "11px 12px",
+                fontSize: "13px",
+                opacity:
+                  gerandoFundoIA ||
+                  !bannerGerado
+                    ? 0.5
+                    : 1,
+                cursor:
+                  gerandoFundoIA ||
+                  !bannerGerado
+                    ? "not-allowed"
+                    : "pointer",
+              }}
+            >
+              ✅ Aprovar Banner
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.setItem(
+                "abaMidiasAppia",
+                "banners"
+              );
+              setScreen?.("midiasAppia");
+            }}
+            style={{
+              ...botaoSecundario,
+              width: "100%",
+              marginTop: "6px",
+              padding: "7px 10px",
+              fontSize: "12px",
+            }}
+          >
+            Meus Banners
+          </button>
+
+          {bannerGerado &&
+            aprovado && (
+              <div
+                style={{
+                  marginTop: "16px",
+                  padding: "16px",
+                  borderRadius: "14px",
+                  border:
+                    "1px solid #334155",
+                  background:
+                    "#020617",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    alignItems:
+                      "center",
+                    gap: "10px",
+                    flexWrap: "wrap",
+                    marginBottom:
+                      "12px",
+                  }}
+                >
+                  <div>
+                    <strong
+                      style={{
+                        color:
+                          "#e2e8f0",
+                        fontSize:
+                          "15px",
+                      }}
+                    >
+                      📐 Formatar para publicação
+                    </strong>
+
+                    <div
+                      style={{
+                        color:
+                          "#64748b",
+                        fontSize:
+                          "12px",
+                        marginTop:
+                          "3px",
+                      }}
+                    >
+                      Use a mesma arte aprovada em outros canais, sem gerar outro banner com IA.
+                    </div>
+                  </div>
+
+                  <span
+                    style={{
+                      padding:
+                        "6px 10px",
+                      borderRadius:
+                        "999px",
+                      border:
+                        "1px solid #22c55e",
+                      background:
+                        "rgba(34,197,94,.10)",
+                      color:
+                        "#86efac",
+                      fontSize:
+                        "11px",
+                      fontWeight:
+                        "900",
+                    }}
+                  >
+                    1 ARTE → VÁRIOS FORMATOS
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fit,minmax(145px,1fr))",
+                    gap: "9px",
+                  }}
+                >
+                  {[
+                    "mercadoLivre",
+                    "instagram",
+                    "facebook",
+                    "story",
+                    "whatsapp",
+                  ].map(
+                    (
+                      chaveDestino
+                    ) => {
+                      const destino =
+                        FORMATOS[
+                          chaveDestino
+                        ];
+
+                      return (
+                        <button
+                          key={
+                            chaveDestino
+                          }
+                          type="button"
+                          onClick={() =>
+                            exportarVersaoDestino(
+                              chaveDestino
+                            )
+                          }
+                          style={{
+                            padding:
+                              "11px 10px",
+                            borderRadius:
+                              "11px",
+                            border:
+                              "1px solid #334155",
+                            background:
+                              "#0f172a",
+                            color:
+                              "#e2e8f0",
+                            cursor:
+                              "pointer",
+                            textAlign:
+                              "left",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight:
+                                "900",
+                              fontSize:
+                                "12px",
+                            }}
+                          >
+                            {
+                              destino.icone
+                            }{" "}
+                            {
+                              destino.nome
+                            }
+                          </div>
+
+                          <div
+                            style={{
+                              color:
+                                "#64748b",
+                              fontSize:
+                                "10px",
+                              marginTop:
+                                "3px",
+                            }}
+                          >
+                            {
+                              destino.largura
+                            }{" "}
+                            ×{" "}
+                            {
+                              destino.altura
+                            }
+                          </div>
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
+              </div>
+            )}
 
           <div
             style={{
@@ -2433,11 +4042,11 @@ return;
               color: "#64748b",
               fontSize: "12px",
               lineHeight: 1.5,
+              textAlign: "center",
             }}
           >
-            A arte criada pela IA é exibida inteira e sem elementos
-            do editor sobre ela. Aprove o resultado e baixe o PNG original
-            gerado pelo APPIA.
+            Gere a arte uma vez. Depois de aprovada, o PAIIA cria as versões
+            nas medidas dos canais sem consumir uma nova geração de IA.
           </div>
         </main>
       </div>
@@ -2503,7 +4112,7 @@ return;
                     margin: 0,
                   }}
                 >
-                  🖼️ Galeria APPIA
+                  🖼️ Galeria PAIIA
                 </h2>
 
                 <p
@@ -2556,7 +4165,7 @@ return;
               >
                 Nenhuma imagem
                 disponível na Galeria
-                APPIA.
+                PAIIA.
               </div>
             ) : (
               <div
@@ -2607,7 +4216,7 @@ return;
                         src={
                           imagem.url
                         }
-                        alt="Galeria APPIA"
+                        alt="Galeria PAIIA"
                         style={{
                           width:
                             "100%",
@@ -2631,24 +4240,90 @@ return;
   );
 }
 
-const painelStyle = {
-  padding: "18px",
+const secaoCompactaStyle = {
+  padding: "0",
+  marginBottom: "10px",
+};
+
+const secaoTituloCompacto = {
+  color: "#67e8f9",
+  fontWeight: "900",
+  fontSize: "13px",
+  letterSpacing: ".2px",
+  marginBottom: "6px",
+};
+
+const secaoDestaqueStyle = {
+  padding: "16px",
   borderRadius: "16px",
-  border: "1px solid #334155",
-  background: "#0f172a",
+  border: "1px solid rgba(34,211,238,.28)",
+  background: "linear-gradient(180deg,rgba(8,145,178,.12),rgba(2,6,23,.32))",
+  marginBottom: "16px",
+};
+
+const secaoBlocoStyle = {
+  padding: "16px",
+  borderRadius: "16px",
+  border: "1px solid #26364d",
+  background: "rgba(2,6,23,.45)",
+  marginBottom: "16px",
+};
+
+const secaoTituloStyle = {
+  color: "#67e8f9",
+  fontWeight: "900",
+  fontSize: "16px",
+  letterSpacing: ".2px",
+  marginBottom: "6px",
+};
+
+const secaoApoioStyle = {
+  color: "#94a3b8",
+  fontSize: "13px",
+  lineHeight: 1.45,
+  margin: "0 0 12px",
+};
+
+const gradeFormatos = {
+  display: "grid",
+  gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+  gap: "8px",
+};
+
+const formatoCardStyle = {
+  minHeight: "48px",
+  padding: "6px 4px",
+  borderRadius: "10px",
+  color: "#e2e8f0",
+  cursor: "pointer",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: "2px",
+  textAlign: "center",
+};
+
+const painelStyle = {
+  padding: "12px",
+  borderRadius: "16px",
+  border: "1px solid #26364d",
+  background: "rgba(15,23,42,.94)",
+  boxShadow: "0 12px 32px rgba(0,0,0,.22)",
 };
 
 const previewPainel = {
   padding: "18px",
-  borderRadius: "16px",
-  border: "1px solid #334155",
-  background: "#0f172a",
+  borderRadius: "18px",
+  border: "1px solid #26364d",
+  background: "rgba(15,23,42,.94)",
+  boxShadow: "0 18px 50px rgba(0,0,0,.22)",
 };
 
 const passoTitulo = {
   color: "#67e8f9",
   fontWeight: "900",
-  fontSize: "13px",
+  fontSize: "14px",
   marginBottom: "10px",
 };
 
@@ -2674,7 +4349,7 @@ const opcaoStyle = {
 const separador = {
   height: "1px",
   background: "#1e293b",
-  margin: "16px 0",
+  margin: "14px 0",
 };
 
 const labelStyle = {
@@ -2687,14 +4362,15 @@ const labelStyle = {
 
 const inputStyle = {
   width: "100%",
-  marginTop: "6px",
-  padding: "11px 12px",
-  borderRadius: "10px",
+  marginTop: "8px",
+  padding: "13px 14px",
+  borderRadius: "12px",
   border: "1px solid #334155",
   background: "#020617",
   color: "#f8fafc",
   outline: "none",
   boxSizing: "border-box",
+  fontSize: "15px",
 };
 
 const botaoPrincipal = {

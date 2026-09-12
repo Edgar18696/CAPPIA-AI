@@ -39,13 +39,6 @@ function extrairPagina(linha) {
     : null;
 }
 
-
-/*
- * ============================================================
- * MONTADORAS
- * ============================================================
- */
-
 const MONTADORAS = [
   "ALFA ROMEO",
   "ASIA MOTORS",
@@ -118,13 +111,6 @@ function linhaEhSomenteMontadora(
       )
   );
 }
-
-
-/*
- * ============================================================
- * CÓDIGOS BOSCH
- * ============================================================
- */
 
 function extrairCodigosBosch(
   linha
@@ -199,13 +185,6 @@ function extrairCodigosGerais(
   );
 }
 
-
-/*
- * ============================================================
- * DATAS
- * ============================================================
- */
-
 function converterAnoCurto(
   valor
 ) {
@@ -219,11 +198,6 @@ function converterAnoCurto(
   ) {
     return null;
   }
-
-  /*
-   * Catálogo contém veículos
-   * principalmente de 1980 em diante.
-   */
 
   if (
     numero >= 70
@@ -248,18 +222,9 @@ function extrairAnos(
       texto || ""
     );
 
-  /*
-   * ========================================================
-   * FORMATO DO CATÁLOGO BOSCH
-   *
-   * 09.94 → 12.96
-   * 10.98 → 10.08
-   * ========================================================
-   */
-
   const faixaCurta =
     conteudo.match(
-      /\b(?:0?[1-9]|1[0-2])[./-](\d{2})\s*(?:|→|A|ATÉ|ATE|-)\s*(?:0?[1-9]|1[0-2])[./-](\d{2})\b/i
+     /\b(?:0?[1-9]|1[0-2])[./-](\d{2})\s*(?:|→|�|□|A|ATÉ|ATE|-)\s*(?:0?[1-9]|1[0-2])[./-](\d{2})\b/i
     );
 
   if (
@@ -278,15 +243,9 @@ function extrairAnos(
     };
   }
 
-  /*
-   * Data inicial sem final:
-   *
-   * 10.17 →
-   */
-
   const dataAberta =
     conteudo.match(
-      /\b(?:0?[1-9]|1[0-2])[./-](\d{2})\s*(?:|→)\s*(?=$|\s)/i
+      /\b(?:0?[1-9]|1[0-2])[./-](\d{2})\s*(?:|→|�|□)\s*(?=$|\s)/i
     );
 
   if (
@@ -302,12 +261,6 @@ function extrairAnos(
         null,
     };
   }
-
-  /*
-   * Formato tradicional:
-   *
-   * 1994 até 1996
-   */
 
   const faixaLonga =
     conteudo.match(
@@ -374,13 +327,6 @@ function extrairAnos(
   };
 }
 
-
-/*
- * ============================================================
- * LIMPEZA DE DATAS
- * ============================================================
- */
-
 function removerDatas(
   texto
 ) {
@@ -389,9 +335,9 @@ function removerDatas(
       texto || ""
     )
       .replace(
-        /\b(?:0?[1-9]|1[0-2])[./-]\d{2}\s*(?:|→|A|ATÉ|ATE|-)\s*(?:0?[1-9]|1[0-2])[./-]\d{2}\b/gi,
-        " "
-      )
+  /\b(?:0?[1-9]|1[0-2])[./-]\d{2}\s*(?:|→|�|□|A|ATÉ|ATE|-)\s*(?:0?[1-9]|1[0-2])[./-]\d{2}\b/gi,
+  " "
+)
       .replace(
         /\b(?:0?[1-9]|1[0-2])[./-]\d{2}\s*(?:|→)/gi,
         " "
@@ -406,13 +352,6 @@ function removerDatas(
       )
   );
 }
-
-
-/*
- * ============================================================
- * REMOVER CÓDIGOS BOSCH
- * ============================================================
- */
 
 function removerCodigosBosch(
   texto,
@@ -441,11 +380,8 @@ function removerCodigosBosch(
 
     const formatos = [
       codigo,
-
       `0 258 ${grupo1} ${grupo2}`,
-
       `0 258${grupo1}${grupo2}`,
-
       `0258 ${grupo1} ${grupo2}`,
     ];
 
@@ -466,13 +402,6 @@ function removerCodigosBosch(
   );
 }
 
-
-/*
- * ============================================================
- * REMOVER INFORMAÇÕES POSTERIORES AO VEÍCULO
- * ============================================================
- */
-
 function limparLinhaAplicacao(
   texto,
   codigos
@@ -488,22 +417,11 @@ function limparLinhaAplicacao(
       resultado
     );
 
-  /*
-   * Combustível aparece depois
-   * da data no catálogo.
-   */
-
   resultado =
     resultado.replace(
       /\b(?:Gasolina|Álcool|Alcool|Flex|Diesel|GNV|Álc\/Gas\/GNV|Alc\/Gas\/GNV)\b.*$/i,
       ""
     );
-
-  /*
-   * Remove códigos universais
-   * Bosch que podem permanecer
-   * depois da aplicação.
-   */
 
   resultado =
     resultado.replace(
@@ -516,13 +434,6 @@ function limparLinhaAplicacao(
   );
 }
 
-
-/*
- * ============================================================
- * MODELO E MOTOR
- * ============================================================
- */
-
 function extrairModeloEMotor(
   texto
 ) {
@@ -530,16 +441,6 @@ function extrairModeloEMotor(
     limparTexto(
       texto
     );
-
-  /*
-   * Procura cilindrada:
-   *
-   * 1.0
-   * 1.4
-   * 2.0
-   * 4.1
-   * 6.2
-   */
 
   const inicioMotor =
     conteudo.search(
@@ -579,13 +480,6 @@ function extrairModeloEMotor(
   };
 }
 
-
-/*
- * ============================================================
- * OBSERVAÇÃO
- * ============================================================
- */
-
 function textoPareceObservacao(
   linha
 ) {
@@ -620,13 +514,6 @@ function textoPareceObservacao(
     )
   );
 }
-
-
-/*
- * ============================================================
- * CABEÇALHOS / LIXO DO PDF
- * ============================================================
- */
 
 function linhaEhCabecalho(
   linha
@@ -672,27 +559,6 @@ function linhaEhCabecalho(
   );
 }
 
-
-/*
- * ============================================================
- * LINHA DE CONTINUAÇÃO
- * ============================================================
- *
- * Algumas aplicações Bosch ocupam duas linhas.
- *
- * Exemplo:
- *
- * 156 2.5 24V
- * AR32402 (...) 10.97 → 12.01 ... 0258...
- *
- * Nesse caso podemos usar a linha anterior.
- *
- * IMPORTANTE:
- *
- * Nunca usamos a linha seguinte.
- * ============================================================
- */
-
 function podeUsarLinhaAnterior({
   linhaAnterior,
   linhaAtual,
@@ -737,10 +603,10 @@ function podeUsarLinhaAnterior({
   }
 
   /*
-   * Linha anterior já possui código:
-   * não pertence ao registro atual.
+   * SEGURANÇA:
+   * se a linha anterior já possui código,
+   * ela pertence a outro registro.
    */
-
   if (
     extrairCodigosBosch(
       linhaAnterior
@@ -748,12 +614,6 @@ function podeUsarLinhaAnterior({
   ) {
     return false;
   }
-
-  /*
-   * Se a linha atual já começa claramente
-   * com modelo + cilindrada, não precisamos
-   * da anterior.
-   */
 
   if (
     /^[A-ZÀ-Ú0-9][A-ZÀ-Ú0-9 ./'-]*\s+\d[.,]\d\b/i.test(
@@ -764,9 +624,30 @@ function podeUsarLinhaAnterior({
   }
 
   /*
-   * Linha atual parece continuação:
-   * motor/código do motor/data.
+   * O PDF Bosch também pode quebrar assim:
+   *
+   * Astra 2.0 MPFI C20NE ... 09.94 → 12.96 Gasolina
+   * 0 258 003 300 0 258 986 502
+   *
+   * Nesse caso a linha atual começa somente
+   * com o código Bosch.
    */
+  const atualComecaComCodigoBosch =
+    /^0\s*258\s*\d{3}\s*\d{3}/i.test(
+      linhaAtual
+    );
+
+  const anteriorTemCilindrada =
+    /\b\d[.,]\d\b/i.test(
+      linhaAnterior
+    );
+
+  if (
+    atualComecaComCodigoBosch &&
+    anteriorTemCilindrada
+  ) {
+    return true;
+  }
 
   const pareceContinuacao =
     (
@@ -786,21 +667,6 @@ function podeUsarLinhaAnterior({
   return pareceContinuacao;
 }
 
-
-/*
- * ============================================================
- * EQUIVALÊNCIAS
- * ============================================================
- *
- * REGRA DE SEGURANÇA:
- *
- * Só associa equivalência quando o código Bosch
- * e o código equivalente aparecem NA MESMA LINHA.
- *
- * Zero equivalência é melhor do que equivalência errada.
- * ============================================================
- */
-
 function criarMapaEquivalencias(
   textoEquivalencias
 ) {
@@ -808,7 +674,44 @@ function criarMapaEquivalencias(
     separarLinhas(
       textoEquivalencias
     );
+/*
+ * DIAGNÓSTICO TEMPORÁRIO — ASTRA / 0258003300
+ */
+linhas.forEach(
+  (linha, indice) => {
+    const trecho = [
+      linhas[indice - 3] || "",
+      linhas[indice - 2] || "",
+      linhas[indice - 1] || "",
+      linha || "",
+      linhas[indice + 1] || "",
+      linhas[indice + 2] || "",
+      linhas[indice + 3] || "",
+    ];
 
+    const texto =
+      trecho.join(" | ");
+
+    if (
+  String(linha || "")
+    .toUpperCase()
+    .includes("ASTRA")
+)
+    {
+      console.log(
+        [
+          "🚗 ASTRA BOSCH 0258003300",
+          `ÍNDICE: ${indice}`,
+          ...trecho.map(
+            (item, posicao) =>
+              `${posicao - 3}: ${item}`
+          ),
+          "============================",
+        ].join("\n")
+      );
+    }
+  }
+);
   const mapa =
     new Map();
 
@@ -871,11 +774,6 @@ function criarMapaEquivalencias(
           continue;
         }
 
-        /*
-         * Outro código 0258 não entra
-         * como equivalência automática.
-         */
-
         if (
           /^0258\d{6}$/.test(
             codigo
@@ -907,22 +805,10 @@ function juntarEquivalentes(
   );
 }
 
-
-/*
- * ============================================================
- * ADICIONAR REGISTRO
- * ============================================================
- */
-
 function adicionarRegistro(
   mapa,
   registro
 ) {
-  /*
-   * Segurança:
-   * registro sem aplicação não entra.
-   */
-
   if (
     !registro.codigo_oem ||
     !registro.montadora ||
@@ -1017,13 +903,6 @@ function adicionarRegistro(
   }
 }
 
-
-/*
- * ============================================================
- * PARSER BOSCH SONDAS
- * ============================================================
- */
-
 export async function parserBoschSondas({
   textoAplicacoes = "",
   textoEquivalencias = "",
@@ -1052,6 +931,14 @@ export async function parserBoschSondas({
   let observacaoAtual =
     "";
 
+  /*
+   * Guarda aplicação que foi separada
+   * da linha onde aparece o código.
+   */
+  let aplicacaoPendente =
+    "";
+let ultimaAplicacaoVeiculo =
+  "";
   for (
     let indice = 0;
     indice < linhas.length;
@@ -1076,12 +963,6 @@ export async function parserBoschSondas({
       continue;
     }
 
-    /*
-     * ========================================================
-     * MONTADORA
-     * ========================================================
-     */
-
     const montadora =
       identificarMontadora(
         linha
@@ -1099,14 +980,11 @@ export async function parserBoschSondas({
       observacaoAtual =
         "";
 
+      aplicacaoPendente =
+        "";
+
       continue;
     }
-
-    /*
-     * ========================================================
-     * OBSERVAÇÃO
-     * ========================================================
-     */
 
     if (
       textoPareceObservacao(
@@ -1119,12 +997,6 @@ export async function parserBoschSondas({
       continue;
     }
 
-    /*
-     * ========================================================
-     * CABEÇALHO
-     * ========================================================
-     */
-
     if (
       linhaEhCabecalho(
         linha
@@ -1133,34 +1005,44 @@ export async function parserBoschSondas({
       continue;
     }
 
-    /*
-     * ========================================================
-     * CÓDIGOS BOSCH NA LINHA ATUAL
-     * ========================================================
-     */
-
     const codigosBosch =
       extrairCodigosBosch(
         linha
       );
 
+    /*
+     * ======================================================
+     * LINHA SEM CÓDIGO
+     * ======================================================
+     *
+     * O PDF pode colocar:
+     *
+     * Astra 2.0 MPFI C20NE ...
+     * 09.94 → 12.96 ...
+     * 0 258 003 300
+     *
+     * ou:
+     *
+     * Astra 2.0 ... 09.94 → 12.96
+     * 0 258 003 300
+     */
     if (
       !codigosBosch.length
     ) {
+      const possuiCilindrada =
+        /\b\d[.,]\d\b/i.test(
+          linha
+        );
+
+      if (
+        possuiCilindrada
+      ) {
+        aplicacaoPendente =
+          linha;
+      }
+
       continue;
     }
-
-    /*
-     * ========================================================
-     * CONTEXTO SEGURO
-     * ========================================================
-     *
-     * Nunca usa linha seguinte.
-     *
-     * Linha anterior somente quando
-     * comprovadamente é continuação.
-     * ========================================================
-     */
 
     const linhaAnterior =
       linhas[
@@ -1170,22 +1052,67 @@ export async function parserBoschSondas({
     let contexto =
       linha;
 
-    if (
-      podeUsarLinhaAnterior({
-        linhaAnterior,
-        linhaAtual:
-          linha,
-      })
-    ) {
-      contexto =
-        `${linhaAnterior} ${linha}`;
-    }
+    const linhaAtualComecaComData =
+  /^(?:0?[1-9]|1[0-2])[./-]\d{2}\s*(?:|→|�|□)/i.test(
+    linha
+  );
+
+    const linhaAtualComecaComCodigoBosch =
+      /^0\s*258\s*\d{3}\s*\d{3}/i.test(
+        linha
+      );
 
     /*
-     * ========================================================
-     * MONTADORA NA PRÓPRIA LINHA
-     * ========================================================
+     * ======================================================
+     * CABEÇALHO PENDENTE
+     * ======================================================
+     *
+     * Aceita:
+     *
+     * veículo
+     * data + código
+     *
+     * e:
+     *
+     * veículo + data
+     * código
      */
+    if (
+  aplicacaoPendente &&
+  (
+    linhaAtualComecaComData ||
+    linhaAtualComecaComCodigoBosch
+  )
+) {
+  contexto =
+    `${aplicacaoPendente} ${linha}`;
+
+  aplicacaoPendente =
+    "";
+} else if (
+  linhaAtualComecaComData &&
+  ultimaAplicacaoVeiculo
+) {
+  contexto =
+    `${ultimaAplicacaoVeiculo} ${linha}`;
+} else if (
+  podeUsarLinhaAnterior({
+    linhaAnterior,
+    linhaAtual:
+      linha,
+  })
+) {
+  contexto =
+    `${linhaAnterior} ${linha}`;
+}
+
+    if (
+      !linhaAtualComecaComData &&
+      !linhaAtualComecaComCodigoBosch
+    ) {
+      aplicacaoPendente =
+        "";
+    }
 
     const montadoraLinha =
       identificarMontadora(
@@ -1195,11 +1122,6 @@ export async function parserBoschSondas({
     const montadoraRegistro =
       montadoraLinha ||
       montadoraAtual;
-
-    /*
-     * Sem montadora confirmada:
-     * não grava.
-     */
 
     if (
       !montadoraRegistro
@@ -1211,12 +1133,6 @@ export async function parserBoschSondas({
 
       continue;
     }
-
-    /*
-     * ========================================================
-     * APLICAÇÃO
-     * ========================================================
-     */
 
     const textoAplicacao =
       limparLinhaAplicacao(
@@ -1236,10 +1152,14 @@ export async function parserBoschSondas({
       extrairModeloEMotor(
         textoAplicacao
       );
-
-    /*
-     * Aplicação sem modelo é insegura.
-     */
+if (
+  modelo &&
+  motor &&
+  !linhaAtualComecaComData
+) {
+  ultimaAplicacaoVeiculo =
+    `${modelo} ${motor}`;
+}
 
     if (
       !modelo
@@ -1251,12 +1171,6 @@ export async function parserBoschSondas({
 
       continue;
     }
-
-    /*
-     * ========================================================
-     * CRIA REGISTROS
-     * ========================================================
-     */
 
     for (
       const codigo
@@ -1300,7 +1214,6 @@ export async function parserBoschSondas({
         observacao:
           [
             linha,
-
             observacaoAtual,
           ]
             .filter(
@@ -1329,11 +1242,6 @@ export async function parserBoschSondas({
       );
     }
 
-    /*
-     * Observação específica não deve
-     * contaminar aplicações posteriores.
-     */
-
     observacaoAtual =
       "";
 
@@ -1342,7 +1250,7 @@ export async function parserBoschSondas({
       indice % 200 === 0
     ) {
       onProgresso?.(
-        `🧠 Bosch Sondas V4: ${registros.size} registros estruturados...`
+        `🧠 Bosch Sondas V6: ${registros.size} registros estruturados...`
       );
     }
   }
@@ -1353,7 +1261,7 @@ export async function parserBoschSondas({
     );
 
   onProgresso?.(
-    `✅ Bosch Sondas V4 encontrou ${resultado.length} registros seguros.`
+    `✅ Bosch Sondas V6 encontrou ${resultado.length} registros seguros.`
   );
 
   return resultado;

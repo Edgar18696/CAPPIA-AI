@@ -358,7 +358,7 @@ export async function pesquisarCatalogo({
   onProgresso?.({
     etapa: "consultando_base_mestre",
     mensagem:
-      "Localizando a peça na Base Mestre APPIA...",
+      "Localizando a peça na Base Mestre PAIIA...",
   });
 
   console.log(
@@ -432,7 +432,7 @@ export async function pesquisarCatalogo({
       etapa: "nao_encontrado",
       encontrados: 0,
       mensagem:
-        "Código não encontrado na Base Mestre APPIA.",
+        "Código não encontrado na Base Mestre PAIIA.",
     });
 
     return [];
@@ -588,7 +588,7 @@ export async function pesquisarCatalogo({
       arquivo:
         registro.origem_catalogo ||
         registroMestre.origem_catalogo ||
-        "Base APPIA",
+        "Base PAIIA",
 
       pagina:
         registro.pagina_catalogo ||

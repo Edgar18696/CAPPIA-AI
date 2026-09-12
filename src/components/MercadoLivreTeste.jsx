@@ -1,9 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 
 function normalizarTexto(valor = "") {
@@ -16,7 +11,183 @@ function normalizarTexto(valor = "") {
     .toLowerCase()
     .trim();
 }
+function formatarCompatibilidadesLegiveis(
+  aplicacoes = [],
+  textoOriginal = ""
+) {
+  if (
+    !Array.isArray(aplicacoes) ||
+    aplicacoes.length === 0
+  ) {
+    return String(
+      textoOriginal || ""
+    )
+      .replace(/\uFFFD/g, "")
+      .trim();
+  }
 
+  const limpar = (valor) =>
+    String(valor || "")
+      .replace(/\uFFFD/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const vistos = new Set();
+  const registrosUnicos = [];
+
+  aplicacoes.forEach((item) => {
+    const montadora =
+      limpar(
+        item?.montadora ||
+        item?.marca_veiculo ||
+        item?.marcaVeiculo ||
+        item?.marca
+      );
+
+    const modelo =
+      limpar(
+        item?.modelo ||
+        item?.veiculo ||
+        item?.modelo_veiculo ||
+        item?.modeloVeiculo
+      );
+
+    const motor =
+      limpar(
+        item?.motor ||
+        item?.motorizacao ||
+        item?.motor_descricao
+      );
+
+    const anoInicio =
+      limpar(
+        item?.ano_inicio ||
+        item?.anoInicial ||
+        item?.ano_de ||
+        item?.anoDe
+      );
+
+    const anoFim =
+      limpar(
+        item?.ano_fim ||
+        item?.anoFinal ||
+        item?.ano_ate ||
+        item?.anoAte
+      );
+
+    const chave = [
+      montadora,
+      modelo,
+      motor,
+      anoInicio,
+      anoFim,
+    ]
+      .join("|")
+      .toUpperCase();
+
+    if (!chave.replace(/\|/g, "")) {
+      return;
+    }
+
+    if (vistos.has(chave)) {
+      return;
+    }
+
+    vistos.add(chave);
+
+    registrosUnicos.push({
+      montadora,
+      modelo,
+      motor,
+      anoInicio,
+      anoFim,
+    });
+  });
+
+  registrosUnicos.sort(
+    (a, b) => {
+      return (
+        a.montadora.localeCompare(
+          b.montadora,
+          "pt-BR"
+        ) ||
+        a.modelo.localeCompare(
+          b.modelo,
+          "pt-BR"
+        ) ||
+        a.motor.localeCompare(
+          b.motor,
+          "pt-BR"
+        )
+      );
+    }
+  );
+
+  const grupos = {};
+
+  registrosUnicos.forEach(
+    (item) => {
+      const montadora =
+        item.montadora ||
+        "OUTROS";
+
+      if (!grupos[montadora]) {
+        grupos[montadora] = [];
+      }
+
+      grupos[montadora].push(
+        item
+      );
+    }
+  );
+
+  const blocos = [];
+
+  Object.entries(grupos).forEach(
+    ([montadora, itens]) => {
+      blocos.push(
+        montadora.toUpperCase()
+      );
+
+      itens.forEach((item) => {
+        let bloco =
+          `• ${
+            item.modelo ||
+            "Modelo não informado"
+          }`;
+
+        if (item.motor) {
+          bloco +=
+            `\n  Motor: ${item.motor}`;
+        }
+
+        if (
+          item.anoInicio ||
+          item.anoFim
+        ) {
+          const inicio =
+            item.anoInicio ||
+            "?";
+
+          const fim =
+            item.anoFim ||
+            "Atual";
+
+          bloco +=
+            `\n  Período: ${inicio} até ${fim}`;
+        }
+
+        blocos.push(bloco);
+      });
+
+      blocos.push("");
+    }
+  );
+
+  return blocos
+    .join("\n\n")
+    .trim();
+}
 function sugerirCategoriaPorTitulo(
   titulo = ""
 ) {
@@ -149,21 +320,92 @@ function obterDimensoesFoto(url) {
 }
 
 export default function MercadoLivreTeste({
+  usuario,
   setScreen,
 }) {
   const anuncio = useMemo(() => {
+    let dadosLocal = null;
+
     try {
       const salvo =
         localStorage.getItem(
           "mlAnuncioTeste"
         );
 
-      return salvo
-        ? JSON.parse(salvo)
-        : null;
-    } catch {
-      return null;
+      dadosLocal =
+        salvo
+          ? JSON.parse(salvo)
+          : null;
+    } catch (erro) {
+      console.warn(
+        "Não foi possível ler mlAnuncioTeste:",
+        erro
+      );
     }
+
+    const dadosMemoria =
+      window.__paiiaAnuncioSimulador &&
+      typeof window.__paiiaAnuncioSimulador ===
+        "object"
+        ? window.__paiiaAnuncioSimulador
+        : null;
+
+    if (
+      dadosMemoria &&
+      dadosLocal
+    ) {
+      return {
+        ...dadosLocal,
+        ...dadosMemoria,
+
+        fotos:
+          Array.isArray(
+            dadosMemoria?.fotos
+          ) &&
+          dadosMemoria.fotos.length > 0
+            ? dadosMemoria.fotos
+            : Array.isArray(
+                dadosLocal?.fotos
+              )
+              ? dadosLocal.fotos
+              : [],
+
+        imagens:
+          Array.isArray(
+            dadosMemoria?.imagens
+          ) &&
+          dadosMemoria.imagens.length > 0
+            ? dadosMemoria.imagens
+            : Array.isArray(
+                dadosLocal?.imagens
+              )
+              ? dadosLocal.imagens
+              : [],
+
+        aplicacoes:
+          Array.isArray(
+            dadosMemoria?.aplicacoes
+          ) &&
+          dadosMemoria.aplicacoes.length > 0
+            ? dadosMemoria.aplicacoes
+            : Array.isArray(
+                dadosLocal?.aplicacoes
+              )
+              ? dadosLocal.aplicacoes
+              : [],
+
+        pecaEncontrada:
+          dadosMemoria?.pecaEncontrada ||
+          dadosLocal?.pecaEncontrada ||
+          null,
+      };
+    }
+
+    return (
+      dadosMemoria ||
+      dadosLocal ||
+      null
+    );
   }, []);
 
   const [
@@ -257,19 +499,39 @@ export default function MercadoLivreTeste({
   useEffect(() => {
     function sincronizarMidiasSelecionadas() {
       try {
-        const banners =
-          JSON.parse(
-            localStorage.getItem(
-              "bannersSelecionadosPublicacao"
-            ) || "[]"
-          );
+       const midiasTemporarias =
+  window.__paiiaMidiasPublicacao ||
+  {};
 
-        const clips =
-          JSON.parse(
-            localStorage.getItem(
-              "clipsSelecionadosPublicacao"
-            ) || "[]"
-          );
+const bannersLocal =
+  JSON.parse(
+    localStorage.getItem(
+      "bannersSelecionadosPublicacao"
+    ) || "[]"
+  );
+
+const clipsLocal =
+  JSON.parse(
+    localStorage.getItem(
+      "clipsSelecionadosPublicacao"
+    ) || "[]"
+  );
+
+const banners =
+  Array.isArray(
+    midiasTemporarias.banners
+  ) &&
+  midiasTemporarias.banners.length > 0
+    ? midiasTemporarias.banners
+    : bannersLocal;
+
+const clips =
+  Array.isArray(
+    midiasTemporarias.clips
+  ) &&
+  midiasTemporarias.clips.length > 0
+    ? midiasTemporarias.clips
+    : clipsLocal;
 
         setBannersSelecionados(
           Array.isArray(banners)
@@ -546,47 +808,180 @@ useEffect(() => {
   });
 }, []);
 
-  const [
-    fotos,
-    setFotos,
-  ] = useState(() =>
-    Array.isArray(anuncio?.fotos)
-      ? anuncio.fotos
-      : []
-  );
+const [
+  fotos,
+  setFotos,
+] = useState(() => {
+  const fotosMemoria =
+    Array.isArray(
+      window.__paiiaFotosPublicacao
+    )
+      ? window.__paiiaFotosPublicacao
+      : [];
 
-  function salvarFotosNoSimulador(
-    novasFotos
-  ) {
-    setFotos(novasFotos);
+  let fotosIniciais =
+    fotosMemoria.length > 0
+      ? [...fotosMemoria]
+      : Array.isArray(
+          anuncio?.fotos
+        )
+        ? [...anuncio.fotos]
+        : [];
 
-    try {
-      const salvo =
-        localStorage.getItem(
-          "mlAnuncioTeste"
-        );
+  const bannerUrl =
+    window.__paiiaBannerParaFotos ||
+    "";
 
-      const base =
-        salvo
-          ? JSON.parse(salvo)
-          : {};
-
-      localStorage.setItem(
-        "mlAnuncioTeste",
-        JSON.stringify({
-          ...base,
-          fotos: novasFotos,
-        })
+  if (bannerUrl) {
+    const jaExiste =
+      fotosIniciais.some(
+        (foto) =>
+          obterUrlFoto(foto) ===
+          bannerUrl
       );
-    } catch (erro) {
-      console.error(
-        "Erro ao salvar ordem das fotos:",
-        erro
-      );
+
+    if (
+      !jaExiste &&
+      fotosIniciais.length < 6
+    ) {
+      fotosIniciais.push({
+        id:
+          `banner-${Date.now()}`,
+
+        imagem_processada:
+          bannerUrl,
+
+        imagem_original:
+          bannerUrl,
+
+        tipo:
+          "banner",
+
+        created_at:
+          new Date().toISOString(),
+      });
     }
+
+    window.__paiiaBannerParaFotos =
+      "";
   }
 
-  function moverFoto(
+  window.__paiiaFotosPublicacao =
+    fotosIniciais;
+
+  return fotosIniciais;
+});
+function salvarFotosNoSimulador(
+  novasFotos
+) {
+  const lista =
+    Array.isArray(novasFotos)
+      ? novasFotos
+      : [];
+
+  setFotos(lista);
+
+  // =====================================================
+  // FOTOS DA PUBLICAÇÃO
+  // Guardamos em memória para não estourar localStorage.
+  // =====================================================
+  window.__paiiaFotosPublicacao =
+    lista;
+
+  try {
+    const salvo =
+      localStorage.getItem(
+        "mlAnuncioTeste"
+      );
+
+    const base =
+      salvo
+        ? JSON.parse(salvo)
+        : {};
+
+    // NÃO gravamos fotos aqui.
+    // Banner pode ser base64 e estourar o Storage.
+    const {
+      fotos: _fotosAntigas,
+      ...baseLimpa
+    } = base;
+
+    localStorage.setItem(
+      "mlAnuncioTeste",
+      JSON.stringify(
+        baseLimpa
+      )
+    );
+  } catch (erro) {
+    console.warn(
+      "Estado leve preservado. Fotos mantidas em memória:",
+      erro
+    );
+  }
+}
+function escolherBannerParaFotos(
+  banner
+) {
+  const url =
+    banner?.imagem_processada ||
+    banner?.imagem_original ||
+    "";
+
+  if (!url) {
+    alert(
+      "Este banner não possui imagem válida."
+    );
+    return;
+  }
+
+  const jaExiste =
+    fotos.some(
+      (foto) =>
+        obterUrlFoto(foto) === url
+    );
+
+  if (jaExiste) {
+    alert(
+      "✅ Este banner já está nas fotos."
+    );
+    return;
+  }
+
+  if (fotos.length >= 6) {
+    alert(
+      "⚠️ O anúncio já possui 6 imagens. Remova uma foto antes de adicionar o banner."
+    );
+    return;
+  }
+
+  const novasFotos = [
+    ...fotos,
+    {
+      id:
+        `banner-${Date.now()}`,
+
+      imagem_processada:
+        url,
+
+      imagem_original:
+        banner?.imagem_original ||
+        url,
+
+      tipo:
+        "banner",
+
+      created_at:
+        banner?.created_at ||
+        new Date().toISOString(),
+    },
+  ];
+
+  salvarFotosNoSimulador(
+    novasFotos
+  );
+}
+
+function moverFoto(
     index,
     direcao
   ) {
@@ -839,9 +1234,26 @@ useEffect(() => {
   const [
   compatibilidades,
   setCompatibilidades,
-] = useState(
-  anuncio?.compatibilidades || ""
-);
+] = useState(() => {
+  const aplicacoesDisponiveis =
+    Array.isArray(
+      anuncio?.aplicacoes
+    ) &&
+    anuncio.aplicacoes.length > 0
+      ? anuncio.aplicacoes
+      : Array.isArray(
+          anuncio?.pecaEncontrada
+            ?.aplicacoes
+        )
+        ? anuncio.pecaEncontrada
+            .aplicacoes
+        : [];
+
+  return formatarCompatibilidadesLegiveis(
+    aplicacoesDisponiveis,
+    anuncio?.compatibilidades || ""
+  );
+});
 
 const [
   observacaoCompatibilidade,
@@ -851,14 +1263,42 @@ const [
   ""
 );
 
+const aplicacoesCompatibilidade =
+  Array.isArray(
+    anuncio?.aplicacoes
+  ) &&
+  anuncio.aplicacoes.length > 0
+    ? anuncio.aplicacoes
+    : Array.isArray(
+        anuncio?.pecaEncontrada
+          ?.aplicacoes
+      )
+      ? anuncio.pecaEncontrada
+          .aplicacoes
+      : [];
+
 const totalCompatibilidades =
-  Array.isArray(anuncio?.aplicacoes)
-    ? anuncio.aplicacoes.length
+  aplicacoesCompatibilidade.length > 0
+    ? aplicacoesCompatibilidade.length
     : Number(
         anuncio?.totalCompatibilidades ||
           0
       );
+useEffect(() => {
+  if (
+    aplicacoesCompatibilidade.length > 0
+  ) {
+    const textoFormatado =
+      formatarCompatibilidadesLegiveis(
+        aplicacoesCompatibilidade,
+        anuncio?.compatibilidades || ""
+      );
 
+    setCompatibilidades(
+      textoFormatado
+    );
+  }
+}, [anuncio]);
   const [
     canalVendaPublicacao,
     setCanalVendaPublicacao,
@@ -1726,7 +2166,7 @@ async function pesquisarConcorrenciaPaizinho() {
     });
 
     console.log(
-      "✅ CONCORRÊNCIA APPIA:",
+      "✅ CONCORRÊNCIA PAIIA:",
       data
     );
   } catch (erroPesquisa) {
@@ -1928,51 +2368,60 @@ async function atualizarCategoria() {
 }
 
   function salvarEstadoAtualDoTeste() {
-    try {
-      const salvo =
-        localStorage.getItem(
-          "mlAnuncioTeste"
-        );
-
-      const base =
-        salvo
-          ? JSON.parse(salvo)
-          : {};
-
-      localStorage.setItem(
-        "mlAnuncioTeste",
-        JSON.stringify({
-          ...base,
-          titulo:
-            tituloAnuncio,
-          codigo,
-          preco,
-          descricao,
-          fotos,
-          banner:
-            bannerAtual || "",
-          banners:
-            bannersSelecionados,
-          clip:
-            clipAtual || "",
-          clips:
-            clipsSelecionados,
-          compatibilidades,
-          observacaoCompatibilidade,
-          canalVenda:
-            canalVendaPublicacao,
-          tipoAnuncio:
-            modalidade,
-        })
+  try {
+    const salvo =
+      localStorage.getItem(
+        "mlAnuncioTeste"
       );
-    } catch (erro) {
-      console.error(
-        "Erro ao preservar dados do simulador:",
-        erro
-      );
-    }
+
+    const base =
+      salvo
+        ? JSON.parse(salvo)
+        : {};
+
+    // Mídias possuem armazenamento próprio.
+    // Não duplicamos Banner e Clip dentro
+    // do mlAnuncioTeste.
+    const {
+      banner,
+      banners,
+      clip,
+      clips,
+      ...baseLimpa
+    } = base;
+
+  localStorage.setItem(
+  "mlAnuncioTeste",
+  JSON.stringify({
+    ...baseLimpa,
+
+    titulo:
+      tituloAnuncio,
+
+    codigo,
+
+    preco,
+
+    descricao,
+
+    compatibilidades,
+
+    observacaoCompatibilidade,
+
+    canalVenda:
+      canalVendaPublicacao,
+
+    tipoAnuncio:
+      modalidade,
+  })
+);
+  } catch (erro) {
+    console.error(
+      "Erro ao preservar dados do simulador:",
+      erro
+    );
   }
-
+}
   function exportarAnuncio() {
     if (!payloadTeste) {
       alert(
@@ -2120,7 +2569,7 @@ async function atualizarCategoria() {
         alert(
           "❌ Publicação bloqueada.\n\n" +
           `${fotosInvalidas.length} foto(s) estão abaixo de 1200 x 1200 ou não puderam ser verificadas.\n\n` +
-          "O APPIA exige no mínimo 1200 x 1200 para o padrão de publicação."
+          "O PAIIA exige no mínimo 1200 x 1200 para o padrão de publicação."
         );
 
         setValidado(false);
@@ -3347,313 +3796,173 @@ async function atualizarCategoria() {
           </strong>
         </div>
 
-        <div
-          style={{
-            ...resumoLinha,
-            border:
-              dimensoesFotos.some(
-                (item) => !item.ok
-              )
-                ? "1px solid #ef4444"
-                : "1px solid #22c55e",
-          }}
-        >
-          <span>
-            📐 Resolução mínima
-          </span>
+       <div
+  style={{
+    ...resumoLinha,
+    border:
+      dimensoesFotos.some(
+        (item) => !item.ok
+      )
+        ? "1px solid #ef4444"
+        : "1px solid #22c55e",
+  }}
+>
+  <span>
+    📐 Resolução mínima
+  </span>
 
-          <strong
-            style={{
-              color:
-                dimensoesFotos.some(
-                  (item) => !item.ok
-                )
-                  ? "#fca5a5"
-                  : "#86efac",
-            }}
-          >
-            {dimensoesFotos.length === 0
-              ? "Verificando..."
-              : dimensoesFotos.every(
-                    (item) => item.ok
-                  )
-                ? "✅ Todas 1200 × 1200 ou maiores"
-                : "❌ Corrigir fotos abaixo de 1200 × 1200"}
-          </strong>
-        </div>
+  <strong
+    style={{
+      color:
+        dimensoesFotos.some(
+          (item) => !item.ok
+        )
+          ? "#fca5a5"
+          : "#86efac",
+    }}
+  >
+    {dimensoesFotos.length === 0
+      ? "Verificando..."
+      : dimensoesFotos.every(
+            (item) => item.ok
+          )
+        ? "✅ Todas 1200 × 1200 ou maiores"
+        : "❌ Corrigir fotos abaixo de 1200 × 1200"}
+  </strong>
+</div>
 
         <div
           id="secao-midias-publicacao"
           style={{
             marginTop: "18px",
-            paddingTop: "16px",
+            paddingTop: "18px",
             borderTop:
               "1px solid #1e3a5f",
             scrollMarginTop: "130px",
           }}
         >
-          <h4
-            style={{
-              color: "#67e8f9",
-              textAlign: "center",
-              margin: "0 0 6px 0",
-            }}
-          >
-            🎞️ Mídias APPIA
-          </h4>
-
-          <p
-            style={{
-              ...textoAuxiliar,
-              textAlign: "center",
-              marginBottom: "14px",
-            }}
-          >
-            Prepare Banner e Clip com calma e escolha aqui somente
-            quando o anúncio estiver pronto.
-          </p>
-
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit,minmax(320px,1fr))",
+              display: "flex",
+              justifyContent:
+                "space-between",
+              alignItems: "center",
               gap: "12px",
+              flexWrap: "wrap",
               marginBottom: "14px",
             }}
           >
-            <div
-              style={{
-                ...resumoLinha,
-                display: "block",
-              }}
-            >
-              <div
+            <div>
+              <h4
                 style={{
-                  display: "flex",
-                  justifyContent:
-                    "space-between",
-                  alignItems: "center",
-                  gap: "10px",
-                  flexWrap: "wrap",
+                  color: "#67e8f9",
+                  margin: "0 0 4px 0",
+                  fontSize: "18px",
                 }}
               >
-                <span>🎨 Banners — entram nas fotos</span>
+                🎬 Clip do anúncio
+              </h4>
 
-                <strong
-                  style={{
-                    color:
-                      bannersSelecionados.length
-                        ? "#86efac"
-                        : "#94a3b8",
-                  }}
-                >
-                  {bannersSelecionados.length
-                    ? `✅ ${bannersSelecionados.length} selecionado(s)`
-                    : "○ Opcional"}
-                </strong>
-              </div>
-
-              {bannersSelecionados.length >
-                0 && (
-                <div
-                  style={{
-                    marginTop: "12px",
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(2,minmax(0,1fr))",
-                    gap: "10px",
-                  }}
-                >
-                  {bannersSelecionados.map(
-                    (
-                      url,
-                      index
-                    ) => (
-                      <div
-                        key={`${url}-${index}`}
-                        style={{
-                          position:
-                            "relative",
-                          padding: "8px",
-                          borderRadius:
-                            "12px",
-                          border:
-                            "1px solid #334155",
-                          background:
-                            "#020617",
-                        }}
-                      >
-                        <img
-                          src={url}
-                          alt={`Banner ${
-                            index + 1
-                          }`}
-                          style={{
-                            width: "100%",
-                            aspectRatio:
-                              "1 / 1",
-                            objectFit:
-                              "contain",
-                            borderRadius:
-                              "9px",
-                            background:
-                              "#ffffff",
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removerBannerSelecionado(
-                              url
-                            )
-                          }
-                          style={{
-                            width:
-                              "100%",
-                            marginTop:
-                              "7px",
-                            padding:
-                              "7px",
-                            borderRadius:
-                              "8px",
-                            border:
-                              "1px solid #ef4444",
-                            background:
-                              "#450a0a",
-                            color:
-                              "#fecaca",
-                            cursor:
-                              "pointer",
-                            fontWeight:
-                              "bold",
-                          }}
-                        >
-                          🗑 Remover
-                        </button>
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div
-              style={{
-                ...resumoLinha,
-                display: "block",
-              }}
-            >
-              <div
+              <p
                 style={{
-                  display: "flex",
-                  justifyContent:
-                    "space-between",
-                  alignItems: "center",
-                  gap: "10px",
-                  flexWrap: "wrap",
+                  ...textoAuxiliar,
+                  margin: 0,
                 }}
               >
-                <span>🎬 Clips — vídeos separados</span>
-
-                <strong
-                  style={{
-                    color:
-                      clipsSelecionados.length
-                        ? "#86efac"
-                        : "#94a3b8",
-                  }}
-                >
-                  {clipsSelecionados.length
-                    ? `✅ ${clipsSelecionados.length} selecionado(s)`
-                    : "○ Opcional"}
-                </strong>
-              </div>
-
-              {clipsSelecionados.length >
-                0 && (
-                <div
-                  style={{
-                    marginTop: "12px",
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(2,minmax(0,1fr))",
-                    gap: "10px",
-                  }}
-                >
-                  {clipsSelecionados.map(
-                    (
-                      url,
-                      index
-                    ) => (
-                      <div
-                        key={`${url}-${index}`}
-                        style={{
-                          padding: "8px",
-                          borderRadius:
-                            "12px",
-                          border:
-                            "1px solid #334155",
-                          background:
-                            "#020617",
-                        }}
-                      >
-                        <video
-                          src={url}
-                          controls
-                          preload="metadata"
-                          playsInline
-                          style={{
-                            width: "100%",
-                            aspectRatio:
-                              "1 / 1",
-                            objectFit:
-                              "contain",
-                            borderRadius:
-                              "9px",
-                            background:
-                              "#000000",
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removerClipSelecionado(
-                              url
-                            )
-                          }
-                          style={{
-                            width:
-                              "100%",
-                            marginTop:
-                              "7px",
-                            padding:
-                              "7px",
-                            borderRadius:
-                              "8px",
-                            border:
-                              "1px solid #ef4444",
-                            background:
-                              "#450a0a",
-                            color:
-                              "#fecaca",
-                            cursor:
-                              "pointer",
-                            fontWeight:
-                              "bold",
-                          }}
-                        >
-                          🗑 Remover
-                        </button>
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
+                Opcional. Adicione um vídeo ao anúncio quando quiser.
+              </p>
             </div>
+
+            <strong
+              style={{
+                color:
+                  clipsSelecionados.length
+                    ? "#86efac"
+                    : "#94a3b8",
+                padding: "7px 11px",
+                borderRadius: "999px",
+                border:
+                  clipsSelecionados.length
+                    ? "1px solid #22c55e"
+                    : "1px solid #475569",
+                background:
+                  clipsSelecionados.length
+                    ? "#052e16"
+                    : "#0f172a",
+                fontSize: "12px",
+              }}
+            >
+              {clipsSelecionados.length
+                ? `✅ ${clipsSelecionados.length} selecionado(s)`
+                : "○ Opcional"}
+            </strong>
           </div>
+
+          {clipsSelecionados.length > 0 && (
+            <div
+              style={{
+                marginBottom: "14px",
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit,minmax(220px,320px))",
+                justifyContent: "center",
+                gap: "12px",
+              }}
+            >
+              {clipsSelecionados.map(
+                (url, index) => (
+                  <div
+                    key={`${url}-${index}`}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "14px",
+                      border:
+                        "1px solid #334155",
+                      background: "#020617",
+                    }}
+                  >
+                    <video
+                      src={url}
+                      controls
+                      preload="metadata"
+                      playsInline
+                      style={{
+                        width: "100%",
+                        aspectRatio: "16 / 9",
+                        objectFit: "contain",
+                        borderRadius: "10px",
+                        background: "#000000",
+                        display: "block",
+                      }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        removerClipSelecionado(
+                          url
+                        )
+                      }
+                      style={{
+                        width: "100%",
+                        marginTop: "8px",
+                        padding: "8px",
+                        borderRadius: "9px",
+                        border:
+                          "1px solid #ef4444",
+                        background: "#450a0a",
+                        color: "#fecaca",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      🗑 Remover clip
+                    </button>
+                  </div>
+                )
+              )}
+            </div>
+          )}
 
           <button
             type="button"
@@ -3663,6 +3972,11 @@ async function atualizarCategoria() {
               localStorage.setItem(
                 "retornarParaMidiasPublicacao",
                 "true"
+              );
+
+              localStorage.setItem(
+                "abaMidiasAppia",
+                "videos"
               );
 
               setScreen?.(
@@ -3676,27 +3990,19 @@ async function atualizarCategoria() {
               border:
                 "1px solid #22d3ee",
               background:
-                "linear-gradient(135deg,#2563eb,#0891b2)",
+                clipsSelecionados.length
+                  ? "#0f172a"
+                  : "linear-gradient(135deg,#2563eb,#0891b2)",
               color: "#ffffff",
               fontWeight: "bold",
               cursor: "pointer",
               fontSize: "15px",
             }}
           >
-            🎞️ Adicionar / Trocar Mídias APPIA
+            {clipsSelecionados.length
+              ? "🎬 Trocar Clip"
+              : "🎬 Escolher Clip"}
           </button>
-
-          <p
-            style={{
-              ...textoAuxiliar,
-              textAlign: "center",
-              marginTop: "10px",
-              marginBottom: 0,
-            }}
-          >
-            Banners entram junto com as fotos da publicação.
-            Clips ficam separados na área de vídeos.
-          </p>
         </div>
       </section>
 
@@ -3835,14 +4141,18 @@ async function atualizarCategoria() {
         </h3>
 
         <AreaTexto
-          value={
-            caracteristicasSecundarias
-          }
-          onChange={
-            setCaracteristicasSecundarias
-          }
-          placeholder="Características adicionais do produto."
-        />
+  value={
+    formatarCompatibilidadesLegiveis(
+      aplicacoesCompatibilidade,
+      compatibilidades
+    )
+  }
+  onChange={
+    setCompatibilidades
+  }
+  placeholder="As aplicações encontradas pelo PAIIA aparecerão aqui."
+  minHeight="220px"
+/>
       </section>
 
       {/* 8 - REGULATÓRIA */}
@@ -3893,7 +4203,7 @@ async function atualizarCategoria() {
     >
       Compatibilidades recuperadas da
       Base Mestre e dos catálogos
-      técnicos do APPIA.
+      técnicos do PAIIA.
     </p>
 
     <span
@@ -3923,19 +4233,8 @@ async function atualizarCategoria() {
     onChange={
       setCompatibilidades
     }
-    placeholder="As aplicações encontradas pelo APPIA aparecerão aqui."
+    placeholder="As aplicações encontradas pelo PAIIA aparecerão aqui."
     minHeight="220px"
-  />
-
-  <AreaTexto
-    label="Observação de compatibilidade"
-    value={
-      observacaoCompatibilidade
-    }
-    onChange={
-      setObservacaoCompatibilidade
-    }
-    placeholder="Ex.: Antes da compra, confira o código gravado na peça original."
   />
 </section>
 
@@ -4078,7 +4377,7 @@ async function atualizarCategoria() {
 </h3>
 
 <p style={textoAuxiliar}>
-  Digite o nome da peça e o APPIA
+  Digite o nome da peça e o PAIIA
   consulta o Mercado Livre para
   encontrar a categoria recomendada.
 </p>

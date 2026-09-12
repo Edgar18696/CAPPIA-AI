@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+} from "react";
 import { supabase } from "../supabase";
 import PainelCatalogo from "./PainelCatalogo";
 import ChecklistAnuncio from "./ChecklistAnuncio";
@@ -9,6 +12,7 @@ import AssistenteAnuncio from "./AssistenteAnuncio";
 
 import DadosPeca from "./DadosPeca";
 import useNovoAnuncio from "../hooks/useNovoAnuncio";
+import { deveIniciarNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 import {
   gerarAnuncioV2,
 } from "../services/inteligencia";
@@ -433,6 +437,14 @@ export default function NovoAnuncio({
     }
   });
 useEffect(() => {
+  if (anuncioEditando) {
+    return;
+  }
+
+  if (deveIniciarNovaCriacaoMidia()) {
+    return;
+  }
+
   const dadosTemporarios =
     localStorage.getItem(
       "novoAnuncioTemporario"
@@ -728,7 +740,7 @@ const [erroConcorrencia, setErroConcorrencia] =
 const [custo, setCusto] =
   useState("");
 const [fretePrecificacao, setFretePrecificacao] =
-  useState("18,80");
+  useState("");
 
 const [despesasPrecificacao, setDespesasPrecificacao] =
   useState("3,00");
@@ -758,6 +770,26 @@ const [vendasMediasMes, setVendasMediasMes] =
   useState("");
 
 const [outrosCustosDetalhados, setOutrosCustosDetalhados] =
+  useState("");
+
+const [calculandoCustosML, setCalculandoCustosML] =
+  useState(false);
+
+const [resultadoCustosML, setResultadoCustosML] =
+  useState(null);
+const [mostrarCalculoFreteML, setMostrarCalculoFreteML] =
+  useState(false);
+
+const [pesoFreteML, setPesoFreteML] =
+  useState("");
+
+const [alturaFreteML, setAlturaFreteML] =
+  useState("");
+
+const [larguraFreteML, setLarguraFreteML] =
+  useState("");
+
+const [comprimentoFreteML, setComprimentoFreteML] =
   useState("");
 
 /*
@@ -972,13 +1004,6 @@ function usarCustoDetalhadoNaPrecificacao() {
       .replace(".", ",")
   );
 
-  /*
-   * A embalagem já entrou no custo real detalhado.
-   * Zeramos a embalagem do cálculo básico para
-   * não cobrar esse custo duas vezes.
-   * O Frete básico permanece livre para o frete
-   * da venda/expedição.
-   */
   setDespesasPrecificacao(
     "0,00"
   );
@@ -986,6 +1011,199 @@ function usarCustoDetalhadoNaPrecificacao() {
   setMostrarCustoDetalhado(
     false
   );
+}
+
+async function calcularCustosMercadoLivre() {
+  if (!usuario?.id) {
+    alert(
+      "Usuário não identificado. Entre novamente no PAIIA."
+    );
+    return;
+  }
+
+  const peso =
+    numeroPrecificacao(
+      pesoFreteML
+    );
+
+  const altura =
+    numeroPrecificacao(
+      alturaFreteML
+    );
+
+  const largura =
+    numeroPrecificacao(
+      larguraFreteML
+    );
+
+  const comprimento =
+    numeroPrecificacao(
+      comprimentoFreteML
+    );
+
+  if (
+    peso <= 0 ||
+    altura <= 0 ||
+    largura <= 0 ||
+    comprimento <= 0
+  ) {
+    alert(
+      "Informe peso, altura, largura e comprimento da embalagem."
+    );
+    return;
+  }
+
+  const custoProduto =
+    numeroPrecificacao(
+      custoCompraDetalhado ||
+      custo
+    );
+
+  /*
+   * Se o usuário ainda não escolheu
+   * o preço final, usamos o preço
+   * recomendado atual como referência
+   * para a consulta ao Mercado Livre.
+   */
+  const precoInformado =
+    numeroPrecificacao(preco);
+
+  const precoReferencia =
+    precoInformado > 0
+      ? precoInformado
+      : precoMargem15;
+
+  if (precoReferencia <= 0) {
+    alert(
+      "Informe primeiro o custo da mercadoria."
+    );
+    return;
+  }
+
+  try {
+    setCalculandoCustosML(
+      true
+    );
+
+    const { data, error } =
+      await supabase.functions.invoke(
+        "calcular-custos-mercado-livre",
+        {
+          body: {
+            usuarioId:
+              usuario.id,
+
+            precoVenda:
+              precoReferencia,
+
+            custoProduto,
+
+            categoriaId:
+              pecaEncontrada
+                ?.categoria_id ||
+              diagnostico
+                ?.categoria_id ||
+              "",
+
+            listingTypeId:
+              tipoAnuncio ===
+              "premium"
+                ? "gold_pro"
+                : "gold_special",
+
+            shippingMode:
+              "me2",
+
+            logisticType:
+              "drop_off",
+
+            peso,
+            altura,
+            largura,
+            comprimento,
+
+            freteGratis:
+              true,
+          },
+        }
+      );
+
+    if (error) {
+      throw new Error(
+        error.message ||
+          "A função de custos não respondeu."
+      );
+    }
+
+    if (!data?.ok) {
+      throw new Error(
+        data?.erro ||
+          "Não foi possível calcular os custos do Mercado Livre."
+      );
+    }
+
+    setResultadoCustosML(
+      data
+    );
+
+    const freteCalculado =
+      Number(
+        data?.freteVendedor
+      );
+
+    if (
+      !Number.isFinite(
+        freteCalculado
+      ) ||
+      freteCalculado <= 0
+    ) {
+      throw new Error(
+        "O Mercado Livre não retornou um valor válido de frete."
+      );
+    }
+
+    const freteFormatado =
+      freteCalculado
+        .toFixed(2)
+        .replace(".", ",");
+
+    /*
+     * Preenche o frete principal.
+     * Os preços Conservador,
+     * Recomendado e Ideal serão
+     * recalculados automaticamente.
+     */
+    setFretePrecificacao(
+      freteFormatado
+    );
+
+    setFreteCompraDetalhado(
+      freteFormatado
+    );
+
+    setMostrarCalculoFreteML(
+      false
+    );
+
+    console.log(
+      "✅ FRETE MERCADO LIVRE:",
+      data
+    );
+  } catch (erro) {
+    console.error(
+      "❌ ERRO FRETE ML:",
+      erro
+    );
+
+    alert(
+      erro?.message ||
+        "Não foi possível calcular o frete do Mercado Livre."
+    );
+  } finally {
+    setCalculandoCustosML(
+      false
+    );
+  }
 }
 
 function aplicarPrecoSugerido(valor) {
@@ -1311,7 +1529,7 @@ console.log(
   codigo_equivalente: dados.oem || "",
   peca: dados.peca || "",
   fabricante: dados.fabricante || "",
-  origem_catalogo: "Central Técnica APPIA AI",
+  origem_catalogo: "Central Técnica PAIIA AI",
   aplicacoes: dados.aplicacoes || [],
 });
 
@@ -1937,7 +2155,7 @@ if (!precosComparaveis.length) {
     });
 
     console.log(
-      "✅ CONCORRÊNCIA APPIA:",
+      "✅ CONCORRÊNCIA PAIIA:",
       {
         bruto: data,
         mercadoLivre,
@@ -1978,6 +2196,20 @@ async function buscarEMontarAnuncio() {
     return;
   }
 
+  setOem("");
+  setTitulo("");
+  setDescricao("");
+  setPecaEncontrada(null);
+  setDiagnostico(null);
+  setAuditoria(null);
+  setMostrarAplicacoes(false);
+  localStorage.removeItem(
+    "novoAnuncioTemporario"
+  );
+  localStorage.removeItem(
+    "rascunhoNovoAnuncioTemp"
+  );
+
   setProcessando(true);
   setProgressoProcessamento(5);
   setEtapaProcessamento(
@@ -1988,7 +2220,8 @@ async function buscarEMontarAnuncio() {
     const resultado =
       await preencherAnuncioAutomaticamente({
         codigo: codigoFinal,
-        oem,
+        oem: "",
+        permitirBuscaInternet: false,
 
         onProgresso: (
           progresso,
@@ -2024,10 +2257,338 @@ async function buscarEMontarAnuncio() {
         oemResultado,
       });
 
-    const descricaoResultado =
-      String(
+    const fontesAplicacoes = [
+  ...(Array.isArray(
+    resultado?.baseMestre?.aplicacoes
+  )
+    ? resultado.baseMestre.aplicacoes
+    : []),
+
+  ...(Array.isArray(
+    resultado?.diagnostico
+      ?.baseMestre?.aplicacoes
+  )
+    ? resultado.diagnostico
+        .baseMestre.aplicacoes
+    : []),
+
+  ...(Array.isArray(
+    resultado?.inteligencia?.registros
+  )
+    ? resultado.inteligencia.registros
+    : []),
+
+  ...(Array.isArray(
+    pecaResultado?.aplicacoes
+  )
+    ? pecaResultado.aplicacoes
+    : []),
+
+  ...(Array.isArray(
+    resultado?.resultadosCatalogo
+  )
+    ? resultado.resultadosCatalogo
+    : []),
+
+  ...(Array.isArray(
+    resultado?.aplicacoes
+  )
+    ? resultado.aplicacoes
+    : []),
+];
+
+console.log(
+  "PAIIA_APLICACOES_BRUTAS",
+  fontesAplicacoes
+);
+console.table(
+  fontesAplicacoes.map(
+    (item, index) => ({
+      index,
+      montadora:
+        item?.montadora || "",
+      modelo:
+        item?.modelo || "",
+      motor:
+        item?.motor || "",
+      ano_inicio:
+        item?.ano_inicio || "",
+      ano_fim:
+        item?.ano_fim || "",
+      observacao:
+        item?.observacao || "",
+      codigo_oem:
+        item?.codigo_oem || "",
+      codigo_equivalente:
+        item?.codigo_equivalente || "",
+      origem_catalogo:
+        item?.origem_catalogo || "",
+    })
+  )
+);
+
+function limparCampoDescricao(
+  valor = ""
+) {
+  return String(valor || "")
+    .replace(/[□�]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function limparMotorDescricao(
+  valor = ""
+) {
+  let texto =
+    limparCampoDescricao(valor);
+
+  if (!texto) {
+    return "";
+  }
+
+  /*
+   * O catálogo pode trazer depois do motor:
+   * período, combustível, códigos Bosch
+   * e até informações da aplicação seguinte.
+   *
+   * Aqui preservamos a identificação do motor
+   * e retiramos somente o conteúdo posterior.
+   */
+
+  texto = texto
+    .replace(
+      /\s+\d{2}[./]\d{2}\s+(?:até|a|-)?\s*\d{2}[./]\d{2}.*$/i,
+      ""
+    )
+    .replace(
+      /\s+\d{2}[./]\d{2}\s+.*$/i,
+      ""
+    )
+    .replace(
+      /\s+(?:gasolina|flex|etanol|álcool|alcool|diesel)\b.*$/i,
+      ""
+    )
+    .replace(
+      /\s+\d\s+\d{3}\s+\d{3}\s+\d{3}\b.*$/i,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return texto;
+}
+
+const aplicacoesValidas = [];
+const aplicacoesVistas = new Set();
+
+for (
+  const item of fontesAplicacoes
+) {
+  const montadora =
+    limparCampoDescricao(
+      item?.montadora
+    );
+
+  const modelo =
+    limparCampoDescricao(
+      item?.modelo
+    );
+
+  const motor =
+    limparMotorDescricao(
+      item?.motor
+    );
+
+  const anoInicio =
+    limparCampoDescricao(
+      item?.ano_inicio
+    );
+
+  const anoFim =
+    limparCampoDescricao(
+      item?.ano_fim
+    );
+
+  if (
+    !montadora &&
+    !modelo &&
+    !motor
+  ) {
+    continue;
+  }
+
+  const chave = [
+    montadora,
+    modelo,
+    motor,
+    anoInicio,
+    anoFim,
+  ]
+    .join("|")
+    .toUpperCase();
+
+  if (
+    aplicacoesVistas.has(chave)
+  ) {
+    continue;
+  }
+
+  aplicacoesVistas.add(chave);
+
+  aplicacoesValidas.push({
+    montadora,
+    modelo,
+    motor,
+    anoInicio,
+    anoFim,
+    nivelConcordancia:
+      item?.nivelConcordancia || "",
+  });
+}
+
+const gruposAplicacoes = {};
+
+for (
+  const item of aplicacoesValidas
+) {
+  const montadora =
+    item.montadora ||
+    "OUTROS";
+
+  if (
+    !gruposAplicacoes[
+      montadora
+    ]
+  ) {
+    gruposAplicacoes[
+      montadora
+    ] = [];
+  }
+
+  gruposAplicacoes[
+    montadora
+  ].push(item);
+}
+
+const linhasDescricao = [];
+
+if (resultado?.fallbackExterno) {
+  const confirmadas = aplicacoesValidas.filter(
+    (item) => item.nivelConcordancia === "confirmado"
+  );
+  const provisórias = aplicacoesValidas.filter(
+    (item) => item.nivelConcordancia !== "confirmado"
+  );
+
+  const montarLinhaMl = (item) => {
+    const periodo =
+      item.anoInicio && item.anoFim
+        ? `${item.anoInicio} até ${item.anoFim}`
+        : item.anoInicio
+          ? `A partir de ${item.anoInicio}`
+          : item.anoFim
+            ? `Até ${item.anoFim}`
+            : "A confirmar";
+
+    return [
+      item.montadora || "A confirmar",
+      item.modelo || "A confirmar",
+      item.motor || "A confirmar",
+      periodo,
+    ].join(" | ");
+  };
+
+  linhasDescricao.push("APLICAÇÕES DO PRODUTO");
+  linhasDescricao.push("Fonte: Mercado Livre — dados provisórios");
+  linhasDescricao.push("Auditoria: REVISAR");
+  linhasDescricao.push("");
+
+  linhasDescricao.push("CONFIRMADO");
+  linhasDescricao.push("(coincidiu em mais de um anúncio)");
+  linhasDescricao.push("");
+  if (confirmadas.length) {
+    for (const item of confirmadas) {
+      linhasDescricao.push(montarLinhaMl(item));
+    }
+  } else {
+    linhasDescricao.push("Nenhuma aplicação com concordância entre anúncios.");
+  }
+
+  linhasDescricao.push("");
+  linhasDescricao.push("ENCONTRADO NO MERCADO LIVRE — A CONFIRMAR");
+  linhasDescricao.push("(apareceu em um anúncio ou sem concordância suficiente)");
+  linhasDescricao.push("");
+  if (provisórias.length) {
+    for (const item of provisórias) {
+      linhasDescricao.push(montarLinhaMl(item));
+    }
+  } else {
+    linhasDescricao.push("Nenhuma aplicação adicional encontrada.");
+  }
+} else {
+  linhasDescricao.push("APLICAÇÕES DO PRODUTO");
+  linhasDescricao.push("");
+
+for (
+  const [
+    montadora,
+    itens,
+  ] of Object.entries(
+    gruposAplicacoes
+  )
+) {
+  linhasDescricao.push(
+    montadora.toUpperCase()
+  );
+
+  linhasDescricao.push("");
+
+  for (const item of itens) {
+    linhasDescricao.push(
+      `• ${
+        item.modelo ||
+        "Modelo não informado"
+      }`
+    );
+
+    if (item.motor) {
+      linhasDescricao.push(
+        `  Motor: ${item.motor}`
+      );
+    }
+
+    if (
+      item.anoInicio ||
+      item.anoFim
+    ) {
+      const periodo =
+        item.anoInicio &&
+        item.anoFim
+          ? `${item.anoInicio} até ${item.anoFim}`
+          : item.anoInicio
+            ? `A partir de ${item.anoInicio}`
+            : `Até ${item.anoFim}`;
+
+      linhasDescricao.push(
+        `  Período: ${periodo}`
+      );
+    }
+
+    linhasDescricao.push("");
+  }
+}
+}
+
+const descricaoResultado =
+  aplicacoesValidas.length > 0
+    ? linhasDescricao
+        .join("\n")
+        .trim()
+    : String(
         resultado?.descricao || ""
-      ).trim();
+      )
+        .replace(/[□�]+/g, " ")
+        .trim();
 
     const diagnosticoResultado = {
       ...(
@@ -2076,7 +2637,7 @@ async function buscarEMontarAnuncio() {
           ?.arquivo ||
         pecaResultado
           ?.origem_catalogo ||
-        "Base APPIA",
+        "Base PAIIA",
 
       paginaCatalogo:
         resultado
@@ -2276,7 +2837,7 @@ async function analisarAntesDePublicar() {
     podePublicar
       ? `✅ Anúncio pronto para publicação.
 
-O APPIA concluiu a análise técnica e os dados obrigatórios estão preenchidos.
+O PAIIA concluiu a análise técnica e os dados obrigatórios estão preenchidos.
 
 Deseja continuar para a publicação?`
       : `⚠ O anúncio ainda possui pontos para revisar.
@@ -2372,45 +2933,141 @@ Deseja publicar mesmo assim?`
   );
 }
   function escolherFotosGaleria() {
-    localStorage.setItem(
-      chaveRascunhoTemp,
-      JSON.stringify({
-        codigo,
-        oem,
-        titulo,
-        descricao,
-        preco,
-        tipoAnuncio,
-        pecaEncontrada,
-        fotos: fotosAnuncio || [],
-        clip: clipAnuncio || "",
-      })
-    );
+  // =====================================================
+  // PRESERVA AS FOTOS EM MEMÓRIA
+  // Evita colocar imagens pesadas no localStorage.
+  // =====================================================
+  window.__paiiaFotosNovoAnuncio =
+    Array.isArray(fotosAnuncio)
+      ? fotosAnuncio
+      : [];
+
+  // =====================================================
+  // SALVA SOMENTE OS DADOS LEVES DO ANÚNCIO
+  // =====================================================
+  try {
+    const dadosLeves = {
+      codigo,
+      oem,
+      titulo,
+      descricao,
+      preco,
+      tipoAnuncio,
+      pecaEncontrada,
+      diagnostico,
+      auditoria,
+      clip:
+        clipAnuncio || "",
+    };
 
     localStorage.setItem(
-      "modoGaleria",
-      "selecionarParaAnuncio"
+      "novoAnuncioTemporario",
+      JSON.stringify(
+        dadosLeves
+      )
     );
-
-    localStorage.setItem("abrirUltimasFotos", "true");
-localStorage.setItem(
-  "novoAnuncioTemporario",
-  JSON.stringify({
-    codigo,
-    oem,
-    titulo,
-    descricao,
-    preco,
-    tipoAnuncio,
-    pecaEncontrada,
-    diagnostico,
-    auditoria,
-  })
-);
-
-    setScreen("galeria");
+  } catch (erro) {
+    console.error(
+      "Erro ao preservar anúncio antes da Galeria:",
+      erro
+    );
   }
 
+  // =====================================================
+  // MARCA O MODO DA GALERIA
+  // =====================================================
+  localStorage.setItem(
+    "modoGaleria",
+    "selecionarParaAnuncio"
+  );
+
+  localStorage.setItem(
+    "abrirGaleriaAnuncio",
+    "true"
+  );
+
+  localStorage.setItem(
+    "abrirUltimasFotos",
+    "true"
+  );
+
+  localStorage.setItem(
+    "abrirGaleriaNaAba",
+    "foto"
+  );
+
+  localStorage.setItem(
+    "galeriaAbaFixa",
+    "foto"
+  );
+
+  setScreen(
+    "galeria"
+  );
+}
+function escolherBannerGaleria() {
+  // Preserva as imagens já escolhidas
+  window.__paiiaFotosNovoAnuncio =
+    Array.isArray(fotosAnuncio)
+      ? fotosAnuncio
+      : [];
+
+  try {
+    const dadosLeves = {
+      codigo,
+      oem,
+      titulo,
+      descricao,
+      preco,
+      tipoAnuncio,
+      pecaEncontrada,
+      diagnostico,
+      auditoria,
+      clip:
+        clipAnuncio || "",
+    };
+
+    localStorage.setItem(
+      "novoAnuncioTemporario",
+      JSON.stringify(
+        dadosLeves
+      )
+    );
+  } catch (erro) {
+    console.error(
+      "Erro ao preservar anúncio antes de escolher banner:",
+      erro
+    );
+  }
+
+  localStorage.setItem(
+    "modoGaleria",
+    "selecionarParaAnuncio"
+  );
+
+  localStorage.setItem(
+    "abrirGaleriaAnuncio",
+    "true"
+  );
+
+  localStorage.setItem(
+    "abrirGaleriaNaAba",
+    "banner"
+  );
+
+  localStorage.setItem(
+    "galeriaAbaFixa",
+    "banner"
+  );
+
+  localStorage.removeItem(
+    "abrirUltimasFotos"
+  );
+
+  setScreen(
+    "galeria"
+  );
+}
   function obterFotoPrincipal() {
     const foto =
       fotosUnicas[0];
@@ -3104,23 +3761,43 @@ marcarAnuncioPronto({
     ③ 🖼 Imagens do Anúncio
   </h3>
 
+  <div
+  style={{
+    display: "flex",
+    gap: "12px",
+    justifyContent: "center",
+    flexWrap: "wrap",
+    marginBottom: "18px",
+  }}
+>
   <button
     type="button"
     onClick={escolherFotosGaleria}
     style={{
       ...botaoAzul,
-      alignSelf: "center",
       minWidth: "310px",
       padding: "16px 24px",
       fontSize: "15px",
       fontWeight: "bold",
-      marginBottom: "18px",
     }}
   >
-    {fotosUnicas.length > 0
-      ? "🖼 Escolher mais imagens"
-      : "🖼 Escolher Imagens da Galeria"}
+    🖼 Escolher Foto
   </button>
+
+  <button
+    type="button"
+    onClick={escolherBannerGaleria}
+    style={{
+      ...botaoEscuro,
+      minWidth: "310px",
+      padding: "16px 24px",
+      fontSize: "15px",
+      fontWeight: "bold",
+    }}
+  >
+    🎨 Escolher Banner
+  </button>
+</div>
 
   <div
     style={{
@@ -3157,7 +3834,7 @@ marcarAnuncioPronto({
       >
         🖼 Nenhuma imagem selecionada ainda.
         <br />
-        Escolha as fotos da Galeria APPIA para montar o anúncio.
+        Escolha as fotos da Galeria PAIIA para montar o anúncio.
       </div>
     )}
   </div>
@@ -3185,7 +3862,7 @@ marcarAnuncioPronto({
               </h3>
 
               <p style={centralInteligenciaSubtitulo}>
-                O APPIA acompanha técnica, preço, qualidade e
+                O PAIIA acompanha técnica, preço, qualidade e
                 prontidão enquanto você monta o anúncio.
               </p>
             </div>
@@ -3254,7 +3931,7 @@ marcarAnuncioPronto({
   <span
     style={centralInteligenciaTexto}
   >
-    Informe seus custos. O APPIA calcula
+    Informe seus custos. O PAIIA calcula
     preços buscando margem líquida de
     10%, 15% ou 20%.
   </span>
@@ -3415,11 +4092,154 @@ marcarAnuncioPronto({
     </div>
   </div>
 
+
+  <button
+    type="button"
+    onClick={() =>
+      setMostrarCalculoFreteML(
+        (atual) => !atual
+      )
+    }
+    style={{
+      width: "100%",
+      marginTop: "14px",
+      marginBottom: "12px",
+      padding: "13px 16px",
+      borderRadius: "12px",
+      border: "1px solid #38bdf8",
+      background:
+        mostrarCalculoFreteML
+          ? "linear-gradient(135deg,#0c4a6e,#0f172a)"
+          : "#082f49",
+      color: "#bae6fd",
+      fontWeight: "800",
+      textAlign: "left",
+      cursor: "pointer",
+    }}
+  >
+    🚚{" "}
+    {mostrarCalculoFreteML
+      ? "Fechar cálculo de frete Mercado Livre"
+      : "Quero calcular meu frete Mercado Livre"}
+  </button>
+
+  {mostrarCalculoFreteML && (
+    <div
+      style={{
+        width: "100%",
+        marginBottom: "14px",
+        padding: "14px",
+        borderRadius: "12px",
+        border: "1px solid #334155",
+        background: "#020617",
+      }}
+    >
+      <div
+        style={{
+          color: "#94a3b8",
+          fontSize: "12px",
+          lineHeight: 1.5,
+          marginBottom: "12px",
+        }}
+      >
+        Informe o peso e as medidas da embalagem. O PAIIA consulta
+        o Mercado Livre e preenche o campo de frete automaticamente.
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "repeat(4, minmax(0, 1fr))",
+          gap: "10px",
+          width: "100%",
+        }}
+      >
+        <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+          Peso (kg)
+          <input
+            value={pesoFreteML}
+            onChange={(e) =>
+              setPesoFreteML(e.target.value)
+            }
+            placeholder="Ex.: 0,350"
+            style={campoPrecificacaoAppia}
+          />
+        </label>
+
+        <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+          Altura (cm)
+          <input
+            value={alturaFreteML}
+            onChange={(e) =>
+              setAlturaFreteML(e.target.value)
+            }
+            placeholder="Ex.: 8"
+            style={campoPrecificacaoAppia}
+          />
+        </label>
+
+        <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+          Largura (cm)
+          <input
+            value={larguraFreteML}
+            onChange={(e) =>
+              setLarguraFreteML(e.target.value)
+            }
+            placeholder="Ex.: 15"
+            style={campoPrecificacaoAppia}
+          />
+        </label>
+
+        <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+          Comprimento (cm)
+          <input
+            value={comprimentoFreteML}
+            onChange={(e) =>
+              setComprimentoFreteML(e.target.value)
+            }
+            placeholder="Ex.: 20"
+            style={campoPrecificacaoAppia}
+          />
+        </label>
+      </div>
+
+      <button
+        type="button"
+        onClick={calcularCustosMercadoLivre}
+        disabled={calculandoCustosML}
+        style={{
+          width: "100%",
+          marginTop: "12px",
+          padding: "12px 16px",
+          borderRadius: "10px",
+          border: "none",
+          background:
+            "linear-gradient(135deg,#0369a1,#0284c7)",
+          color: "#ffffff",
+          fontWeight: "800",
+          cursor:
+            calculandoCustosML
+              ? "wait"
+              : "pointer",
+          opacity:
+            calculandoCustosML
+              ? 0.7
+              : 1,
+        }}
+      >
+        {calculandoCustosML
+          ? "⏳ Consultando Mercado Livre..."
+          : "🚚 Calcular frete Mercado Livre"}
+      </button>
+    </div>
+  )}
+
   <div
     style={{
       display: "grid",
       gridTemplateColumns:
-        "repeat(auto-fit,minmax(150px,1fr))",
+        "repeat(5, minmax(0, 1fr))",
       gap: "10px",
       width: "100%",
       marginTop: "14px",
@@ -3460,7 +4280,7 @@ marcarAnuncioPronto({
         e.target.value
       )
     }
-    placeholder="18,80"
+    placeholder="0,00"
     style={campoPrecificacaoAppia}
   />
 </label>
@@ -3632,8 +4452,10 @@ marcarAnuncioPronto({
             }
             placeholder="Ex.: 5,00"
             style={campoPrecificacaoAppia}
-          />
+                   />
         </label>
+
+        
 
         <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
           Embalagem por peça
@@ -3791,7 +4613,7 @@ marcarAnuncioPronto({
       width: "100%",
     }}
   >
-    🧮 <strong>Fórmula APPIA</strong>
+    🧮 <strong>Fórmula PAIIA</strong>
     <br />
     Preço = custo total ÷
     [1 − (comissão + impostos +
@@ -4464,7 +5286,7 @@ const custoTotalVenda =
         ? `⚠️ ${erroConcorrencia}`
         : resultadoConcorrencia
           ? resultadoConcorrencia.analise
-          : "Clique em ‘Paizinho, pesquisar a concorrência’. O APPIA pesquisará Mercado Livre e Shopee e trará as faixas de preço para esta tela."}
+          : "Clique em ‘Paizinho, pesquisar a concorrência’. O PAIIA pesquisará Mercado Livre e Shopee e trará as faixas de preço para esta tela."}
     </div>
 
     <div
@@ -4634,7 +5456,7 @@ const custoTotalVenda =
 
               <p style={parecerEspecialistaTexto}>
                 {parecerIA?.texto ||
-                  "O APPIA está analisando o anúncio."}
+                  "O PAIIA está analisando o anúncio."}
               </p>
             </div>
           </div>
@@ -4783,24 +5605,231 @@ const custoTotalVenda =
           </div>
         </div>
 
-{pecaEncontrada && (
-  <PainelCatalogo
-    pecaEncontrada={{
-      ...pecaEncontrada,
+{pecaEncontrada && (() => {
+  const baseMestreAtual =
+    diagnostico?.baseMestre ||
+    pecaEncontrada?.baseMestre ||
+    {};
 
-      baseMestre:
-        diagnostico?.baseMestre ||
-        pecaEncontrada?.baseMestre ||
-        null,
-    }}
-    diagnostico={diagnostico}
-    auditoria={auditoria}
-    mostrarAplicacoes={mostrarAplicacoes}
-    setMostrarAplicacoes={
-      setMostrarAplicacoes
-    }
-  />
-)}
+  const fontesAplicacoes = [
+    ...(
+      Array.isArray(
+        pecaEncontrada?.aplicacoes
+      )
+        ? pecaEncontrada.aplicacoes
+        : []
+    ),
+
+    ...(
+      Array.isArray(
+        baseMestreAtual?.aplicacoes
+      )
+        ? baseMestreAtual.aplicacoes
+        : []
+    ),
+  ];
+
+  const aplicacoesNormalizadas =
+    fontesAplicacoes
+      .map((item) => {
+        const montadora =
+          String(
+            item?.montadora ||
+            item?.marca ||
+            ""
+          ).trim();
+
+        const modelo =
+          String(
+            item?.modelo ||
+            item?.veiculo ||
+            ""
+          ).trim();
+
+        const motor =
+          String(
+            item?.motor ||
+            item?.motorizacao ||
+            ""
+          ).trim();
+
+        const anoInicio =
+          item?.ano_inicio ??
+          item?.anoInicio ??
+          null;
+
+        const anoFim =
+          item?.ano_fim ??
+          item?.anoFim ??
+          null;
+
+        const observacao =
+          String(
+            item?.observacao ||
+            item?.obs ||
+            ""
+          ).trim();
+
+        const origem =
+          String(
+            item?.origem_catalogo ||
+            item?.origem ||
+            ""
+          ).trim();
+
+        return {
+          ...item,
+
+          montadora,
+          modelo,
+          motor,
+
+          // Mantemos os dois padrões.
+          // Alguns módulos antigos usam snake_case
+          // e outros usam camelCase.
+          ano_inicio:
+            anoInicio,
+
+          ano_fim:
+            anoFim,
+
+          anoInicio,
+          anoFim,
+
+          observacao,
+          origem,
+
+          origem_catalogo:
+            item?.origem_catalogo ||
+            origem,
+        };
+      })
+      .filter(
+        (item) =>
+          item.montadora ||
+          item.modelo ||
+          item.motor
+      )
+      .filter(
+        (
+          item,
+          index,
+          lista
+        ) => {
+          const chave =
+            [
+              item.montadora,
+              item.modelo,
+              item.motor,
+              item.ano_inicio,
+              item.ano_fim,
+            ]
+              .map(
+                (valor) =>
+                  String(
+                    valor ?? ""
+                  )
+                    .trim()
+                    .toLowerCase()
+              )
+              .join("|");
+
+          return (
+            index ===
+            lista.findIndex(
+              (outro) => {
+                const chaveOutro =
+                  [
+                    outro.montadora,
+                    outro.modelo,
+                    outro.motor,
+                    outro.ano_inicio,
+                    outro.ano_fim,
+                  ]
+                    .map(
+                      (valor) =>
+                        String(
+                          valor ?? ""
+                        )
+                          .trim()
+                          .toLowerCase()
+                    )
+                    .join("|");
+
+                return (
+                  chaveOutro ===
+                  chave
+                );
+              }
+            )
+          );
+        }
+      );
+
+  const pecaPainel = {
+    ...pecaEncontrada,
+
+    aplicacoes:
+      aplicacoesNormalizadas,
+
+    baseMestre: {
+      ...baseMestreAtual,
+
+      aplicacoes:
+        aplicacoesNormalizadas,
+
+      totalRegistros:
+        aplicacoesNormalizadas
+          .length,
+    },
+  };
+
+  const diagnosticoPainel = {
+    ...(
+      diagnostico ||
+      {}
+    ),
+
+    totalAplicacoes:
+      aplicacoesNormalizadas
+        .length,
+
+    baseMestre: {
+      ...baseMestreAtual,
+
+      aplicacoes:
+        aplicacoesNormalizadas,
+
+      totalRegistros:
+        aplicacoesNormalizadas
+          .length,
+    },
+  };
+
+  return (
+    <PainelCatalogo
+      pecaEncontrada={
+        pecaPainel
+      }
+
+      diagnostico={
+        diagnosticoPainel
+      }
+
+      auditoria={
+        auditoria
+      }
+
+      mostrarAplicacoes={
+        mostrarAplicacoes
+      }
+
+      setMostrarAplicacoes={
+        setMostrarAplicacoes
+      }
+    />
+  );
+})()}
         {diagnostico && (
           <section
   id="secao-fotos-anuncio"
@@ -4809,6 +5838,26 @@ const custoTotalVenda =
             <h3 style={tituloSecao}>
               🧠 Diagnóstico Técnico
             </h3>
+
+            {diagnostico?.fonteProvisoria && (
+              <div
+                style={{
+                  margin: "12px 0 16px",
+                  padding: "12px 14px",
+                  borderRadius: "12px",
+                  border: "1px solid #f59e0b",
+                  background: "#451a03",
+                  color: "#fde68a",
+                  fontSize: "14px",
+                  lineHeight: 1.5,
+                }}
+              >
+                ⚠️ Mercado Livre — dados provisórios. Auditoria: REVISAR.
+                CONFIRMADO = coincidiu em mais de um anúncio.
+                ENCONTRADO NO MERCADO LIVRE — A CONFIRMAR = um anúncio
+                ou sem concordância. Não grave no catálogo.
+              </div>
+            )}
 
             <div style={gradeDiagnostico}>
               <div>

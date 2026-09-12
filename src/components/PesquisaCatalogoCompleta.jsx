@@ -1,6 +1,92 @@
 import { useState } from "react";
 import identificarCatalogo from "../services/catalogos/identificarCatalogo";
 import { pesquisarCatalogoUniversal } from "../services/catalogos/pesquisarCatalogoUniversal";
+import { consultarCatCarOEM } from "../services/catcarService";
+
+function obterFabricanteInicial() {
+  const catalogoSelecionado =
+    localStorage.getItem(
+      "catalogoSelecionado"
+    ) || "";
+
+  const mapa = {
+    CatCar: "catcar",
+    Bosch: "bosch",
+    Renault: "renault",
+    Fiat: "fiat",
+    "Magneti Marelli":
+      "magneti_marelli",
+    Volkswagen: "volkswagen",
+    GM: "gm",
+    Delphi: "delphi",
+    NGK: "ngk",
+    Denso: "denso",
+  };
+
+  return (
+    mapa[catalogoSelecionado] ||
+    "todos"
+  );
+}
+
+function converterRegistroCatCar(
+  registro = {}
+) {
+  const detalhes = [
+    registro?.tipo
+      ? `Tipo: ${registro.tipo}`
+      : "",
+    registro?.grupo
+      ? `Grupo: ${registro.grupo}`
+      : "",
+    registro?.subgrupo
+      ? `Subgrupo: ${registro.subgrupo}`
+      : "",
+    registro?.posicao
+      ? `Posição: ${registro.posicao}`
+      : "",
+    registro?.descricao_original ||
+      "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  return {
+    ...registro,
+
+    peca:
+      registro?.codigo_substituto ||
+      registro?.descricao_original ||
+      "Peça automotiva",
+
+    fabricante:
+      "Renault",
+
+    montadora:
+      registro?.montadora ||
+      "Renault",
+
+    codigo_equivalente:
+      "",
+
+    observacao:
+      detalhes,
+
+    origem_catalogo:
+      "CatCar Renault",
+
+    pagina_catalogo:
+      registro?.pagina_url ||
+      null,
+
+    fonte_tecnica:
+      "catcar",
+
+    confirmado:
+      registro?.confirmado !==
+      false,
+  };
+}
 
 export default function PesquisaCatalogoCompleta({
   cardStyle,
@@ -24,7 +110,9 @@ export default function PesquisaCatalogoCompleta({
   const [
     fabricanteSelecionado,
     setFabricanteSelecionado,
-  ] = useState("todos");
+  ] = useState(
+    obterFabricanteInicial
+  );
 
   const fabricantesPesquisa = [
     "todos",
@@ -59,12 +147,17 @@ export default function PesquisaCatalogoCompleta({
     const codigoFinal = String(
       codigoPesquisa || ""
     )
-      .replace(/[^a-zA-Z0-9]/g, "")
+      .replace(
+        /[^a-zA-Z0-9]/g,
+        ""
+      )
       .toUpperCase()
       .trim();
 
     const catalogo =
-      identificarCatalogo(codigoFinal);
+      identificarCatalogo(
+        codigoFinal
+      );
 
     console.log(
       "Catálogo identificado:",
@@ -87,25 +180,172 @@ export default function PesquisaCatalogoCompleta({
         `🔎 Localizando informações para ${codigoFinal}...`
       );
 
-      const resposta =
-        await pesquisarCatalogoUniversal({
-          codigo: codigoFinal,
-          fabricante:
-            fabricanteSelecionado,
-          onProgresso:
-            setProgresso,
-        });
+      /*
+       * ===============================================
+       * CATCAR LOCAL
+       * ===============================================
+       *
+       * Quando o CatCar estiver selecionado,
+       * consulta a base local indexada na porta 8787.
+       *
+       * Os demais fabricantes continuam usando
+       * pesquisarCatalogoUniversal normalmente.
+       * ===============================================
+       */
 
-      setResultado(resposta);
+      if (
+        fabricanteSelecionado ===
+        "catcar"
+      ) {
+        const respostaCatCar =
+          await consultarCatCarOEM(
+            codigoFinal
+          );
+
+        if (
+          respostaCatCar?.erro
+        ) {
+          throw new Error(
+            respostaCatCar.erro
+          );
+        }
+
+        const registrosCatCar =
+          Array.isArray(
+            respostaCatCar?.registros
+          )
+            ? respostaCatCar.registros.map(
+                converterRegistroCatCar
+              )
+            : [];
+
+        const respostaFormatada = {
+          encontrado:
+            Boolean(
+              respostaCatCar
+                ?.encontrado
+            ),
+
+          fabricante:
+            "Renault",
+
+          origem:
+            "CatCar Renault",
+
+          encontrados:
+            registrosCatCar.length,
+
+          quantidade:
+            registrosCatCar.length,
+
+          unicos:
+            Number(
+              respostaCatCar
+                ?.total_aplicacoes_consolidadas ||
+              registrosCatCar.length
+            ),
+
+          gravados:
+            registrosCatCar.length,
+
+          confirmado:
+            Boolean(
+              respostaCatCar
+                ?.confirmado
+            ),
+
+          codigo_pesquisado:
+            respostaCatCar
+              ?.codigo_pesquisado ||
+            codigoFinal,
+
+          oems:
+            Array.isArray(
+              respostaCatCar?.oems
+            )
+              ? respostaCatCar.oems
+              : [],
+
+          substitutos:
+            Array.isArray(
+              respostaCatCar
+                ?.substitutos
+            )
+              ? respostaCatCar
+                  .substitutos
+              : [],
+
+          descricoes:
+            Array.isArray(
+              respostaCatCar
+                ?.descricoes
+            )
+              ? respostaCatCar
+                  .descricoes
+              : [],
+
+          aplicacoes:
+            Array.isArray(
+              respostaCatCar
+                ?.aplicacoes
+            )
+              ? respostaCatCar
+                  .aplicacoes
+              : [],
+
+          registros:
+            registrosCatCar,
+        };
+
+        setResultado(
+          respostaFormatada
+        );
+
+        setProgresso(
+          respostaFormatada
+            .encontrado
+            ? `✅ CatCar Renault: ${registrosCatCar.length} registro(s) encontrado(s).`
+            : `⚠️ Código ${codigoFinal} não encontrado no CatCar Renault.`
+        );
+
+        return;
+      }
+
+      /*
+       * ===============================================
+       * DEMAIS CATÁLOGOS
+       * ===============================================
+       */
+
+      const resposta =
+        await pesquisarCatalogoUniversal(
+          {
+            codigo:
+              codigoFinal,
+
+            fabricante:
+              fabricanteSelecionado,
+
+            onProgresso:
+              setProgresso,
+          }
+        );
+
+      setResultado(
+        resposta
+      );
 
       setProgresso(
         `✅ Pesquisa concluída: ${
           resposta?.quantidade ||
-          resposta?.registros?.length ||
+          resposta?.registros
+            ?.length ||
           0
         } registro(s) encontrado(s).`
       );
-    } catch (erroPesquisa) {
+    } catch (
+      erroPesquisa
+    ) {
       console.error(
         "Erro ao pesquisar catálogo:",
         erroPesquisa
@@ -253,11 +493,11 @@ export default function PesquisaCatalogoCompleta({
           Consulte códigos OEM,
           equivalentes e aplicações nos
           catálogos técnicos integrados
-          ao APPIA AI.
+          ao PAIIA AI.
           <br />
-          A estrutura do CatCar fica
-          disponível como fonte técnica
-          para futura integração oficial.
+          O CatCar Renault também está
+          integrado à pesquisa técnica
+          por código OEM.
         </p>
 
         <div
@@ -290,11 +530,15 @@ export default function PesquisaCatalogoCompleta({
                 <button
                   key={fabricante}
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     setFabricanteSelecionado(
                       fabricante
-                    )
-                  }
+                    );
+
+                    setResultado(null);
+                    setErro("");
+                    setProgresso("");
+                  }}
                   style={{
                     padding:
                       "10px 16px",
@@ -560,7 +804,7 @@ export default function PesquisaCatalogoCompleta({
                     <br />
                     {registros[0]
                       .origem_catalogo ||
-                      "Base APPIA AI"}
+                      "Base PAIIA AI"}
                   </div>
 
                   <div>
@@ -631,7 +875,7 @@ export default function PesquisaCatalogoCompleta({
                     <b>Origem</b>
                     <br />
                     {resultado.origem ||
-                      "Base APPIA AI"}
+                      "Base PAIIA AI"}
                   </div>
 
                   <div>
@@ -800,7 +1044,7 @@ export default function PesquisaCatalogoCompleta({
                         <div>
                           <b>Catálogo:</b>{" "}
                           {item.origem_catalogo ||
-                            "APPIA AI"}
+                            "PAIIA AI"}
                         </div>
 
                         <div>

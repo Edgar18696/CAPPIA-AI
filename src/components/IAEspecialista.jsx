@@ -29,7 +29,7 @@ async function consultarIA() {
 
   if (error || !data || data.length === 0) {
     setResposta(
-      "Não encontrei essa informação na base APPIA. Recomendo confirmar pelo código gravado na peça original ou pelo chassi do veículo."
+      "Não encontrei essa informação na base PAIIA. Recomendo confirmar pelo código gravado na peça original ou pelo chassi do veículo."
     );
     return;
   }

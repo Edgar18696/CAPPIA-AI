@@ -15,7 +15,7 @@ export default function ChecklistAnuncio({
   return (
     <div style={checklistStyle}>
       <h3 style={{ color: "#67e8f9", marginTop: 0 }}>
-        🤖 Checklist APPIA
+        🤖 Checklist PAIIA
       </h3>
 
       <p style={checkItemStyle}>{codigo || oem ? "✅" : "⬜"} Código informado</p>

@@ -417,17 +417,31 @@ if (
    */
 
   const ehElectronicSystems2016 =
+  (
+    nomeNormalizado.includes(
+      "parts electronic systems and ignition"
+    ) ||
+    nomeNormalizado.includes(
+      "electronic systems and ignition"
+    ) ||
+    nomeNormalizado.includes(
+      "sistemi elettronici e accensione"
+    ) ||
+    nomeNormalizado.includes(
+      "buyers guide section1"
+    ) ||
+    nomeNormalizado.includes(
+      "buyers guide section 1"
+    ) ||
     (
       nomeNormalizado.includes(
-        "parts electronic systems and ignition"
-      ) ||
+        "magneti marelli"
+      ) &&
       nomeNormalizado.includes(
-        "electronic systems and ignition"
-      ) ||
-      nomeNormalizado.includes(
-        "sistemi elettronici e accensione"
+        "buyers guide"
       )
-    );
+    )
+  );
 
   if (
   ehElectronicSystems2016 &&

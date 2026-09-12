@@ -4,6 +4,7 @@ import identificarFamiliaPorCodigo from "./identificarFamiliaPorCodigo";
 import identificarCategoriaPorCodigo from "./identificarCategoriaPorCodigo";
 import identificarSistemaPorCodigo from "./identificarSistemaPorCodigo";
 import normalizarCodigo from "./normalizarCodigo";
+import { buscarAplicacoes } from "../../inteligenciaCatalogo/buscarAplicacoes";
 
 function montarCategoria(familia = "") {
   const texto = String(familia || "").toLowerCase();

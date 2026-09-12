@@ -61,7 +61,7 @@ export function motorRecomendacao({
 
   return {
     titulo:
-      "🧠 Recomendação APPIA",
+      "🧠 Recomendação PAIIA",
 
     mensagens,
   };

@@ -81,7 +81,7 @@ export default function AlertasTecnicosIA({
   return (
     <div style={container}>
       <h2 style={titulo}>
-        ⚠️ Alertas Técnicos APPIA AI
+        ⚠️ Alertas Técnicos PAIIA AI
       </h2>
 
       {alertas.map((alerta, index) => (

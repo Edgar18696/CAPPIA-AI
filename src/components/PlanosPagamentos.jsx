@@ -149,7 +149,7 @@ export default function PlanosPagamentos({
 
     alert(
       [
-        "💎 Compra de créditos APPIA",
+        "💎 Compra de créditos PAIIA",
         "",
         `Pacote: ${pacoteCreditoSelecionado.quantidade} créditos`,
         `Valor: ${pacoteCreditoSelecionado.valor}`,
@@ -206,7 +206,7 @@ export default function PlanosPagamentos({
 
     alert(
       [
-        "💳 Checkout APPIA",
+        "💳 Checkout PAIIA",
         "",
         `Plano: ${planoAtual.nome}`,
         `Valor: ${planoAtual.preco} ${planoAtual.periodo}`,
@@ -274,7 +274,7 @@ export default function PlanosPagamentos({
               }}
             >
               Gerencie sua assinatura,
-              créditos APPIA e formas de
+              créditos PAIIA e formas de
               pagamento.
             </p>
           </div>
@@ -305,7 +305,7 @@ export default function PlanosPagamentos({
           titulo="Conta"
           valor={
             usuario?.email ||
-            "Usuário APPIA"
+            "Usuário PAIIA"
           }
         />
 
@@ -862,7 +862,7 @@ export default function PlanosPagamentos({
                 lineHeight: 1.5,
               }}
             >
-              ⚠️ Importante: A conta APPIA será liberada
+              ⚠️ Importante: A conta PAIIA será liberada
               após a confirmação do pagamento do boleto.
             </div>
           </div>
@@ -1072,7 +1072,7 @@ export default function PlanosPagamentos({
           >
             Na integração real, os dados do cartão serão
             enviados diretamente ao gateway de pagamento.
-            A APPIA não armazenará o número completo do cartão
+            A PAIIA não armazenará o número completo do cartão
             nem o CVV.
           </p>
         </section>

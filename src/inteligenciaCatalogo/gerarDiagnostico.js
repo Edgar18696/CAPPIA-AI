@@ -88,7 +88,7 @@ export function gerarDiagnostico(
       (registro) =>
         registro.origem_catalogo ||
         registro.fonte ||
-        "Base Mestre APPIA"
+        "Base Mestre PAIIA"
     )
   );
 
@@ -138,7 +138,7 @@ export function gerarDiagnostico(
     ) ||
     texto(primeiro.fonte) ||
     fontes[0] ||
-    "Base Mestre APPIA";
+    "Base Mestre PAIIA";
 
   const paginaPrincipal =
     texto(

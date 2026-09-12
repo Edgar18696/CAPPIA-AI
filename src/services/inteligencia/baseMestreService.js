@@ -142,7 +142,7 @@ function montarBaseAplicacao(
 
               origem:
                 registro.origem_catalogo ||
-                "Base APPIA",
+                "Base PAIIA",
             },
           ]
         : [],
@@ -225,7 +225,7 @@ export async function buscarBaseMestre(
 
   if (!data) {
     console.log(
-      "🤖 PAIZINHO APPIA — Código não encontrado:",
+      "🤖 PAIZINHO PAIIA — Código não encontrado:",
       codigoNormalizado
     );
 
@@ -233,14 +233,14 @@ export async function buscarBaseMestre(
   }
 
   console.log(
-    "🤖 PAIZINHO APPIA — Código encontrado:",
+    "🤖 PAIZINHO PAIIA — Código encontrado:",
     codigoNormalizado
   );
 
   console.log(
     "📚 Fonte:",
     data.origem_catalogo ||
-      "Base Mestre APPIA"
+      "Base Mestre PAIIA"
   );
 
   return montarBaseAplicacao(
