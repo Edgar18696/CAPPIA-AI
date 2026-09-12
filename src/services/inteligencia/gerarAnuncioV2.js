@@ -59,7 +59,7 @@ export async function gerarAnuncioV2({
       : null,
 
     "",
-    `Confiança APPIA AI: ${
+    `Confiança PAIIA AI: ${
       Number(confianca.percentual) || 0
     }% (${confianca.nivel || "Baixa"})`,
   ]

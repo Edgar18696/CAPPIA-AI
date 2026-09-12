@@ -708,7 +708,7 @@ export default function CentralPrecificacao({
             margin: "8px 0 6px 0",
           }}
         >
-          Paizinho APPIA
+          Paizinho PAIIA
         </h3>
 
         <p
@@ -851,7 +851,7 @@ export default function CentralPrecificacao({
                 color: "#ffffff",
               }}
             >
-              💡 Oportunidade APPIA
+              💡 Oportunidade PAIIA
             </strong>
 
             <span
@@ -885,7 +885,7 @@ export default function CentralPrecificacao({
           {estrategias.length > 0 && (
             <>
               <h3 style={tituloBloco}>
-                🚀 Estratégias APPIA
+                🚀 Estratégias PAIIA
               </h3>
 
               <div style={gradeEstrategias}>
@@ -1116,7 +1116,7 @@ export default function CentralPrecificacao({
     );
 
     setStatusAnalise(
-      "✅ Preço sugerido pelo APPIA aplicado. Você ainda pode alterá-lo antes de confirmar."
+      "✅ Preço sugerido pelo PAIIA aplicado. Você ainda pode alterá-lo antes de confirmar."
     );
   }}
   style={botaoSecundario}

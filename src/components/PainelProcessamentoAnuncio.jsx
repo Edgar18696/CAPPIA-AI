@@ -23,7 +23,7 @@ export default function PainelProcessamentoAnuncio({
           marginTop: 0,
         }}
       >
-        🤖 APPIA AI
+        🤖 PAIIA AI
       </h2>
 
       <div

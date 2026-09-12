@@ -161,21 +161,46 @@ export const configuracaoBosch = {
       paginaInicialAplicacoes: 5,
       paginaFinalAplicacoes: 15,
 
-      paginaInicialEquivalencias: null,
+            paginaInicialEquivalencias: null,
       paginaFinalEquivalencias: null,
     },
 
-    bicos_gasolina: {
-      tipoCatalogo: "bicos_gasolina",
+    gasolina_2023: {
+      tipoCatalogo: "gasolina_2023",
 
       origemCatalogo:
-        "Catálogo Bosch Bicos Injetores Gasolina e Flex",
+        "Bosch Ignition and Gasoline Injection Parts and Sensors Product Portfolio 2023",
 
-      paginaInicialAplicacoes: 1,
-      paginaFinalAplicacoes: null,
+      paginaInicialAplicacoes: 20,
+      paginaFinalAplicacoes: 180,
 
       paginaInicialEquivalencias: null,
       paginaFinalEquivalencias: null,
+
+      palavrasChave: [
+        "ignition",
+        "gasoline",
+        "injection",
+        "injector",
+        "gasoline injector",
+        "high-pressure injector",
+        "fuel pump",
+        "fuel supply module",
+        "ignition cable",
+        "ignition coil",
+        "lambda",
+        "oxygen sensor",
+        "crankshaft sensor",
+        "camshaft sensor",
+        "knock sensor",
+        "air mass meter",
+        "pressure sensor",
+        "temperature sensor",
+        "speed sensor",
+        "throttle valve",
+        "product portfolio",
+        "2023",
+      ],
     },
 
     gasolina_2025: {

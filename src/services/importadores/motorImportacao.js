@@ -43,27 +43,95 @@ function selecionarConfiguracaoCatalogo(
       .replace(/[_-]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+/*
+ * =======================================================
+ * MAGNETI MARELLI — BUYERS GUIDE SECTION 1
+ * PDF separado do Electronic Systems
+ * =======================================================
+ */
+
+if (
+  arquivoNormalizado.includes(
+    "buyers guide section1"
+  ) ||
+  arquivoNormalizado.includes(
+    "buyers guide section 1"
+  )
+) {
+  const catalogoConfigurado =
+    configuracao.catalogos
+      ?.sistemasEletronicos;
+
+  if (catalogoConfigurado) {
+    console.log(
+      "🎯 CATÁLOGO FORÇADO:",
+      "sistemasEletronicos"
+    );
+
+   return {
+  ...configuracao,
+  ...catalogoConfigurado,
+
+  tipoCatalogo:
+    "sistemas_eletronicos",
+
+  fabricante:
+    "Magneti Marelli",
 
   /*
-   * =======================================================
-   * PRIORIDADE ABSOLUTA — MAGNETI MARELLI
-   * SISTEMA DE COMBUSTÍVEL
-   * =======================================================
+   * PDF recortado:
+   * página 1 = antiga página 481
+   * página 192 = antiga página 672
    */
+  paginaInicialReferencias:
+    1,
 
-  const ehSistemaCombustivelMarelli =
-    arquivoNormalizado.includes(
-      "fuel level sensors"
-    ) ||
-    arquivoNormalizado.includes(
-      "fuel level sensor"
-    ) ||
-    arquivoNormalizado.includes(
-      "fuel supply units"
-    ) ||
-    arquivoNormalizado.includes(
-      "fuel supply unit"
-    );
+  paginaFinalReferencias:
+    192,
+
+  paginaInicialAplicacoes:
+    1,
+
+  paginaFinalAplicacoes:
+    192,
+
+  paginaInicialEquivalencias:
+    null,
+
+  paginaFinalEquivalencias:
+    null,
+
+  catalogos:
+    configuracao.catalogos,
+
+  chaves:
+    configuracao.chaves,
+};
+
+  } // fecha if (catalogoConfigurado)
+
+} // fecha if (buyers guide section1)
+
+/*
+ * =======================================================
+ * PRIORIDADE ABSOLUTA — MAGNETI MARELLI
+ * SISTEMA DE COMBUSTÍVEL
+ * =======================================================
+ */
+
+const ehSistemaCombustivelMarelli =
+  arquivoNormalizado.includes(
+    "fuel level sensors"
+  ) ||
+  arquivoNormalizado.includes(
+    "fuel level sensor"
+  ) ||
+  arquivoNormalizado.includes(
+    "fuel supply units"
+  ) ||
+  arquivoNormalizado.includes(
+    "fuel supply unit"
+  );
 
   if (
     ehSistemaCombustivelMarelli
@@ -144,7 +212,52 @@ function selecionarConfiguracaoCatalogo(
    * =======================================================
    */
    let chaveForcada = "";
+/*
+ * =======================================================
+ * BOSCH CATÁLOGO 2 — GASOLINA / IGNIÇÃO 2023
+ * =======================================================
+ */
 
+if (
+  arquivoNormalizado ===
+    "bosch catalogo 2.pdf" ||
+  arquivoNormalizado ===
+    "bosch catalogo 2"
+) {
+  chaveForcada =
+    "gasolina_2023";
+}
+if (
+  arquivoNormalizado ===
+    "bosch catalogo 2.pdf" ||
+  arquivoNormalizado ===
+    "bosch catalogo 2"
+) {
+  const catalogoForcado =
+    configuracao.catalogos
+      ?.gasolina_2023;
+
+  if (catalogoForcado) {
+    console.log(
+      "🎯 CATÁLOGO FORÇADO:",
+      "gasolina_2023"
+    );
+
+    return {
+      ...configuracao,
+      ...catalogoForcado,
+
+      catalogos:
+        configuracao.catalogos,
+
+      fabricante:
+        configuracao.fabricante,
+
+      chaves:
+        configuracao.chaves,
+    };
+  }
+}
   /*
    * =======================================================
    * LÂMPADAS / BULBS
@@ -428,6 +541,31 @@ function selecionarConfiguracaoCatalogo(
     chaveForcada =
       "sistemasEletronicos";
 
+   /*
+   * =======================================================
+   * BOSCH GASOLINE / IGNITION 2023
+   * =======================================================
+   */
+
+  } else if (
+    (
+      arquivoNormalizado.includes(
+        "gasoline"
+      ) ||
+      arquivoNormalizado.includes(
+        "ignition"
+      )
+    ) &&
+    arquivoNormalizado.includes(
+      "product portfolio"
+    ) &&
+    arquivoNormalizado.includes(
+      "2023"
+    )
+  ) {
+    chaveForcada =
+      "gasolina_2023";
+
   /*
    * =======================================================
    * BOSCH GASOLINE 2025
@@ -447,7 +585,6 @@ function selecionarConfiguracaoCatalogo(
   ) {
     chaveForcada =
       "gasolina_2025";
-
   /*
    * =======================================================
    * IGNIÇÃO
@@ -1112,7 +1249,7 @@ export async function motorImportacao({
     }
 
     onProgresso?.(
-      "💾 Gravando catálogo na Base APPIA..."
+      "💾 Gravando catálogo na Base PAIIA..."
     );
 
     const resultadoSalvar =
@@ -1983,6 +2120,535 @@ export async function motorImportacao({
     "📦 REGISTROS INTERPRETADOS:",
     registros.length
   );
+/*
+ * =======================================================
+ * AUDITORIA FINAL — MARELLI ELECTRONIC SYSTEMS
+ * Detecta possível mistura entre blocos de produtos.
+ * NÃO altera os registros.
+ * =======================================================
+ */
+
+if (
+  tipoCatalogoNormalizado ===
+  "sistemas_eletronicos"
+) {
+  function normalizarCodigoAuditoria(
+    valor = ""
+  ) {
+    return String(
+      valor || ""
+    )
+      .toUpperCase()
+      .replace(
+        /[^A-Z0-9]/g,
+        ""
+      );
+  }
+
+  const suspeitosAuditoria =
+    [];
+
+  const mapaOemParaEquivalentes =
+    new Map();
+
+  const mapaEquivalenteParaOems =
+    new Map();
+
+  registros.forEach(
+    (registro, indice) => {
+      const codigoOem =
+        String(
+          registro?.codigo_oem ||
+          registro?.codigo ||
+          ""
+        ).trim();
+
+      const codigoEquivalente =
+        String(
+          registro
+            ?.codigo_equivalente ||
+          registro?.equivalente ||
+          ""
+        ).trim();
+
+      const equivalentes =
+        Array.isArray(
+          registro?.equivalentes
+        )
+          ? registro.equivalentes
+          : [];
+
+      const observacao =
+        String(
+          registro?.observacao ||
+          registro?.aplicacao ||
+          ""
+        );
+
+      /*
+ * =======================================================
+ * TEXTO SEGURO PARA AUDITORIA
+ *
+ * NÃO usamos JSON.stringify(registro),
+ * porque modelo/descrição podem conter números longos
+ * legítimos e gerar falso positivo.
+ * =======================================================
+ */
+
+const textoAuditoria =
+  [
+    codigoOem,
+
+    codigoEquivalente,
+
+    ...equivalentes,
+
+    registro?.aplicacao || "",
+
+    registro?.observacao || "",
+  ]
+    .filter(Boolean)
+    .join(" | ")
+    .toUpperCase();
+
+/*
+ * -----------------------------------------------
+ * Códigos curtos encontrados
+ * -----------------------------------------------
+ *
+ * Incluímos as famílias que estamos validando
+ * no Electronic Systems.
+ */
+
+const codigosCurtosEncontrados =
+  [
+    ...textoAuditoria.matchAll(
+      /\b(?:IWP|IPM|FEI|PAS|TB)(?=[0-9])[A-Z0-9./-]*\b/g
+    ),
+  ]
+    .map(
+      (resultado) =>
+        resultado[0]
+    )
+    .filter(Boolean);
+
+const codigosCurtosUnicos =
+  [
+    ...new Set(
+      codigosCurtosEncontrados.map(
+        normalizarCodigoAuditoria
+      )
+    ),
+  ];
+
+/*
+ * -----------------------------------------------
+ * OEMs longos encontrados
+ *
+ * Agora procura SOMENTE em:
+ * código + equivalente + aplicação + observação.
+ *
+ * Modelo e montadora ficam fora da auditoria.
+ * -----------------------------------------------
+ */
+
+const oemsEncontrados =
+  [
+    ...textoAuditoria.matchAll(
+      /\b8\d{11}\b/g
+    ),
+  ]
+    .map(
+      (resultado) =>
+        resultado[0]
+    )
+    .filter(Boolean);
+
+const oemsUnicos =
+  [
+    ...new Set(
+      oemsEncontrados
+    ),
+  ];
+
+      const equivalenteNormalizado =
+        normalizarCodigoAuditoria(
+          codigoEquivalente
+        );
+
+      const oemNormalizado =
+        normalizarCodigoAuditoria(
+          codigoOem
+        );
+
+      /*
+       * -----------------------------------------------
+       * TESTE 1
+       * Um registro contém MAIS DE UM código curto
+       * diferente: exemplo IWP049 + IWP058.
+       * -----------------------------------------------
+       */
+
+      if (
+        codigosCurtosUnicos.length >
+        1
+      ) {
+        suspeitosAuditoria.push({
+          indice,
+          motivo:
+            "MAIS DE UM CÓDIGO CURTO NO MESMO REGISTRO",
+          montadora:
+            registro?.montadora || "",
+          modelo:
+            registro?.modelo || "",
+          codigo_oem:
+            codigoOem,
+          equivalente:
+            codigoEquivalente,
+          encontrados:
+            codigosCurtosUnicos.join(
+              " | "
+            ),
+          observacao,
+        });
+      }
+
+      /*
+       * -----------------------------------------------
+       * TESTE 2
+       * Código equivalente principal não bate
+       * com o código encontrado no próprio registro.
+       * -----------------------------------------------
+       */
+
+      if (
+        equivalenteNormalizado &&
+        codigosCurtosUnicos.length >
+          0 &&
+        !codigosCurtosUnicos.includes(
+          equivalenteNormalizado
+        )
+      ) {
+        suspeitosAuditoria.push({
+          indice,
+          motivo:
+            "EQUIVALENTE DIFERENTE DO BLOCO",
+          montadora:
+            registro?.montadora || "",
+          modelo:
+            registro?.modelo || "",
+          codigo_oem:
+            codigoOem,
+          equivalente:
+            codigoEquivalente,
+          encontrados:
+            codigosCurtosUnicos.join(
+              " | "
+            ),
+          observacao,
+        });
+      }
+
+      /*
+       * -----------------------------------------------
+       * TESTE 3
+       * Mais de um OEM longo Marelli dentro
+       * do mesmo registro.
+       * -----------------------------------------------
+       */
+
+      if (
+        oemsUnicos.length >
+        1
+      ) {
+        suspeitosAuditoria.push({
+          indice,
+          motivo:
+            "MAIS DE UM OEM LONGO NO MESMO REGISTRO",
+          montadora:
+            registro?.montadora || "",
+          modelo:
+            registro?.modelo || "",
+          codigo_oem:
+            codigoOem,
+          equivalente:
+            codigoEquivalente,
+          encontrados:
+            oemsUnicos.join(
+              " | "
+            ),
+          observacao,
+        });
+      }
+
+      /*
+       * -----------------------------------------------
+       * TESTE 4
+       * OEM gravado não aparece entre os OEMs
+       * encontrados no próprio registro.
+       * -----------------------------------------------
+       */
+
+      if (
+        oemNormalizado &&
+        /^8\d{11}$/.test(
+          oemNormalizado
+        ) &&
+        oemsUnicos.length >
+          0 &&
+        !oemsUnicos.includes(
+          oemNormalizado
+        )
+      ) {
+        suspeitosAuditoria.push({
+          indice,
+          motivo:
+            "OEM DIFERENTE DO BLOCO",
+          montadora:
+            registro?.montadora || "",
+          modelo:
+            registro?.modelo || "",
+          codigo_oem:
+            codigoOem,
+          equivalente:
+            codigoEquivalente,
+          encontrados:
+            oemsUnicos.join(
+              " | "
+            ),
+          observacao,
+        });
+      }
+
+      /*
+       * -----------------------------------------------
+       * MAPA OEM -> EQUIVALENTE
+       * -----------------------------------------------
+       */
+
+      if (
+        codigoOem &&
+        codigoEquivalente
+      ) {
+        if (
+          !mapaOemParaEquivalentes.has(
+            codigoOem
+          )
+        ) {
+          mapaOemParaEquivalentes.set(
+            codigoOem,
+            new Set()
+          );
+        }
+
+        mapaOemParaEquivalentes
+          .get(
+            codigoOem
+          )
+          .add(
+            codigoEquivalente
+          );
+
+        if (
+          !mapaEquivalenteParaOems.has(
+            codigoEquivalente
+          )
+        ) {
+          mapaEquivalenteParaOems.set(
+            codigoEquivalente,
+            new Set()
+          );
+        }
+
+        mapaEquivalenteParaOems
+          .get(
+            codigoEquivalente
+          )
+          .add(
+            codigoOem
+          );
+      }
+    }
+  );
+
+  /*
+   * -----------------------------------------------
+   * Duplicidades de relacionamento
+   * -----------------------------------------------
+   */
+
+  const oemsComVariosEquivalentes =
+    [
+      ...mapaOemParaEquivalentes
+        .entries(),
+    ]
+      .filter(
+        ([, equivalentes]) =>
+          equivalentes.size >
+          1
+      )
+      .map(
+        ([oem, equivalentes]) => ({
+          oem,
+          equivalentes:
+            [
+              ...equivalentes,
+            ].join(
+              " | "
+            ),
+        })
+      );
+
+  const equivalentesComVariosOems =
+    [
+      ...mapaEquivalenteParaOems
+        .entries(),
+    ]
+      .filter(
+        ([, oems]) =>
+          oems.size >
+          1
+      )
+      .map(
+        ([equivalente, oems]) => ({
+          equivalente,
+          oems:
+            [
+              ...oems,
+            ].join(
+              " | "
+            ),
+        })
+      );
+
+  console.log(
+    "======================================"
+  );
+
+  console.log(
+    "🛡️ AUDITORIA FINAL MARELLI"
+  );
+
+  console.log(
+    "📦 TOTAL:",
+    registros.length
+  );
+
+// Auditoria de suspeitos desativada temporariamente 
+
+  console.log(
+    "🔗 OEMs COM MAIS DE UM EQUIVALENTE:",
+    oemsComVariosEquivalentes.length
+  );
+
+  if (
+    oemsComVariosEquivalentes.length >
+    0
+  ) {
+    console.table(
+      oemsComVariosEquivalentes
+    );
+  }
+
+  console.log(
+    "🔗 EQUIVALENTES COM MAIS DE UM OEM:",
+    equivalentesComVariosOems.length
+  );
+
+  if (
+    equivalentesComVariosOems.length >
+    0
+  ) {
+    console.table(
+      equivalentesComVariosOems
+    );
+  }
+
+  console.log(
+    "======================================"
+  );
+}
+  /*
+   * =======================================================
+   * DIAGNÓSTICO TEMPORÁRIO — IWP058
+   * =======================================================
+   *
+   * Executa somente no catálogo Sistemas Eletrônicos.
+   * Não altera nem filtra os registros; apenas mostra
+   * no console as aplicações encontradas para o IWP058.
+   */
+  if (
+  tipoCatalogoNormalizado ===
+  "sistemas_eletronicos"
+) {
+  const registrosIWP217 =
+    registros.filter(
+      (registro) => {
+        const textoRegistro =
+          JSON.stringify(
+            registro || {}
+          ).toUpperCase();
+
+        return (
+          textoRegistro.includes(
+            "805010089002"
+          ) ||
+          textoRegistro.includes(
+            "IWP217"
+          )
+        );
+      }
+    );
+
+  console.log(
+    "======================================"
+  );
+
+  console.log(
+    "💉 TESTE IWP217 — REGISTROS:",
+    registrosIWP217.length
+  );
+
+  console.log(
+    "💉 TESTE IWP217 — APLICAÇÕES:",
+    registrosIWP217
+  );
+
+  console.table(
+    registrosIWP217.map(
+      (registro, indice) => ({
+        n: indice + 1,
+
+        montadora:
+          registro?.montadora || "",
+
+        modelo:
+          registro?.modelo || "",
+
+        motor:
+          registro?.motor || "",
+
+        ano_inicio:
+          registro?.ano_inicio || "",
+
+        ano_fim:
+          registro?.ano_fim || "",
+
+        codigo_oem:
+          registro?.codigo_oem || "",
+
+        equivalente:
+          registro?.codigo_equivalente ||
+          registro?.equivalente ||
+          "",
+      })
+    )
+  );
+
+  console.log(
+    "======================================"
+  );
+}
 
   /*
    * =======================================================
@@ -2069,7 +2735,7 @@ export async function motorImportacao({
    */
 
   onProgresso?.(
-    "💾 Gravando catálogo na Base APPIA..."
+    "💾 Gravando catálogo na Base PAIIA..."
   );
 
   const resultadoSalvar =

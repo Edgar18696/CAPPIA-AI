@@ -1,8 +1,75 @@
+import { useEffect } from "react";
+import { supabase } from "../supabase.js";
+
 export default function ContasMarketplace({
   usuario,
   cardStyle,
   setScreen,
 }) {
+    useEffect(() => {
+    async function concluirOAuthMercadoLivre() {
+      const params =
+        new URLSearchParams(
+          window.location.search
+        );
+
+      const code =
+        params.get("code");
+
+      const state =
+        params.get("state");
+
+      if (!code) {
+        return;
+      }
+
+      try {
+        const { data, error } =
+          await supabase.functions.invoke(
+            "mercadolivre-oauth",
+            {
+              body: {
+                code,
+                user_id:
+                  state ||
+                  usuario?.id ||
+                  "",
+              },
+            }
+          );
+
+        if (error) {
+          throw error;
+        }
+
+        console.log(
+          "✅ MERCADO LIVRE OAUTH:",
+          data
+        );
+
+        alert(
+          "Mercado Livre conectado com sucesso."
+        );
+
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
+      } catch (erro) {
+        console.error(
+          "❌ Erro OAuth Mercado Livre:",
+          erro
+        );
+
+        alert(
+          "Não foi possível concluir a conexão com o Mercado Livre."
+        );
+      }
+    }
+
+    concluirOAuthMercadoLivre();
+  }, [usuario?.id]);
   function conectarMercadoLivre() {
     const clientId =
       import.meta.env.VITE_ML_CLIENT_ID;
@@ -28,13 +95,26 @@ export default function ContasMarketplace({
       return;
     }
 
-    const url =
-      `https://auth.mercadolivre.com.br/authorization` +
-      `?response_type=code` +
-      `&client_id=${clientId}` +
-      `&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}`;
+    const userId =
+  usuario?.id || "";
+
+if (!userId) {
+  alert(
+    "Usuário não identificado. Entre novamente no PAIIA."
+  );
+  return;
+}
+
+const url =
+  `https://auth.mercadolivre.com.br/authorization` +
+  `?response_type=code` +
+  `&client_id=${clientId}` +
+  `&redirect_uri=${encodeURIComponent(
+    redirectUri
+  )}` +
+  `&state=${encodeURIComponent(
+    userId
+  )}`;
 
     window.location.href = url;
   }
@@ -89,7 +169,7 @@ export default function ContasMarketplace({
           }}
         >
           Conecte suas contas para publicar
-          anúncios diretamente pelo APPIA AI.
+          anúncios diretamente pelo PAIIA AI.
         </p>
       </section>
 
@@ -154,7 +234,7 @@ export default function ContasMarketplace({
               "8px 0 6px 0",
           }}
         >
-          Paizinho APPIA
+          Paizinho PAIIA
         </h3>
 
         <p

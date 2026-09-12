@@ -181,7 +181,7 @@ ANOS:
 ${montarAno(item)}
 
 CATÁLOGO:
-${item.origem_catalogo || "Base APPIA"}
+${item.origem_catalogo || "Base PAIIA"}
 
 OBSERVAÇÃO:
 ${
@@ -200,7 +200,7 @@ ${
 
       alert(
         error.message ||
-          "Erro ao consultar a Base Mestre APPIA."
+          "Erro ao consultar a Base Mestre PAIIA."
       );
 
       return false;

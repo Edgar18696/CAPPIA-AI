@@ -12,13 +12,19 @@ export async function vincularImagensProjeto(
     return { error: null };
   }
 
-  const registros = imagens.map((item) => ({
-    user_id: usuario.id,
-    projeto_id: projetoId,
-    processamento_id: item.id || item.created_at,
-    imagem_url: item.imagem_processada || item.imagem_original,
-    tipo: item.tipo || "foto",
-  }));
+  const registros = imagens
+    .filter((item) => item?.id)
+    .map((item) => ({
+      user_id: usuario.id,
+      projeto_id: projetoId,
+      processamento_id: item.id,
+      imagem_url: item.imagem_processada || item.imagem_original,
+      tipo: item.tipo || "foto",
+    }));
+
+  if (registros.length === 0) {
+    return { error: null };
+  }
 
   const { data, error } = await supabase
     .from("projeto_imagens")

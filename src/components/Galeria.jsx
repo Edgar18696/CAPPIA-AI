@@ -1,9 +1,59 @@
-import { useEffect, useRef } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { supabase } from "../supabase";
+import { obterIdProcessamento } from "../services/processamentosService";
+
+function chaveVisualGaleria(item) {
+  return (
+    item?.id ||
+    item?.imagem_processada ||
+    item?.created_at ||
+    ""
+  );
+}
+
+function urlMiniaturaCardBanner(urlOriginal) {
+  const texto = String(urlOriginal || "");
+  const marcador =
+    "/storage/v1/object/public/imagens/";
+  const indice = texto.indexOf(marcador);
+
+  if (indice < 0) {
+    return "";
+  }
+
+  const caminho = decodeURIComponent(
+    texto
+      .slice(indice + marcador.length)
+      .split("?")[0]
+  );
+
+  const match = caminho.match(
+    /^([^/]+)\/banners\/(paiia-banner-\d+)\.png$/i
+  );
+
+  if (!match) {
+    return "";
+  }
+
+  return (
+    texto.slice(
+      0,
+      indice + marcador.length
+    ) +
+    `${match[1]}/banners/${match[2]}-thumb.webp`
+  );
+}
 
 export default function Galeria({
   galeria,
   filtroGaleria,
   setFiltroGaleria,
+  selecionarAbaGaleria,
   buscaGaleria,
   setBuscaGaleria,
   selecionadas,
@@ -18,7 +68,68 @@ export default function Galeria({
   setScreen,
   setFotosAnuncio,
   cardStyle,
+  galeriaTemMais = false,
+  carregarMaisGaleria,
 }) {
+
+  const [imagemAberta, setImagemAberta] = useState(null);
+
+  const [
+    bannersGaleria,
+    setBannersGaleria,
+  ] = useState(() => {
+    if (
+      Array.isArray(
+        window.__paiiaBannersGaleriaCache
+      )
+    ) {
+      return window
+        .__paiiaBannersGaleriaCache;
+    }
+
+    return [];
+  });
+
+  const [abaMidiaAnuncio, setAbaMidiaAnuncio] =
+    useState("foto");
+useEffect(() => {
+  const modoAtual =
+    localStorage.getItem(
+      "modoGaleria"
+    );
+
+  if (modoAtual !== "selecionarParaAnuncio") {
+    localStorage.removeItem(
+      "galeriaAbaFixa"
+    );
+    localStorage.removeItem(
+      "abrirGaleriaNaAba"
+    );
+    return;
+  }
+
+  const abaInicial =
+    localStorage.getItem(
+      "galeriaAbaFixa"
+    ) ||
+    localStorage.getItem(
+      "abrirGaleriaNaAba"
+    );
+
+  if (abaInicial === "banner") {
+    setAbaMidiaAnuncio(
+      "banner"
+    );
+  } else if (abaInicial === "foto") {
+    setAbaMidiaAnuncio(
+      "foto"
+    );
+  }
+
+  localStorage.removeItem(
+    "abrirGaleriaNaAba"
+  );
+}, []);
   const inputFotoComputadorRef = useRef(null);
 
   function importarFotoDoComputador(event) {
@@ -38,6 +149,12 @@ export default function Galeria({
       "imagemClipSelecionada",
       urlTemporaria
     );
+    if (localStorage.getItem("paiiaAbaMidias") === "produto") {
+      localStorage.setItem(
+        "imagemClipProdutoSelecionada",
+        urlTemporaria
+      );
+    }
 
     localStorage.setItem(
       "abrirClipAutomatico",
@@ -72,10 +189,13 @@ useEffect(() => {
   if (abrirUltimas) {
     setFiltroGaleria("foto");
     setBuscaGaleria("");
-  } else if (filtroSalvo) {
-    setFiltroGaleria(
-      filtroSalvo
-    );
+  } else if (
+    filtroSalvo === "foto" ||
+    filtroSalvo === "banner" ||
+    filtroSalvo === "video" ||
+    filtroSalvo === "mascote"
+  ) {
+    setFiltroGaleria(filtroSalvo);
   }
 
   window.scrollTo({
@@ -95,39 +215,11 @@ useEffect(() => {
   setFiltroGaleria,
   setBuscaGaleria,
 ]);
- let modoGaleria =
-  localStorage.getItem("modoGaleria");
 
-const abrirGaleriaClip =
+const modoGaleria =
   localStorage.getItem(
-    "abrirGaleriaClip"
-  ) === "true";
-
-const abrirGaleriaBanner =
-  localStorage.getItem(
-    "abrirGaleriaBanner"
-  ) === "true";
-
-const abrirGaleriaAnuncio =
-  localStorage.getItem(
-    "abrirGaleriaAnuncio"
-  ) === "true";
-
-const temEntradaEspecial =
-  abrirGaleriaClip ||
-  abrirGaleriaBanner ||
-  abrirGaleriaAnuncio;
-
-if (
-  modoGaleria &&
-  !temEntradaEspecial
-) {
-  localStorage.removeItem(
     "modoGaleria"
   );
-
-  modoGaleria = null;
-}
 
 const selecionandoParaBanner =
   modoGaleria ===
@@ -137,238 +229,716 @@ const selecionandoParaClip =
   modoGaleria ===
   "clipIA";
 
-  const selecionandoParaAnuncio =
-    modoGaleria === "selecionarParaAnuncio";
+const selecionandoParaAnuncio =
+  modoGaleria ===
+  "selecionarParaAnuncio";
 
-  const galeriaOrdenada = [...galeria].sort(
-    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+useEffect(() => {
+  if (!selecionandoParaClip) {
+    return;
+  }
+
+  if (filtroGaleria === "foto" || filtroGaleria === "mascote") {
+    return;
+  }
+
+  if (typeof selecionarAbaGaleria === "function") {
+    selecionarAbaGaleria("foto");
+    return;
+  }
+
+  setFiltroGaleria("foto");
+}, [
+  selecionandoParaClip,
+  filtroGaleria,
+  selecionarAbaGaleria,
+  setFiltroGaleria,
+]);
+
+const abaGaleriaFixa = (() => {
+  if (!selecionandoParaAnuncio) {
+    return "";
+  }
+
+  const valor = String(
+    localStorage.getItem(
+      "galeriaAbaFixa"
+    ) || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (valor === "banner" || valor === "foto") {
+    return valor;
+  }
+
+  return "";
+})();
+
+const [limiteGaleria, setLimiteGaleria] =
+  useState(8);
+
+useEffect(() => {
+  setLimiteGaleria((atual) =>
+    atual === 8 ? atual : 8
   );
+}, [
+  filtroGaleria,
+  buscaGaleria,
+  selecionandoParaAnuncio,
+  abaMidiaAnuncio,
+]);
 
-  const galeriaFiltrada = galeriaOrdenada.filter((item) => {
-    const tipoItem =
-      String(item?.tipo || "")
-        .trim()
-        .toLowerCase();
 
-    // Galeria é exclusiva para fotos.
-    // Clips/vídeos e banners ficam somente em Mídias APPIA.
-    const ehMidiaAppia =
-      tipoItem === "clip" ||
-      tipoItem === "video" ||
-      tipoItem === "banner";
+// =====================================================
+// BANNERS — CARREGA SOMENTE QUANDO REALMENTE NECESSÁRIO
+// =====================================================
+//
+// IMPORTANTE:
+// A Galeria normal NÃO consulta banners no Supabase.
+// A consulta de banners acontece somente no fluxo
+// "selecionarParaAnuncio" e somente quando a aba
+// "Banners" é aberta.
+//
+// Isso evita uma segunda consulta pesada toda vez
+// que a Galeria é aberta.
+// =====================================================
 
-    if (ehMidiaAppia) {
-      return false;
+const bannersJaBuscadosRef = useRef(false);
+
+useEffect(() => {
+  let ativo = true;
+
+  async function carregarBannersGaleria() {
+    if (!selecionandoParaAnuncio) {
+      return;
     }
 
-    const passaTipo =
-      filtroGaleria === "todos"
-        ? true
-        : tipoItem ===
-          String(filtroGaleria || "")
+    if (abaMidiaAnuncio !== "banner") {
+      return;
+    }
+
+    if (bannersJaBuscadosRef.current) {
+      return;
+    }
+
+    bannersJaBuscadosRef.current = true;
+
+    try {
+      const {
+        data: dadosSessao,
+        error: erroSessao,
+      } = await supabase.auth.getSession();
+
+      if (erroSessao) {
+        throw erroSessao;
+      }
+
+      const usuario =
+        dadosSessao?.session?.user;
+
+      if (!usuario?.id) {
+        bannersJaBuscadosRef.current = false;
+        return;
+      }
+
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("processamentos")
+        .select("*")
+        .eq(
+          "user_id",
+          usuario.id
+        )
+        .eq(
+          "tipo",
+          "banner"
+        )
+        .eq(
+          "status",
+          "finalizado"
+        )
+        .not(
+          "imagem_processada",
+          "is",
+          null
+        )
+        .order(
+          "created_at",
+          { ascending: false }
+        )
+        .limit(8);
+
+      if (error) {
+        throw error;
+      }
+
+      const bannersLeves =
+        (
+          Array.isArray(data)
+            ? data
+            : []
+        ).map((item) => ({
+          ...item,
+          tipo: "banner",
+          imagem_original: "",
+        }));
+
+      if (!ativo) {
+        return;
+      }
+
+      const bannersOrdenados =
+        [...bannersLeves].sort(
+          (a, b) =>
+            new Date(
+              b?.created_at || 0
+            ) -
+            new Date(
+              a?.created_at || 0
+            )
+        );
+
+      setBannersGaleria(
+        bannersOrdenados
+      );
+
+      window.__paiiaBannersGaleriaCache =
+        bannersOrdenados;
+    } catch (erro) {
+      bannersJaBuscadosRef.current = false;
+
+      console.error(
+        "Erro ao carregar banners na Galeria:",
+        erro
+      );
+    }
+  }
+
+  carregarBannersGaleria();
+
+  return () => {
+    ativo = false;
+  };
+}, [
+  selecionandoParaAnuncio,
+  abaMidiaAnuncio,
+]);
+
+// =====================================================
+// GALERIA FILTRADA
+// JUNTA FOTOS + BANNERS
+// =====================================================
+
+const galeriaFiltrada =
+  useMemo(() => {
+    const fotos =
+      Array.isArray(galeria)
+        ? galeria
+        : [];
+
+    const banners =
+      Array.isArray(
+        bannersGaleria
+      )
+        ? bannersGaleria
+        : [];
+
+    const mapa =
+      new Map();
+
+    [
+      ...fotos,
+      ...banners,
+    ].forEach((item) => {
+      const chave =
+        chaveVisualGaleria(
+          item
+        );
+
+      if (!chave) {
+        return;
+      }
+
+      if (
+        !mapa.has(chave)
+      ) {
+        mapa.set(
+          chave,
+          item
+        );
+      }
+    });
+
+    const lista =
+      Array.from(
+        mapa.values()
+      );
+
+    lista.sort(
+      (a, b) =>
+        new Date(
+          b?.created_at || 0
+        ) -
+        new Date(
+          a?.created_at || 0
+        )
+    );
+
+    return lista.filter(
+      (item) => {
+        const tipoItem =
+          String(
+            item?.tipo || ""
+          )
             .trim()
             .toLowerCase();
 
-    const textoBusca =
-      buscaGaleria
-        .trim()
-        .toLowerCase();
+        const ehClipOuVideo =
+          tipoItem === "clip" ||
+          tipoItem === "video";
 
-    const passaBusca =
-      !textoBusca ||
-      tipoItem.includes(textoBusca) ||
-      String(item.created_at || "")
-        .toLowerCase()
-        .includes(textoBusca);
+        const ehBanner =
+          tipoItem ===
+          "banner";
 
-    return passaTipo && passaBusca;
-  });
+        const ehMascote =
+          tipoItem ===
+          "mascote";
 
-function selecionarImagemParaAnuncio(item) {
-  const modoGaleria =
-    localStorage.getItem("modoGaleria");
+        const ehFoto =
+          tipoItem === "foto" ||
+          (
+            !tipoItem &&
+            !ehClipOuVideo &&
+            !ehBanner &&
+            !ehMascote
+          );
+
+        if (!selecionandoParaAnuncio) {
+          if (filtroGaleria === "foto" && !ehFoto) {
+            return false;
+          }
+
+          if (filtroGaleria === "banner" && !ehBanner) {
+            return false;
+          }
+
+          if (filtroGaleria === "video" && !ehClipOuVideo) {
+            return false;
+          }
+
+          if (filtroGaleria === "mascote" && !ehMascote) {
+            return false;
+          }
+        }
+
+        /*
+         * =============================================
+         * FLUXO DO NOVO ANÚNCIO
+         * =============================================
+         *
+         * Mantemos como já estava:
+         * anúncio seleciona foto ou banner.
+         * Vídeo não entra neste fluxo.
+         * =============================================
+         */
+
+        if (
+          selecionandoParaAnuncio
+        ) {
+          const abaLista =
+            abaGaleriaFixa ||
+            abaMidiaAnuncio;
+
+          const passaAba =
+            abaLista ===
+            "banner"
+              ? ehBanner
+              : ehFoto;
+
+          if (!passaAba) {
+            return false;
+          }
+        }
+
+        /*
+         * =============================================
+         * BUSCA
+         * =============================================
+         */
+
+        const textoBusca =
+          String(
+            buscaGaleria || ""
+          )
+            .trim()
+            .toLowerCase();
+
+        const categoria =
+            ehMascote
+              ? "mascote"
+              : ehClipOuVideo
+            ? "video clip"
+            : ehBanner
+              ? "banner"
+              : "foto";
+
+        const passaBusca =
+          !textoBusca ||
+          categoria.includes(
+            textoBusca
+          ) ||
+          tipoItem.includes(
+            textoBusca
+          ) ||
+          String(
+            item?.created_at ||
+            ""
+          )
+            .toLowerCase()
+            .includes(
+              textoBusca
+            );
+
+        return passaBusca;
+      }
+    );
+  }, [
+    galeria,
+    bannersGaleria,
+    filtroGaleria,
+    buscaGaleria,
+    selecionandoParaAnuncio,
+    abaMidiaAnuncio,
+    abaGaleriaFixa,
+  ]);
+
+
+// =====================================================
+// SELEÇÃO PARA BANNER / CLIP
+// =====================================================
+
+function selecionarImagemParaAnuncio(
+  item
+) {
+  const modoAtual =
+    localStorage.getItem(
+      "modoGaleria"
+    );
+
+  // ===================================================
+  // BANNER EXPRESS
+  // ===================================================
 
   if (
-  modoGaleria ===
-  "selecionarParaBanner"
-) {
-  const url =
-    item.imagem_processada ||
-    item.imagem_original;
+    modoAtual ===
+    "selecionarParaBanner"
+  ) {
+    const url =
+      item?.imagem_processada ||
+      item?.imagem_original ||
+      "";
 
-  if (!url) {
-    alert(
-      "Esta imagem não possui uma URL válida."
+    if (!url) {
+      alert(
+        "Esta imagem não possui uma URL válida."
+      );
+
+      return;
+    }
+
+    setImagemBanner?.(
+      url
     );
+
+    localStorage.setItem(
+      "imagemBannerSelecionada",
+      url
+    );
+
+    localStorage.setItem(
+      "abrirBannerAutomatico",
+      "true"
+    );
+
+    localStorage.removeItem(
+      "modoGaleria"
+    );
+
+    setSelecionadas([]);
+
+    setScreen(
+      "bannerStudio"
+    );
+
     return;
   }
 
-  setImagemBanner?.(url);
+  // ===================================================
+  // CLIP IA
+  // ===================================================
 
-  localStorage.setItem(
-    "imagemBannerSelecionada",
-    url
-  );
+  if (
+    modoAtual ===
+    "clipIA"
+  ) {
+    const url =
+      item?.imagem_processada ||
+      item?.imagem_original ||
+      "";
 
-  localStorage.setItem(
-    "abrirBannerAutomatico",
-    "true"
-  );
+    if (!url) {
+      alert(
+        "Esta imagem não possui uma URL válida."
+      );
 
-  localStorage.removeItem(
-    "modoGaleria"
-  );
+      return;
+    }
 
-  setSelecionadas([]);
+    localStorage.setItem(
+      "imagemClipSelecionada",
+      url
+    );
+    if (localStorage.getItem("paiiaAbaMidias") === "produto") {
+      localStorage.setItem(
+        "imagemClipProdutoSelecionada",
+        url
+      );
+    }
 
-  setScreen("bannerStudio");
+    localStorage.setItem(
+      "abrirClipAutomatico",
+      "true"
+    );
 
-  return;
-}
+    localStorage.removeItem(
+      "modoGaleria"
+    );
 
-if (modoGaleria === "clipIA") {
-  const url =
-    item.imagem_processada ||
-    item.imagem_original;
+    setSelecionadas([]);
 
-  if (!url) {
-    alert("Esta imagem não possui uma URL válida.");
+    const destino =
+      localStorage.getItem(
+        "retornoCriacaoMidia"
+      ) === "midiasAppia"
+        ? "midiasAppia"
+        : "clipIA";
+
+    localStorage.removeItem(
+      "retornoCriacaoMidia"
+    );
+
+    setScreen(
+      destino
+    );
+
     return;
   }
-
-  localStorage.setItem(
-    "imagemClipSelecionada",
-    url
-  );
-
-  localStorage.setItem(
-    "abrirClipAutomatico",
-    "true"
-  );
-
-  localStorage.removeItem(
-    "modoGaleria"
-  );
-
-  setScreen("clipIA");
-  return;
 }
 
-  if (!selecionandoParaAnuncio) {
+
+// =====================================================
+// MARCA / DESMARCA FOTO OU BANNER DO ANÚNCIO
+// =====================================================
+
+function alternarSelecaoDoAnuncio(
+  item
+) {
+  const id =
+    obterIdProcessamento(
+      item
+    );
+
+  if (!id) {
+    alert(
+      "Esta imagem não possui identificador único. A seleção foi bloqueada."
+    );
     return;
   }
 
   if (
     selecionadas.includes(
-      item.created_at
+      id
     )
   ) {
     setSelecionadas(
       selecionadas.filter(
-        (id) =>
-          id !== item.created_at
+        (selecionada) =>
+          selecionada !== id
       )
     );
 
     return;
   }
 
-  // continua aqui o restante
-  // da função que já existe
+  if (
+    selecionadas.length >= 6
+  ) {
+    alert(
+      "Você pode selecionar no máximo 6 imagens entre fotos e banners."
+    );
+
+    return;
+  }
+
+  setSelecionadas([
+    ...selecionadas,
+    id,
+  ]);
 }
+
+
+// =====================================================
+// CONFIRMA FOTOS + BANNERS NO NOVO ANÚNCIO
+// =====================================================
+
 function confirmarImagensNoAnuncio() {
-  const novasFotos =
-    galeriaFiltrada
-      .filter((item) =>
-        selecionadas.includes(
-          item.created_at
-        )
-      )
-      .map((item) => ({
-        id:
-          item.id ||
-          item.created_at,
+  const fotos =
+    Array.isArray(galeria)
+      ? galeria
+      : [];
 
-        imagem_processada:
-          item.imagem_processada ||
-          item.imagem_original,
+  const banners =
+    Array.isArray(
+      bannersGaleria
+    )
+      ? bannersGaleria
+      : [];
 
-        imagem_original:
-          item.imagem_original,
+  const todasDisponiveis = [
+    ...fotos,
+    ...banners,
+  ];
 
-        tipo:
-          item.tipo,
+  const novasMidias =
+    todasDisponiveis
+      .filter((item) => {
+        const id =
+          obterIdProcessamento(
+            item
+          );
 
-        created_at:
-          item.created_at,
-      }));
-
-  setFotosAnuncio(
-    (fotosAtuais) => {
-      const atuais =
-        Array.isArray(
-          fotosAtuais
-        )
-          ? fotosAtuais
-          : [];
-
-      const todas = [
-        ...atuais,
-        ...novasFotos,
-      ];
-
-      const semDuplicadas =
-        todas.filter(
-          (
-            foto,
-            index,
-            lista
-          ) => {
-            const url =
-              foto?.imagem_processada ||
-              foto?.imagem_original ||
-              "";
-
-            return (
-              url &&
-              index ===
-                lista.findIndex(
-                  (item) =>
-                    (
-                      item?.imagem_processada ||
-                      item?.imagem_original ||
-                      ""
-                    ) === url
-                )
-            );
-          }
+        return (
+          id &&
+          selecionadas.includes(
+            id
+          )
         );
+      })
+      .filter((item) => {
+        const tipo =
+          String(
+            item?.tipo || ""
+          )
+            .trim()
+            .toLowerCase();
 
-      const rascunhoAtual =
-        JSON.parse(
-          localStorage.getItem(
-            "rascunhoNovoAnuncioTemp"
-          ) || "{}"
+        return (
+          tipo !== "clip" &&
+          tipo !== "video"
         );
+      })
+      .map((item) => {
+        const tipo =
+          String(
+            item?.tipo || ""
+          )
+            .trim()
+            .toLowerCase();
 
-      localStorage.setItem(
-        "rascunhoNovoAnuncioTemp",
-        JSON.stringify({
-          ...rascunhoAtual,
-          fotos:
-            semDuplicadas,
-        })
+        return {
+          id: item.id,
+
+          imagem_processada:
+            item?.imagem_processada ||
+            item?.imagem_original ||
+            "",
+
+          imagem_original:
+            item?.imagem_original ||
+            "",
+
+          tipo:
+            tipo === "banner"
+              ? "banner"
+              : "foto",
+
+          created_at:
+            item?.created_at ||
+            new Date()
+              .toISOString(),
+        };
+      })
+      .filter(
+        (item) =>
+          Boolean(
+            item.imagem_processada
+          )
       );
 
-      localStorage.setItem(
-        "fotosSelecionadasAnuncio",
-        JSON.stringify(
-          semDuplicadas
-        )
-      );
+  // ===================================================
+  // IMAGENS QUE JÁ ESTAVAM NO ANÚNCIO
+  // ===================================================
 
-      return semDuplicadas;
+  const fotosMemoria =
+    Array.isArray(
+      window
+        .__paiiaFotosNovoAnuncio
+    )
+      ? window
+          .__paiiaFotosNovoAnuncio
+      : [];
+
+  const todas = [
+    ...fotosMemoria,
+    ...novasMidias,
+  ];
+
+  // ===================================================
+  // REMOVE DUPLICADAS PELA URL
+  // ===================================================
+
+  const mapa = new Map();
+
+  todas.forEach((item) => {
+    const url =
+      item?.imagem_processada ||
+      item?.imagem_original ||
+      "";
+
+    if (!url) {
+      return;
     }
+
+    if (!mapa.has(url)) {
+      mapa.set(
+        url,
+        item
+      );
+    }
+  });
+
+  // ===================================================
+  // LIMITE DE 6
+  // ===================================================
+
+  const fotosFinais =
+    Array.from(
+      mapa.values()
+    ).slice(
+      0,
+      6
+    );
+
+  window
+    .__paiiaFotosNovoAnuncio =
+    fotosFinais;
+
+  setFotosAnuncio?.(
+    fotosFinais
   );
 
   localStorage.setItem(
@@ -376,20 +946,33 @@ function confirmarImagensNoAnuncio() {
     "true"
   );
 
-  setSelecionadas([]);
-
   localStorage.removeItem(
     "modoGaleria"
   );
+
+  localStorage.removeItem(
+    "abrirGaleriaAnuncio"
+  );
+
+  localStorage.removeItem(
+    "galeriaAbaFixa"
+  );
+
+  localStorage.removeItem(
+    "abrirGaleriaNaAba"
+  );
+
+  setSelecionadas([]);
 
   setScreen(
     "novoAnuncio"
   );
 }
-
 function confirmarImagemParaBanner() {
   const imagem = galeriaFiltrada.find((item) =>
-    selecionadas.includes(item.created_at)
+    selecionadas.includes(
+      obterIdProcessamento(item)
+    )
   );
 
   if (!imagem) {
@@ -453,7 +1036,7 @@ function confirmarImagemParaBanner() {
             fontWeight:"bold",
           }}
         >
-          Selecione uma foto para usar no Clip IA.
+          Selecione uma foto para a criação. Toque na imagem para voltar.
         </div>
       )}
 
@@ -470,13 +1053,72 @@ function confirmarImagemParaBanner() {
             fontWeight: "bold",
           }}
         >
-          Selecione as fotos do anúncio e clique no botão verde embaixo.
+          Selecione fotos e banners do anúncio. Você pode alternar entre as abas sem perder a seleção.
+        </div>
+      )}
+
+      {selecionandoParaAnuncio &&
+        !abaGaleriaFixa && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "10px",
+            marginBottom: "18px",
+            maxWidth: "520px",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() =>
+              setAbaMidiaAnuncio("foto")
+            }
+            style={{
+              ...botaoAzul,
+              background:
+                abaMidiaAnuncio === "foto"
+                  ? "#2563eb"
+                  : "#1e293b",
+              border:
+                abaMidiaAnuncio === "foto"
+                  ? "1px solid #60a5fa"
+                  : "1px solid #334155",
+            }}
+          >
+            🖼 Fotos
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              setAbaMidiaAnuncio("banner")
+            }
+            style={{
+              ...botaoAzul,
+              background:
+                abaMidiaAnuncio === "banner"
+                  ? "#7c3aed"
+                  : "#1e293b",
+              border:
+                abaMidiaAnuncio === "banner"
+                  ? "1px solid #c4b5fd"
+                  : "1px solid #334155",
+            }}
+          >
+            🎨 Banners
+          </button>
         </div>
       )}
 
       <input
         type="text"
-        placeholder="🔍 Buscar imagem"
+        placeholder={
+          selecionandoParaAnuncio
+            ? abaMidiaAnuncio === "banner"
+              ? "🔍 Buscar banner"
+              : "🔍 Buscar foto"
+            : "🔍 Buscar imagem"
+        }
         value={buscaGaleria}
         onChange={(e) => setBuscaGaleria(e.target.value)}
         style={{
@@ -486,9 +1128,84 @@ function confirmarImagemParaBanner() {
           marginBottom: "20px",
         }}
       />
+      {/* FILTROS DA GALERIA DE MÍDIAS */}
+      {!selecionandoParaAnuncio &&
+        !selecionandoParaBanner &&
+        !selecionandoParaClip && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              gap: "10px",
+              flexWrap: "wrap",
+              marginBottom: "20px",
+            }}
+          >
+            {[
+              {
+                valor: "foto",
+                label: "📸 Fotos",
+              },
+              {
+                valor: "mascote",
+                label: "🎭 Mascotes",
+              },
+              {
+                valor: "banner",
+                label: "🎨 Banners",
+              },
+              {
+                valor: "video",
+                label: "🎬 Vídeos",
+              },
+            ].map((opcao) => {
+              const ativo =
+                filtroGaleria ===
+                opcao.valor;
 
+              return (
+                <button
+                  key={opcao.valor}
+                  type="button"
+                  onClick={() => {
+                    if (
+                      selecionarAbaGaleria
+                    ) {
+                      selecionarAbaGaleria(
+                        opcao.valor
+                      );
+                      return;
+                    }
+
+                    setFiltroGaleria(
+                      opcao.valor
+                    );
+                  }}
+                  style={{
+                    padding:
+                      "10px 16px",
+                    borderRadius:
+                      "10px",
+                    border: ativo
+                      ? "1px solid #67e8f9"
+                      : "1px solid #334155",
+                    background: ativo
+                      ? "#0e7490"
+                      : "#0f172a",
+                    color: "#ffffff",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {opcao.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
     {!selecionandoParaAnuncio &&
-  !selecionandoParaBanner && (
+  !selecionandoParaBanner &&
+  !selecionandoParaClip && (
     <div
       style={{
         display: "flex",
@@ -501,11 +1218,31 @@ function confirmarImagemParaBanner() {
     >
       <button
         onClick={() =>
-          setSelecionadas(
-            galeriaFiltrada.map(
-              (item) => item.created_at
-            )
-          )
+          {
+            const ids =
+              galeriaFiltrada
+                .map((item) =>
+                  obterIdProcessamento(
+                    item
+                  )
+                )
+                .filter(Boolean);
+
+            if (
+              galeriaFiltrada.length >
+                0 &&
+              ids.length === 0
+            ) {
+              alert(
+                "Estas imagens não possuem identificador único. A seleção foi bloqueada."
+              );
+              return;
+            }
+
+            setSelecionadas(
+              ids
+            );
+          }
         }
         style={botaoAzul}
       >
@@ -646,15 +1383,6 @@ function confirmarImagemParaBanner() {
             🗑️ Excluir selecionadas
           </button>
 
-          <button
-  onClick={(e) => {
-    e.stopPropagation();
-    baixarImagem(url);
-  }}
-  style={botaoVerdePequeno}
->
-  ⬇️ Baixar
-</button>
         </div>
       )}
 
@@ -665,43 +1393,74 @@ function confirmarImagemParaBanner() {
           gap: "20px",
         }}
       >
-        {galeriaFiltrada.map((item) => {
+        {galeriaFiltrada
+  .slice(0, limiteGaleria)
+  .map((item) => {
           const url = item.imagem_processada || item.imagem_original;
-          const estaSelecionada = selecionadas.includes(item.created_at);
+          const ehBannerCard =
+            String(item?.tipo || "")
+              .trim()
+              .toLowerCase() ===
+            "banner";
+          const urlMiniatura =
+            ehBannerCard
+              ? urlMiniaturaCardBanner(
+                  url
+                )
+              : "";
+          const urlCard =
+            urlMiniatura || url;
+          const estaSelecionada = selecionadas.includes(
+            obterIdProcessamento(item)
+          );
+          const chaveCard =
+            chaveVisualGaleria(item);
 
           return (
             <div
-              key={item.id || item.created_at}
+              key={chaveCard}
               onClick={() => {
-                if (selecionandoParaClip) {
-                  selecionarImagemParaAnuncio(
-                    item
-                  );
-                  return;
-                }
+  if (selecionandoParaClip) {
+    selecionarImagemParaAnuncio(
+      item
+    );
+    return;
+  }
 
-                if (
-                  selecionandoParaBanner
-                ) {
-                  selecionarImagemParaAnuncio(
-                    item
-                  );
-                  return;
-                }
+  if (
+    selecionandoParaBanner
+  ) {
+    selecionarImagemParaAnuncio(
+      item
+    );
+    return;
+  }
 
-                if (
-                  selecionandoParaAnuncio
-                ) {
-                  alternarSelecionada(
-                    item.created_at
-                  );
-                  return;
-                }
+  if (
+    selecionandoParaAnuncio
+  ) {
+    alternarSelecaoDoAnuncio(
+      item
+    );
+    return;
+  }
 
-                selecionarImagemParaAnuncio(
-                  item
-                );
-              }}
+  const urlImagem =
+    item.imagem_processada ||
+    item.imagem_original;
+
+  if (!urlImagem) {
+    alert(
+      "Esta imagem não possui uma URL válida."
+    );
+    return;
+  }
+
+  setImagemAberta({
+    ...item,
+    url: urlImagem,
+  });
+}}
               style={{
                 ...cardStyle,
                 position: "relative",
@@ -721,6 +1480,7 @@ function confirmarImagemParaBanner() {
                     : "default",
               }}
             >
+              {!selecionandoParaClip && (
               <input
                 type="checkbox"
                 checked={estaSelecionada}
@@ -735,8 +1495,29 @@ function confirmarImagemParaBanner() {
                     return;
                   }
 
+                  if (
+                    selecionandoParaAnuncio
+                  ) {
+                    alternarSelecaoDoAnuncio(
+                      item
+                    );
+                    return;
+                  }
+
+                  const processamentoId =
+                    obterIdProcessamento(
+                      item
+                    );
+
+                  if (!processamentoId) {
+                    alert(
+                      "Esta imagem não possui identificador único. A seleção foi bloqueada."
+                    );
+                    return;
+                  }
+
                   alternarSelecionada(
-                    item.created_at
+                    processamentoId
                   );
                 }}
                 onClick={(e) =>
@@ -748,26 +1529,81 @@ function confirmarImagemParaBanner() {
                   marginBottom: "10px",
                 }}
               />
+              )}
 
-              <img
-                src={url}
-                alt="Imagem"
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
-                style={{
-                  width: "100%",
-                  borderRadius: "12px",
-                  background: "#fff",
-                }}
-              />
+{item.tipo === "video" ||
+item.tipo === "clip" ? (
+  <video
+    src={url}
+    controls
+    preload="metadata"
+    playsInline
+    style={{
+      width: "100%",
+      borderRadius: "12px",
+      background: "#000",
+      maxHeight: "420px",
+    }}
+  />
+) : (
+  <img
+    src={urlCard}
+    alt="Imagem"
+    loading="lazy"
+    decoding="async"
+    onError={(e) => {
+      const destino =
+        e.currentTarget;
 
+      if (ehBannerCard) {
+        const atual = String(
+          destino.getAttribute("src") ||
+            ""
+        );
+
+        if (
+          atual.endsWith(
+            "-thumb.webp"
+          )
+        ) {
+          destino.src = atual.replace(
+            /-thumb\.webp$/i,
+            "-thumb.jpg"
+          );
+          return;
+        }
+
+        if (
+          atual.endsWith(
+            "-thumb.jpg"
+          ) &&
+          url
+        ) {
+          destino.src = url;
+          return;
+        }
+      }
+
+      destino.style.display =
+        "none";
+    }}
+    style={{
+      width: "100%",
+      borderRadius: "12px",
+      background: "#fff",
+    }}
+  />
+)}
               <p style={{ color: "#93c5fd", fontWeight: "bold" }}>
                 {item.tipo === "banner"
-                  ? "🎨 Banner IA"
-                  : item.tipo === "clip"
-                  ? "🎬 Clip IA"
-                  : "📸 Foto IA"}
+  ? "🎨 Banner IA"
+  : item.tipo === "clip"
+  ? "🎬 Clip IA"
+  : item.tipo === "mascote"
+  ? "🎭 Mascote"
+  : item.tipo === "video"
+  ? "🎬 Vídeo IA"
+  : "📸 Foto IA"}
               </p>
 
               <p style={{ color: "#94a3b8", fontSize: "13px" }}>
@@ -777,7 +1613,8 @@ function confirmarImagemParaBanner() {
               </p>
 
               {!selecionandoParaAnuncio &&
-  !selecionandoParaBanner && (
+  !selecionandoParaBanner &&
+  !selecionandoParaClip && (
     <div
       style={{
         display: "flex",
@@ -801,24 +1638,28 @@ function confirmarImagemParaBanner() {
         <button
           type="button"
           onClick={(e) => {
-            e.stopPropagation();
+  e.stopPropagation();
 
-            localStorage.setItem(
-              "imagemBannerSelecionada",
-              url
-            );
+  // Coloca a foto diretamente no estado do Banner
+  setImagemBanner?.(url);
 
-            localStorage.setItem(
-              "abrirBannerAutomatico",
-              "true"
-            );
+  // Mantém também como segurança
+  localStorage.setItem(
+    "imagemBannerSelecionada",
+    url
+  );
 
-            localStorage.removeItem(
-              "modoGaleria"
-            );
+  localStorage.setItem(
+    "abrirBannerAutomatico",
+    "true"
+  );
 
-            setScreen("bannerStudio");
-          }}
+  localStorage.removeItem(
+    "modoGaleria"
+  );
+
+  setScreen("bannerStudio");
+}}
           style={botaoAzulPequeno}
         >
           🖼️ Usar no Banner
@@ -841,14 +1682,198 @@ function confirmarImagemParaBanner() {
           );
         })}
       </div>
+{ (galeriaFiltrada.length > limiteGaleria ||
+  galeriaTemMais) && (
+  <div
+    style={{
+      gridColumn: "1 / -1",
+      display: "flex",
+      justifyContent: "center",
+      marginTop: "10px",
+    }}
+  >
+    <button
+      type="button"
+      onClick={async () => {
+        if (
+          galeriaFiltrada.length >
+          limiteGaleria
+        ) {
+          setLimiteGaleria(
+            (atual) => atual + 8
+          );
+          return;
+        }
 
+        await carregarMaisGaleria?.(
+          filtroGaleria
+        );
+        setLimiteGaleria(
+          (atual) => atual + 8
+        );
+      }}
+      style={botaoAzul}
+    >
+      📷 Carregar mais imagens
+    </button>
+  </div>
+)}
       {galeriaFiltrada.length === 0 && (
         <p style={{ color: "#94a3b8", marginTop: "25px" }}>
-          Nenhuma imagem encontrada.
+          {selecionandoParaAnuncio
+            ? abaMidiaAnuncio === "banner"
+              ? "Nenhum banner encontrado."
+              : "Nenhuma foto encontrada."
+            : "Nenhuma imagem encontrada."}
         </p>
       )}
+{imagemAberta?.url && (
+  <div
+    onClick={() =>
+      setImagemAberta(null)
+    }
+    style={{
+      position: "fixed",
+      inset: 0,
+      zIndex: 99999,
+      background:
+        "rgba(2,6,23,.92)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "20px",
+    }}
+  >
+    <div
+      onClick={(e) =>
+        e.stopPropagation()
+      }
+      style={{
+        position: "relative",
+        width: "min(100%, 1000px)",
+        maxHeight: "92vh",
+        background: "#0f172a",
+        border:
+          "1px solid #334155",
+        borderRadius: "18px",
+        padding: "16px",
+        boxShadow:
+          "0 30px 80px rgba(0,0,0,.55)",
+        overflow: "auto",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() =>
+          setImagemAberta(null)
+        }
+        style={{
+          position: "absolute",
+          top: "12px",
+          right: "12px",
+          zIndex: 2,
+          width: "38px",
+          height: "38px",
+          borderRadius: "50%",
+          border: "none",
+          background:
+            "rgba(15,23,42,.9)",
+          color: "#ffffff",
+          fontSize: "20px",
+          cursor: "pointer",
+        }}
+      >
+        ✕
+      </button>
 
- {selecionandoParaAnuncio && (
+      <img
+        src={imagemAberta.url}
+        alt="Imagem ampliada"
+        style={{
+          width: "100%",
+          maxHeight: "75vh",
+          objectFit: "contain",
+          background: "#ffffff",
+          borderRadius: "12px",
+          display: "block",
+        }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          gap: "10px",
+          justifyContent: "center",
+          flexWrap: "wrap",
+          marginTop: "14px",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() =>
+            baixarImagem(
+              imagemAberta.url
+            )
+          }
+          style={botaoVerde}
+        >
+          ⬇️ Baixar
+        </button>
+
+        {imagemAberta.tipo ===
+          "foto" && (
+          <button
+  type="button"
+  onClick={() => {
+    setImagemBanner?.(
+      imagemAberta.url
+    );
+
+    localStorage.setItem(
+      "imagemBannerSelecionada",
+      imagemAberta.url
+    );
+
+    localStorage.setItem(
+      "abrirBannerAutomatico",
+      "true"
+    );
+
+    localStorage.removeItem(
+      "modoGaleria"
+    );
+
+    setImagemAberta(null);
+
+    setScreen(
+      "bannerStudio"
+    );
+  }}
+  style={botaoAzul}
+>
+  🖼️ Usar no Banner
+</button>
+        )}
+
+        <button
+          type="button"
+          onClick={() =>
+            setImagemAberta(null)
+          }
+          style={botaoCinza}
+        >
+          ↩️ Fechar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* =========================================
+    BARRA DE SELEÇÃO DO NOVO ANÚNCIO
+    ========================================= */}
+
+{selecionandoParaAnuncio && (
   <div
     style={{
       position: "fixed",
@@ -856,13 +1881,18 @@ function confirmarImagemParaBanner() {
       left: "50%",
       transform: "translateX(-50%)",
       zIndex: 9999,
+      width: "calc(100% - 32px)",
+      maxWidth: "760px",
       background: "#052e16",
-      border: "1px solid #22c55e",
+      border:
+        "1px solid #22c55e",
       borderRadius: "16px",
       padding: "12px 18px",
       display: "flex",
       alignItems: "center",
-      gap: "18px",
+      justifyContent: "center",
+      gap: "12px",
+      flexWrap: "wrap",
       boxShadow:
         "0 10px 30px rgba(0,0,0,.35)",
     }}
@@ -874,8 +1904,85 @@ function confirmarImagemParaBanner() {
         whiteSpace: "nowrap",
       }}
     >
-      📦 {selecionadas.length} / 6 imagens
+      📦 {selecionadas.length} / 6 imagens selecionadas
     </div>
+
+    {/* =====================================
+        ESTÁ EM FOTOS → LEVA PARA BANNERS
+        ===================================== */}
+
+    {abaMidiaAnuncio === "foto" &&
+      abaGaleriaFixa !== "foto" && (
+      <button
+        type="button"
+        onClick={() => {
+          setAbaMidiaAnuncio(
+            "banner"
+          );
+
+          setImagemAberta(null);
+
+          window.scrollTo({
+            top: 0,
+            left: 0,
+            behavior: "smooth",
+          });
+        }}
+        style={{
+          padding: "12px 18px",
+          borderRadius: "12px",
+          border:
+            "1px solid #c4b5fd",
+          background: "#7c3aed",
+          color: "#ffffff",
+          fontWeight: "bold",
+          cursor: "pointer",
+        }}
+      >
+        🎨 Escolher Banner
+      </button>
+    )}
+
+    {/* =====================================
+        ESTÁ EM BANNERS → VOLTA PARA FOTOS
+        ===================================== */}
+
+    {abaMidiaAnuncio ===
+      "banner" &&
+      abaGaleriaFixa !== "banner" && (
+      <button
+        type="button"
+        onClick={() => {
+          setAbaMidiaAnuncio(
+            "foto"
+          );
+
+          setImagemAberta(null);
+
+          window.scrollTo({
+            top: 0,
+            left: 0,
+            behavior: "smooth",
+          });
+        }}
+        style={{
+          padding: "12px 18px",
+          borderRadius: "12px",
+          border:
+            "1px solid #60a5fa",
+          background: "#2563eb",
+          color: "#ffffff",
+          fontWeight: "bold",
+          cursor: "pointer",
+        }}
+      >
+        🖼 Escolher Fotos
+      </button>
+    )}
+
+    {/* =====================================
+        FINALIZA SELEÇÃO
+        ===================================== */}
 
     <button
       type="button"
@@ -899,6 +2006,10 @@ function confirmarImagemParaBanner() {
           selecionadas.length === 0
             ? "not-allowed"
             : "pointer",
+        opacity:
+          selecionadas.length === 0
+            ? 0.65
+            : 1,
       }}
     >
       📦 Inserir no anúncio
@@ -908,7 +2019,6 @@ function confirmarImagemParaBanner() {
     </div>
   );
 }
-
 const botaoAzul = {
   background: "#2563eb",
   color: "#ffffff",
@@ -918,6 +2028,7 @@ const botaoAzul = {
   cursor: "pointer",
   fontWeight: "bold",
 };
+
 const botaoCinza = {
   background: "#475569",
   color: "white",

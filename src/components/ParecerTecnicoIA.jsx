@@ -29,7 +29,7 @@ export default function ParecerTecnicoIA({
   return (
     <div style={container}>
       <h2 style={titulo}>
-        🧠 Parecer Técnico APPIA AI
+        🧠 Parecer Técnico PAIIA AI
       </h2>
 
       <div style={caixa}>

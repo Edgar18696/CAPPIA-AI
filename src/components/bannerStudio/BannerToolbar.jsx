@@ -329,10 +329,10 @@ const LOGOS_STUDIO = [
     }),
   },
   {
-    nome: "APPIA AI",
+    nome: "PAIIA AI",
     categoria: "Marca própria",
     src: criarLogoSvg({
-      texto: "APPIA AI",
+      texto: "PAIIA AI",
       subtitulo: "PLATAFORMA AUTOMOTIVA",
       fundo: "#020617",
       cor: "#ffffff",
@@ -2464,7 +2464,7 @@ function criarBannerInteligenteCompleto() {
       subtitulo:
         "QUALIDADE, DESEMPENHO E CONFIANÇA",
       selo: "Premium",
-      logo: "APPIA AI",
+      logo: "PAIIA AI",
       produtoX: 0.69,
       produtoY: 0.57,
       textoX: 0.27,
@@ -5283,7 +5283,7 @@ function abrirProjetoBanner() {
           x: 0.5,
           y: 0.92,
           escala: 0.58,
-          nome: "APPIA AI",
+          nome: "PAIIA AI",
         },
       },
     };

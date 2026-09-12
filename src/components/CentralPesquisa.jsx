@@ -322,7 +322,7 @@ export default function CentralPesquisa({
           marginBottom: "8px",
         }}
       >
-        🔎 Central de Pesquisa APPIA AI
+        🔎 Central de Pesquisa PAIIA AI
       </h1>
 
       <p
@@ -381,7 +381,7 @@ export default function CentralPesquisa({
         resultados.length === 0 && (
           <div style={avisoVazio}>
             Nenhum registro encontrado
-            na Base Mestre APPIA.
+            na Base Mestre PAIIA.
           </div>
         )}
 
@@ -501,7 +501,7 @@ export default function CentralPesquisa({
         titulo="📚 Catálogo"
         texto={
           item.origem_catalogo ||
-          "Base APPIA"
+          "Base PAIIA"
         }
       />
     </div>
@@ -532,7 +532,7 @@ export default function CentralPesquisa({
             color: "#67e8f9",
           }}
         >
-          🧠 Inteligência APPIA
+          🧠 Inteligência PAIIA
         </h4>
 
         <div
@@ -673,7 +673,7 @@ export default function CentralPesquisa({
         marginBottom: "8px",
       }}
     >
-      💡 Insights APPIA
+      💡 Insights PAIIA
     </div>
 
     {item.baseMestre.insights.map(

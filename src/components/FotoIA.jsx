@@ -128,7 +128,7 @@ function PaizinhoFotoIA({
                 fontSize: "17px",
               }}
             >
-              Paizinho APPIA
+              Paizinho PAIIA
             </strong>
 
             <span

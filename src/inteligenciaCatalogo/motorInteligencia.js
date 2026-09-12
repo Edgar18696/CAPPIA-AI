@@ -1,107 +1,43 @@
-import { buscarCodigoPrincipal } from "./buscarCodigoPrincipal";
-import { buscarAplicacoes } from "./buscarAplicacoes";
-import { buscarEquivalencias } from "./buscarEquivalencias";
-import { gerarDiagnostico } from "./gerarDiagnostico";
-import { auditoriaCatalogo } from "./auditoriaCatalogo";
-import { motorEspecialistas } from "./motorEspecialistas";
+/*
+ * ============================================================
+ * PAIIA AI
+ * MOTOR DE INTELIGÊNCIA — COMPATIBILIDADE LEGADA
+ * ============================================================
+ *
+ * A busca de aplicações possui uma única fonte oficial:
+ *
+ * src/inteligenciaCatalogo/buscarAplicacoes.js
+ *
+ * Este arquivo existe apenas para manter compatibilidade
+ * com módulos antigos que ainda importam motorInteligencia.js.
+ * ============================================================
+ */
 
-function texto(valor) {
-  return String(valor || "")
-    .trim()
-    .toLowerCase();
-}
+export {
+  buscarAplicacoes,
+} from "./buscarAplicacoes";/*
+ * ============================================================
+ * PAIIA AI
+ * MOTOR DE INTELIGÊNCIA — COMPATIBILIDADE
+ * ============================================================
+ *
+ * REGRA DEFINITIVA:
+ *
+ * Existe apenas UMA função responsável pela busca
+ * das aplicações:
+ *
+ * src/inteligenciaCatalogo/buscarAplicacoes.js
+ *
+ * Este arquivo serve somente como ponte para módulos
+ * antigos que ainda importam:
+ *
+ * motorInteligencia.js
+ *
+ * NÃO criar outra consulta ao Supabase neste arquivo.
+ * NÃO duplicar buscarAplicacoes aqui.
+ * ============================================================
+ */
 
-function chaveRegistro(item) {
-  return [
-    texto(item?.codigo_oem),
-    texto(item?.codigo_equivalente),
-    texto(item?.fabricante),
-    texto(item?.peca),
-    texto(item?.montadora),
-    texto(item?.modelo),
-    texto(item?.motor),
-    texto(item?.ano_inicio),
-    texto(item?.ano_fim),
-  ].join("|");
-}
-
-export async function motorInteligencia(
-  codigo
-) {
-  const codigoEntrada = texto(codigo);
-
-  if (!codigoEntrada) {
-    return null;
-  }
-
-  const codigoPrincipal = texto(
-    await buscarCodigoPrincipal(
-      codigoEntrada
-    )
-  );
-
-  const codigoBusca =
-    codigoPrincipal || codigoEntrada;
-
-  const resultados =
-    await Promise.all([
-      buscarAplicacoes(
-        codigoEntrada
-      ),
-
-      codigoPrincipal &&
-      codigoPrincipal !== codigoEntrada
-        ? buscarAplicacoes(
-            codigoPrincipal
-          )
-        : Promise.resolve([]),
-    ]);
-
-  const registrosUnidos =
-    resultados.flat();
-
-  const registros = [
-    ...new Map(
-      registrosUnidos.map(
-        (item) => [
-          chaveRegistro(item),
-          item,
-        ]
-      )
-    ).values(),
-  ];
-
-  if (!registros.length) {
-    return null;
-  }
-
-  const equivalentes =
-    buscarEquivalencias(
-      registros
-    );
-
-  const diagnostico =
-    gerarDiagnostico(
-      registros,
-      equivalentes
-    );
-
-  const auditoria =
-    auditoriaCatalogo(
-      registros
-    );
-
-  const inteligencia =
-    motorEspecialistas(
-      registros
-    );
-
-  return {
-    codigoPrincipal: codigoBusca,
-    registros,
-    equivalentes,
-    diagnostico,
-    auditoria,
-    inteligencia,
-  };
-}
+export {
+  buscarAplicacoes,
+} from "./buscarAplicacoes";

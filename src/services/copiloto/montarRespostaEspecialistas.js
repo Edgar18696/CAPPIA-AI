@@ -28,7 +28,7 @@ export function montarRespostaEspecialistas({
   const resposta = [];
 
   resposta.push(
-    "🤖 Análise completa do APPIA AI"
+    "🤖 Análise completa do PAIIA AI"
   );
 
   resposta.push("");

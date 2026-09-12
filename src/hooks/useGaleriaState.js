@@ -4,7 +4,7 @@ export default function useGaleriaState() {
   const [
     filtroGaleria,
     setFiltroGaleria,
-  ] = useState("todos");
+  ] = useState("foto");
 
   const [
     galeria,
@@ -34,6 +34,11 @@ export default function useGaleriaState() {
   const [
     totalBannersIA,
     setTotalBannersIA,
+  ] = useState(0);
+
+  const [
+    totalVideosIA,
+    setTotalVideosIA,
   ] = useState(0);
 
   const [
@@ -74,6 +79,9 @@ export default function useGaleriaState() {
 
     totalBannersIA,
     setTotalBannersIA,
+
+    totalVideosIA,
+    setTotalVideosIA,
 
     totalProcessamentos,
     setTotalProcessamentos,

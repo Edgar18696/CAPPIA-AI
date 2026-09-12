@@ -103,7 +103,7 @@ export function especialistaTecnico({
     textoSeguro(
       diagnostico?.arquivoCatalogo ||
       pecaEncontrada?.origem_catalogo
-    ) || "Base APPIA";
+    ) || "Base PAIIA";
 
   const pagina =
     diagnostico?.paginaCatalogo ||

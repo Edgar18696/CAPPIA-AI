@@ -337,10 +337,10 @@ const LOGOS_STUDIO = [
     }),
   },
   {
-    nome: "APPIA AI",
+    nome: "PAIIA AI",
     categoria: "Marca própria",
     src: criarLogoSvg({
-      texto: "APPIA AI",
+      texto: "PAIIA AI",
       subtitulo: "PLATAFORMA AUTOMOTIVA",
       fundo: "#020617",
       cor: "#ffffff",
@@ -824,7 +824,7 @@ const [
 const [
   nomeArquivoExportacao,
   setNomeArquivoExportacao,
-] = useState("banner-appia");
+] = useState("banner-paiia");
 
 const [
   fundoTransparenteExportacao,
@@ -1157,7 +1157,7 @@ async function gerarArquivoBanner(
   const nomeLimpo = String(
     configuracao.nomeArquivo ||
       nomeArquivoExportacao ||
-      "banner-appia"
+      "banner-paiia"
   )
     .trim()
     .replace(
@@ -1166,7 +1166,7 @@ async function gerarArquivoBanner(
     )
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") ||
-    "banner-appia";
+    "banner-paiia";
 
   const larguraVisual =
     Math.max(
@@ -1339,7 +1339,7 @@ async function gerarArquivoBanner(
   };
 }
 
-async function salvarBannerNasMidiasAppia() {
+async function salvarBannerNasMidiasPaiia() {
   const elementoAnterior =
     elementoSelecionado;
 
@@ -1390,12 +1390,12 @@ async function salvarBannerNasMidiasAppia() {
 
     if (!usuario?.id) {
       throw new Error(
-        "Faça login para salvar o banner em Mídias APPIA."
+        "Faça login para salvar o banner em Mídias PAIIA."
       );
     }
 
     const nomeArquivo =
-      `${usuario.id}/banners/appia-banner-${Date.now()}.png`;
+      `${usuario.id}/banners/paiia-banner-${Date.now()}.png`;
 
     const {
       error: erroUpload,
@@ -1457,7 +1457,7 @@ async function salvarBannerNasMidiasAppia() {
 
     window.dispatchEvent(
       new CustomEvent(
-        "appia:banner-pronto",
+        "paiia:banner-pronto",
         {
           detail: {
             url: urlBanner,
@@ -1467,17 +1467,17 @@ async function salvarBannerNasMidiasAppia() {
     );
 
     alert(
-      "✅ Banner salvo em Mídias APPIA.\n\nEle será escolhido depois, na etapa de publicação."
+      "✅ Banner salvo em Mídias PAIIA.\n\nEle será escolhido depois, na etapa de publicação."
     );
   } catch (erro) {
     console.error(
-      "ERRO SALVAR BANNER NAS MÍDIAS APPIA:",
+      "ERRO SALVAR BANNER NAS MÍDIAS PAIIA:",
       erro
     );
 
     alert(
       erro?.message ||
-        "Erro ao salvar o banner em Mídias APPIA."
+        "Erro ao salvar o banner em Mídias PAIIA."
     );
   } finally {
     setElementoSelecionado(
@@ -2660,7 +2660,7 @@ function criarBannerInteligenteCompleto() {
       subtitulo:
         "QUALIDADE, DESEMPENHO E CONFIANÇA",
       selo: "Premium",
-      logo: "APPIA AI",
+      logo: "PAIIA AI",
       produtoX: 0.69,
       produtoY: 0.57,
       textoX: 0.27,
@@ -3531,7 +3531,7 @@ function abrirNovoAnuncio() {
     try {
       const projetoSalvo =
         localStorage.getItem(
-          "projetoAppiaAtual"
+          "projetoPaiiaAtual"
         );
 
       const projetoAtual =
@@ -3549,7 +3549,7 @@ function abrirNovoAnuncio() {
         };
 
         localStorage.setItem(
-          "projetoAppiaAtual",
+          "projetoPaiiaAtual",
           JSON.stringify(
             projetoAtualizado
           )
@@ -4853,7 +4853,7 @@ function abrirProjetoBanner() {
           x: 0.5,
           y: 0.92,
           escala: 0.58,
-          nome: "APPIA AI",
+          nome: "PAIIA AI",
         },
       },
     };
@@ -5415,7 +5415,7 @@ function abrirProjetoBanner() {
         style={{
           display: "grid",
           gridTemplateColumns:
-            "124px 310px minmax(680px, 1fr)",
+  "124px minmax(680px, 980px) 310px",
           justifyContent: "center",
           gap: "14px",
           marginTop: "16px",
@@ -5589,6 +5589,7 @@ function abrirProjetoBanner() {
 
         <div
           style={{
+            gridColumn: "3",
             background: "#0f172a",
             borderRadius: "16px",
             padding: "18px",
@@ -7439,7 +7440,7 @@ function abrirProjetoBanner() {
                     evento.target.value
                   )
                 }
-                placeholder="banner-appia"
+                placeholder="banner-paia"
                 style={inputExportacaoStyle}
               />
 
@@ -7521,7 +7522,7 @@ function abrirProjetoBanner() {
               <button
                 type="button"
                 onClick={
-                  salvarBannerNasMidiasAppia
+                  salvarBannerNasMidiasPaiia
                 }
                 style={{
                   width: "100%",
@@ -7536,7 +7537,7 @@ function abrirProjetoBanner() {
                   fontWeight: "bold",
                 }}
               >
-                🎞️ Salvar em Mídias APPIA
+                🎞️ Salvar em Mídias PAIIA
               </button>
             </div>
           )}
@@ -8111,6 +8112,7 @@ function abrirProjetoBanner() {
       });
     }}
     style={{
+      gridColumn: "2",
       width: "100%",
       maxWidth: "980px",
       overflow: "auto",

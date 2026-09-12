@@ -42,7 +42,7 @@ export default function CentralInteligenciaAppia({
 
   const origem =
     diagnostico.origem ||
-    "Base APPIA";
+    "Base PAIIA";
 
   return (
     <section style={container}>
@@ -53,7 +53,7 @@ export default function CentralInteligenciaAppia({
           </span>
 
           <h1 style={titulo}>
-            APPIA AI
+            PAIIA AI
           </h1>
 
           <p style={subtitulo}>

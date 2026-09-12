@@ -1,43 +1,54 @@
 import { supabase } from "../supabase";
 
 async function contarRegistros(tabela) {
-  const { count, error } = await supabase
-    .from(tabela)
-    .select("*", {
-      count: "exact",
-      head: true,
-    });
+  try {
+    const { count, error } = await supabase
+      .from(tabela)
+      .select("*", {
+        count: "estimated",
+        head: true,
+      });
 
-  if (error) {
+    if (error) {
+      console.error(
+        `Erro ao contar registros de ${tabela}:`,
+        error
+      );
+
+      return 0;
+    }
+
+    return Number(count || 0);
+  } catch (erro) {
     console.error(
-      `Erro ao contar registros de ${tabela}:`,
-      error
+      `Falha inesperada ao contar ${tabela}:`,
+      erro
     );
 
     return 0;
   }
-
-  return count || 0;
 }
 
 async function carregarCampoDistinto({
   tabela,
   campo,
 }) {
-  const tamanhoPagina = 1000;
-  const valores = new Set();
+  try {
+    /*
+     * Não vamos mais percorrer centenas
+     * de milhares de registros.
+     *
+     * Para o resumo visual do PAIIA,
+     * uma amostra grande é suficiente
+     * e evita sobrecarregar o banco.
+     */
+    const limite = 10000;
 
-  let inicio = 0;
-  let continuar = true;
-
-  while (continuar) {
     const { data, error } = await supabase
       .from(tabela)
       .select(campo)
-      .range(
-        inicio,
-        inicio + tamanhoPagina - 1
-      );
+      .not(campo, "is", null)
+      .limit(limite);
 
     if (error) {
       console.error(
@@ -47,6 +58,8 @@ async function carregarCampoDistinto({
 
       return 0;
     }
+
+    const valores = new Set();
 
     const registros =
       Array.isArray(data)
@@ -63,13 +76,15 @@ async function carregarCampoDistinto({
       }
     });
 
-    continuar =
-      registros.length === tamanhoPagina;
+    return valores.size;
+  } catch (erro) {
+    console.error(
+      `Falha inesperada ao carregar ${campo}:`,
+      erro
+    );
 
-    inicio += tamanhoPagina;
+    return 0;
   }
-
-  return valores.size;
 }
 
 export async function obterResumoBaseMestre() {
@@ -112,12 +127,7 @@ export async function obterResumoBaseMestre() {
       "Erro ao obter resumo da Base Mestre:",
       erro
     );
-console.log({
-  totalPecas,
-  totalFabricantes,
-  totalCatalogos,
-  totalCompatibilidades,
-});
+
     return {
       sucesso: false,
 

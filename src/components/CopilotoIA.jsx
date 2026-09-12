@@ -186,7 +186,7 @@ ${descricaoAtual}
 
 ────────────────────
 
-✅ RECOMENDAÇÕES APPIA AI
+✅ RECOMENDAÇÕES PAIIA AI
 
 • Compare sempre o código gravado na peça original.
 
@@ -273,7 +273,7 @@ ${descricaoAtual}
               marginBottom: "6px",
             }}
           >
-            🤖 Copiloto APPIA AI
+            🤖 Copiloto PAIIA AI
           </h3>
 
           <p
@@ -481,7 +481,7 @@ ${descricaoAtual}
             )
           ) : (
             <>
-              Crie ou abra um Projeto APPIA
+              Crie ou abra um Projeto PAIIA
               para iniciar o fluxo completo.
             </>
           )}

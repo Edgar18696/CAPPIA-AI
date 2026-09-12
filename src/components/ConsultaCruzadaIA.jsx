@@ -15,7 +15,7 @@ export default function ConsultaCruzadaIA({
   return (
     <div style={container}>
       <h2 style={titulo}>
-        🌎 Consulta Cruzada APPIA AI
+        🌎 Consulta Cruzada PAIIA AI
       </h2>
 
       <p style={subtitulo}>

@@ -6,6 +6,9 @@ export default function HomeScreen({
   totalVideos,
   cardStyle,
   setScreen,
+  ehAdministrador = false,
+  mostrarPaizinho = false,
+  setMostrarPaizinho,
 }) {
   return (
     <Home
@@ -14,6 +17,9 @@ export default function HomeScreen({
       totalVideos={totalVideos}
       cardStyle={cardStyle}
       setScreen={setScreen}
+      ehAdministrador={ehAdministrador}
+      mostrarPaizinho={mostrarPaizinho}
+      setMostrarPaizinho={setMostrarPaizinho}
     />
   );
 }

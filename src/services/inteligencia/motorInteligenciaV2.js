@@ -9,6 +9,7 @@ import {
   buscarBaseMestre,
   salvarBaseMestre,
 } from "./baseMestreService";
+import { buscarAplicacoes } from "../../inteligenciaCatalogo/buscarAplicacoes";
 
 export async function motorInteligenciaV2({
   codigo,
@@ -16,15 +17,56 @@ export async function motorInteligenciaV2({
 }) {
   const codigoNormalizado =
     normalizarCodigo(codigo);
+
 const baseExistente =
   await buscarBaseMestre(
     codigoNormalizado
   );
 
-if (baseExistente) {
-  console.log(
-    "📚 Base Mestre encontrada:",
+const fabricante =
+    identificarFabricante({
+      codigo: codigoNormalizado,
+      descricao,
+    });
+
+  const familia =
+    identificarFamilia({
+      codigo: codigoNormalizado,
+      descricao,
+    });
+
+ const inteligenciaPeca =
+  await motorInteligenciaPeca({
+    codigo: codigoNormalizado,
+    descricao,
+  });
+
+const registros =
+  await buscarAplicacoes(
     codigoNormalizado
+  );
+
+const inteligencia = {
+  ...inteligenciaPeca,
+
+  registros,
+
+  aplicacoes:
+    registros,
+
+  equivalentes:
+    inteligenciaPeca?.equivalentes ||
+    [],
+};
+
+const equivalentes =
+  inteligencia.equivalentes;
+if (
+  registros.length === 0 &&
+  baseExistente
+) {
+  console.log(
+    "📚 Nenhum registro detalhado encontrado. Usando Base Mestre como fallback."
   );
 
   return {
@@ -59,30 +101,6 @@ if (baseExistente) {
       baseExistente,
   };
 }
-  const fabricante =
-    identificarFabricante({
-      codigo: codigoNormalizado,
-      descricao,
-    });
-
-  const familia =
-    identificarFamilia({
-      codigo: codigoNormalizado,
-      descricao,
-    });
-
-  const inteligencia =
-    await motorInteligenciaPeca({
-      codigo: codigoNormalizado,
-      descricao,
-    });
-
-  const registros =
-    inteligencia?.registros || [];
-
-  const equivalentes =
-    inteligencia?.equivalentes || [];
-
   const registroPrincipal =
     registros[0] || {};
 

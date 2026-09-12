@@ -63,7 +63,7 @@ export default function AssistenteAnuncio({
       }}
     >
       <h3 style={{ color: "#67e8f9" }}>
-        🧠 Assistente APPIA AI
+        🧠 Assistente PAIIA AI
       </h3>
 
       {mensagens.map((m, index) => (

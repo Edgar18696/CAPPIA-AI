@@ -11,7 +11,7 @@ export default function Footer() {
       }}
     >
       <p style={{ margin: 0 }}>
-        APPIA AI • Versão 1.0.0
+        PAIIA AI • Versão 1.0.0
       </p>
 
       <p style={{ marginTop: "6px" }}>

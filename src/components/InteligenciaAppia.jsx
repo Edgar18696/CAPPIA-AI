@@ -113,7 +113,7 @@ export default function InteligenciaAppia({
       <div style={cabecalho}>
         <div>
           <h3 style={titulo}>
-            🧠 Inteligência APPIA
+            🧠 Inteligência PAIIA
           </h3>
 
           <p style={subtitulo}>
@@ -202,7 +202,7 @@ export default function InteligenciaAppia({
       {insights.length > 0 && (
         <div style={secao}>
           <h4 style={tituloSecao}>
-            💡 Insights APPIA
+            💡 Insights PAIIA
           </h4>
 
           <div style={listaInsights}>

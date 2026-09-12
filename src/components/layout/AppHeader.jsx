@@ -1,9 +1,11 @@
+import { prepararNovaCriacaoMidia } from "../../services/limparEstadoTemporarioMidia";
+
 export default function AppHeader({ logoAppia, usuario, setScreen, sairUsuario }) {
   return (
     <>
       <img
         src={logoAppia}
-        alt="APPIA AI"
+        alt="PAIIA AI"
         style={{
           width: "320px",
           marginTop: "10px",
@@ -31,11 +33,11 @@ export default function AppHeader({ logoAppia, usuario, setScreen, sairUsuario }
         }}
       >
         <button onClick={() => setScreen("dashboardAppia")}>🏠 Dashboard 2.0</button>
-        <button onClick={() => setScreen("foto")}>📸 Fotos IA</button>
-        <button onClick={() => setScreen("banner")}>🎨 Banner IA</button>
+        <button onClick={() => { prepararNovaCriacaoMidia(); setScreen("foto"); }}>📸 Fotos IA</button>
+        <button onClick={() => { prepararNovaCriacaoMidia(); setScreen("banner"); }}>🎨 Banner IA</button>
         <button onClick={() => setScreen("galeria")}>🖼 Galeria</button>
         <button onClick={() => setScreen("atendimento")}>💬 Atendimento IA</button>
-        <button onClick={() => setScreen("clipIA")}>🎬 Clip IA</button>
+        <button onClick={() => { prepararNovaCriacaoMidia(); setScreen("clipIA"); }}>🎬 Clip IA</button>
         <button onClick={() => setScreen("centroConhecimento")}>📚 Centro de Conhecimento</button>
         <button onClick={() => setScreen("projetos")}>📦 Projetos</button>
         <button onClick={() => setScreen("admin")}>⚙️ Administrador</button>

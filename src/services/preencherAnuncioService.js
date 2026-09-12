@@ -3,14 +3,19 @@ import { supabase } from "../supabase";
 import enriquecerRegistro from "./inteligencia/enriquecerRegistro";
 
 import {
+  consultarCatCarOEM,
+} from "./catcarService";
+
+import { pesquisarCatalogoUniversal } from "./catalogos/pesquisarCatalogoUniversal";
+
+import {
   expandirSinonimosAutomotivos,
 } from "./inteligencia";
 
 import {
-  buscarPecaInternetProvisoria,
   FONTE_EXTERNA_PROVISORIA,
+  ROTULO_FONTE_MERCADO_LIVRE,
 } from "./buscaPecaInternetProvisoria";
-
 
 /*
  * ============================================================
@@ -24,7 +29,6 @@ function limparCodigo(valor) {
   ).trim();
 }
 
-
 function normalizarCodigo(valor) {
   return String(
     valor ?? ""
@@ -37,7 +41,6 @@ function normalizarCodigo(valor) {
     );
 }
 
-
 function limparTexto(valor) {
   return String(
     valor ?? ""
@@ -48,7 +51,6 @@ function limparTexto(valor) {
     )
     .trim();
 }
-
 
 function limparTermoPesquisa(valor) {
   return limparTexto(
@@ -65,25 +67,39 @@ function limparTermoPesquisa(valor) {
     .trim();
 }
 
-
 /*
  * ============================================================
  * IDENTIFICAR SE É CÓDIGO
  * ============================================================
- *
- * Exemplos:
- *
- * 7701047893
- * 0258003300
- * IWP066
- * 35310-04TF0
- * 028015710G
- *
- * Quando for código:
- *
- * NÃO executamos pesquisa universal pesada.
- * ============================================================
  */
+
+function temAplicacoesTecnicas(
+  registros = []
+) {
+  if (
+    !Array.isArray(
+      registros
+    ) ||
+    registros.length === 0
+  ) {
+    return false;
+  }
+
+  return registros.some(
+    (registro) =>
+      Boolean(
+        limparTexto(
+          registro?.montadora
+        ) ||
+        limparTexto(
+          registro?.modelo
+        ) ||
+        limparTexto(
+          registro?.motor
+        )
+      )
+  );
+}
 
 function pareceCodigoPesquisa(
   valor = ""
@@ -100,12 +116,6 @@ function pareceCodigoPesquisa(
   ) {
     return false;
   }
-
-  /*
-   * Pesquisa textual com espaços
-   * normalmente representa peça,
-   * veículo ou descrição.
-   */
 
   if (
     /\s/.test(
@@ -126,11 +136,6 @@ function pareceCodigoPesquisa(
     return false;
   }
 
-  /*
-   * Código automotivo deve possuir
-   * pelo menos um número.
-   */
-
   if (
     !/\d/.test(
       normalizado
@@ -141,7 +146,6 @@ function pareceCodigoPesquisa(
 
   return true;
 }
-
 
 /*
  * ============================================================
@@ -176,7 +180,6 @@ function adicionarSemRepetir(
   }
 }
 
-
 function listaUnica(
   valores = []
 ) {
@@ -194,7 +197,6 @@ function listaUnica(
   ];
 }
 
-
 function separarEquivalentes(
   valor
 ) {
@@ -210,7 +212,6 @@ function separarEquivalentes(
     )
     .filter(Boolean);
 }
-
 
 /*
  * ============================================================
@@ -269,7 +270,6 @@ function montarTitulo(
     );
 }
 
-
 /*
  * ============================================================
  * APLICAÇÃO
@@ -296,7 +296,6 @@ function montarAplicacao(
     .trim();
 }
 
-
 function montarPeriodo(
   item
 ) {
@@ -313,7 +312,6 @@ function montarPeriodo(
     item.ano_fim || "Atual"
   }`;
 }
-
 
 /*
  * ============================================================
@@ -391,25 +389,361 @@ CONTEÚDO DA EMBALAGEM:
 `.trim();
 }
 
-
 /*
  * ============================================================
- * PESQUISA EM TABELA PAIIA
+ * PESQUISA PAIIA — ROTA RÁPIDA V1.0
  * ============================================================
  *
- * REGRA V1.0:
- *
  * CÓDIGO:
- *   somente busca exata.
+ *   - somente igualdade exata
+ *   - nunca usa ILIKE %codigo%
+ *   - catalogo_pecas + catalogo_mestre em paralelo
  *
  * TEXTO:
- *   pode usar busca inteligente.
- *
- * Isso evita statement timeout em código OEM.
+ *   - mantém pesquisa inteligente
  * ============================================================
  */
 
-async function pesquisarNaTabela({
+async function executarComTimeout(
+  promessa,
+  tempoMs = 5000,
+  nome = "consulta"
+) {
+  let timer;
+
+  try {
+    return await Promise.race([
+      promessa,
+
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `TIMEOUT_${nome}`
+            )
+          );
+        }, tempoMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/*
+ * ============================================================
+ * BUSCA EXATA DE CÓDIGO
+ * ============================================================
+ */
+
+async function pesquisarCodigoExato({
+  tabela,
+  termo,
+}) {
+  const codigoOriginal =
+    limparTexto(
+      termo
+    );
+
+  const codigoNormalizado =
+    normalizarCodigo(
+      codigoOriginal
+    );
+
+  if (!codigoOriginal) {
+    return {
+      data: [],
+      error: null,
+    };
+  }
+
+  /*
+   * ==========================================================
+   * CONSULTA DIRETA
+   * ==========================================================
+   *
+   * IMPORTANTE:
+   *
+   * Não usamos mais:
+   *
+   * .or(...)
+   * .order("prioridade")
+   *
+   * Cada coluna é consultada diretamente.
+   *
+   * Isso permite ao PostgreSQL usar índice
+   * simples de codigo_oem / codigo_equivalente.
+   * ==========================================================
+   */
+
+  async function consultarCodigo(
+    codigoBusca
+  ) {
+    if (!codigoBusca) {
+      return {
+        data: [],
+        error: null,
+      };
+    }
+
+    try {
+      const [
+        resultadoOem,
+        resultadoEquivalente,
+      ] =
+        await Promise.all([
+          executarComTimeout(
+            supabase
+              .from(
+                tabela
+              )
+              .select("*")
+              .eq(
+                "codigo_oem",
+                codigoBusca
+              )
+              .eq(
+                "ativo",
+                true
+              )
+              .limit(100),
+
+            4500,
+
+            `OEM_${tabela}`
+          ),
+
+          executarComTimeout(
+            supabase
+              .from(
+                tabela
+              )
+              .select("*")
+              .eq(
+                "codigo_equivalente",
+                codigoBusca
+              )
+              .eq(
+                "ativo",
+                true
+              )
+              .limit(100),
+
+            4500,
+
+            `EQUIVALENTE_${tabela}`
+          ),
+        ]);
+
+      const dadosOem =
+        Array.isArray(
+          resultadoOem?.data
+        )
+          ? resultadoOem.data
+          : [];
+
+      const dadosEquivalentes =
+        Array.isArray(
+          resultadoEquivalente
+            ?.data
+        )
+          ? resultadoEquivalente.data
+          : [];
+
+      /*
+       * Junta resultados sem repetir registro.
+       */
+
+      const mapa =
+        new Map();
+
+      for (
+        const registro
+        of [
+          ...dadosOem,
+          ...dadosEquivalentes,
+        ]
+      ) {
+        const chave =
+          registro?.id ??
+          [
+            registro
+              ?.codigo_oem ||
+              "",
+            registro
+              ?.codigo_equivalente ||
+              "",
+            registro
+              ?.montadora ||
+              "",
+            registro
+              ?.modelo ||
+              "",
+            registro
+              ?.motor ||
+              "",
+          ].join("|");
+
+        if (
+          !mapa.has(
+            chave
+          )
+        ) {
+          mapa.set(
+            chave,
+            registro
+          );
+        }
+      }
+
+      const dados = [
+        ...mapa.values(),
+      ];
+
+      const erroOem =
+        resultadoOem?.error ||
+        null;
+
+      const erroEquivalente =
+        resultadoEquivalente
+          ?.error ||
+        null;
+
+      /*
+       * Se uma consulta funcionou,
+       * não tratamos a outra como
+       * erro geral.
+       */
+
+      const erroFinal =
+        erroOem &&
+        erroEquivalente
+          ? erroOem
+          : null;
+
+      return {
+        data:
+          dados,
+
+        error:
+          erroFinal,
+      };
+    } catch (
+      erro
+    ) {
+      console.warn(
+        `⚠️ Consulta direta ${tabela}:`,
+        erro
+      );
+
+      return {
+        data: [],
+        error: erro,
+      };
+    }
+  }
+
+
+  /*
+   * ==========================================================
+   * PRIMEIRA TENTATIVA
+   * Código exatamente como digitado.
+   * ==========================================================
+   */
+
+  const primeiraTentativa =
+    await consultarCodigo(
+      codigoOriginal
+    );
+
+  if (
+    primeiraTentativa
+      .data.length > 0
+  ) {
+    console.log(
+      `✅ ${tabela}: código encontrado diretamente.`,
+      codigoOriginal,
+      primeiraTentativa
+        .data.length
+    );
+
+    return primeiraTentativa;
+  }
+
+
+  /*
+   * ==========================================================
+   * SEGUNDA TENTATIVA
+   * ==========================================================
+   *
+   * Só acontece quando o código
+   * normalizado é realmente diferente.
+   *
+   * Exemplo:
+   *
+   * 35310-04TF0
+   * 3531004TF0
+   * ==========================================================
+   */
+
+  if (
+    codigoNormalizado &&
+    codigoNormalizado !==
+      codigoOriginal
+  ) {
+    const segundaTentativa =
+      await consultarCodigo(
+        codigoNormalizado
+      );
+
+    if (
+      segundaTentativa
+        .data.length > 0
+    ) {
+      console.log(
+        `✅ ${tabela}: código normalizado encontrado.`,
+        codigoNormalizado,
+        segundaTentativa
+          .data.length
+      );
+
+      return segundaTentativa;
+    }
+
+    /*
+     * Se nenhuma encontrou,
+     * só devolvemos erro quando
+     * as duas tentativas realmente
+     * falharam tecnicamente.
+     */
+
+    return {
+      data: [],
+
+      error:
+        primeiraTentativa
+          .error &&
+        segundaTentativa
+          .error
+          ? primeiraTentativa
+              .error
+          : null,
+    };
+  }
+
+
+  return primeiraTentativa;
+}
+
+/*
+ * ============================================================
+ * PESQUISA TEXTUAL
+ * ============================================================
+ */
+
+async function pesquisarTextoNaTabela({
   tabela,
   termo,
 }) {
@@ -425,95 +759,6 @@ async function pesquisarNaTabela({
     };
   }
 
-  const ehCodigo =
-    pareceCodigoPesquisa(
-      termoPesquisa
-    );
-
-  /*
-   * ========================================================
-   * 1. BUSCA EXATA
-   * ========================================================
-   */
-
-  const {
-    data: dadosExatos,
-    error: erroExato,
-  } =
-    await supabase
-      .from(
-        tabela
-      )
-      .select("*")
-      .or(
-        [
-          `codigo_oem.eq.${termoPesquisa}`,
-          `codigo_equivalente.eq.${termoPesquisa}`,
-        ].join(",")
-      )
-      .eq(
-        "ativo",
-        true
-      )
-      .order(
-        "prioridade",
-        {
-          ascending:
-            true,
-        }
-      )
-      .limit(
-        100
-      );
-
-  if (
-    !erroExato &&
-    Array.isArray(
-      dadosExatos
-    ) &&
-    dadosExatos.length >
-      0
-  ) {
-    return {
-      data:
-        dadosExatos,
-
-      error:
-        null,
-    };
-  }
-
-
-  /*
-   * ========================================================
-   * CÓDIGO NÃO ENCONTRADO
-   * ========================================================
-   *
-   * Não dispara ILIKE universal.
-   *
-   * O próximo motor será CatCar.
-   * ========================================================
-   */
-
-  if (
-    ehCodigo
-  ) {
-    return {
-      data: [],
-
-      error:
-        erroExato ||
-        null,
-    };
-  }
-
-
-  /*
-   * ========================================================
-   * 2. PESQUISA TEXTUAL
-   * ========================================================
-   */
-
   const camposPesquisa = [
     "peca",
     "fabricante",
@@ -524,12 +769,10 @@ async function pesquisarNaTabela({
     "origem_catalogo",
   ];
 
-
   const sinonimos =
     expandirSinonimosAutomotivos(
       termoPesquisa
     );
-
 
   const palavrasPesquisa =
     Array.isArray(
@@ -539,12 +782,6 @@ async function pesquisarNaTabela({
       : [
           termoPesquisa,
         ];
-
-
-  /*
-   * Limitamos a quantidade de palavras
-   * para impedir um OR gigantesco.
-   */
 
   const palavrasUnicas = [
     ...new Set(
@@ -562,10 +799,7 @@ async function pesquisarNaTabela({
     6
   );
 
-
-  const filtros =
-    [];
-
+  const filtros = [];
 
   for (
     const palavra
@@ -581,7 +815,6 @@ async function pesquisarNaTabela({
     }
   }
 
-
   if (
     filtros.length === 0
   ) {
@@ -591,50 +824,78 @@ async function pesquisarNaTabela({
     };
   }
 
+  try {
+    const {
+      data,
+      error,
+    } =
+      await executarComTimeout(
+        supabase
+          .from(tabela)
+          .select("*")
+          .or(
+            filtros.join(",")
+          )
+          .eq(
+            "ativo",
+            true
+          )
+          .order(
+            "prioridade",
+            {
+              ascending: true,
+            }
+          )
+          .limit(100),
 
-  const {
-    data:
-      dadosUniversais,
+        7000,
 
-    error:
-      erroUniversal,
-  } =
-    await supabase
-      .from(
-        tabela
-      )
-      .select("*")
-      .or(
-        filtros.join(",")
-      )
-      .eq(
-        "ativo",
-        true
-      )
-      .order(
-        "prioridade",
-        {
-          ascending:
-            true,
-        }
-      )
-      .limit(
-        100
+        `TEXTO_${tabela}`
       );
 
+    return {
+      data:
+        Array.isArray(data)
+          ? data
+          : [],
 
-  return {
-    data:
-      dadosUniversais ||
-      [],
-
-    error:
-      erroUniversal ||
-      null,
-  };
+      error:
+        error || null,
+    };
+  } catch (erro) {
+    return {
+      data: [],
+      error: erro,
+    };
+  }
 }
 
+/*
+ * ============================================================
+ * PESQUISA EM UMA TABELA
+ * ============================================================
+ */
 
+async function pesquisarNaTabela({
+  tabela,
+  termo,
+}) {
+  if (
+    pareceCodigoPesquisa(
+      termo
+    )
+  ) {
+    return pesquisarCodigoExato({
+      tabela,
+      termo,
+    });
+  }
+
+  return pesquisarTextoNaTabela({
+    tabela,
+    termo,
+  });
+}
 /*
  * ============================================================
  * BASE PAIIA
@@ -644,26 +905,79 @@ async function pesquisarNaTabela({
 async function pesquisarBaseAppia(
   termo
 ) {
+  const ehCodigo =
+    pareceCodigoPesquisa(
+      termo
+    );
+
+  /*
+   * ==========================================================
+   * CÓDIGO — DUAS BASES EM PARALELO
+   * ==========================================================
+   */
+
+  if (ehCodigo) {
+    const resultadoUniversal =
+      await pesquisarCatalogoUniversal({
+        codigo: termo,
+        fabricante: "todos",
+      });
+
+    const registros =
+      Array.isArray(
+        resultadoUniversal?.registros
+      )
+        ? resultadoUniversal.registros
+        : [];
+
+    if (
+      resultadoUniversal?.sucesso &&
+      registros.length > 0
+    ) {
+      console.log(
+        "✅ CÓDIGO ENCONTRADO: Base PAIIA",
+        registros.length
+      );
+
+      return {
+        data: registros,
+        tabela: "catalogo_pecas",
+        error: null,
+      };
+    }
+
+    return {
+      data: [],
+      tabela: "catalogo_pecas",
+      error: null,
+    };
+  }
+
+  /*
+   * ==========================================================
+   * TEXTO
+   * ==========================================================
+   *
+   * Para nome de peça, modelo,
+   * veículo etc. mantemos a busca
+   * textual inteligente.
+   * ==========================================================
+   */
+
   const resultadoAplicacoes =
-    await pesquisarNaTabela({
+    await pesquisarTextoNaTabela({
       tabela:
         "catalogo_pecas",
 
       termo,
     });
 
-
   if (
     !resultadoAplicacoes
       .error &&
     resultadoAplicacoes
-      .data.length >
-      0
+      .data.length > 0
   ) {
-    console.log(
-      "✅ PESQUISA UTILIZANDO: catalogo_pecas"
-    );
-
     return {
       data:
         resultadoAplicacoes
@@ -679,25 +993,19 @@ async function pesquisarBaseAppia(
 
 
   const resultadoMestre =
-    await pesquisarNaTabela({
+    await pesquisarTextoNaTabela({
       tabela:
         "catalogo_mestre",
 
       termo,
     });
 
-
   if (
     !resultadoMestre
       .error &&
     resultadoMestre
-      .data.length >
-      0
+      .data.length > 0
   ) {
-    console.log(
-      "✅ PESQUISA UTILIZANDO: catalogo_mestre"
-    );
-
     return {
       data:
         resultadoMestre
@@ -712,21 +1020,17 @@ async function pesquisarBaseAppia(
   }
 
 
-  /*
-   * Se uma das tabelas respondeu
-   * normalmente, ausência de código
-   * NÃO é erro técnico.
-   */
-
   const erroFinal =
     resultadoAplicacoes
       .error &&
     resultadoMestre
       .error
-      ? resultadoAplicacoes
-          .error ||
-        resultadoMestre
-          .error
+      ? (
+          resultadoAplicacoes
+            .error ||
+          resultadoMestre
+            .error
+        )
       : null;
 
 
@@ -752,7 +1056,6 @@ async function pesquisarBaseAppia(
  * NÃO dispara indexação pesada.
  * ============================================================
  */
-
 async function pesquisarCatcarIndexado(
   codigo
 ) {
@@ -769,43 +1072,31 @@ async function pesquisarCatcarIndexado(
   }
 
   try {
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .functions
-        .invoke(
-          "consultar-catcar",
-          {
-           body: {
-  codigo_oem:
-    codigoFinal,
-},
-          }
-        );
+    const resposta =
+      await consultarCatCarOEM(
+        codigoFinal
+      );
 
-
-    if (error) {
+    if (
+      resposta?.erro
+    ) {
       console.warn(
-        "⚠️ consultar-catcar:",
-        error
+        "⚠️ CatCar local:",
+        resposta.erro
       );
 
       return {
         data: [],
-        error,
+        error: null,
       };
     }
 
-
     const registros =
       Array.isArray(
-        data?.registros
+        resposta?.registros
       )
-        ? data.registros
+        ? resposta.registros
         : [];
-
 
     if (
       registros.length ===
@@ -817,17 +1108,14 @@ async function pesquisarCatcarIndexado(
       };
     }
 
-
     const convertidos =
       registros.map(
         converterRegistroCatcar
       );
 
-
     console.log(
-      `✅ CATCAR INDEXADO: ${convertidos.length} registro(s).`
+      `✅ CATCAR LOCAL: ${convertidos.length} registro(s).`
     );
-
 
     return {
       data:
@@ -840,13 +1128,13 @@ async function pesquisarCatcarIndexado(
     erro
   ) {
     console.warn(
-      "⚠️ Falha ao consultar índice CatCar:",
+      "⚠️ Falha ao consultar CatCar local:",
       erro
     );
 
     /*
-     * CatCar é fallback.
-     * Uma falha nele não derruba
+     * CatCar continua sendo fallback.
+     * Se ele falhar, não derruba
      * toda a Base PAIIA.
      */
 
@@ -856,31 +1144,27 @@ async function pesquisarCatcarIndexado(
     };
   }
 }
-
-
-/*
- * ============================================================
- * CONVERTER CATCAR PARA PADRÃO PAIIA
- * ============================================================
- */
-
 function converterRegistroCatcar(
   registro = {}
 ) {
-  const descricaoOriginal =
+  const codigoSubstituto =
     limparTexto(
-      registro
-        ?.descricao_original ||
       registro
         ?.codigo_substituto ||
       ""
     );
 
+  const descricaoOriginal =
+    limparTexto(
+      registro
+        ?.descricao_original ||
+      ""
+    );
 
   const nomePeca =
+    codigoSubstituto ||
     descricaoOriginal ||
     "Peça Automotiva";
-
 
   const detalhesTecnicos = [
     registro?.tipo
@@ -899,12 +1183,15 @@ function converterRegistroCatcar(
       ? `Posição: ${registro.posicao}`
       : "",
 
+    descricaoOriginal
+      ? `Descrição: ${descricaoOriginal}`
+      : "",
+
     registro?.observacao ||
       "",
   ]
     .filter(Boolean)
     .join(" | ");
-
 
   return {
     codigo_oem:
@@ -954,106 +1241,240 @@ function converterRegistroCatcar(
 
     ano_inicio:
       registro
-        ?.ano_inicio ??
+        ?.ano_inicio ||
       null,
 
     ano_fim:
       registro
-        ?.ano_fim ??
+        ?.ano_fim ||
       null,
+
+    combustivel:
+      limparTexto(
+        registro
+          ?.combustivel ||
+        ""
+      ),
 
     observacao:
       detalhesTecnicos,
 
     origem_catalogo:
-      "Catálogo Original Renault",
+      "CatCar Renault",
+
+    arquivo_catalogo:
+      "",
 
     pagina_catalogo:
       registro
         ?.pagina_url ||
-      null,
-
-    pagina:
       registro
-        ?.pagina_url ||
+        ?.pagina_catalogo ||
       null,
 
-    diagrama_url:
-      registro
-        ?.diagrama_url ||
-      null,
-
-    tipo:
-      registro?.tipo ||
-      null,
-
-    grupo:
-      registro?.grupo ||
-      null,
-
-    subgrupo:
-      registro?.subgrupo ||
-      null,
-
-    posicao:
-      registro?.posicao ||
-      null,
-
-    confiabilidade:
-      registro
-        ?.confirmado ===
-        true
-        ? 100
-        : 90,
+    prioridade:
+      1,
 
     ativo:
       true,
 
+    fonte_tecnica:
+      "catcar",
+
     confirmado:
       registro
-        ?.confirmado ===
-        true,
+        ?.confirmado !==
+      false,
 
-    origem:
-      "catalogo_original",
+    catcar:
+      {
+        catalogo:
+          registro
+            ?.catalogo ||
+          "",
 
-    fonte_tecnica:
-      "catalogo_original",
+        veiculo:
+          registro
+            ?.veiculo ||
+          "",
 
-    inteligencia: {
-      fabricante:
-        "Renault",
+        grupo:
+          registro
+            ?.grupo ||
+          "",
 
-      origem:
-        "catalogo_original",
-    },
+        subgrupo:
+          registro
+            ?.subgrupo ||
+          "",
 
-    auditoria: {
-      aprovado:
-        registro
-          ?.confirmado ===
-          true,
+        posicao:
+          registro
+            ?.posicao ||
+          "",
 
-      status:
-        registro
-          ?.confirmado ===
-          true
-          ? "APROVADO"
-          : "REVISAR",
+        url_origem:
+          registro
+            ?.pagina_url ||
+          registro
+            ?.url_origem ||
+          "",
 
-      confiabilidade:
-        registro
-          ?.confirmado ===
-          true
-          ? 100
-          : 90,
-
-      problemas: [],
-    },
+        imagem_diagrama:
+          registro
+            ?.diagrama_url ||
+          registro
+            ?.imagem_diagrama ||
+          "",
+      },
   };
 }
 
 
+/*
+ * ============================================================
+ * CONSOLIDAR APLICAÇÕES
+ * ============================================================
+ */
+
+function consolidarAplicacoes(
+  registros = []
+) {
+  const mapa =
+    new Map();
+
+
+  for (
+    const registro
+    of registros
+  ) {
+    const montadora =
+      limparTexto(
+        registro?.montadora
+      );
+
+    const modelo =
+      limparTexto(
+        registro?.modelo
+      );
+
+    const motor =
+      limparTexto(
+        registro?.motor
+      );
+
+    const anoInicio =
+      registro
+        ?.ano_inicio ??
+      registro
+        ?.anoInicio ??
+      null;
+
+    const anoFim =
+      registro
+        ?.ano_fim ??
+      registro
+        ?.anoFim ??
+      null;
+
+    const observacao =
+      limparTexto(
+        registro
+          ?.observacao
+      );
+
+    const origem =
+      limparTexto(
+        registro
+          ?.origem_catalogo ||
+        registro
+          ?.origem
+      );
+
+
+    /*
+     * Não criamos aplicação vazia.
+     */
+
+    if (
+      !montadora &&
+      !modelo &&
+      !motor
+    ) {
+      continue;
+    }
+
+
+    const chave =
+      [
+        montadora,
+        modelo,
+        motor,
+        anoInicio || "",
+        anoFim || "",
+      ]
+        .map(
+          (valor) =>
+            String(
+              valor ?? ""
+            )
+              .trim()
+              .toLowerCase()
+        )
+        .join("|");
+
+
+    if (
+      mapa.has(
+        chave
+      )
+    ) {
+      continue;
+    }
+
+
+    mapa.set(
+      chave,
+      {
+        montadora,
+        modelo,
+        motor,
+
+        /*
+         * Mantemos os dois formatos
+         * para compatibilidade com
+         * telas antigas e novas.
+         */
+
+        ano_inicio:
+          anoInicio,
+
+        ano_fim:
+          anoFim,
+
+        anoInicio,
+        anoFim,
+
+        observacao,
+
+        origem,
+
+        origem_catalogo:
+          origem,
+
+        nivelConcordancia:
+          registro
+            ?.nivelConcordancia ||
+          "",
+      }
+    );
+  }
+
+
+  return [
+    ...mapa.values(),
+  ];
+}
 /*
  * ============================================================
  * PREENCHER ANÚNCIO AUTOMATICAMENTE
@@ -1090,216 +1511,215 @@ export async function preencherAnuncioAutomaticamente({
 
   onProgresso?.(
     10,
-    "🤖 Recebi o código. Vou iniciar a análise da peça..."
+    ehCodigo
+      ? "🔎 Pesquisando código na Base PAIIA..."
+      : "🔎 Pesquisando peça na Base PAIIA..."
   );
 
 
   /*
    * ========================================================
-   * 1. BASE PAIIA
+   * 1. BASE PAIIA — ROTA RÁPIDA
    * ========================================================
    */
 
-  let {
-    data,
-    error,
-    tabela,
-  } =
-    await pesquisarBaseAppia(
-      termoFinal
-    );
+  let data = [];
+
+  let error = null;
+
+  let tabela =
+    "catalogo_pecas";
 
 
-  /*
-   * ========================================================
-   * 2. SEGUNDA TENTATIVA
-   * ========================================================
-   *
-   * Somente quando houve ERRO real.
-   *
-   * Zero resultados não precisa
-   * repetir a mesma consulta.
-   * ========================================================
-   */
+  try {
+    const resultadoBase =
+      await executarComTimeout(
+        pesquisarBaseAppia(
+          termoFinal
+        ),
 
-  if (error) {
-    console.warn(
-      "⚠️ Primeira consulta à Base PAIIA falhou.",
-      error
-    );
+        ehCodigo
+          ? 5500
+          : 8000,
 
-
-    onProgresso?.(
-      15,
-      "🔄 A Base PAIIA demorou a responder. Tentando novamente..."
-    );
-
-
-    await new Promise(
-      (resolve) =>
-        setTimeout(
-          resolve,
-          500
-        )
-    );
-
-
-    const segundaTentativa =
-      await pesquisarBaseAppia(
-        termoFinal
+        "BASE_PAIIA"
       );
 
 
     data =
-      segundaTentativa
-        .data;
+      Array.isArray(
+        resultadoBase?.data
+      )
+        ? resultadoBase.data
+        : [];
 
 
     error =
-      segundaTentativa
-        .error;
+      resultadoBase?.error ||
+      null;
 
 
     tabela =
-      segundaTentativa
-        .tabela;
+      resultadoBase?.tabela ||
+      "catalogo_pecas";
+
+    console.info("[PAIIA_FALLBACK] 1 consulta base PAIIA", {
+      codigo: termoFinal,
+      encontrados: data.length,
+      aplicacoesTecnicas: temAplicacoesTecnicas(data),
+      tabela,
+    });
+
+    if (
+      ehCodigo &&
+      !temAplicacoesTecnicas(data)
+    ) {
+      data = [];
+    }
+  } catch (
+    erroBase
+  ) {
+    console.warn(
+      "⚠️ Base PAIIA:",
+      erroBase
+    );
+
+
+    data = [];
+
+    error =
+      erroBase;
   }
 
 
   /*
    * ========================================================
-   * 3. CATCAR INDEXADO
+   * 2. CATCAR — SOMENTE FALLBACK
    * ========================================================
    *
-   * Se for código e a Base PAIIA não encontrou,
-   * consulta o índice técnico CatCar.
+   * Só entra aqui se:
+   *
+   * - for código
+   * - Base PAIIA não encontrou
+   *
+   * Código existente na base
+   * NÃO espera CatCar.
    * ========================================================
    */
 
   if (
     ehCodigo &&
-    (!data ||
-      data.length === 0)
+    data.length === 0
   ) {
     onProgresso?.(
       25,
-      "📚 Consultando catálogo técnico original..."
+      "📚 Código não localizado na base rápida. Consultando catálogo técnico..."
     );
 
 
-    const resultadoCatcar =
-      await pesquisarCatcarIndexado(
-        termoFinal
-      );
-
-
-    if (
-      resultadoCatcar
-        .data.length >
-      0
-    ) {
-      data =
-        resultadoCatcar
-          .data;
-
-      error =
-        null;
-
-      tabela =
-        "catcar_indice";
-    }
-  }
-
-
-  /*
-   * ========================================================
-   * 4. INTERNET — SOMENTE FALLBACK PROVISÓRIO
-   * ========================================================
-   *
-   * Só entra se:
-   * - for código exato
-   * - Base PAIIA e CatCar não encontraram
-   * - o Novo Anúncio pediu busca externa
-   *
-   * Nunca grava no catálogo mestre nem em catalogo_pecas.
-   * ========================================================
-   */
-
-  let buscaInternet = null;
-
-  if (
-    ehCodigo &&
-    (!data || data.length === 0) &&
-    permitirBuscaInternet
-  ) {
     try {
-      buscaInternet =
-        await buscarPecaInternetProvisoria(
-          termoFinal,
-          onProgresso
+      const resultadoCatcar =
+        await executarComTimeout(
+          pesquisarCatcarIndexado(
+            termoFinal
+          ),
+
+          5000,
+
+          "CATCAR"
         );
 
+
       if (
-        Array.isArray(buscaInternet?.registros) &&
-        buscaInternet.registros.length > 0
+        temAplicacoesTecnicas(
+          resultadoCatcar?.data
+        )
       ) {
-        data = buscaInternet.registros;
-        error = null;
-        tabela = FONTE_EXTERNA_PROVISORIA;
+        data =
+          resultadoCatcar.data;
+
+
+        error =
+          null;
+
+
+        tabela =
+          "catcar_indice";
       }
-    } catch (erroInternet) {
+
+      console.info("[PAIIA_FALLBACK] 2 consulta catálogo técnico", {
+        codigo: termoFinal,
+        encontrados: Array.isArray(resultadoCatcar?.data)
+          ? resultadoCatcar.data.length
+          : 0,
+        aplicacoesTecnicas: temAplicacoesTecnicas(
+          resultadoCatcar?.data
+        ),
+      });
+    } catch (
+      erroCatcar
+    ) {
       console.warn(
-        "⚠️ Busca externa provisória:",
-        erroInternet
+        "⚠️ CatCar indisponível:",
+        erroCatcar
       );
+      console.info("[PAIIA_FALLBACK] 2 consulta catálogo técnico", {
+        codigo: termoFinal,
+        encontrados: 0,
+        erro: erroCatcar?.message || "indisponível",
+      });
     }
   }
 
 
   /*
    * ========================================================
-   * ERRO REAL
+   * 3. MERCADO LIVRE — FORA DA IDENTIFICAÇÃO TÉCNICA
+   * ========================================================
+   *
+   * A consulta por código responde só com Base PAIIA / CatCar.
+   * Preço, concorrência e anúncios continuam nos fluxos comerciais.
    * ========================================================
    */
 
-  if (
-    error &&
-    (!data ||
-      data.length === 0)
-  ) {
-    console.error(
-      "❌ ERRO NA PESQUISA TÉCNICA:",
-      error
-    );
-
-
-    throw new Error(
-      "Erro ao consultar a base técnica da PAIIA."
-    );
-  }
+  console.info("[PAIIA_FALLBACK] 3 Mercado Livre fora da busca técnica", {
+    codigo: termoFinal,
+    chamarMercadoLivre: false,
+    encontradosNaBase: data.length,
+  });
 
 
   /*
    * ========================================================
-   * NÃO ENCONTRADO
-   * ========================================================
-   *
-   * Importante:
-   *
-   * Não significa que o código não existe.
-   *
-   * Pode ainda não estar indexado.
+   * 4. SEM RESULTADO
    * ========================================================
    */
 
   if (
-    !data?.length
+    data.length === 0
   ) {
     if (
-      ehCodigo
+      error &&
+      !(
+        ehCodigo &&
+        permitirBuscaInternet
+      )
     ) {
+      console.error(
+        "❌ ERRO NA PESQUISA TÉCNICA:",
+        error
+      );
+
+
       throw new Error(
-        `O código "${termoFinal}" ainda não possui dados técnicos confirmados na base indexada.`
+        "A base técnica demorou a responder. Tente novamente."
+      );
+    }
+
+
+    if (ehCodigo) {
+      throw new Error(
+        "Produto ainda não encontrado na Base PAIIA."
       );
     }
 
@@ -1313,8 +1733,8 @@ export async function preencherAnuncioAutomaticamente({
   onProgresso?.(
     35,
     tabela === FONTE_EXTERNA_PROVISORIA
-      ? "🌐 Fontes públicas localizadas. Montando sugestão provisória..."
-      : "🏭 Fabricante identificado. Consultando a Base Mestre PAIIA..."
+      ? "🌐 Anúncios do Mercado Livre localizados. Cruzando tipo e fabricante..."
+      : "🏭 Código localizado. Preparando dados do anúncio..."
   );
 
 
@@ -1327,11 +1747,8 @@ export async function preencherAnuncioAutomaticamente({
   const resultadosComInteligencia =
     tabela === FONTE_EXTERNA_PROVISORIA
       ? data
-      : data.map(
-          (registro) =>
-            enriquecerRegistro(
-              registro
-            )
+      : data.map((registro) =>
+          enriquecerRegistro(registro)
         );
 
 
@@ -1360,13 +1777,20 @@ export async function preencherAnuncioAutomaticamente({
     ];
 
 
+  if (!item) {
+    throw new Error(
+      "A peça foi localizada, mas os dados técnicos não puderam ser processados."
+    );
+  }
+
+
   const registroComPecaReal =
     resultadosComInteligencia
       .find(
         (registro) => {
           const nome =
             limparTexto(
-              registro.peca
+              registro?.peca
             ).toLowerCase();
 
 
@@ -1418,12 +1842,38 @@ export async function preencherAnuncioAutomaticamente({
 
   /*
    * ========================================================
-   * APLICAÇÕES
+   * COMPATIBILIDADES / APLICAÇÕES
+   * ========================================================
+   *
+   * Esta é a lista oficial usada
+   * por todo o anúncio.
+   *
+   * consolidarAplicacoes()
+   * já devolve:
+   *
+   * ano_inicio / ano_fim
+   * e
+   * anoInicio / anoFim
+   *
+   * para manter compatibilidade
+   * com as telas antigas e novas.
+   * ========================================================
+   */
+
+  const aplicacoes =
+    consolidarAplicacoes(
+      resultadosComInteligencia
+    );
+
+
+  /*
+   * ========================================================
+   * TEXTO DAS APLICAÇÕES
    * ========================================================
    */
 
   const aplicacoesDescricao =
-    resultadosComInteligencia
+    aplicacoes
       .map(
         (registro) => {
           const veiculo = [
@@ -1440,9 +1890,34 @@ export async function preencherAnuncioAutomaticamente({
           }
 
 
-          return `• ${veiculo} — ${montarPeriodo(
-            registro
-          )}`;
+          const periodo =
+            montarPeriodo({
+              ano_inicio:
+                registro.ano_inicio,
+
+              ano_fim:
+                registro.ano_fim,
+            });
+
+          if (tabela === FONTE_EXTERNA_PROVISORIA) {
+            const linha = [
+              registro.montadora || "A confirmar",
+              registro.modelo || "A confirmar",
+              registro.motor || "A confirmar",
+              periodo && periodo !== "Não informado"
+                ? periodo
+                : "A confirmar",
+            ].join(" | ");
+
+            const prefixo =
+              registro.nivelConcordancia === "confirmado"
+                ? "CONFIRMADO"
+                : "ENCONTRADO NO MERCADO LIVRE — A CONFIRMAR";
+
+            return `${prefixo} · ${linha}`;
+          }
+
+          return `• ${veiculo} — ${periodo}`;
         }
       )
       .filter(Boolean);
@@ -1467,9 +1942,7 @@ export async function preencherAnuncioAutomaticamente({
 
 
   const descricao =
-    aplicacoesUnicas
-      .length >
-    0
+    aplicacoesUnicas.length > 0
       ? `${descricaoBase}
 
 APLICAÇÕES COMPLETAS:
@@ -1479,24 +1952,28 @@ ${aplicacoesUnicas.join(
 )}`
       : descricaoBase;
 
+
   const fonteProvisoria =
     tabela === FONTE_EXTERNA_PROVISORIA;
 
   const descricaoFinal = fonteProvisoria
-    ? `⚠️ DADOS PROVISÓRIOS — FONTE externa_provisoria
-Estes dados NÃO vieram do catálogo confiável PAIIA e precisam ser confirmados.
-Não devem ser gravados como dados definitivos do catálogo mestre.
+    ? `⚠️ Mercado Livre — dados provisórios
+Fonte: Mercado Livre — dados provisórios
+Auditoria: REVISAR
+Não gravar no catálogo mestre nem em catalogo_pecas.
+
+CONFIRMADO = coincidiu em mais de um anúncio.
+ENCONTRADO NO MERCADO LIVRE — A CONFIRMAR = apareceu em um anúncio ou sem concordância suficiente.
 
 ${descricao}`
     : descricao;
 
   const problemasAuditoria = fonteProvisoria
     ? [
-        "Resultado de busca externa provisória. Confirme fabricante, descrição, OEM e aplicações antes de publicar.",
+        "Resultado provisório do Mercado Livre. Confirme fabricante, descrição, OEM e aplicações antes de publicar.",
         ...(buscaInternet?.conflitos || []),
       ]
     : [];
-
 
   /*
    * ========================================================
@@ -1506,31 +1983,28 @@ ${descricao}`
 
   const montadoras =
     listaUnica(
-      resultadosComInteligencia
-        .map(
-          (registro) =>
-            registro.montadora
-        )
+      aplicacoes.map(
+        (registro) =>
+          registro.montadora
+      )
     );
 
 
   const modelos =
     listaUnica(
-      resultadosComInteligencia
-        .map(
-          (registro) =>
-            registro.modelo
-        )
+      aplicacoes.map(
+        (registro) =>
+          registro.modelo
+      )
     );
 
 
   const motores =
     listaUnica(
-      resultadosComInteligencia
-        .map(
-          (registro) =>
-            registro.motor
-        )
+      aplicacoes.map(
+        (registro) =>
+          registro.motor
+      )
     );
 
 
@@ -1540,7 +2014,9 @@ ${descricao}`
         .map(
           (registro) =>
             registro
-              .origem_catalogo
+              .origem_catalogo ||
+            registro
+              .origem
         )
     );
 
@@ -1556,48 +2032,6 @@ ${descricao}`
             )
         )
     );
-
-
-  const aplicacoes =
-    resultadosComInteligencia
-      .map(
-        (registro) => ({
-          montadora:
-            registro
-              .montadora ||
-            "",
-
-          modelo:
-            registro
-              .modelo ||
-            "",
-
-          motor:
-            registro
-              .motor ||
-            "",
-
-          anoInicio:
-            registro
-              .ano_inicio ??
-            null,
-
-          anoFim:
-            registro
-              .ano_fim ??
-            null,
-
-          observacao:
-            registro
-              .observacao ||
-            "",
-
-          origem:
-            registro
-              .origem_catalogo ||
-            "Base PAIIA",
-        })
-      );
 
 
   const confiabilidade =
@@ -1657,6 +2091,9 @@ ${descricao}`
       resultadosComInteligencia
         .length,
 
+    totalAplicacoes:
+      aplicacoes.length,
+
     confianca: {
       percentual:
         fonteProvisoria
@@ -1676,7 +2113,7 @@ ${descricao}`
 
       motivos: fonteProvisoria
         ? [
-            "Fonte provisória de internet. Aguardando confirmação no catálogo confiável PAIIA.",
+            "Fonte Mercado Livre provisória. Aguardando confirmação no catálogo confiável PAIIA.",
             ...(buscaInternet?.conflitos || []),
           ]
         : [],
@@ -1744,6 +2181,12 @@ ${descricao}`
     fallbackExterno:
       fonteProvisoria,
 
+    totalAnunciosMercadoLivre:
+      buscaInternet?.totalAnuncios ||
+      buscaInternet?.totalFontes ||
+      0,
+
+
     diagnostico: {
       ...(
         itemPrincipal
@@ -1768,15 +2211,24 @@ ${descricao}`
 
       equivalentes,
 
+      aplicacoes,
+
       totalAplicacoes:
         aplicacoes.length,
 
       arquivoCatalogo:
         fonteProvisoria
-          ? FONTE_EXTERNA_PROVISORIA
+          ? ROTULO_FONTE_MERCADO_LIVRE
           : itemPrincipal
               .origem_catalogo ||
             "Base PAIIA",
+
+      paginaCatalogo:
+        itemPrincipal
+          .pagina_catalogo ||
+          itemPrincipal
+            .pagina ||
+          null,
 
       fonteProvisoria,
 
@@ -1785,6 +2237,7 @@ ${descricao}`
 
       baseMestre,
     },
+
 
     auditoria:
       itemPrincipal
@@ -1811,12 +2264,15 @@ ${descricao}`
           problemasAuditoria,
       },
 
+
     inteligencia:
       itemPrincipal
         .inteligencia ||
       null,
 
+
     baseMestre,
+
 
     pecaEncontrada: {
       ...itemPrincipal,
@@ -1828,8 +2284,15 @@ ${descricao}`
         baseMestre
           .fabricante,
 
-      aplicacoes:
-        resultadosComInteligencia,
+      /*
+       * IMPORTANTE:
+       *
+       * Aqui entram as aplicações
+       * normalizadas, e não mais
+       * os registros brutos.
+       */
+
+      aplicacoes,
 
       baseMestre,
 
@@ -1840,8 +2303,24 @@ ${descricao}`
         fonteProvisoria,
     },
 
+
+    /*
+     * Mantemos os registros completos
+     * para diagnóstico técnico.
+     */
+
     resultadosCatalogo:
       resultadosComInteligencia,
+
+
+    /*
+     * E disponibilizamos também
+     * diretamente as compatibilidades
+     * normalizadas.
+     */
+
+    aplicacoes,
+
 
     resultadoPrincipal: {
       arquivo:

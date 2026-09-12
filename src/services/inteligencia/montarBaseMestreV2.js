@@ -219,7 +219,7 @@ export function montarBaseMestreV2({
     },
 
     origem:
-      "Motor de Inteligência APPIA V2",
+      "Motor de Inteligência PAIIA V2",
 
     atualizadoEm:
       new Date().toISOString(),

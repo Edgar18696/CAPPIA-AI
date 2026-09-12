@@ -307,6 +307,9 @@ function criarVariantesCodigo(
    * ========================================================
    * NGK / NTK
    * ========================================================
+   *
+   * FLN1A123  → FLN1-A123
+   * OZA112A4  → OZA-112-A4
    */
 
   const matchNtk =
@@ -317,6 +320,23 @@ function criarVariantesCodigo(
   if (matchNtk) {
     variantes.add(
       `${matchNtk[1]}-${matchNtk[2]}${matchNtk[3]}`
+    );
+  }
+
+  const matchOza =
+    compacto.match(
+      /^([A-Z]{2,})(\d{2,4})([A-Z]{1,3})(\d{1,3})$/i
+    );
+
+  if (matchOza) {
+    variantes.add(
+      `${matchOza[1]}-${matchOza[2]}-${matchOza[3]}${matchOza[4]}`
+    );
+    variantes.add(
+      `${matchOza[1]}-${matchOza[2]}${matchOza[3]}${matchOza[4]}`
+    );
+    variantes.add(
+      `${matchOza[1]}${matchOza[2]}-${matchOza[3]}${matchOza[4]}`
     );
   }
 
@@ -511,6 +531,9 @@ function registroCorrespondeAoCodigo(
 
     registro
       ?.codigo_equivalente,
+
+    registro
+      ?.codigo_principal,
   ];
 
 
@@ -561,56 +584,100 @@ function registroCorrespondeAoCodigo(
  * ============================================================
  */
 
+async function executarComTimeout(
+  promessa,
+  tempoMs = 5000,
+  nome = "consulta"
+) {
+  let timer;
+
+  try {
+    return await Promise.race([
+      promessa,
+
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `TIMEOUT_${nome}`
+            )
+          );
+        }, tempoMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function consultarTabela({
   tabela,
   termosPesquisa,
   fabricante = "todos",
   limite = 300,
 }) {
-  const encontrados =
-    [];
+  const encontrados = [];
 
+  const fabricanteBanco =
+    normalizarFabricantePesquisa(
+      fabricante
+    );
 
-  for (
-    const termo
-    of termosPesquisa
-  ) {
-    const codigo =
-      String(
-        termo || ""
-      )
-        .trim();
+  const camposExatos =
+    tabela === "catalogo_mestre"
+      ? [
+          "codigo_oem",
+          "codigo_equivalente",
+          "codigo_principal",
+        ]
+      : [
+          "codigo_oem",
+          "codigo_equivalente",
+        ];
 
+  const codigos =
+    [
+      ...new Set(
+        (termosPesquisa || [])
+          .map(
+            (termo) =>
+              String(
+                termo || ""
+              ).trim()
+          )
+          .filter(Boolean)
+      ),
+    ];
 
-    if (!codigo) {
-      continue;
-    }
-
-
+  async function executarConsulta({
+    campo,
+    codigo,
+    aproximarLista = false,
+  }) {
     let consulta =
       supabase
-        .from(
-          tabela
-        )
+        .from(tabela)
         .select("*")
-        .or(
-          [
-            `codigo_oem.eq.${codigo}`,
-
-            `codigo_equivalente.eq.${codigo}`,
-          ].join(",")
-        )
         .eq(
           "ativo",
           true
         );
 
-
-    const fabricanteBanco =
-      normalizarFabricantePesquisa(
-        fabricante
-      );
-
+    if (aproximarLista) {
+      consulta =
+        consulta.ilike(
+          campo,
+          `%${codigo}%`
+        );
+    } else {
+      consulta =
+        consulta.eq(
+          campo,
+          codigo
+        );
+    }
 
     if (
       fabricante !== "todos" &&
@@ -623,101 +690,225 @@ async function consultarTabela({
         );
     }
 
-
-    const {
-      data,
-      error,
-    } =
-      await consulta.limit(
-        Math.min(
-          limite,
-          500
-        )
+    try {
+      return await executarComTimeout(
+        consulta.limit(
+          Math.min(
+            limite,
+            300
+          )
+        ),
+        aproximarLista ? 4000 : 5000,
+        `${tabela}_${campo}`
       );
-
-
-    if (error) {
+    } catch (erroConsulta) {
       console.warn(
-        `⚠️ Erro consultando ${tabela}:`,
-        error
+        `⚠️ Falha técnica em ${tabela}:`,
+        {
+          campo,
+          codigo,
+          erro:
+            erroConsulta
+              ?.message ||
+            erroConsulta,
+        }
       );
 
-      continue;
+      return {
+        data: [],
+        error:
+          erroConsulta,
+      };
+    }
+  }
+
+  function aceitarRegistro(
+    registro
+  ) {
+    if (
+      !fabricanteCorresponde(
+        registro,
+        fabricante
+      )
+    ) {
+      return false;
     }
 
+    if (
+      !registroCorrespondeAoCodigo(
+        registro,
+        termosPesquisa
+      )
+    ) {
+      console.warn(
+        "🛡️ PAIIA bloqueou registro não exato:",
+        {
+          tabela,
+          pesquisado:
+            termosPesquisa,
+          codigo_oem:
+            registro
+              ?.codigo_oem,
+          codigo_equivalente:
+            registro
+              ?.codigo_equivalente,
+          codigo_principal:
+            registro
+              ?.codigo_principal,
+          fabricante:
+            registro
+              ?.fabricante,
+        }
+      );
 
+      return false;
+    }
+
+    return true;
+  }
+
+  const consultasExatas =
+    [];
+
+  for (
+    const codigo
+    of codigos
+  ) {
+    for (
+      const campo
+      of camposExatos
+    ) {
+      consultasExatas.push(
+        executarConsulta({
+          campo,
+          codigo,
+        })
+      );
+    }
+  }
+
+  const resultadosExatos =
+    await Promise.all(
+      consultasExatas
+    );
+
+  for (
+    const resultado
+    of resultadosExatos
+  ) {
     const registros =
       Array.isArray(
-        data
+        resultado?.data
       )
-        ? data
+        ? resultado.data
         : [];
-
 
     for (
       const registro
       of registros
     ) {
       if (
-        !fabricanteCorresponde(
-          registro,
-          fabricante
+        aceitarRegistro(
+          registro
         )
       ) {
-        continue;
-      }
-
-
-      /*
-       * Segunda trava.
-       */
-
-      if (
-        !registroCorrespondeAoCodigo(
-          registro,
-          termosPesquisa
-        )
-      ) {
-        console.warn(
-          "🛡️ PAIIA bloqueou registro:",
-          {
-            tabela,
-
-            pesquisado:
-              termosPesquisa,
-
-            codigo_oem:
-              registro?.codigo_oem,
-
-            codigo_equivalente:
-              registro
-                ?.codigo_equivalente,
-
-            fabricante:
-              registro?.fabricante,
-          }
+        encontrados.push(
+          registro
         );
-
-        continue;
       }
-
-
-      encontrados.push(
-        registro
-      );
     }
   }
 
-
   /*
-   * ========================================================
-   * REMOVER DUPLICADOS
-   * ========================================================
+   * Ampliação segura na Base PAIIA:
+   * listas de equivalência (vírgula),
+   * depois trava por token exato.
+   * Não usa Mercado Livre.
    */
+  if (
+    encontrados.length === 0
+  ) {
+    const compactos =
+      [
+        ...new Set(
+          codigos
+            .map(
+              (codigo) =>
+                normalizarCodigo(
+                  codigo
+                )
+            )
+            .filter(Boolean)
+        ),
+      ];
+
+    const consultasLista =
+      compactos.map(
+        (codigo) =>
+          executarConsulta({
+            campo:
+              "codigo_equivalente",
+            codigo,
+            aproximarLista:
+              true,
+          })
+      );
+
+    if (
+      tabela ===
+      "catalogo_mestre"
+    ) {
+      for (
+        const codigo
+        of compactos
+      ) {
+        consultasLista.push(
+          executarConsulta({
+            campo:
+              "codigo_oem",
+            codigo,
+            aproximarLista:
+              true,
+          })
+        );
+      }
+    }
+
+    const resultadosLista =
+      await Promise.all(
+        consultasLista
+      );
+
+    for (
+      const resultado
+      of resultadosLista
+    ) {
+      const registros =
+        Array.isArray(
+          resultado?.data
+        )
+          ? resultado.data
+          : [];
+
+      for (
+        const registro
+        of registros
+      ) {
+        if (
+          aceitarRegistro(
+            registro
+          )
+        ) {
+          encontrados.push(
+            registro
+          );
+        }
+      }
+    }
+  }
 
   const mapa =
     new Map();
-
 
   for (
     const registro
@@ -725,39 +916,26 @@ async function consultarTabela({
   ) {
     const chave = [
       registro?.id || "",
-
-      registro?.codigo_oem ||
-        "",
-
+      registro
+        ?.codigo_oem || "",
       registro
         ?.codigo_equivalente ||
         "",
-
-      registro?.montadora ||
-        "",
-
-      registro?.modelo ||
-        "",
-
-      registro?.motor ||
-        "",
-
-      registro?.ano_inicio ||
-        "",
-
-      registro?.ano_fim ||
-        "",
+      registro?.montadora || "",
+      registro?.modelo || "",
+      registro?.motor || "",
+      registro?.ano_inicio || "",
+      registro?.ano_fim || "",
     ]
       .map(
         (valor) =>
           String(
-            valor || ""
+            valor ?? ""
           )
             .trim()
             .toUpperCase()
       )
       .join("|");
-
 
     if (
       !mapa.has(
@@ -771,7 +949,6 @@ async function consultarTabela({
     }
   }
 
-
   return Array.from(
     mapa.values()
   ).slice(
@@ -779,13 +956,6 @@ async function consultarTabela({
     limite
   );
 }
-
-
-/*
- * ============================================================
- * DUPLICADOS ENTRE BASES
- * ============================================================
- */
 
 function removerDuplicados(
   registros = []
@@ -1114,45 +1284,36 @@ export async function pesquisarCatalogoUniversal({
    */
 
   onProgresso?.(
-    "🧠 Consultando catálogo técnico..."
+    "🧠 Consultando Base PAIIA..."
   );
 
+  const [
+    registrosCatalogo,
+    registrosMestre,
+  ] =
+    await Promise.all([
+      consultarTabela({
+        tabela:
+          "catalogo_pecas",
 
-  const registrosCatalogo =
-    await consultarTabela({
-      tabela:
-        "catalogo_pecas",
+        termosPesquisa,
 
-      termosPesquisa,
+        fabricante,
 
-      fabricante,
+        limite: 300,
+      }),
 
-      limite: 300,
-    });
+      consultarTabela({
+        tabela:
+          "catalogo_mestre",
 
+        termosPesquisa,
 
-  /*
-   * ========================================================
-   * 2. BASE MESTRE
-   * ========================================================
-   */
+        fabricante,
 
-  onProgresso?.(
-    "🧠 Consultando Base Mestre..."
-  );
-
-
-  const registrosMestre =
-    await consultarTabela({
-      tabela:
-        "catalogo_mestre",
-
-      termosPesquisa,
-
-      fabricante,
-
-      limite: 300,
-    });
+        limite: 300,
+      }),
+    ]);
 
 
   /*
@@ -1482,9 +1643,7 @@ export async function pesquisarCatalogoUniversal({
       null,
 
     mensagem:
-      montadoraCatcar
-        ? "Código não localizado nos catálogos técnicos consultados."
-        : "Código não confirmado na base técnica.",
+      "Produto ainda não encontrado na Base PAIIA.",
   };
 }
 

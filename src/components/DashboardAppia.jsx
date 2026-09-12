@@ -995,7 +995,7 @@ export default function DashboardAppia({
               marginBottom: "8px",
             }}
           >
-            🚀 APPIA AI Dashboard
+            🚀 PAIIA AI Dashboard
           </h1>
 
           <p
@@ -1034,7 +1034,7 @@ export default function DashboardAppia({
       </div>
 
       <h2 style={tituloSecao}>
-        🔥 Hoje no APPIA
+        🔥 Hoje no PAIIA
       </h2>
 
       <div style={gradeCards}>
@@ -1684,7 +1684,7 @@ export default function DashboardAppia({
       </div>
 
       <h2 style={tituloSecao}>
-        📊 Base APPIA
+        📊 Base PAIIA
       </h2>
 
       <div style={gradeCards}>

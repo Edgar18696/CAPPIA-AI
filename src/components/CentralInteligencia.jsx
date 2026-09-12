@@ -134,14 +134,14 @@ export default function CentralInteligencia({
     <div style={pagina}>
       <section style={hero}>
         <div>
-          <div style={selo}>🧠 CENTRAL DE INTELIGÊNCIA APPIA</div>
+          <div style={selo}>🧠 CENTRAL DE INTELIGÊNCIA PAIIA</div>
 
           <h1 style={titulo}>
             Seu consultor comercial automotivo
           </h1>
 
           <p style={subtitulo}>
-            O APPIA organiza o que merece sua atenção e mostra
+            O PAIIA organiza o que merece sua atenção e mostra
             onde agir primeiro.
           </p>
         </div>
@@ -168,7 +168,7 @@ export default function CentralInteligencia({
       <strong style={{ color: "#67e8f9" }}>
         {formatarNumero(totalAnuncios)}
       </strong>{" "}
-      anúncio(s) no APPIA.
+      anúncio(s) no PAIIA.
     </p>
 
     <p style={textoPaizinho}>
@@ -207,7 +207,7 @@ export default function CentralInteligencia({
 
       <section style={scoreBox}>
         <div>
-          <span style={rotulo}>SCORE APPIA</span>
+          <span style={rotulo}>SCORE PAIIA</span>
           <div style={scoreNumero}>{score} / 100</div>
           <div style={statusScoreStyle}>{statusScore}</div>
         </div>
@@ -290,7 +290,7 @@ export default function CentralInteligencia({
       <section style={bloco}>
         <Cabecalho
           titulo="📚 Base Mestre"
-          texto="Conhecimento técnico disponível para o APPIA."
+          texto="Conhecimento técnico disponível para o PAIIA."
         />
 
         <div style={gradeQuatro}>
@@ -306,7 +306,7 @@ export default function CentralInteligencia({
 
       <section style={bloco}>
         <Cabecalho
-          titulo="🎯 Produção APPIA"
+          titulo="🎯 Produção PAIIA"
           texto="Tudo o que já foi produzido dentro da plataforma."
         />
 
