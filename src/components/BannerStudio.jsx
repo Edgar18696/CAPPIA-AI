@@ -2382,7 +2382,14 @@ async function salvarBannerNasMidias(urlBanner) {
           }
           @media (max-width: 520px) {
             .banner-express-formatos {
-              grid-template-columns: 1fr 1fr;
+              grid-template-columns: 1fr 1fr !important;
+            }
+            .banner-express-foto-moldura {
+              max-height: 200px;
+              min-height: 150px;
+            }
+            .banner-express-foto-moldura img {
+              max-height: 180px;
             }
           }
         `}
@@ -4053,6 +4060,7 @@ async function salvarBannerNasMidias(urlBanner) {
 
       {mostrarGaleria && (
         <div
+          className="paiia-galeria-modal"
           onClick={() =>
             setMostrarGaleria(
               false
@@ -4073,6 +4081,7 @@ async function salvarBannerNasMidias(urlBanner) {
           }}
         >
           <div
+            className="paiia-galeria-modal-caixa"
             onClick={(event) =>
               event.stopPropagation()
             }

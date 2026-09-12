@@ -473,6 +473,7 @@ export default function ClipProduto({
           automaticamente.
         </p>
         <div
+          className="paiia-mobile-2cols"
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
@@ -550,6 +551,7 @@ export default function ClipProduto({
       <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
           <h4 style={{ ...tituloSecao, marginTop: 0 }}>Movimento do Produto</h4>
           <div
+            className="paiia-mobile-2cols"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(2, minmax(0, 1fr))",

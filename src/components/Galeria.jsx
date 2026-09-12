@@ -1112,6 +1112,7 @@ function confirmarImagemParaBanner() {
 
       <input
         type="text"
+        className="paiia-galeria-busca"
         placeholder={
           selecionandoParaAnuncio
             ? abaMidiaAnuncio === "banner"
@@ -1133,6 +1134,7 @@ function confirmarImagemParaBanner() {
         !selecionandoParaBanner &&
         !selecionandoParaClip && (
           <div
+            className="paiia-galeria-filtros"
             style={{
               display: "flex",
               justifyContent: "center",

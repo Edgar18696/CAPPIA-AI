@@ -422,6 +422,7 @@ export default function Login({
           </p>
 
           <div
+            className="paiia-mobile-2cols"
             style={{
               display: "grid",
               gridTemplateColumns:

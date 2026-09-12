@@ -161,14 +161,24 @@ table {
   [style*="width:800px"],
   [style*="width: 700px"],
   [style*="width:700px"],
+  [style*="width: 650px"],
+  [style*="width:650px"],
   [style*="width: 600px"],
   [style*="width:600px"],
+  [style*="width: 520px"],
+  [style*="width:520px"],
   [style*="width: 500px"],
   [style*="width:500px"],
+  [style*="width: 450px"],
+  [style*="width:450px"],
   [style*="width: 420px"],
   [style*="width:420px"],
   [style*="width: 400px"],
-  [style*="width:400px"] {
+  [style*="width:400px"],
+  [style*="width: 320px"],
+  [style*="width:320px"],
+  [style*="width: 300px"],
+  [style*="width:300px"] {
     width: 100% !important;
   }
 
@@ -276,6 +286,17 @@ table {
     overflow-wrap: anywhere;
   }
 
+  header,
+  header * {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  [style*="position: sticky"],
+  [style*="position:sticky"] {
+    position: static !important;
+  }
+
   /* Pré-visualizações grandes ficam centralizadas */
   [style*="aspect-ratio"] {
     max-width: 100% !important;
@@ -288,38 +309,6 @@ table {
   [style*="overflowX: auto"] {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
-  }
-}
-
-/* =========================================================
-   CELULAR PEQUENO
-   ========================================================= */
-
-@media (max-width: 480px) {
-  [style*="grid-template-columns"] {
-    grid-template-columns: 1fr !important;
-  }
-
-  /* Exceção: grades de opções curtas podem manter 2 colunas */
-  .paiia-mobile-2cols {
-    grid-template-columns:
-      repeat(2, minmax(0, 1fr)) !important;
-  }
-
-  button {
-    font-size: 14px;
-  }
-
-  [style*="gap: 18px"],
-  [style*="gap:18px"],
-  [style*="gap: 16px"],
-  [style*="gap:16px"] {
-    gap: 10px !important;
-  }
-
-  [style*="border-radius: 16px"],
-  [style*="border-radius:16px"] {
-    border-radius: 12px !important;
   }
 }
 
@@ -342,6 +331,10 @@ table {
   max-width: 100%;
 }
 
+/* =========================================================
+   CELULAR — NOVO PAIIA
+   ========================================================= */
+
 @media (max-width: 768px) {
   .paiia-mobile-stack {
     flex-direction: column !important;
@@ -358,5 +351,82 @@ table {
   .paiia-mobile-center {
     text-align: center !important;
     justify-content: center !important;
+  }
+
+  .paiia-app {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+
+  .paiia-home-conteudo {
+    margin-top: 18px !important;
+  }
+
+  .paiia-home-conteudo > div[style*="grid"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .paiia-mobile-2cols,
+  .banner-express-formatos,
+  .banner-express-estilos {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .paiia-galeria-filtros {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    width: 100%;
+  }
+
+  .paiia-galeria-filtros button {
+    width: 100%;
+  }
+
+  .paiia-galeria-busca {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .paiia-galeria-modal {
+    padding: 10px !important;
+    align-items: flex-start !important;
+  }
+
+  .paiia-galeria-modal-caixa {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 92vh !important;
+    padding: 14px !important;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 480px) {
+  [style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Exceção: grades de opções curtas podem manter 2 colunas */
+  .paiia-mobile-2cols,
+  .banner-express-formatos,
+  .paiia-galeria-filtros {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  button {
+    font-size: 14px;
+  }
+
+  [style*="gap: 18px"],
+  [style*="gap:18px"],
+  [style*="gap: 16px"],
+  [style*="gap:16px"] {
+    gap: 10px !important;
+  }
+
+  [style*="border-radius: 16px"],
+  [style*="border-radius:16px"] {
+    border-radius: 12px !important;
   }
 }

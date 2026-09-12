@@ -326,6 +326,7 @@ export default function Home({
 
       {mostrarPaizinho && (
         <div
+          className="paiia-galeria-modal"
           onClick={() =>
             setMostrarPaizinho(false)
           }
@@ -345,6 +346,7 @@ export default function Home({
           }}
         >
           <div
+            className="paiia-galeria-modal-caixa"
             onClick={(evento) =>
               evento.stopPropagation()
             }

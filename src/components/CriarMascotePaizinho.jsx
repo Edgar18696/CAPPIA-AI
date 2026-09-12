@@ -1077,6 +1077,7 @@ export default function CriarMascotePaizinho({
               briefing do mascote será mantido.
             </p>
             <div
+              className="paiia-mobile-2cols"
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(2, minmax(0, 1fr))",

@@ -1938,8 +1938,8 @@ return (
   <div
     className={
       screen === "home"
-        ? "paiia-app-home"
-        : undefined
+        ? "paiia-app paiia-app-home"
+        : "paiia-app"
     }
     style={{
       minHeight: "100vh",
@@ -1985,31 +1985,45 @@ return (
       box-shadow: 0 6px 18px rgba(34,211,238,.28);
     }
     @media (max-width: 720px) {
+      .paiia-app,
       .paiia-app-home {
         padding-top: 12px !important;
-        padding-left: 16px !important;
-        padding-right: 16px !important;
+        padding-left: 14px !important;
+        padding-right: 14px !important;
       }
       .paiia-topo-home {
         margin-top: 0;
         padding-top: 0;
-        margin-bottom: 0 !important;
-        padding-bottom: 0 !important;
+        margin-bottom: 12px !important;
+        padding-bottom: 12px !important;
+        justify-content: stretch !important;
       }
       .paiia-topo-acoes {
         width: 100%;
+        display: grid !important;
+        grid-template-columns: 1fr 1fr;
         gap: 8px;
       }
       .paiia-topo-acoes button {
-        font-size: 13px;
-        padding: 8px 12px;
-        white-space: nowrap;
+        width: 100%;
+        font-size: 14px;
+        padding: 11px 10px;
+        white-space: normal;
+        min-height: 44px;
       }
       .paiia-topo-paizinho {
-        padding: 9px 14px;
-        font-size: 13px;
-        order: -1;
-        flex: 0 0 auto;
+        padding: 11px 10px;
+        font-size: 14px;
+        grid-column: 1 / -1;
+      }
+      .paiia-topo-interno {
+        flex-direction: column;
+        align-items: stretch !important;
+        gap: 12px !important;
+      }
+      .paiia-topo-marca {
+        width: 100%;
+        justify-content: flex-start;
       }
     }
   `}
@@ -2018,7 +2032,7 @@ return (
   className={
     !usuario || screen === "home"
       ? "paiia-topo-home"
-      : undefined
+      : "paiia-topo-interno"
   }
   style={{
     display: "flex",
@@ -2033,6 +2047,7 @@ return (
 >
   {usuario && screen !== "home" && (
   <div
+    className="paiia-topo-marca"
     style={{
       display: "flex",
       alignItems: "center",
