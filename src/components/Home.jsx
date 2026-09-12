@@ -148,9 +148,10 @@ export default function Home({
         boxSizing: "border-box",
       }}
     >
-      <h1>🚀 PAIIA AI</h1>
+      <h1 className="paiia-home-marca">🚀 PAIIA AI</h1>
 
       <p
+        className="paiia-home-slogan"
         style={{
           color: "#93c5fd",
           fontSize: "18px",
@@ -160,6 +161,7 @@ export default function Home({
       </p>
 
       <h2
+        className="paiia-home-secao"
         style={{
           color: "#67e8f9",
           marginTop: "18px",
@@ -169,6 +171,7 @@ export default function Home({
       </h2>
 
       <div
+        className="paiia-home-cards"
         style={{
           display: "grid",
           gridTemplateColumns:
@@ -260,6 +263,7 @@ export default function Home({
             )}
 
             <div
+              className="paiia-home-card-icone"
               style={{
                 fontSize: "42px",
                 marginBottom: "18px",

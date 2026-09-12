@@ -1987,34 +1987,33 @@ return (
     @media (max-width: 720px) {
       .paiia-app,
       .paiia-app-home {
-        padding-top: 12px !important;
-        padding-left: 14px !important;
-        padding-right: 14px !important;
+        padding-top: 8px !important;
+        padding-left: 12px !important;
+        padding-right: 12px !important;
       }
       .paiia-topo-home {
         margin-top: 0;
         padding-top: 0;
-        margin-bottom: 12px !important;
-        padding-bottom: 12px !important;
+        margin-bottom: 4px !important;
+        padding-bottom: 0 !important;
         justify-content: stretch !important;
+      }
+      .paiia-topo-home .paiia-topo-paizinho {
+        display: none !important;
       }
       .paiia-topo-acoes {
         width: 100%;
         display: grid !important;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 6px;
       }
       .paiia-topo-acoes button {
         width: 100%;
-        font-size: 14px;
-        padding: 11px 10px;
+        font-size: 11px;
+        line-height: 1.2;
+        padding: 8px 4px;
         white-space: normal;
-        min-height: 44px;
-      }
-      .paiia-topo-paizinho {
-        padding: 11px 10px;
-        font-size: 14px;
-        grid-column: 1 / -1;
+        min-height: 40px;
       }
       .paiia-topo-interno {
         flex-direction: column;
