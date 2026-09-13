@@ -40,6 +40,8 @@ const ROTULOS = [
   "Honda",
   "TOYOTA",
   "Toyota",
+  "DAEWOO",
+  "Daewoo",
   "CHERY",
   "Chery",
   "JEEP",
@@ -80,6 +82,7 @@ const MONTADORAS = {
   "ALFA ROMEO": "Alfa Romeo",
   AUDI: "Audi",
   BMW: "BMW",
+  DAEWOO: "Daewoo",
   CHERY: "Chery",
   CHEVROLET: "Chevrolet",
   CITROEN: "Citroën",
@@ -236,64 +239,110 @@ function detectarFabricantePeca(texto = "") {
   return "";
 }
 
-function adicionarCodigo(lista, vistos, originalBruto) {
+export function classificarTokenCodigoGauss(originalBruto = "") {
   const original = limpar(originalBruto)
     .replace(/^[,;:]+/, "")
     .replace(/[,;:]+$/, "");
-  if (!original) return;
+  if (!original) return { ok: false, motivo: "vazio", original, normalizado: "" };
   const normalizado = normalizarCodigoGauss(original);
-  if (!normalizado || normalizado.length < 5 || normalizado.length > 22) return;
-  if (ehCodigoGauss(normalizado)) return;
-  if (!/\d/.test(normalizado)) return;
+
+  if (ehCodigoGauss(normalizado)) {
+    return { ok: false, motivo: "gi", original, normalizado };
+  }
+  if (/^(19|20)\d{2}[A-Z]{0,2}$/.test(normalizado)) {
+    return { ok: false, motivo: "ano", original, normalizado };
+  }
   if (
-    /^(TODOS|FLEX|GASOLINA|ALCOOL|MPI|MPFI|DOHC|SOHC|TOTALFLEX|TETRAFUEL)$/i.test(
+    /^(DOHC|SOHC|MPI|MPFI|SPI|EFI|FLEX|TETRAFUEL|TOTALFLEX|GASOLINA|ALCOOL|TODOS|DRAGON|ROCAM|POWERSHIFT|FLEXPOWER)$/i.test(
+      original
+    ) ||
+    /^(DOHC|SOHC|MPI|MPFI|SPI|EFI|FLEX|TETRAFUEL|TOTALFLEX|GASOLINA|ALCOOL|TODOS)$/i.test(
       normalizado
     )
   ) {
-    return;
+    return { ok: false, motivo: "motor", original, normalizado };
   }
-  if (/^(19|20)\d{2}$/.test(normalizado)) return;
-  if (vistos.has(normalizado)) return;
-  vistos.add(normalizado);
-  lista.push({ original, normalizado });
+  if (/^\d(?:[.,]\d)(?:\/\d(?:[.,]\d))?$/.test(original)) {
+    return { ok: false, motivo: "motor", original, normalizado };
+  }
+  if (/^V[468]$/i.test(normalizado) || /^L[3-8]$/i.test(normalizado)) {
+    return { ok: false, motivo: "motor", original, normalizado };
+  }
+  if (/^\d{1,2}V([A-Z]{0,5})?$/i.test(normalizado)) {
+    return { ok: false, motivo: "medida", original, normalizado };
+  }
+  if (/^\d{2,5}CC$/i.test(normalizado) || /^\dCIL/i.test(normalizado)) {
+    return { ok: false, motivo: "medida", original, normalizado };
+  }
+  if (/^FUROS\d*$/i.test(normalizado)) {
+    return { ok: false, motivo: "medida", original, normalizado };
+  }
+
+  if (!normalizado) return { ok: false, motivo: "outro", original, normalizado: "" };
+  if (normalizado.length < 5 || normalizado.length > 22) {
+    return { ok: false, motivo: "outro", original, normalizado };
+  }
+  if (!/\d/.test(normalizado)) {
+    return { ok: false, motivo: "outro", original, normalizado };
+  }
+
+  return { ok: true, motivo: null, original, normalizado };
 }
 
-function extrairCodigosSubstitui(texto = "") {
+function adicionarCodigo(lista, vistos, originalBruto) {
+  const classificado = classificarTokenCodigoGauss(originalBruto);
+  if (!classificado.ok) return;
+  if (vistos.has(classificado.normalizado)) return;
+  vistos.add(classificado.normalizado);
+  lista.push({
+    original: classificado.original,
+    normalizado: classificado.normalizado,
+  });
+}
+
+const PADROES_CODIGO_GAUSS = [
+  /\bIWP\d{2,4}\b/gi,
+  /\bIWM\d{4,6}\b/gi,
+  /\bIPE\d{2,4}\b/gi,
+  /\bIPM\d{2,4}\b/gi,
+  /\bICD\d{3,6}\b/gi,
+  /\b0\s*280\s*\d{3}\s*\d{3}\b/g,
+  /\b\d{3}\s\d{3}\s\d{2,3}(?:\s\d)?\b/g,
+  /\b\d{2,3}\s\d{3}\s\d{3}\b/g,
+  /\b032\s*906\s*031\s*[A-Z]\b/gi,
+  /\b0?3[026]\s*906\s*031\s*[A-Z]?\b/gi,
+  /\b06A906031[A-Z]{0,3}\b/gi,
+  /\b16450-[A-Z]{3}-\d{3}X?\b/gi,
+  /\b\d{5}-[A-Z0-9]{2,8}\b/gi,
+  /\b0K0[0-9A-Z]{2,4}\s*\d{4,6}\b/gi,
+  /\bGN1[A-Z0-9]{6,14}\b/gi,
+  /\bH331[A-Z0-9]{5,12}\b/gi,
+  /\b01F002A\b/gi,
+  /\b\d{2}[A-Z]\d{3}[A-Z]\b/g,
+  /\b1984\s*E0\b/gi,
+  /\b1984-87\b/g,
+  /\b348001\b/g,
+  /\bH106845\b/gi,
+  /\bSV107683NPN\b/gi,
+  /\b\d{2}\.\d{3}\.\d{3}\b/g,
+  /\b\d{7,12}[A-Z]{0,3}\b/g,
+  /\b[A-Z]{2,5}\d[A-Z0-9.]{5,16}\b/g,
+  /\b[A-Z]{1,3}\d{5,10}[A-Z]{0,4}\b/g,
+];
+
+const RE_CODIGO_ALFANUMERICO_GAUSS =
+  /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{6,20}\b/gi;
+
+export function extrairCodigosSubstitui(texto = "", opcoes = {}) {
   const bruto = repararTextoCatalogo(texto);
   const encontrados = [];
   const vistos = new Set();
-  const padroes = [
-    /\bIWP\d{2,4}\b/gi,
-    /\bIWM\d{4,6}\b/gi,
-    /\bIPE\d{2,4}\b/gi,
-    /\bIPM\d{2,4}\b/gi,
-    /\bICD\d{3,6}\b/gi,
-    /\b0\s*280\s*\d{3}\s*\d{3}\b/g,
-    /\b\d{3}\s\d{3}\s\d{2,3}(?:\s\d)?\b/g,
-    /\b\d{2,3}\s\d{3}\s\d{3}\b/g,
-    /\b032\s*906\s*031\s*[A-Z]\b/gi,
-    /\b0?3[026]\s*906\s*031\s*[A-Z]?\b/gi,
-    /\b06A906031[A-Z]{0,3}\b/gi,
-    /\b16450-[A-Z]{3}-\d{3}X?\b/gi,
-    /\b\d{5}-[A-Z0-9]{2,8}\b/gi,
-    /\b0K0[0-9A-Z]{2,4}\s*\d{4,6}\b/gi,
-    /\bGN1[A-Z0-9]{6,14}\b/gi,
-    /\bH331[A-Z0-9]{5,12}\b/gi,
-    /\b01F002A\b/gi,
-    /\b\d{2}[A-Z]\d{3}[A-Z]\b/g,
-    /\b1984\s*E0\b/gi,
-    /\b1984-87\b/g,
-    /\b348001\b/g,
-    /\bH106845\b/gi,
-    /\bSV107683NPN\b/gi,
-    /\b\d{2}\.\d{3}\.\d{3}\b/g,
-    /\b\d{7,12}[A-Z]{0,3}\b/g,
-    /\b[A-Z]{2,5}\d[A-Z0-9.]{5,16}\b/g,
-    /\b[A-Z]{1,3}\d{5,10}[A-Z]{0,4}\b/g,
-  ];
+  const padroes = opcoes.somenteLegado
+    ? PADROES_CODIGO_GAUSS
+    : [...PADROES_CODIGO_GAUSS, RE_CODIGO_ALFANUMERICO_GAUSS];
 
   for (const re of padroes) {
-    for (const match of bruto.matchAll(re)) {
+    for (const match of bruto.matchAll(new RegExp(re.source, re.flags))) {
       adicionarCodigo(encontrados, vistos, match[0]);
     }
   }
@@ -309,6 +358,23 @@ function extrairCodigosSubstitui(texto = "") {
   });
 
   return filtrados;
+}
+
+export function auditarCandidatosAlfanumericos(texto = "") {
+  const bruto = repararTextoCatalogo(texto);
+  const vistos = new Set();
+  const aceitos = [];
+  const rejeitados = [];
+  for (const match of bruto.matchAll(new RegExp(RE_CODIGO_ALFANUMERICO_GAUSS.source, "gi"))) {
+    const token = match[0];
+    const chave = token.toUpperCase();
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    const classificado = classificarTokenCodigoGauss(token);
+    if (classificado.ok) aceitos.push(classificado);
+    else rejeitados.push(classificado);
+  }
+  return { aceitos, rejeitados };
 }
 
 function partirSubstituiAplicacao(corpo = "") {
@@ -341,7 +407,7 @@ function completarAno(valor) {
 
 function extrairFaixasAno(texto = "") {
   const faixas = [];
-  for (const match of texto.matchAll(/(\d{2}|\d{4})\s*[>\-–]\s*(\d{2}|\d{4})?/g)) {
+  for (const match of texto.matchAll(/(\d{4}|\d{2})\s*[>\-–]\s*(\d{4}|\d{2})?/g)) {
     faixas.push({
       inicio: completarAno(match[1]),
       fim: match[2] ? completarAno(match[2]) : null,
@@ -368,18 +434,142 @@ function anosUnicos(texto = "") {
   };
 }
 
-function motoresUnicos(texto = "") {
-  const encontrados = [
-    ...texto.matchAll(/\b(\d(?:[.,]\d)(?:\s*\/\s*\d(?:[.,]\d))?)\b/g),
-  ]
-    .map((match) => match[1].replace(",", ".").replace(/\s+/g, ""))
-    .filter((valor) => {
-      const n = Number(String(valor).split("/")[0]);
+const RE_MOTOR_GAUSS =
+  /\b(\d(?:[.,]\d)(?:\s*\/\s*\d(?:[.,]\d))?)(?!\d)/g;
+const RE_ANO_GAUSS = /(\d{4}|\d{2})\s*[>\-–]\s*(\d{4}|\d{2})?/g;
+const TOKEN_TECNICO_CONJUNTO =
+  /^(DOHC|SOHC|MPI|MPFI|SPI|EFI|FLEX|TETRAFUEL|GASOLINA|ALCOOL|ÁLCOOL|TOTAL|HI|HI-FLEX|CIL|CIL\.|DRAGON|ROCAM|FIRE|L4|L5|L6|CC|TODOS|MARCHAS|MI|HGT|ESSENCE|POWERSHIFT|FLEXPOWER|TETRA|FUEL|NEXT|EDITION|BREAK|PICK-UP|PICKUP|FURGAO|FURGÃO|WAGON|SEDAN|HATCH|CLASSIC|\d+V|V6|V8|\d+CC|\d+CIL\.?)$/i;
+
+function ocorrenciasMotor(texto = "") {
+  const brutos = [...String(texto).matchAll(new RegExp(RE_MOTOR_GAUSS.source, "g"))].filter(
+    (match) => {
+      const n = Number(String(match[1]).split("/")[0].replace(",", "."));
       return n >= 0.8 && n <= 8;
-    });
-  const unicos = [...new Set(encontrados)];
+    }
+  );
+  const filtrados = [];
+  for (let i = 0; i < brutos.length; i++) {
+    const atual = brutos[i];
+    const proximo = brutos[i + 1];
+    if (proximo) {
+      const valorAtual = atual[1].replace(",", ".").replace(/\s+/g, "");
+      const valorProximo = proximo[1].replace(",", ".").replace(/\s+/g, "");
+      const meio = texto.slice(atual.index + atual[0].length, proximo.index);
+      const temAno = new RegExp(RE_ANO_GAUSS.source, "g").test(meio);
+      if (
+        valorAtual === valorProximo &&
+        !temAno &&
+        !/[,;]/.test(meio)
+      ) {
+        continue;
+      }
+    }
+    filtrados.push(atual);
+  }
+  return filtrados;
+}
+
+function motoresUnicos(texto = "") {
+  const unicos = [
+    ...new Set(
+      ocorrenciasMotor(texto).map((match) =>
+        match[1].replace(",", ".").replace(/\s+/g, "")
+      )
+    ),
+  ];
   if (unicos.length !== 1) return null;
   return unicos[0];
+}
+
+function avancarExtrasConjunto(texto, inicio, limite) {
+  let i = inicio;
+  while (i < limite) {
+    while (i < limite && /\s/.test(texto[i])) i += 1;
+    if (i >= limite) break;
+    const fatia = texto.slice(i, limite);
+    const ano = fatia.match(
+      /^(\d{4}|\d{2})\s*[>\-–]\s*(\d{4}|\d{2})?/
+    );
+    if (ano) {
+      i += ano[0].length;
+      continue;
+    }
+    const anoParen = fatia.match(/^\(\d{4}\)/);
+    if (anoParen) {
+      i += anoParen[0].length;
+      continue;
+    }
+    if (fatia[0] === "(") {
+      const fecha = texto.indexOf(")", i);
+      if (fecha < 0 || fecha >= limite) break;
+      i = fecha + 1;
+      continue;
+    }
+    const tok = fatia.match(/^[A-Za-zÀ-ÿ0-9./\-]+\.?/);
+    if (!tok) break;
+    if (
+      TOKEN_TECNICO_CONJUNTO.test(tok[0].replace(/\.$/, "")) ||
+      /^\d+([.,]\d+)?$/.test(tok[0])
+    ) {
+      i += tok[0].length;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
+function fimConjuntoAposMotor(texto, motorFim, proximoMotorInicio) {
+  const limite = proximoMotorInicio ?? texto.length;
+  const meio = texto.slice(motorFim, limite);
+  const anos = [...meio.matchAll(new RegExp(RE_ANO_GAUSS.source, "g"))];
+  if (anos.length) {
+    const primeiro = anos[0];
+    return motorFim + primeiro.index + primeiro[0].length;
+  }
+  const paren = meio.match(/\(\d{4}\)/);
+  if (paren) {
+    return motorFim + paren.index + paren[0].length;
+  }
+  return avancarExtrasConjunto(texto, motorFim, limite);
+}
+
+function partirConjuntosAplicacao(corpo = "") {
+  const texto = limpar(corpo);
+  if (!texto) return [];
+  const motores = ocorrenciasMotor(texto);
+  if (!motores.length) return [texto];
+
+  const conjuntos = [];
+  let cursor = 0;
+  for (let i = 0; i < motores.length; i++) {
+    const motor = motores[i];
+    const proximo = motores[i + 1];
+    const fim = fimConjuntoAposMotor(
+      texto,
+      motor.index + motor[0].length,
+      proximo ? proximo.index : null
+    );
+    const fatia = limpar(
+      texto.slice(cursor, fim).replace(/^[,;\s]+/, "").replace(/[,;]+$/, "")
+    );
+    if (fatia) conjuntos.push(fatia);
+    cursor = fim;
+  }
+  const resto = limpar(texto.slice(cursor)).replace(/^[,;]+/, "");
+  if (resto && !/^\d{1,2}$/.test(resto)) {
+    conjuntos.push(resto);
+  }
+  return conjuntos.length ? conjuntos : [texto];
+}
+
+function camposDoConjunto(trecho = "") {
+  return {
+    motor: motoresUnicos(trecho),
+    ...anosUnicos(trecho),
+    combustivel: combustivelUnico(trecho),
+    sistema: sistemaUnico(trecho),
+  };
 }
 
 function combustivelUnico(texto = "") {
@@ -424,8 +614,9 @@ function mapearMontadora(rotulo = "") {
 function nomeModelo(parte = "") {
   let texto = limpar(parte)
     .replace(/\([^)]*\)/g, " ")
+    .replace(/\b\d{4}\s*[>\-–]\s*\d{0,4}/g, " ")
     .replace(/\b\d{2,4}\s*[>\-–]\s*\d{0,4}/g, " ")
-    .replace(/\b(MPI|MPFI|SPI|EFI|DOHC|SOHC|FLEX|TETRAFUEL|GASOLINA|ÁLCOOL|ALCOOL|TODOS|TOTAL|MARCHAS)\b/gi, " ")
+    .replace(/\b(MPI|MPFI|SPI|EFI|DOHC|SOHC|FLEXPOWER|FLEX|TETRAFUEL|GASOLINA|ÁLCOOL|ALCOOL|TODOS|TOTAL|MARCHAS)\b/gi, " ")
     .replace(/\b\d(?:[.,]\d)(?:\s*\/\s*\d(?:[.,]\d))?\b/g, " ")
     .replace(/\b\d{1,2}V\b/gi, " ")
     .replace(/\bV6\b/gi, " ")
@@ -468,13 +659,28 @@ function extrairAplicacoes(textoAplicacao = "") {
   const blocos = [];
 
   if (!ocorrencias.length) {
-    return [
-      {
-        montadora: null,
-        modelo: null,
-        trecho: texto,
-      },
-    ];
+    const blocosSemRotulo = [];
+    for (const trecho of partirConjuntosAplicacao(texto)) {
+      const campos = camposDoConjunto(trecho);
+      const modelos = [];
+      for (const parte of trecho.split(/[,;]/)) {
+        const modelo = nomeModelo(parte);
+        if (modelo && !modelos.includes(modelo)) modelos.push(modelo);
+      }
+      if (modelos.length) {
+        for (const modelo of modelos) {
+          blocosSemRotulo.push({ montadora: null, modelo, trecho, ...campos });
+        }
+      } else {
+        blocosSemRotulo.push({
+          montadora: null,
+          modelo: null,
+          trecho,
+          ...campos,
+        });
+      }
+    }
+    return blocosSemRotulo;
   }
 
   for (let i = 0; i < ocorrencias.length; i++) {
@@ -487,12 +693,7 @@ function extrairAplicacoes(textoAplicacao = "") {
     if (ehRotuloFabricantePeca(rotulo) && !montadora) {
       continue;
     }
-    const partes = corpo.split(/[,;]/);
-    const modelos = [];
-    for (const parte of partes) {
-      const modelo = nomeModelo(parte);
-      if (modelo && !modelos.includes(modelo)) modelos.push(modelo);
-    }
+    const conjuntos = partirConjuntosAplicacao(corpo);
 
     if (!montadora && /varias/i.test(rotulo)) {
       const marcas = [];
@@ -503,26 +704,38 @@ function extrairAplicacoes(textoAplicacao = "") {
       }
       if (marcas.length) {
         for (const nome of marcas) {
-          blocos.push({
-            montadora: nome,
-            modelo: null,
-            trecho: corpo,
-          });
+          for (const trecho of conjuntos) {
+            blocos.push({
+              montadora: nome,
+              modelo: null,
+              trecho,
+              ...camposDoConjunto(trecho),
+            });
+          }
         }
         continue;
       }
     }
 
-    if (modelos.length) {
-      for (const modelo of modelos) {
-        blocos.push({ montadora, modelo, trecho: corpo });
+    for (const trecho of conjuntos) {
+      const campos = camposDoConjunto(trecho);
+      const modelos = [];
+      for (const parte of trecho.split(/[,;]/)) {
+        const modelo = nomeModelo(parte);
+        if (modelo && !modelos.includes(modelo)) modelos.push(modelo);
       }
-    } else {
-      blocos.push({
-        montadora,
-        modelo: null,
-        trecho: corpo,
-      });
+      if (modelos.length) {
+        for (const modelo of modelos) {
+          blocos.push({ montadora, modelo, trecho, ...campos });
+        }
+      } else {
+        blocos.push({
+          montadora,
+          modelo: null,
+          trecho,
+          ...campos,
+        });
+      }
     }
   }
 
@@ -680,8 +893,11 @@ function marcarDuplicidades(produtos = []) {
   }
 }
 
-function montarObservacao(produto) {
+function montarObservacao(produto, aplicacao = null) {
   return [
+    aplicacao?.trecho
+      ? `Conjunto: ${aplicacao.trecho}`
+      : "",
     produto.aplicacao_original
       ? `Aplicação original: ${produto.aplicacao_original}`
       : "",
@@ -725,12 +941,12 @@ export function montarCargaPaiia(produtos = []) {
     if (!produto.equivalentes.length) continue;
 
     const codigoEquivalente = listaEquivalentesCampo(produto.equivalentes);
-    const observacao = montarObservacao(produto);
     const aplicacoes = produto.aplicacoes.length
       ? produto.aplicacoes
       : [{ montadora: null, modelo: null, trecho: produto.aplicacao_original }];
 
     for (const aplicacao of aplicacoes) {
+      const observacao = montarObservacao(produto, aplicacao);
       for (const codigo of produto.equivalentes) {
         catalogo_pecas.push({
           peca: produto.peca,
@@ -740,13 +956,13 @@ export function montarCargaPaiia(produtos = []) {
           origem_catalogo: produto.fonte_catalogo,
           familia_catalogo: "injecao",
           categoria: "Bico Injetor",
-          sistema: produto.sistema,
+          sistema: aplicacao.sistema ?? produto.sistema,
           tipo: "Bico Injetor",
           montadora: aplicacao.montadora,
           modelo: aplicacao.modelo,
-          motor: produto.motor,
-          ano_inicio: produto.ano_inicio,
-          ano_fim: produto.ano_fim,
+          motor: aplicacao.motor ?? null,
+          ano_inicio: aplicacao.ano_inicio ?? null,
+          ano_fim: aplicacao.ano_fim ?? null,
           observacao,
           ativo: true,
           prioridade: 1,
@@ -767,7 +983,7 @@ export function montarCargaPaiia(produtos = []) {
         codigo_equivalente: codigoEquivalente,
         fabricante: produto.fabricante,
         origem_catalogo: produto.fonte_catalogo,
-        observacao,
+        observacao: montarObservacao(produto),
         ativo: true,
         prioridade: 1,
         confiabilidade: produto.duvidas.length ? 70 : 100,

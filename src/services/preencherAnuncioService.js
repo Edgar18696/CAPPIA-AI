@@ -6,8 +6,6 @@ import {
   consultarCatCarOEM,
 } from "./catcarService";
 
-import { pesquisarCatalogoUniversal } from "./catalogos/pesquisarCatalogoUniversal";
-
 import {
   expandirSinonimosAutomotivos,
 } from "./inteligencia";
@@ -39,6 +37,35 @@ function normalizarCodigo(valor) {
       /[^A-Z0-9]/g,
       ""
     );
+}
+
+function variantesCodigoPesquisa(valor) {
+  const original = String(valor ?? "")
+    .trim()
+    .toUpperCase();
+  const compacto = normalizarCodigo(valor);
+  return [...new Set([original, compacto].filter(Boolean))];
+}
+
+function tokensEquivalentes(valor) {
+  return String(valor ?? "")
+    .split(/[,;|/\n]+/)
+    .map((item) => normalizarCodigo(item))
+    .filter(Boolean);
+}
+
+function registroTemCodigoNormalizado(registro, compacto) {
+  if (!compacto) {
+    return false;
+  }
+
+  if (normalizarCodigo(registro?.codigo_oem) === compacto) {
+    return true;
+  }
+
+  return tokensEquivalentes(registro?.codigo_equivalente).includes(
+    compacto
+  );
 }
 
 function limparTexto(valor) {
@@ -902,6 +929,77 @@ async function pesquisarNaTabela({
  * ============================================================
  */
 
+async function consultarMestrePorCodigo(compacto, variantes) {
+  const { data, error } = await supabase
+    .from("catalogo_mestre")
+    .select("*")
+    .in("codigo_oem", variantes)
+    .eq("ativo", true)
+    .limit(50);
+
+  if (error) {
+    throw error;
+  }
+
+  let rows = Array.isArray(data) ? data : [];
+
+  if (!rows.some((registro) => registroTemCodigoNormalizado(registro, compacto))) {
+    const extra = await supabase
+      .from("catalogo_mestre")
+      .select("*")
+      .eq("ativo", true)
+      .ilike("codigo_equivalente", `%${compacto}%`)
+      .limit(40);
+
+    if (extra.error) {
+      throw extra.error;
+    }
+
+    rows = [...rows, ...(extra.data || [])];
+  }
+
+  return rows.filter((registro) =>
+    registroTemCodigoNormalizado(registro, compacto)
+  );
+}
+
+async function consultarPecasPorCodigos(codigos) {
+  const variantes = [
+    ...new Set(
+      (codigos || [])
+        .flatMap((codigo) => variantesCodigoPesquisa(codigo))
+        .filter(Boolean)
+    ),
+  ];
+
+  const encontrados = [];
+  const vistos = new Set();
+
+  for (let i = 0; i < variantes.length; i += 40) {
+    const lote = variantes.slice(i, i + 40);
+    const { data, error } = await supabase
+      .from("catalogo_pecas")
+      .select("*")
+      .in("codigo_oem", lote)
+      .eq("ativo", true)
+      .limit(300);
+
+    if (error) {
+      throw error;
+    }
+
+    for (const registro of data || []) {
+      if (vistos.has(registro.id)) {
+        continue;
+      }
+      vistos.add(registro.id);
+      encontrados.push(registro);
+    }
+  }
+
+  return encontrados;
+}
+
 async function pesquisarBaseAppia(
   termo
 ) {
@@ -912,28 +1010,51 @@ async function pesquisarBaseAppia(
 
   /*
    * ==========================================================
-   * CÓDIGO — DUAS BASES EM PARALELO
+   * CÓDIGO — MESTRE → OEM/EQUIV → PECAS
+   * Sem internet e sem Mercado Livre.
    * ==========================================================
    */
 
   if (ehCodigo) {
-    const resultadoUniversal =
-      await pesquisarCatalogoUniversal({
-        codigo: termo,
-        fabricante: "todos",
-      });
+    const compacto = normalizarCodigo(termo);
+    const variantes = variantesCodigoPesquisa(termo);
 
-    const registros =
-      Array.isArray(
-        resultadoUniversal?.registros
-      )
-        ? resultadoUniversal.registros
-        : [];
+    let pecas = await consultarPecasPorCodigos(variantes);
+    let mestres = [];
 
-    if (
-      resultadoUniversal?.sucesso &&
-      registros.length > 0
-    ) {
+    try {
+      mestres = await consultarMestrePorCodigo(compacto, variantes);
+    } catch (erroMestre) {
+      console.warn("⚠️ catalogo_mestre:", erroMestre);
+    }
+
+    const codigosRelacionados = [
+      compacto,
+      ...variantes,
+      ...mestres.flatMap((registro) => [
+        registro.codigo_oem,
+        ...tokensEquivalentes(registro.codigo_equivalente),
+      ]),
+    ];
+
+    if (mestres.length > 0) {
+      const pecasExpandidas = await consultarPecasPorCodigos(codigosRelacionados);
+      pecas = pecasExpandidas.length ? pecasExpandidas : pecas;
+    }
+
+    const compactosRelacionados = new Set(
+      codigosRelacionados.map((codigo) => normalizarCodigo(codigo)).filter(Boolean)
+    );
+
+    const registros = pecas.filter((registro) => {
+      const oem = normalizarCodigo(registro.codigo_oem);
+      return (
+        compactosRelacionados.has(oem) ||
+        registroTemCodigoNormalizado(registro, compacto)
+      );
+    });
+
+    if (registros.length > 0) {
       console.log(
         "✅ CÓDIGO ENCONTRADO: Base PAIIA",
         registros.length
@@ -1539,7 +1660,7 @@ export async function preencherAnuncioAutomaticamente({
         ),
 
         ehCodigo
-          ? 5500
+          ? 12000
           : 8000,
 
         "BASE_PAIIA"
@@ -1611,64 +1732,10 @@ export async function preencherAnuncioAutomaticamente({
     ehCodigo &&
     data.length === 0
   ) {
-    onProgresso?.(
-      25,
-      "📚 Código não localizado na base rápida. Consultando catálogo técnico..."
-    );
-
-
-    try {
-      const resultadoCatcar =
-        await executarComTimeout(
-          pesquisarCatcarIndexado(
-            termoFinal
-          ),
-
-          5000,
-
-          "CATCAR"
-        );
-
-
-      if (
-        temAplicacoesTecnicas(
-          resultadoCatcar?.data
-        )
-      ) {
-        data =
-          resultadoCatcar.data;
-
-
-        error =
-          null;
-
-
-        tabela =
-          "catcar_indice";
-      }
-
-      console.info("[PAIIA_FALLBACK] 2 consulta catálogo técnico", {
-        codigo: termoFinal,
-        encontrados: Array.isArray(resultadoCatcar?.data)
-          ? resultadoCatcar.data.length
-          : 0,
-        aplicacoesTecnicas: temAplicacoesTecnicas(
-          resultadoCatcar?.data
-        ),
-      });
-    } catch (
-      erroCatcar
-    ) {
-      console.warn(
-        "⚠️ CatCar indisponível:",
-        erroCatcar
-      );
-      console.info("[PAIIA_FALLBACK] 2 consulta catálogo técnico", {
-        codigo: termoFinal,
-        encontrados: 0,
-        erro: erroCatcar?.message || "indisponível",
-      });
-    }
+    console.info("[PAIIA] identificação técnica só Base PAIIA", {
+      codigo: termoFinal,
+      encontrados: 0,
+    });
   }
 
 
@@ -1698,31 +1765,22 @@ export async function preencherAnuncioAutomaticamente({
   if (
     data.length === 0
   ) {
-    if (
-      error &&
-      !(
-        ehCodigo &&
-        permitirBuscaInternet
-      )
-    ) {
-      console.error(
-        "❌ ERRO NA PESQUISA TÉCNICA:",
-        error
-      );
-
-
-      throw new Error(
-        "A base técnica demorou a responder. Tente novamente."
-      );
-    }
-
-
     if (ehCodigo) {
       throw new Error(
         "Produto ainda não encontrado na Base PAIIA."
       );
     }
 
+    if (error) {
+      console.error(
+        "❌ ERRO NA PESQUISA TÉCNICA:",
+        error
+      );
+
+      throw new Error(
+        "A base técnica demorou a responder. Tente novamente."
+      );
+    }
 
     throw new Error(
       `Nenhum resultado foi encontrado para "${termoFinal}".`
@@ -1970,8 +2028,7 @@ ${descricao}`
 
   const problemasAuditoria = fonteProvisoria
     ? [
-        "Resultado provisório do Mercado Livre. Confirme fabricante, descrição, OEM e aplicações antes de publicar.",
-        ...(buscaInternet?.conflitos || []),
+        "Resultado provisório. Confirme fabricante, descrição, OEM e aplicações antes de publicar.",
       ]
     : [];
 
@@ -2113,8 +2170,7 @@ ${descricao}`
 
       motivos: fonteProvisoria
         ? [
-            "Fonte Mercado Livre provisória. Aguardando confirmação no catálogo confiável PAIIA.",
-            ...(buscaInternet?.conflitos || []),
+            "Fonte provisória. Aguardando confirmação no catálogo confiável PAIIA.",
           ]
         : [],
     },
@@ -2181,10 +2237,7 @@ ${descricao}`
     fallbackExterno:
       fonteProvisoria,
 
-    totalAnunciosMercadoLivre:
-      buscaInternet?.totalAnuncios ||
-      buscaInternet?.totalFontes ||
-      0,
+    totalAnunciosMercadoLivre: 0,
 
 
     diagnostico: {
