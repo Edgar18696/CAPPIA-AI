@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase, supabaseKey } from "./supabase";
 import Catalogos from "./components/Catalogos";
 import BuscaCatalogo from "./components/BuscaCatalogo";
@@ -254,6 +254,12 @@ const {
 
   itensPorPagina,
 } = useGaleriaState();
+
+const TAMANHO_PAGINA_GALERIA = 24;
+const COLUNAS_LEVES_GALERIA =
+  "id, user_id, tipo, status, created_at, imagem_processada";
+const [galeriaTemMais, setGaleriaTemMais] = useState(false);
+const carregandoMaisGaleriaRef = useRef(false);
 
 const [
   produtoCopilot,
@@ -845,6 +851,7 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
     await supabase.auth.signOut();
     setUsuario(null);
     setGaleria([]);
+    setGaleriaTemMais(false);
     setUltimasImagens([]);
     setTotalFotos(0);
     setScreen("login");
@@ -990,15 +997,23 @@ async function EditarProjeto() {
     );
   }
 }
+function consultaGaleriaLeve() {
+  return supabase
+    .from("processamentos")
+    .select(COLUNAS_LEVES_GALERIA)
+    .eq("user_id", usuario.id)
+    .not("imagem_processada", "is", null)
+    .not("imagem_processada", "like", "data:%")
+    .order("created_at", { ascending: false });
+}
+
 async function carregarGaleria() {
   if (!usuario) return;
 
-  const { data, error } = await supabase
-    .from("processamentos")
-    .select("*")
-    .eq("user_id", usuario.id)
-    .not("imagem_processada", "is", null)
-    .order("created_at", { ascending: false });
+  const { data, error } = await consultaGaleriaLeve().range(
+    0,
+    TAMANHO_PAGINA_GALERIA - 1
+  );
 
   
   console.log("ERRO GALERIA:", error);
@@ -1013,10 +1028,48 @@ async function carregarGaleria() {
   
 
   setGaleria(lista);
+  setGaleriaTemMais(lista.length === TAMANHO_PAGINA_GALERIA);
 
   setTotalFotosIA(lista.filter((item) => item.tipo === "foto").length);
   setTotalBannersIA(lista.filter((item) => item.tipo === "banner").length);
   setTotalProcessamentos(lista.length);
+}
+
+async function carregarMaisGaleria() {
+  if (!usuario || !galeriaTemMais || carregandoMaisGaleriaRef.current) {
+    return;
+  }
+
+  carregandoMaisGaleriaRef.current = true;
+
+  try {
+    const inicio = galeria.length;
+    const { data, error } = await consultaGaleriaLeve().range(
+      inicio,
+      inicio + TAMANHO_PAGINA_GALERIA - 1
+    );
+
+    if (error) {
+      console.log(error);
+      alert("Erro ao carregar galeria: " + error.message);
+      return;
+    }
+
+    const novos = data || [];
+    setGaleria((atual) => [...atual, ...novos]);
+    setGaleriaTemMais(novos.length === TAMANHO_PAGINA_GALERIA);
+    setTotalFotosIA(
+      (atual) =>
+        atual + novos.filter((item) => item.tipo === "foto").length
+    );
+    setTotalBannersIA(
+      (atual) =>
+        atual + novos.filter((item) => item.tipo === "banner").length
+    );
+    setTotalProcessamentos((atual) => atual + novos.length);
+  } finally {
+    carregandoMaisGaleriaRef.current = false;
+  }
 }
 
 async function padronizarImagemFinal1200({
@@ -3303,6 +3356,8 @@ setQualidadeFoto={setQualidadeFoto}
 {screen === "galeria" && (
   <GaleriaScreen
     galeria={galeria}
+    galeriaTemMais={galeriaTemMais}
+    carregarMaisGaleria={carregarMaisGaleria}
     filtroGaleria={filtroGaleria}
     setFiltroGaleria={setFiltroGaleria}
     buscaGaleria={buscaGaleria}
