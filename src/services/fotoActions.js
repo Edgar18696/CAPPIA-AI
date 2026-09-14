@@ -8,6 +8,14 @@ function obterMensagemErro(
   dados,
   status
 ) {
+  if (
+    status === 408 ||
+    status === 524 ||
+    status === 546
+  ) {
+    return `A API Foto IA expirou (HTTP ${status}). A conexão caiu antes da resposta.`;
+  }
+
   return (
     dados?.erro ||
     dados?.error ||
@@ -16,26 +24,18 @@ function obterMensagemErro(
   );
 }
 
-function erroTemporario(
-  status,
-  mensagem
-) {
-  const texto = String(
-    mensagem || ""
-  ).toLowerCase();
-
+function statusPermiteUmaNovaTentativa(status) {
   return (
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
+    status === 408 ||
     status === 503 ||
-    status === 504 ||
-    status === 520 ||
-    texto.includes("throttled") ||
-    texto.includes("rate limit") ||
-    texto.includes("timeout") ||
-    texto.includes("network") ||
-    texto.includes("failed to fetch")
+    status === 524 ||
+    status === 546
+  );
+}
+
+function mensagemPermiteUmaNovaTentativa(mensagem) {
+  return /HTTP (408|503|524|546)/.test(
+    String(mensagem || "")
   );
 }
 
@@ -68,6 +68,7 @@ export async function processarFotoAction({
   tipoFundoFoto,
   qualidadeFoto,
   tamanhoFoto,
+  logContext = {},
 }) {
 
   if (!apiProcessarImagem) {
@@ -108,7 +109,8 @@ export async function processarFotoAction({
       }),
   };
 
-  const maximo = 4;
+  const maximo = 2;
+  const esperaRetryMs = 10000;
   let ultimoErro = null;
     for (
     let tentativa = 1;
@@ -118,8 +120,13 @@ export async function processarFotoAction({
     try {
 
       console.log(
-        "FOTO IA — REQUISIÇÃO:",
-        body
+        "FOTO IA — INÍCIO PROCESSAMENTO IA:",
+        {
+          ...logContext,
+          tentativa,
+          urlImagem,
+          body,
+        }
       );
 
       const resposta =
@@ -155,9 +162,24 @@ export async function processarFotoAction({
       try {
         dados =
           await resposta.json();
-      } catch {
-        dados = {};
+      } catch (erroJson) {
+        dados = {
+          erro_parse_json: String(
+            erroJson?.message || erroJson
+          ),
+        };
       }
+
+      console.log(
+        "FOTO IA — RESPOSTA PROCESSAMENTO IA:",
+        {
+          ...logContext,
+          tentativa,
+          statusHttp: resposta.status,
+          ok: resposta.ok,
+          respostaCompleta: dados,
+        }
+      );
 
       const mensagem =
         obterMensagemErro(
@@ -182,34 +204,46 @@ export async function processarFotoAction({
       }
 
       if (
-        erroTemporario(
-          resposta.status,
-          mensagem
+        statusPermiteUmaNovaTentativa(
+          resposta.status
         ) &&
         tentativa < maximo
       ) {
-
-        const espera =
-          tentativa * 15000;
-
         console.warn(
-          `Tentativa ${tentativa} falhou. Nova tentativa em ${espera / 1000}s`
+          "FOTO IA — TENTATIVA FALHOU (temporário):",
+          {
+            ...logContext,
+            tentativa,
+            statusHttp: resposta.status,
+            mensagem,
+            esperaMs: esperaRetryMs,
+            respostaCompleta: dados,
+          }
         );
 
         await esperar(
-          espera
+          esperaRetryMs
         );
 
         continue;
       }
 
       throw new Error(
-        mensagem
+        `[HTTP ${resposta.status}] ${mensagem}`
       );
 
     } catch (erro) {
 
       ultimoErro = erro;
+      console.error(
+        "FOTO IA — ERRO PROCESSAMENTO IA:",
+        {
+          ...logContext,
+          tentativa,
+          erroCompleto: erro,
+          mensagem: String(erro?.message || erro),
+        }
+      );
 
       const mensagem =
         String(
@@ -218,22 +252,23 @@ export async function processarFotoAction({
         );
 
       if (
-        erroTemporario(
-          0,
+        mensagemPermiteUmaNovaTentativa(
           mensagem
         ) &&
         tentativa < maximo
       ) {
-
-        const espera =
-          tentativa * 15000;
-
         console.warn(
-          `Falha ${tentativa}. Tentando novamente...`
+          "FOTO IA — TENTATIVA FALHOU (temporário):",
+          {
+            ...logContext,
+            tentativa,
+            mensagem,
+            esperaMs: esperaRetryMs,
+          }
         );
 
         await esperar(
-          espera
+          esperaRetryMs
         );
 
         continue;
@@ -255,6 +290,7 @@ export async function enviarFotoOriginalAction({
   usuario,
   arquivo,
   bucket = "imagens",
+  logContext = {},
 }) {
   if (!supabase) {
     throw new Error(
@@ -292,6 +328,14 @@ export async function enviarFotoOriginalAction({
   const caminho =
     `${usuario.id}/originais/${Date.now()}-${crypto.randomUUID()}-${nomeSeguro}`;
 
+  console.log("FOTO IA — INÍCIO UPLOAD:", {
+    ...logContext,
+    nomeArquivo: arquivo.name,
+    caminho,
+    tamanho: arquivo.size,
+    tipo: arquivo.type,
+  });
+
   const {
     error: erroUpload,
   } = await supabase.storage
@@ -309,6 +353,12 @@ export async function enviarFotoOriginalAction({
     );
 
   if (erroUpload) {
+    console.error("FOTO IA — ERRO UPLOAD:", {
+      ...logContext,
+      nomeArquivo: arquivo.name,
+      caminho,
+      erroCompleto: erroUpload,
+    });
     throw new Error(
       erroUpload.message ||
       "Erro ao enviar a imagem."
@@ -322,6 +372,13 @@ export async function enviarFotoOriginalAction({
     .getPublicUrl(
       caminho
     );
+
+  console.log("FOTO IA — RESPOSTA UPLOAD:", {
+    ...logContext,
+    nomeArquivo: arquivo.name,
+    caminho,
+    urlPublica: data?.publicUrl || null,
+  });
 
   if (!data?.publicUrl) {
     throw new Error(
@@ -342,6 +399,7 @@ export async function salvarFotoNaGaleriaAction({
   usuario,
   imagemOriginal,
   imagemProcessada,
+  logContext = {},
 }) {
   if (!supabase) {
     throw new Error(
@@ -361,9 +419,15 @@ export async function salvarFotoNaGaleriaAction({
     );
   }
 
+  console.log("FOTO IA — INÍCIO SALVAMENTO:", {
+    ...logContext,
+    imagemOriginal,
+    imagemProcessada,
+  });
+
   const {
-    error,
-  } = await supabase
+        error,
+      } = await supabase
     .from("processamentos")
     .insert([
       {
@@ -386,11 +450,21 @@ export async function salvarFotoNaGaleriaAction({
     ]);
 
   if (error) {
+    console.error("FOTO IA — ERRO SALVAMENTO:", {
+      ...logContext,
+      erroCompleto: error,
+    });
     throw new Error(
       error.message ||
       "A foto foi processada, mas não entrou na Galeria."
     );
   }
+
+  console.log("FOTO IA — SALVAMENTO OK:", {
+    ...logContext,
+    imagemOriginal,
+    imagemProcessada,
+  });
 
   return {
     sucesso: true,

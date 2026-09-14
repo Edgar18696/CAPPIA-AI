@@ -11,7 +11,7 @@ function PaizinhoFotoIA({
     : 0;
 
   const totalResultados = Array.isArray(resultadosFotos)
-    ? resultadosFotos.length
+    ? resultadosFotos.filter((item) => item?.processada && !item?.erro).length
     : 0;
 
   const concluido = totalResultados > 0;
@@ -254,8 +254,6 @@ function PaizinhoFotoIA({
 }
 
 export default function FotoIA({
-  categoriaFoto,
-  setCategoriaFoto,
   arquivosFotos,
   setArquivosFotos,
   setArquivo,
@@ -302,11 +300,22 @@ export default function FotoIA({
       return;
     }
 
-    const fotosPreparadas = files.map((file) => ({
-      file,
-      preview: URL.createObjectURL(file),
-      selecionada: true,
-    }));
+    const fotosPreparadas = files.map((file) => {
+      const arquivoIndependente = new File(
+        [file],
+        file.name,
+        {
+          type: file.type,
+          lastModified: file.lastModified,
+        }
+      );
+
+      return {
+        file: arquivoIndependente,
+        preview: URL.createObjectURL(arquivoIndependente),
+        selecionada: true,
+      };
+    });
 
     setArquivo(files[0]);
     setPreview(fotosPreparadas[0].preview);
@@ -409,45 +418,6 @@ export default function FotoIA({
           </div>
         </div>
       )}
-
-      <div
-        style={{
-          marginTop: "20px",
-          marginBottom: "20px",
-        }}
-      >
-        <h3
-          style={{
-            color: "#67e8f9",
-            marginBottom: "10px",
-          }}
-        >
-          📂 Categoria da Foto
-        </h3>
-
-        <select
-          value={categoriaFoto}
-          onChange={(evento) =>
-            setCategoriaFoto(evento.target.value)
-          }
-          style={{
-            padding: "12px",
-            borderRadius: "10px",
-            width: "320px",
-            maxWidth: "100%",
-            fontSize: "16px",
-          }}
-        >
-          <option value="autopecas">🚗 Autopeças</option>
-          <option value="eletronicos">💻 Eletrônicos</option>
-          <option value="moda">👕 Moda</option>
-          <option value="cosmeticos">💄 Cosméticos</option>
-          <option value="doceria">🍰 Doceria</option>
-          <option value="petshop">🐶 Pet Shop</option>
-          <option value="ferramentas">🔧 Ferramentas</option>
-          <option value="geral">📦 Geral</option>
-        </select>
-      </div>
 
       <p
         style={{
@@ -643,6 +613,8 @@ export default function FotoIA({
                 const urlProcessada =
                   montarUrlSemCache(resultado, index);
 
+                const erroFoto = String(resultado?.erro || "").trim();
+
                 return (
                   <div
                     key={`resultado-${index}`}
@@ -729,7 +701,30 @@ export default function FotoIA({
                           Resultado IA
                         </h4>
 
-                        {urlProcessada ? (
+                        {erroFoto ? (
+                          <div
+                            style={{
+                              minHeight: "320px",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              borderRadius: "12px",
+                              background: "#450a0a",
+                              color: "#fecaca",
+                              padding: "16px",
+                              textAlign: "left",
+                              whiteSpace: "pre-wrap",
+                              fontSize: "13px",
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            Foto {index + 1}
+                            {resultado?.nomeArquivo
+                              ? ` (${resultado.nomeArquivo})`
+                              : ""}
+                            : {erroFoto}
+                          </div>
+                        ) : urlProcessada ? (
                           <img
                             src={urlProcessada}
                             alt={`Processada ${index + 1}`}

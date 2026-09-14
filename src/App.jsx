@@ -37,6 +37,8 @@ import Admin from "./components/Admin";
 import MarketingAppia from "./components/MarketingAppia";
 import HomeScreen from "./components/screens/HomeScreen";
 import { usuarioEhAdministrador } from "./services/usuarioEhAdministrador";
+import { usuarioEhContaInternaTeste } from "./services/usuarioEhContaInternaTeste";
+import { ROTULO_CONTA_INTERNA_TESTE } from "./config/contasInternasPaiia";
 import Projetos from "./components/Projetos";
 import Login from "./components/Login";
 import Footer from "./components/Footer";
@@ -523,6 +525,7 @@ useEffect(() => {
 }, []);
 
 const ehAdministrador = usuarioEhAdministrador(usuario);
+const ehContaInternaTeste = usuarioEhContaInternaTeste(usuario);
 
 useEffect(() => {
   if (
@@ -1256,12 +1259,26 @@ async function processarSelecionadas() {
     ) {
       const foto =
         fotosSelecionadas[i];
+      const nomeArquivo =
+        foto?.file?.name || `foto-${i + 1}`;
+      const logContext = {
+        indice: i,
+        nomeArquivo,
+      };
+
+      console.log("FOTO IA — INÍCIO FOTO:", logContext);
 
       setStatusProcesso(
-        `⬆️ Enviando foto ${i + 1} de ${fotosSelecionadas.length}...`
+        `⬆️ Enviando foto ${i + 1} de ${fotosSelecionadas.length} (${nomeArquivo})...`
       );
 
       try {
+        if (!foto?.file) {
+          throw new Error(
+            "Arquivo da foto não está disponível neste item."
+          );
+        }
+
         const {
           urlPublica:
             imagemOriginal,
@@ -1270,6 +1287,7 @@ async function processarSelecionadas() {
             supabase,
             usuario,
             arquivo: foto.file,
+            logContext,
           });
 
         setUrlPublica(
@@ -1277,7 +1295,7 @@ async function processarSelecionadas() {
         );
 
         setStatusProcesso(
-          `🤖 Processando foto ${i + 1} de ${fotosSelecionadas.length}...`
+          `🤖 Processando foto ${i + 1} de ${fotosSelecionadas.length} (${nomeArquivo})...`
         );
 
         const {
@@ -1300,6 +1318,8 @@ async function processarSelecionadas() {
             qualidadeFoto,
 
             tamanhoFoto,
+
+            logContext,
           });
 
         if (!imagemProcessada) {
@@ -1340,6 +1360,14 @@ async function processarSelecionadas() {
 
           imagemProcessada:
             imagemFinal1200,
+
+          logContext,
+        });
+
+        console.log("FOTO IA — FOTO CONCLUÍDA:", {
+          ...logContext,
+          imagemOriginal,
+          imagemProcessada: imagemFinal1200,
         });
 
         setResultadoIA(
@@ -1350,6 +1378,8 @@ async function processarSelecionadas() {
           (atuais) => [
             ...atuais,
             {
+              indice: i,
+              nomeArquivo,
               original:
                 imagemOriginal,
 
@@ -1395,27 +1425,31 @@ async function processarSelecionadas() {
           `Erro ao processar a foto ${i + 1}`;
 
         erros.push(
-          `Foto ${i + 1}: ${mensagem}`
+          `Foto ${i + 1} (${nomeArquivo}): ${mensagem}`
         );
 
         console.error(
-          `ERRO FOTO ${i + 1}:`,
-          erroFoto
+          "FOTO IA — FOTO FALHOU:",
+          {
+            ...logContext,
+            erroCompleto: erroFoto,
+            mensagem,
+          }
         );
 
-        if (
-          i <
-          fotosSelecionadas.length - 1
-        ) {
-          await new Promise(
-            (resolve) => {
-              setTimeout(
-                resolve,
-                11000
-              );
-            }
-          );
-        }
+        setResultadosFotos(
+          (atuais) => [
+            ...atuais,
+            {
+              indice: i,
+              nomeArquivo,
+              original: foto?.preview || "",
+              processada: "",
+              erro: mensagem,
+              criadaEm: new Date().toISOString(),
+            },
+          ]
+        );
       }
     }
 
@@ -2137,6 +2171,24 @@ return (
           🏠 Home
         </button>
 
+        {ehContaInternaTeste && (
+          <span
+            title="Conta interna de teste. Não é cliente pagante."
+            style={{
+              padding: "8px 12px",
+              borderRadius: "999px",
+              border: "1px solid #fbbf24",
+              background: "rgba(120,53,15,.55)",
+              color: "#fde68a",
+              fontWeight: 800,
+              fontSize: "12px",
+              letterSpacing: ".4px",
+            }}
+          >
+            {ROTULO_CONTA_INTERNA_TESTE}
+          </span>
+        )}
+
         <button
           type="button"
           className="paiia-topo-paizinho"
@@ -2213,6 +2265,7 @@ return (
     cardStyle={cardStyle}
     setScreen={setScreen}
     ehAdministrador={ehAdministrador}
+    ehContaInternaTeste={ehContaInternaTeste}
     mostrarPaizinho={mostrarPaizinho}
     setMostrarPaizinho={setMostrarPaizinho}
   />

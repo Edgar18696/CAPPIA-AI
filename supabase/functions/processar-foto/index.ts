@@ -131,7 +131,7 @@ async function aplicarFundoBranco(
       );
 
       return imagem.write(
-        (dados) => dados
+        (dados) => new Uint8Array(dados)
       );
     }
   );
@@ -255,6 +255,9 @@ Deno.serve(async (req) => {
       }
     );
 
+    const iniciadoEm = Date.now();
+    const limiteMs = 80000;
+
     const respostaReplicate =
       await fetch(
         REPLICATE_ENDPOINT,
@@ -265,7 +268,7 @@ Deno.serve(async (req) => {
               `Bearer ${replicateToken}`,
             "Content-Type":
               "application/json",
-            Prefer: "wait=60",
+            Prefer: "wait=15",
           },
           body: JSON.stringify({
             input: {
@@ -309,13 +312,90 @@ Deno.serve(async (req) => {
     if (
       prediction.status !== "succeeded"
     ) {
+      const getUrl =
+        typeof prediction?.urls === "object" &&
+        prediction.urls &&
+        typeof (prediction.urls as { get?: string }).get ===
+          "string"
+          ? (prediction.urls as { get: string }).get
+          : "";
+
+      if (!getUrl) {
+        const erroPrediction =
+          prediction.error;
+
+        return respostaJson(
+          {
+            sucesso: false,
+            erro: erroPrediction
+              ? String(erroPrediction)
+              : "O Replicate não concluiu o processamento dentro do tempo esperado.",
+          },
+          503
+        );
+      }
+
+      for (let i = 0; i < 30; i++) {
+        if (Date.now() - iniciadoEm >= limiteMs) {
+          break;
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, 2000)
+        );
+
+        const buscarResposta = await fetch(getUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${replicateToken}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        try {
+          prediction =
+            await buscarResposta.json();
+        } catch {
+          prediction = {};
+        }
+
+        console.log(
+          "REPLICATE POLL:",
+          i + 1,
+          prediction.status
+        );
+
+        if (prediction.status === "succeeded") {
+          break;
+        }
+
+        if (
+          prediction.status === "failed" ||
+          prediction.status === "canceled"
+        ) {
+          throw new Error(
+            prediction.error
+              ? String(prediction.error)
+              : "O Replicate falhou no processamento da foto."
+          );
+        }
+      }
+    }
+
+    if (
+      prediction.status !== "succeeded"
+    ) {
       const erroPrediction =
         prediction.error;
 
-      throw new Error(
-        erroPrediction
-          ? String(erroPrediction)
-          : "O Replicate não concluiu o processamento dentro do tempo esperado."
+      return respostaJson(
+        {
+          sucesso: false,
+          erro: erroPrediction
+            ? String(erroPrediction)
+            : "O Replicate não concluiu o processamento dentro do tempo esperado.",
+        },
+        503
       );
     }
 
