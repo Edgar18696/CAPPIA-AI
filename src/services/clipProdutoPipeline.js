@@ -1,4 +1,8 @@
 import { supabase } from "../supabase";
+import {
+  SALDO_INTERNO_TESTE,
+  usuarioPodeUsarSemPagamento,
+} from "./usuarioPodeUsarSemPagamento";
 import { obterMovimentoClipPremium } from "./clipPremium/catalogoMovimentos";
 import { textoPreservacaoProduto } from "./clipPremium/preservacaoProduto";
 
@@ -188,7 +192,7 @@ export function montarInstrucoesClipProduto({
     textoPreservacaoProduto(),
     "Utilizar somente a imagem enviada como referência visual.",
     `Modalidade: Clip Premium.`,
-    `Movimento solicitado: ${movimento.nome}. ${movimento.promptMovimento}`,
+    "Movimento do Clip Premium: manter a peça completamente parada. Aplicar somente um deslocamento lateral muito suave da câmera, limitado a aproximadamente 10–20 graus, combinado com uma aproximação lenta. Não girar a peça, não orbitar ao redor dela e não revelar partes ocultas.",
     `Formato final ${formato.proporcao}, ${formato.largura}x${formato.altura}.`,
     textoOverlay,
     trilha,
@@ -231,6 +235,11 @@ export async function obterUsuarioAtualClip() {
 }
 
 export async function consultarCreditosClip() {
+  const { data: sessao } = await supabase.auth.getUser();
+  if (usuarioPodeUsarSemPagamento(sessao?.user)) {
+    return SALDO_INTERNO_TESTE;
+  }
+
   const { data, error } = await supabase.rpc("consultar_creditos_appia");
 
   if (error) {
@@ -340,4 +349,68 @@ export async function salvarClipProdutoNaGaleria({
   }
 
   return data;
+}
+export async function importarClipProduto({
+  usuarioId,
+  arquivo,
+  imagemOriginal = null,
+}) {
+  if (!usuarioId) {
+    throw new Error("Usuário não identificado.");
+  }
+
+  if (!arquivo) {
+    throw new Error("Selecione um vídeo para importar.");
+  }
+
+  if (!arquivo.type?.startsWith("video/")) {
+    throw new Error("O arquivo selecionado não é um vídeo válido.");
+  }
+
+  const extensao =
+    arquivo.name?.split(".").pop()?.toLowerCase() || "mp4";
+
+  const nomeSeguro = arquivo.name
+    ?.replace(/\.[^/.]+$/, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 60);
+
+  const caminho = `clips/${usuarioId}/${Date.now()}-${
+    nomeSeguro || "clip"
+  }.${extensao}`;
+
+  const { error: erroUpload } = await supabase.storage
+    .from("imagens")
+    .upload(caminho, arquivo, {
+      contentType: arquivo.type || "video/mp4",
+      upsert: false,
+    });
+
+  if (erroUpload) {
+    throw new Error(
+      "Não foi possível importar o vídeo: " + erroUpload.message
+    );
+  }
+
+  const { data: dadosUrl } = supabase.storage
+    .from("imagens")
+    .getPublicUrl(caminho);
+
+  const urlClip = dadosUrl?.publicUrl;
+
+  if (!urlClip) {
+    throw new Error("Não foi possível obter a URL do vídeo importado.");
+  }
+
+  await salvarClipProdutoNaGaleria({
+    usuarioId,
+    imagemOriginal,
+    urlClip,
+    estilo: "clip-importado",
+  });
+
+  return {
+    video: urlClip,
+    importado: true,
+  };
 }

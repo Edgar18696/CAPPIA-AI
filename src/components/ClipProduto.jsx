@@ -25,6 +25,7 @@ import {
   montarInstrucoesNeutrasMarketplace,
   obterMensagemErro,
   obterUsuarioAtualClip,
+  importarClipProduto,
   salvarClipProdutoNaGaleria,
 } from "../services/clipProdutoPipeline";
 
@@ -67,6 +68,7 @@ export default function ClipProduto({
   embutido = false,
 }) {
   const inputFotoRef = useRef(null);
+  const inputVideoRef = useRef(null);
   const [imagemClip, setImagemClip] = useState("");
   const [formatoClip, setFormatoClip] = useState("quadrado");
   const [movimentoProdutoVisual, setMovimentoProdutoVisual] =
@@ -119,7 +121,50 @@ export default function ClipProduto({
     setImagemClip(url);
     localStorage.setItem("imagemClipProdutoSelecionada", url);
   }
+function importarFoto(event) {
+  const arquivo = event.target.files?.[0];
+  event.target.value = "";
 
+  if (!arquivo?.type?.startsWith("image/")) {
+    return;
+  }
+
+  const url = URL.createObjectURL(arquivo);
+  setImagemClip(url);
+  localStorage.setItem("imagemClipProdutoSelecionada", url);
+}
+
+async function importarVideo(event) {
+  const arquivo = event.target.files?.[0];
+
+  if (!arquivo) return;
+
+  try {
+    setStatusClip("📤 Importando seu Clip...");
+
+    const usuario = await obterUsuarioAtualClip();
+
+    const resultado = await importarClipProduto({
+      usuarioId: usuario.id,
+      arquivo,
+      imagemOriginal: imagemClip || null,
+    });
+
+    setVideosGerados([resultado]);
+
+    setStatusClip("✅ Clip importado e salvo em Mídias PAIIA.");
+  } catch (error) {
+    console.error("Erro ao importar Clip:", error);
+
+    setStatusClip(
+      "❌ " + (error?.message || "Não foi possível importar o Clip.")
+    );
+  } finally {
+    if (inputVideoRef.current) {
+      inputVideoRef.current.value = "";
+    }
+  }
+}
   function abrirGaleria() {
     persistirEstado();
     localStorage.setItem("modoGaleria", "clipIA");
@@ -283,14 +328,16 @@ export default function ClipProduto({
         });
 
     const imagemPublica = await garantirImagemPublicaProduto(imagemClip);
+
     const { data, error } = await gerarVideoClipPremium({
-      imageUrl: imagemPublica,
-      estilo: estilo.id,
-      duracao: duracaoTotal,
-      formato: formatoSelecionado.id,
-      instrucoes,
-      movimentoProdutoVisual,
-    });
+  imageUrl: imagemPublica,
+  estilo: estilo.id,
+  duracao: duracaoTotal,
+  formato: formatoSelecionado.id,
+  instrucoes,
+  movimentoProdutoVisual,
+  motor: "gemini",
+});
 
     const videoResultado = data?.video || data?.video_url || "";
 
@@ -441,6 +488,13 @@ export default function ClipProduto({
             onChange={importarFoto}
             style={{ display: "none" }}
           />
+          <input
+  ref={inputVideoRef}
+  type="file"
+  accept="video/*"
+  onChange={importarVideo}
+  style={{ display: "none" }}
+/>
           <button
             type="button"
             onClick={() => inputFotoRef.current?.click()}
@@ -549,73 +603,80 @@ export default function ClipProduto({
       </section>
 
       <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
-          <h4 style={{ ...tituloSecao, marginTop: 0 }}>Movimento do Produto</h4>
-          <div
-            className="paiia-mobile-2cols"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: "10px",
-            }}
-          >
-            {MOVIMENTOS_CLIP_PREMIUM.map((item) => (
-              <CardMovimentoClip
-                key={item.id}
-                movimento={item}
-                selecionado={movimentoProdutoVisual === item.id}
-                recomendado={recomendacao?.id === item.id}
-                onSelect={() => setMovimentoProdutoVisual(item.id)}
-              />
-            ))}
-          </div>
+  <h4 style={{ ...tituloSecao, marginTop: 0 }}>Clip Premium</h4>
 
-          {recomendacao ? (
-            <div
-              style={{
-                marginTop: "16px",
-                marginBottom: "16px",
-                padding: "12px 14px",
-                borderRadius: "12px",
-                border: "1px solid #fbbf24",
-                background: "rgba(120,53,15,.35)",
-              }}
-            >
-              <div style={{ color: "#fde68a", fontWeight: 800, fontSize: "13px" }}>
-                ⭐ Recomendado pelo Paizinho
-              </div>
-              <div style={{ color: "#fff7ed", marginTop: "4px", fontWeight: 700 }}>
-                Recomendado: {recomendacao.nome}
-              </div>
-              <p
-                style={{
-                  margin: "6px 0 0",
-                  color: "#fed7aa",
-                  fontSize: "13px",
-                  lineHeight: 1.45,
-                }}
-              >
-                “{recomendacao.motivo}”
-              </p>
-              <button
-                type="button"
-                onClick={() => setMovimentoProdutoVisual(recomendacao.id)}
-                style={{
-                  marginTop: "10px",
-                  padding: "8px 12px",
-                  borderRadius: "8px",
-                  border: "1px solid #fbbf24",
-                  background: "#78350f",
-                  color: "#fffbeb",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Usar recomendação
-              </button>
-            </div>
-          ) : null}
-      </section>
+  <div
+    style={{
+      padding: "18px",
+      borderRadius: "14px",
+      border: "2px solid #22d3ee",
+      background: "rgba(8, 47, 73, 0.45)",
+    }}
+  >
+    <div
+      style={{
+        color: "#67e8f9",
+        fontWeight: 800,
+        fontSize: "16px",
+      }}
+    >
+      ✨ Clip Premium
+    </div>
 
+    <p
+      style={{
+        margin: "8px 0 0",
+        color: "#e2e8f0",
+        fontSize: "13px",
+        lineHeight: 1.5,
+      }}
+    >
+      Vídeo profissional com movimento suave e aproximação,
+      preservando a peça original.
+    </p>
+
+    <p
+      style={{
+        margin: "6px 0 0",
+        color: "#94a3b8",
+        fontSize: "12px",
+        lineHeight: 1.45,
+      }}
+    >
+      O Paizinho cria automaticamente o movimento ideal para
+      destacar seu produto.
+    </p>
+  </div>
+
+  <button
+    type="button"
+    onClick={() => inputVideoRef.current?.click()}
+    style={{
+      width: "100%",
+      marginTop: "12px",
+      padding: "14px 16px",
+      borderRadius: "12px",
+      border: "1px solid #475569",
+      background: "#0f172a",
+      color: "#e2e8f0",
+      fontSize: "14px",
+      fontWeight: 800,
+      cursor: "pointer",
+    }}
+  >
+    📤 Importar meu Clip
+  </button>
+
+  <p
+    style={{
+      margin: "7px 2px 0",
+      color: "#94a3b8",
+      fontSize: "12px",
+    }}
+  >
+    Já possui um vídeo? Adicione ao PAIIA sem consumir créditos.
+  </p>
+</section>
       <section style={{ ...estiloCard, padding: "22px" }}>
           <div
             style={{
