@@ -27,6 +27,7 @@ function obterMensagemErro(
 function statusPermiteUmaNovaTentativa(status) {
   return (
     status === 408 ||
+    status === 429 ||
     status === 503 ||
     status === 524 ||
     status === 546
@@ -34,8 +35,16 @@ function statusPermiteUmaNovaTentativa(status) {
 }
 
 function mensagemPermiteUmaNovaTentativa(mensagem) {
-  return /HTTP (408|503|524|546)/.test(
-    String(mensagem || "")
+  const texto = String(mensagem || "").toLowerCase();
+
+  return (
+    /http (408|429|503|524|546)/i.test(texto) ||
+    texto.includes("failed to fetch") ||
+    texto.includes("networkerror") ||
+    texto.includes("network error") ||
+    texto.includes("rate limit") ||
+    texto.includes("temporarily unavailable") ||
+    texto.includes("timeout")
   );
 }
 
@@ -109,8 +118,7 @@ export async function processarFotoAction({
       }),
   };
 
-  const maximo = 2;
-  const esperaRetryMs = 10000;
+  const maximo = 3;
   let ultimoErro = null;
     for (
     let tentativa = 1;
@@ -209,6 +217,9 @@ export async function processarFotoAction({
         ) &&
         tentativa < maximo
       ) {
+        const esperaRetryMs =
+          tentativa * 10000;
+
         console.warn(
           "FOTO IA — TENTATIVA FALHOU (temporário):",
           {
@@ -257,6 +268,9 @@ export async function processarFotoAction({
         ) &&
         tentativa < maximo
       ) {
+        const esperaRetryMs =
+          tentativa * 10000;
+
         console.warn(
           "FOTO IA — TENTATIVA FALHOU (temporário):",
           {

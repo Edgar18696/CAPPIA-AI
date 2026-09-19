@@ -287,6 +287,16 @@ export default function FotoIA({
     setImagemAmpliada,
   } = useFotoState();
 
+  function liberarPreviewsLocais() {
+    arquivosFotos.forEach((foto) => {
+      if (
+        String(foto?.preview || "").startsWith("blob:")
+      ) {
+        URL.revokeObjectURL(foto.preview);
+      }
+    });
+  }
+
   function selecionarFotos(evento) {
     const files = Array.from(evento.target.files || []);
 
@@ -299,6 +309,8 @@ export default function FotoIA({
       evento.target.value = "";
       return;
     }
+
+    liberarPreviewsLocais();
 
     const fotosPreparadas = files.map((file) => {
       const arquivoIndependente = new File(
@@ -324,6 +336,7 @@ export default function FotoIA({
     setResultadoIA("");
     setResultadosFotos([]);
     setStatusProcesso("");
+    setImagemAmpliada("");
   }
 
   function abrirGaleria() {
@@ -356,6 +369,7 @@ export default function FotoIA({
   }
 
   function processarNovoLote() {
+    liberarPreviewsLocais();
     setResultadosFotos([]);
     setImagemAmpliada("");
     limparTelaFoto();
@@ -444,6 +458,7 @@ export default function FotoIA({
           multiple
           accept="image/*"
           onChange={selecionarFotos}
+          disabled={processando}
         />
 
         {arquivosFotos.map((foto, index) => (

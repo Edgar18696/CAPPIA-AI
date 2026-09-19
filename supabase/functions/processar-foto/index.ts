@@ -2,6 +2,7 @@
 
 import {
   AlphaAction,
+  Gravity,
   ImageMagick,
   initializeImageMagick,
   MagickColor,
@@ -114,7 +115,6 @@ function obterUrlResultado(
 
   return "";
 }
-
 async function aplicarFundoBranco(
   imagemBytes: Uint8Array
 ) {
@@ -123,15 +123,76 @@ async function aplicarFundoBranco(
   return ImageMagick.read(
     imagemBytes,
     (imagem): Uint8Array => {
+      const TAMANHO_FINAL = 1200;
+      const TAMANHO_MAXIMO_PECA = 960;
+
+      // Remove o espaço transparente excedente
+      // deixado após a remoção do fundo.
+      imagem.trim();
+
+      const larguraOriginal = imagem.width;
+      const alturaOriginal = imagem.height;
+
+      if (
+        larguraOriginal <= 0 ||
+        alturaOriginal <= 0
+      ) {
+        throw new Error(
+          "Dimensões inválidas na imagem processada."
+        );
+      }
+
+      let novaLargura: number;
+      let novaAltura: number;
+
+      if (larguraOriginal >= alturaOriginal) {
+        novaLargura = TAMANHO_MAXIMO_PECA;
+        novaAltura = Math.max(
+          1,
+          Math.round(
+            alturaOriginal *
+              (TAMANHO_MAXIMO_PECA /
+                larguraOriginal)
+          )
+        );
+      } else {
+        novaAltura = TAMANHO_MAXIMO_PECA;
+        novaLargura = Math.max(
+          1,
+          Math.round(
+            larguraOriginal *
+              (TAMANHO_MAXIMO_PECA /
+                alturaOriginal)
+          )
+        );
+      }
+
+      // Redimensiona mantendo exatamente
+      // a proporção original da peça.
+      imagem.resize(
+        novaLargura,
+        novaAltura
+      );
+
+      // Monta a vitrine oficial PAIIA.
       imagem.backgroundColor =
         new MagickColor("#ffffff");
+
+      imagem.gravity =
+        Gravity.Center;
+
+      imagem.extent(
+        TAMANHO_FINAL,
+        TAMANHO_FINAL
+      );
 
       imagem.alpha(
         AlphaAction.Remove
       );
 
       return imagem.write(
-        (dados) => new Uint8Array(dados)
+        (dados) =>
+          new Uint8Array(dados)
       );
     }
   );
