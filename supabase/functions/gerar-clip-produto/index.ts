@@ -3,6 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   createClient,
 } from "https://esm.sh/@supabase/supabase-js@2";
+import { emailEhContaInternaTeste } from "../_shared/contaInternaTeste.ts";
 
 function montarCors(req: Request) {
   const origin =
@@ -166,6 +167,9 @@ Deno.serve(async (req) => {
 
     const usuarioId =
       dadosAuth?.user?.id;
+    const contaInternaTeste = emailEhContaInternaTeste(
+      dadosAuth?.user?.email
+    );
 
     if (erroAuth || !usuarioId) {
       return jsonResponse(req,
@@ -194,12 +198,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    const {
-      data: saldoAtual,
-      error: erroSaldo,
-    } = await usuarioClient.rpc(
-      "consultar_creditos_appia"
-    );
+    let saldoAtual = 999999;
+    let erroSaldo = null;
+    if (!contaInternaTeste) {
+      const consulta = await usuarioClient.rpc(
+        "consultar_creditos_appia"
+      );
+      saldoAtual = consulta.data;
+      erroSaldo = consulta.error;
+    }
 
     if (erroSaldo) {
       return jsonResponse(req,
@@ -211,7 +218,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (Number(saldoAtual || 0) < 1) {
+    if (!contaInternaTeste && Number(saldoAtual || 0) < 1) {
       return jsonResponse(req,
         {
           sucesso: false,
@@ -276,6 +283,9 @@ Deno.serve(async (req) => {
             movimentoProdutoVisual:
               body?.movimentoProdutoVisual ||
               "",
+              motor:
+  body?.motor ||
+  "replicate",
           }),
         }
       );
@@ -400,9 +410,11 @@ Deno.serve(async (req) => {
     const {
       data: novoSaldo,
       error: erroDebito,
-    } = await usuarioClient.rpc(
-      "debitar_credito_clip"
-    );
+    } = contaInternaTeste
+      ? { data: saldoAtual, error: null }
+      : await usuarioClient.rpc(
+          "debitar_credito_clip"
+        );
 
     if (erroDebito) {
       const mensagem = String(

@@ -17,6 +17,7 @@ import {
 } from "../services/mascoteMarcaService";
 import PaizinhoConversa from "./PaizinhoConversa";
 import ClipProduto from "./ClipProduto";
+import { consultarCreditosClip } from "../services/clipProdutoPipeline";
 import {
   consumirNovaCriacaoMidia,
   deveIniciarNovaCriacaoMidia,
@@ -897,27 +898,6 @@ async function obterUsuarioAtualClip() {
   return data.user;
 }
 
-
-async function consultarCreditosClip() {
-  const {
-    data,
-    error,
-  } = await supabase.rpc(
-    "consultar_creditos_appia"
-  );
-
-  if (error) {
-    throw new Error(
-      "Não foi possível consultar os créditos: " +
-        error.message
-    );
-  }
-
-  return Math.max(
-    0,
-    Number(data || 0)
-  );
-}
 
 async function chamarGerarClipProduto(body) {
   const {
