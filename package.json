@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "staging:preflight-creditos": "node --env-file=.env.staging.local scripts/staging/preflightCreditos.mjs",
+    "staging:testar-carteira": "node --env-file=.env.staging.local scripts/staging/testarCarteiraRpc.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
