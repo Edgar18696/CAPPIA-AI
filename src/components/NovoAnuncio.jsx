@@ -736,6 +736,8 @@ const [resultadoConcorrencia, setResultadoConcorrencia] =
   useState(null);
 const [erroConcorrencia, setErroConcorrencia] =
   useState("");
+const [categoriaConcorrencia, setCategoriaConcorrencia] =
+  useState("");
 
 const [custo, setCusto] =
   useState("");
@@ -1613,74 +1615,14 @@ function montarUrlPesquisaShopee(termo = "") {
   );
 }
 
-function classificarPecaConcorrencia() {
-  const texto = [
-    titulo,
-    pecaEncontrada?.peca,
-    pecaEncontrada?.fabricante,
-    diagnostico?.fabricante,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  const sinaisOriginal = [
-    "original",
-    "genuina",
-    "genuína",
-    "genuine",
-    "oem",
-    "mopar",
-  ];
-
-  const marcasEquivalentes = [
-    "bosch",
-    "magneti marelli",
-    "marelli",
-    "ngk",
-    "ntk",
-    "delphi",
-    "denso",
-    "vdo",
-    "motrio",
-  ];
-
-  if (
-    sinaisOriginal.some((sinal) =>
-      texto.includes(sinal)
-    )
-  ) {
-    return {
-      tipo: "original",
-      rotulo: "Original / OEM",
-      busca: "original OEM",
-    };
-  }
-
-  if (
-    marcasEquivalentes.some((marca) =>
-      texto.includes(marca)
-    )
-  ) {
-    return {
-      tipo: "equivalente",
-      rotulo: "Marca equivalente",
-      busca: String(
-        pecaEncontrada?.fabricante ||
-          diagnostico?.fabricante ||
-          ""
-      ).trim(),
-    };
-  }
-
-  return {
-    tipo: "paralela",
-    rotulo: "Paralela / aftermarket",
-    busca: "",
-  };
-}
-
 async function pesquisarConcorrenciaPaizinho() {
+  if (!categoriaConcorrencia) {
+    alert(
+      "Escolha se deseja comparar com peças originais ou importadas."
+    );
+    return;
+  }
+
   const codigoBusca = String(
     codigo || oem || ""
   ).trim();
@@ -1690,7 +1632,17 @@ async function pesquisarConcorrenciaPaizinho() {
   ).trim();
 
   const classificacao =
-    classificarPecaConcorrencia();
+    categoriaConcorrencia === "original"
+      ? {
+          tipo: "original",
+          rotulo: "Peças originais",
+          busca: "original OEM",
+        }
+      : {
+          tipo: "paralela",
+          rotulo: "Peças importadas",
+          busca: "",
+        };
 
   const fabricanteBusca = String(
     pecaEncontrada?.fabricante ||
@@ -1835,13 +1787,24 @@ console.log(
           categoria:
             item?.categoria || "",
         }))
-        .filter(
-          (item) =>
-            Number.isFinite(
-              item.preco
-            ) &&
-            item.preco > 0
-        );
+        .filter((item) => {
+          if (
+            !Number.isFinite(item.preco) ||
+            item.preco <= 0
+          ) {
+            return false;
+          }
+
+          const categoriaItem = String(
+            item.categoria || ""
+          ).toLowerCase();
+
+          return categoriaConcorrencia === "original"
+            ? categoriaItem === "original"
+            : categoriaItem === "paralela" ||
+                categoriaItem === "equivalente" ||
+                categoriaItem === "importado";
+        });
     }
 
     function calcularFaixaMercado(
@@ -5058,47 +5021,135 @@ const custoTotalVenda =
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={pesquisarConcorrenciaPaizinho}
-        disabled={pesquisandoConcorrencia}
+      <div
         style={{
-          padding: "13px 18px",
-          borderRadius: "10px",
-          border: "1px solid #38bdf8",
-          background: "#1d4ed8",
-          color: "#ffffff",
-          fontWeight: "bold",
-          cursor: pesquisandoConcorrencia
-            ? "wait"
-            : "pointer",
-          opacity: pesquisandoConcorrencia
-            ? 0.75
-            : 1,
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap",
+          justifyContent: "flex-end",
+          maxWidth: "100%",
         }}
       >
-        {pesquisandoConcorrencia
-          ? "⏳ Paizinho pesquisando..."
-          : "🤖 Paizinho, pesquisar a concorrência"}
-      </button>
+        <div
+          role="radiogroup"
+          aria-label="Categoria da concorrência"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            flexWrap: "wrap",
+          }}
+        >
+          {["original", "importado"].map((categoria) => {
+            const selecionada =
+              categoriaConcorrencia === categoria;
+            const rotulo =
+              categoria === "original"
+                ? "Original"
+                : "Importado";
+
+            return (
+              <label
+                key={categoria}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "7px",
+                  padding: "10px 13px",
+                  borderRadius: "10px",
+                  border: selecionada
+                    ? "1px solid #67e8f9"
+                    : "1px solid #475569",
+                  background: selecionada
+                    ? "rgba(8,145,178,.22)"
+                    : "#020617",
+                  color: selecionada
+                    ? "#cffafe"
+                    : "#e2e8f0",
+                  fontWeight: "800",
+                  cursor: pesquisandoConcorrencia
+                    ? "wait"
+                    : "pointer",
+                  opacity: pesquisandoConcorrencia
+                    ? 0.7
+                    : 1,
+                }}
+              >
+                <input
+                  type="radio"
+                  name="categoria-concorrencia"
+                  value={categoria}
+                  checked={selecionada}
+                  disabled={pesquisandoConcorrencia}
+                  onChange={() => {
+                    setCategoriaConcorrencia(categoria);
+                    setResultadoConcorrencia(null);
+                    setErroConcorrencia("");
+                  }}
+                />
+                {rotulo}
+              </label>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={pesquisarConcorrenciaPaizinho}
+          disabled={
+            pesquisandoConcorrencia ||
+            !categoriaConcorrencia
+          }
+          style={{
+            padding: "13px 18px",
+            borderRadius: "10px",
+            border: "1px solid #38bdf8",
+            background: "#1d4ed8",
+            color: "#ffffff",
+            fontWeight: "bold",
+            cursor: pesquisandoConcorrencia
+              ? "wait"
+              : categoriaConcorrencia
+                ? "pointer"
+                : "not-allowed",
+            opacity:
+              pesquisandoConcorrencia ||
+              !categoriaConcorrencia
+                ? 0.55
+                : 1,
+            whiteSpace: "normal",
+          }}
+        >
+          {pesquisandoConcorrencia
+            ? "⏳ Paizinho pesquisando..."
+            : "🤖 Paizinho, pesquisar a concorrência"}
+        </button>
+      </div>
     </div>
 
     <div
       style={{
         marginBottom: "12px",
-        padding: "12px",
-        borderRadius: "10px",
-        border: "1px solid #334155",
-        background: "#020617",
-        color: "#cbd5e1",
+        color: categoriaConcorrencia
+          ? "#a5f3fc"
+          : "#fde68a",
         fontSize: "12px",
+        fontWeight: "700",
+        textAlign: "right",
       }}
     >
-      <strong style={{ color: "#67e8f9" }}>
-        🧩 Categoria comparada:
-      </strong>{" "}
-      {resultadoConcorrencia?.classificacao?.rotulo ||
-        "Será identificada automaticamente pela peça do anúncio"}
+      {resultadoConcorrencia
+        ? `Concorrência — ${
+            resultadoConcorrencia.classificacao.tipo === "original"
+              ? "Peças originais"
+              : "Peças importadas"
+          }`
+        : categoriaConcorrencia === "original"
+          ? "Comparando peças originais"
+          : categoriaConcorrencia === "importado"
+            ? "Comparando peças importadas"
+            : "Escolha Original ou Importado para pesquisar."}
     </div>
 
     <div
@@ -5259,7 +5310,7 @@ const custoTotalVenda =
         fontSize: "11px",
       }}
     >
-      ⚪ Original, equivalente e paralela serão separados. Somente a categoria da sua peça entra no cálculo principal; as demais ficam como referência.
+      A menor faixa, a média e a maior faixa consideram somente a categoria escolhida.
     </div>
 
     <div
