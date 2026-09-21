@@ -427,6 +427,576 @@ function escaparHtml(valor = "") {
     .replace(/>/g, "&gt;");
 }
 
+function carregarImagemParaCanvas(fonte) {
+  return new Promise((resolve, reject) => {
+    const imagem = new Image();
+    imagem.crossOrigin = "anonymous";
+    imagem.onload = () => resolve(imagem);
+    imagem.onerror = () => reject(
+      new Error("Não foi possível carregar uma das imagens do banner.")
+    );
+    imagem.src = fonte;
+  });
+}
+
+function desenharImagemContida(
+  contexto,
+  imagem,
+  area,
+  margem = 0
+) {
+  const larguraDisponivel = Math.max(
+    1,
+    area.largura - margem * 2
+  );
+  const alturaDisponivel = Math.max(
+    1,
+    area.altura - margem * 2
+  );
+  const larguraImagem =
+    imagem.naturalWidth || imagem.width;
+  const alturaImagem =
+    imagem.naturalHeight || imagem.height;
+  const escala = Math.min(
+    larguraDisponivel / larguraImagem,
+    alturaDisponivel / alturaImagem
+  );
+  const largura = larguraImagem * escala;
+  const altura = alturaImagem * escala;
+  const x = area.x + (area.largura - largura) / 2;
+  const y = area.y + (area.altura - altura) / 2;
+
+  contexto.drawImage(
+    imagem,
+    x,
+    y,
+    largura,
+    altura
+  );
+}
+
+function removerFundoBrancoConectadoAsBordas(imagem) {
+  const largura = imagem.naturalWidth || imagem.width;
+  const altura = imagem.naturalHeight || imagem.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = largura;
+  canvas.height = altura;
+
+  const contexto = canvas.getContext("2d", {
+    willReadFrequently: true,
+  });
+
+  if (!contexto || !largura || !altura) {
+    return imagem;
+  }
+
+  contexto.drawImage(imagem, 0, 0, largura, altura);
+
+  let dadosImagem;
+  try {
+    dadosImagem = contexto.getImageData(0, 0, largura, altura);
+  } catch {
+    return imagem;
+  }
+
+  const pixels = dadosImagem.data;
+  const total = largura * altura;
+  const visitados = new Uint8Array(total);
+  const fila = new Int32Array(total);
+  let inicioFila = 0;
+  let fimFila = 0;
+
+  const ehBrancoDeFundo = (indicePixel) => {
+    const indice = indicePixel * 4;
+    const vermelho = pixels[indice];
+    const verde = pixels[indice + 1];
+    const azul = pixels[indice + 2];
+    const alpha = pixels[indice + 3];
+    const minimo = Math.min(vermelho, verde, azul);
+    const maximo = Math.max(vermelho, verde, azul);
+
+    return alpha <= 12 || (
+      minimo >= 232 &&
+      maximo - minimo <= 24
+    );
+  };
+
+  const tentarAdicionar = (indicePixel) => {
+    if (
+      indicePixel < 0 ||
+      indicePixel >= total ||
+      visitados[indicePixel]
+    ) {
+      return;
+    }
+
+    visitados[indicePixel] = 1;
+    if (ehBrancoDeFundo(indicePixel)) {
+      fila[fimFila] = indicePixel;
+      fimFila += 1;
+    }
+  };
+
+  for (let x = 0; x < largura; x += 1) {
+    tentarAdicionar(x);
+    tentarAdicionar((altura - 1) * largura + x);
+  }
+
+  for (let y = 1; y < altura - 1; y += 1) {
+    tentarAdicionar(y * largura);
+    tentarAdicionar(y * largura + largura - 1);
+  }
+
+  while (inicioFila < fimFila) {
+    const indicePixel = fila[inicioFila];
+    inicioFila += 1;
+    const x = indicePixel % largura;
+    const y = Math.floor(indicePixel / largura);
+
+    pixels[indicePixel * 4 + 3] = 0;
+
+    if (x > 0) tentarAdicionar(indicePixel - 1);
+    if (x + 1 < largura) tentarAdicionar(indicePixel + 1);
+    if (y > 0) tentarAdicionar(indicePixel - largura);
+    if (y + 1 < altura) tentarAdicionar(indicePixel + largura);
+  }
+
+  contexto.putImageData(dadosImagem, 0, 0);
+
+  let minimoX = largura;
+  let minimoY = altura;
+  let maximoX = -1;
+  let maximoY = -1;
+
+  for (let y = 0; y < altura; y += 1) {
+    for (let x = 0; x < largura; x += 1) {
+      const alpha = pixels[(y * largura + x) * 4 + 3];
+      if (alpha <= 12) continue;
+      minimoX = Math.min(minimoX, x);
+      minimoY = Math.min(minimoY, y);
+      maximoX = Math.max(maximoX, x);
+      maximoY = Math.max(maximoY, y);
+    }
+  }
+
+  if (maximoX < minimoX || maximoY < minimoY) {
+    return imagem;
+  }
+
+  const margemSegura = Math.max(
+    2,
+    Math.round(
+      Math.max(maximoX - minimoX + 1, maximoY - minimoY + 1) * 0.018
+    )
+  );
+  const origemX = Math.max(0, minimoX - margemSegura);
+  const origemY = Math.max(0, minimoY - margemSegura);
+  const limiteX = Math.min(largura, maximoX + margemSegura + 1);
+  const limiteY = Math.min(altura, maximoY + margemSegura + 1);
+  const recorte = document.createElement("canvas");
+  recorte.width = limiteX - origemX;
+  recorte.height = limiteY - origemY;
+  const contextoRecorte = recorte.getContext("2d");
+
+  if (!contextoRecorte) return canvas;
+
+  contextoRecorte.drawImage(
+    canvas,
+    origemX,
+    origemY,
+    recorte.width,
+    recorte.height,
+    0,
+    0,
+    recorte.width,
+    recorte.height
+  );
+
+  return recorte;
+}
+
+function quebrarTexto(contexto, texto, larguraMaxima) {
+  const palavras = String(texto || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const linhas = [];
+  let linha = "";
+
+  for (const palavra of palavras) {
+    const candidata = linha
+      ? `${linha} ${palavra}`
+      : palavra;
+
+    if (
+      linha &&
+      contexto.measureText(candidata).width > larguraMaxima
+    ) {
+      linhas.push(linha);
+      linha = palavra;
+    } else {
+      linha = candidata;
+    }
+  }
+
+  if (linha) linhas.push(linha);
+  return linhas;
+}
+
+function prepararBlocoTexto({
+  contexto,
+  texto,
+  largura,
+  tamanhoInicial,
+  tamanhoMinimo,
+  peso,
+  maximoLinhas,
+  fatorAltura = 1.12,
+}) {
+  let tamanho = tamanhoInicial;
+  let linhas = [];
+
+  while (tamanho >= tamanhoMinimo) {
+    contexto.font = `${peso} ${tamanho}px Arial`;
+    linhas = quebrarTexto(contexto, texto, largura);
+    if (
+      linhas.length <= maximoLinhas &&
+      linhas.every((linha) => contexto.measureText(linha).width <= largura)
+    ) {
+      break;
+    }
+    tamanho -= 2;
+  }
+
+  contexto.font = `${peso} ${Math.max(tamanho, tamanhoMinimo)}px Arial`;
+  linhas = quebrarTexto(contexto, texto, largura);
+
+  if (linhas.length > maximoLinhas) {
+    linhas = linhas.slice(0, maximoLinhas);
+    let ultima = linhas[maximoLinhas - 1];
+    while (
+      ultima.length > 1 &&
+      contexto.measureText(`${ultima}…`).width > largura
+    ) {
+      ultima = ultima.slice(0, -1).trimEnd();
+    }
+    linhas[maximoLinhas - 1] = `${ultima}…`;
+  }
+
+  return {
+    linhas,
+    tamanho: Math.max(tamanho, tamanhoMinimo),
+    alturaLinha: Math.ceil(Math.max(tamanho, tamanhoMinimo) * fatorAltura),
+  };
+}
+
+function desenharBlocoTexto(contexto, bloco, x, y) {
+  bloco.linhas.forEach((linha, indice) => {
+    contexto.fillText(linha, x, y + indice * bloco.alturaLinha);
+  });
+  return y + bloco.linhas.length * bloco.alturaLinha;
+}
+
+function limitarTextoEmUmaLinha(contexto, texto, larguraMaxima) {
+  const original = String(texto || "").trim();
+  if (contexto.measureText(original).width <= larguraMaxima) {
+    return original;
+  }
+
+  let reduzido = original;
+  while (
+    reduzido.length > 1 &&
+    contexto.measureText(`${reduzido}…`).width > larguraMaxima
+  ) {
+    reduzido = reduzido.slice(0, -1).trimEnd();
+  }
+  return `${reduzido}…`;
+}
+
+async function criarBannerDeterministico({
+  formato,
+  paleta,
+  paletaId,
+  imagemProduto,
+  logo,
+  nomeEmpresa,
+  chamada,
+  titulo,
+  apoio,
+  preco,
+  contato,
+  rodape,
+  layout,
+}) {
+  const canvas = document.createElement("canvas");
+  canvas.width = formato.largura;
+  canvas.height = formato.altura;
+
+  const contexto = canvas.getContext("2d");
+  if (!contexto) {
+    throw new Error("Não foi possível montar o banner.");
+  }
+
+  contexto.imageSmoothingEnabled = true;
+  contexto.imageSmoothingQuality = "high";
+
+  const largura = canvas.width;
+  const altura = canvas.height;
+  const claro = paletaId === "clean";
+  const gradiente = contexto.createLinearGradient(
+    0,
+    0,
+    largura,
+    altura
+  );
+
+  if (claro) {
+    gradiente.addColorStop(0, "#ffffff");
+    gradiente.addColorStop(0.58, "#eff6ff");
+    gradiente.addColorStop(1, "#bfdbfe");
+  } else if (paletaId === "vermelho") {
+    gradiente.addColorStop(0, "#120407");
+    gradiente.addColorStop(0.58, "#4c0519");
+    gradiente.addColorStop(1, "#b91c1c");
+  } else if (paletaId === "escuro") {
+    gradiente.addColorStop(0, "#020617");
+    gradiente.addColorStop(0.62, "#0f172a");
+    gradiente.addColorStop(1, "#0c4a6e");
+  } else {
+    gradiente.addColorStop(0, "#020617");
+    gradiente.addColorStop(0.58, "#071a3d");
+    gradiente.addColorStop(1, "#0b3ea8");
+  }
+
+  contexto.fillStyle = gradiente;
+  contexto.fillRect(0, 0, largura, altura);
+
+  const brilho = contexto.createRadialGradient(
+    largura * 0.84,
+    altura * 0.16,
+    0,
+    largura * 0.84,
+    altura * 0.16,
+    Math.max(largura, altura) * 0.42
+  );
+  brilho.addColorStop(0, claro
+    ? "rgba(8,145,178,.22)"
+    : "rgba(103,232,249,.30)");
+  brilho.addColorStop(1, "rgba(0,0,0,0)");
+  contexto.fillStyle = brilho;
+  contexto.fillRect(0, 0, largura, altura);
+
+  const margem = Math.round(Math.min(largura, altura) * 0.055);
+  const espaco = Math.round(margem * 0.6);
+  const topo = Math.round(altura * 0.14);
+  const rodapeAltura = Math.round(altura * 0.105);
+  const conteudoAltura = altura - topo - rodapeAltura - margem;
+  const produtoNaDireita = layout === 2;
+  const larguraProduto = Math.round(largura * 0.46);
+  const areaProduto = {
+    x: produtoNaDireita
+      ? largura - margem - larguraProduto
+      : margem,
+    y: topo,
+    largura: larguraProduto,
+    altura: conteudoAltura,
+  };
+  const areaTexto = {
+    x: produtoNaDireita
+      ? margem
+      : areaProduto.x + areaProduto.largura + espaco,
+    y: topo + Math.round(conteudoAltura * 0.12),
+    largura:
+      largura - margem * 2 - larguraProduto - espaco,
+    altura: conteudoAltura,
+  };
+
+  const produtoOriginal = await carregarImagemParaCanvas(
+    imagemProduto
+  );
+  const produto = removerFundoBrancoConectadoAsBordas(
+    produtoOriginal
+  );
+  contexto.save();
+  contexto.shadowColor = "rgba(2,6,23,.30)";
+  contexto.shadowBlur = Math.round(margem * 0.65);
+  contexto.shadowOffsetY = Math.round(margem * 0.22);
+  desenharImagemContida(
+    contexto,
+    produto,
+    areaProduto,
+    Math.round(margem * 0.45)
+  );
+  contexto.restore();
+
+  if (logo) {
+    const imagemLogo = await carregarImagemParaCanvas(logo);
+    desenharImagemContida(
+      contexto,
+      imagemLogo,
+      {
+        x: margem,
+        y: Math.round(margem * 0.55),
+        largura: Math.round(largura * 0.12),
+        altura: Math.round(altura * 0.075),
+      }
+    );
+  }
+
+  contexto.fillStyle = paleta.texto;
+  contexto.textBaseline = "top";
+  contexto.font = `800 ${Math.max(18, Math.round(largura * 0.022))}px Arial`;
+  contexto.fillText(
+    String(nomeEmpresa || "PAIIA").toUpperCase(),
+    logo
+      ? margem + Math.round(largura * 0.135)
+      : margem,
+    Math.round(margem * 0.7)
+  );
+
+  contexto.fillStyle = paleta.destaque;
+  const blocoChamada = prepararBlocoTexto({
+    contexto,
+    texto: String(chamada || "PRODUTO EM DESTAQUE").toUpperCase(),
+    largura: areaTexto.largura,
+    tamanhoInicial: Math.max(16, Math.round(largura * 0.021)),
+    tamanhoMinimo: Math.max(13, Math.round(largura * 0.014)),
+    peso: 900,
+    maximoLinhas: 2,
+  });
+  let cursorY = desenharBlocoTexto(
+    contexto,
+    blocoChamada,
+    areaTexto.x,
+    areaTexto.y
+  );
+
+  contexto.fillStyle = paleta.texto;
+  const blocoTitulo = prepararBlocoTexto({
+    contexto,
+    texto: String(titulo || "QUALIDADE PARA O SEU CARRO").toUpperCase(),
+    largura: areaTexto.largura,
+    tamanhoInicial: Math.max(30, Math.round(largura * 0.044)),
+    tamanhoMinimo: Math.max(22, Math.round(largura * 0.025)),
+    peso: 900,
+    maximoLinhas: 3,
+    fatorAltura: 1.08,
+  });
+  cursorY = desenharBlocoTexto(
+    contexto,
+    blocoTitulo,
+    areaTexto.x,
+    cursorY + Math.round(margem * 0.28)
+  );
+
+  if (preco) {
+    const textoPreco = String(preco);
+    contexto.font = `900 ${Math.max(38, Math.round(largura * 0.06))}px Arial`;
+    const medida = contexto.measureText(textoPreco);
+    const paddingX = Math.round(margem * 0.42);
+    const paddingY = Math.round(margem * 0.22);
+    const caixaLargura = Math.min(
+      areaTexto.largura,
+      medida.width + paddingX * 2
+    );
+    const caixaAltura = Math.round(largura * 0.085);
+    const gradientePreco = contexto.createLinearGradient(
+      areaTexto.x,
+      cursorY,
+      areaTexto.x + caixaLargura,
+      cursorY + caixaAltura
+    );
+    gradientePreco.addColorStop(0, paleta.destaque);
+    gradientePreco.addColorStop(1, paleta.destaque2);
+    contexto.fillStyle = gradientePreco;
+    contexto.beginPath();
+    contexto.roundRect(
+      areaTexto.x,
+      cursorY + Math.round(margem * 0.18),
+      caixaLargura,
+      caixaAltura,
+      Math.round(margem * 0.25)
+    );
+    contexto.fill();
+    contexto.fillStyle = claro ? "#ffffff" : "#020617";
+    contexto.fillText(
+      textoPreco,
+      areaTexto.x + paddingX,
+      cursorY + Math.round(margem * 0.18) + paddingY
+    );
+    cursorY += caixaAltura + Math.round(margem * 0.42);
+  }
+
+  contexto.fillStyle = paleta.apoio;
+  const blocoApoio = prepararBlocoTexto({
+    contexto,
+    texto: apoio || "Qualidade e confiança para o seu carro",
+    largura: areaTexto.largura,
+    tamanhoInicial: Math.max(17, Math.round(largura * 0.022)),
+    tamanhoMinimo: Math.max(14, Math.round(largura * 0.015)),
+    peso: 600,
+    maximoLinhas: 3,
+    fatorAltura: 1.2,
+  });
+  desenharBlocoTexto(
+    contexto,
+    blocoApoio,
+    areaTexto.x,
+    cursorY + Math.round(margem * 0.22)
+  );
+
+  const yRodape = altura - margem - rodapeAltura;
+  contexto.fillStyle = paleta.caixa;
+  contexto.beginPath();
+  contexto.roundRect(
+    margem,
+    yRodape,
+    largura - margem * 2,
+    rodapeAltura,
+    Math.round(margem * 0.3)
+  );
+  contexto.fill();
+  contexto.strokeStyle = paleta.destaque;
+  contexto.lineWidth = Math.max(2, largura * 0.0015);
+  contexto.stroke();
+
+  contexto.fillStyle = paleta.texto;
+  contexto.font = `700 ${Math.max(14, Math.round(largura * 0.017))}px Arial`;
+  contexto.textBaseline = "middle";
+  const larguraRodapeDisponivel = largura - margem * 2 - Math.round(margem * 0.8);
+  const larguraContato = rodape
+    ? larguraRodapeDisponivel * 0.62
+    : larguraRodapeDisponivel;
+  const textoContato = limitarTextoEmUmaLinha(
+    contexto,
+    contato || "Consulte aplicações e disponibilidade",
+    larguraContato
+  );
+  contexto.fillText(
+    textoContato,
+    margem + Math.round(margem * 0.4),
+    yRodape + rodapeAltura / 2
+  );
+
+  if (rodape) {
+    contexto.textAlign = "right";
+    contexto.fillStyle = paleta.destaque;
+    const textoRodape = limitarTextoEmUmaLinha(
+      contexto,
+      rodape,
+      larguraRodapeDisponivel * 0.32
+    );
+    contexto.fillText(
+      textoRodape,
+      largura - margem - Math.round(margem * 0.4),
+      yRodape + rodapeAltura / 2
+    );
+    contexto.textAlign = "left";
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
 export default function BannerStudio({
   galeria = [],
   setScreen,
@@ -1007,7 +1577,7 @@ useEffect(() => {
     setPaleta(novaPaleta);
     setFormato(novoFormato);
     setPrecoPedido(precoFormatado);
-    setCopyPedido({
+    const copyGerada = {
       chamada:
         novoObjetivo === "oferta"
           ? "OFERTA ESPECIAL"
@@ -1019,13 +1589,16 @@ useEffect(() => {
       titulo: tituloGerado,
       apoio: apoioGerado,
       cta: ctaGerado,
-    });
+    };
+
+    setCopyPedido(copyGerada);
 
     return {
       objetivo: novoObjetivo,
       paleta: novaPaleta,
       formato: novoFormato,
       preco: precoFormatado,
+      copy: copyGerada,
     };
   }
 
@@ -1174,6 +1747,7 @@ ${
 }
 
   async function gerarComIA() {
+    if (gerandoFundoIA) return;
     if (!imagemSelecionada) {
       alert(
         "Escolha uma foto da Galeria PAIIA antes de gerar o banner."
@@ -1181,117 +1755,123 @@ ${
       return;
     }
 
-    const interpretado =
-  formato === "mercadoLivre"
-    ? {
+    let interpretado = {
+      objetivo,
+      paleta,
+      formato,
+      preco: precoPedido,
+      copy:
+        copyPedido || copyAutomatica,
+    };
+
+    if (formato === "mercadoLivre") {
+      interpretado = {
+        ...interpretado,
         objetivo: "produto",
         paleta: "clean",
-        formato:
-          "mercadoLivre",
+        formato: "mercadoLivre",
         preco: "",
-      }
-    : interpretarPedidoAppia();
+      };
+    } else if (pedidoAppia.trim()) {
+      interpretado =
+        interpretarPedidoAppia();
+    }
 
-setBannerGerado(false);
-setAprovado(false);
-setBannerSalvo(false);
-setFundoIA("");
-setGerandoFundoIA(true);
-setErroFundoIA("");
+    setBannerGerado(false);
+    setAprovado(false);
+    setBannerSalvo(false);
+    setFundoIA("");
+    setGerandoFundoIA(true);
+    setErroFundoIA("");
 
     const proximaVersao =
       versaoIA + 1;
 
     setStatus(
-      "🎨 PAIIA criando direção de arte profissional..."
+      "🎨 PAIIA montando o banner profissional..."
     );
 
     try {
-      const { data, error } =
-  await supabase.functions.invoke(
-    "banner-ia",
-    {
-   body: {
-  descricao:
-    montarPedidoCompleto(),
+      const formatoFinal =
+        FORMATOS[interpretado.formato] ||
+        dadosFormato;
+      const paletaFinal =
+        PALETAS[interpretado.paleta] ||
+        cores;
+      const objetivoFinal =
+        OBJETIVOS.find(
+          (item) =>
+            item.id === interpretado.objetivo
+        ) || dadosObjetivo;
+      const copyFinal =
+        interpretado.copy ||
+        obterCopyAutomatica(
+          interpretado.objetivo,
+          proximaVersao
+        );
+      const proximoLayout =
+        layout === 1 ? 2 : 1;
+      const png =
+        await criarBannerDeterministico({
+          formato: formatoFinal,
+          paleta: paletaFinal,
+          paletaId: interpretado.paleta,
+          imagemProduto:
+            imagemSelecionada,
+          logo: marca.logo || "",
+          nomeEmpresa:
+            marca.nome || "Sua Empresa",
+          chamada:
+            copyFinal.chamada ||
+            objetivoFinal.chamada,
+          titulo:
+            copyFinal.titulo ||
+            objetivoFinal.nome,
+          apoio:
+            copyFinal.apoio ||
+            objetivoFinal.apoio,
+          preco:
+            interpretado.formato === "mercadoLivre"
+              ? ""
+              : interpretado.preco ||
+                precoPedido,
+          contato:
+            marca.telefone
+              ? `Contato: ${marca.telefone}`
+              : copyFinal.cta ||
+                "Consulte aplicações e disponibilidade",
+          rodape:
+            marca.site ||
+            marca.endereco ||
+            "PAIIA",
+          layout: proximoLayout,
+        });
 
-  imagemProduto:
-    imagemSelecionada,
-
-  imagemDetalheTecnico:
-    fotoDetalheTecnico?.url || "",
-
-  logo:
-    marca.logo || "",
-
-  modelo:
-    interpretado?.objetivo ||
-    objetivo ||
-    "produto",
-
-  paleta:
-    interpretado?.paleta ||
-    paleta,
-
-  formato:
-    interpretado?.formato ||
-    formato,
-
-  variacao:
-    proximaVersao,
-},
-    }
-  );
-
-if (error) {
-  throw error;
-}
-
-if (
-  !data?.sucesso ||
-  !data?.imagem
-) {
-  throw new Error(
-    data?.erro ||
-      "A IA não retornou o fundo do banner."
-  );
-}
-
-setFundoIA(
-  data.imagem
-);
-
-setVersaoIA(
-  proximaVersao
-);
-      setLayout(
-        (atual) =>
-          atual >= 3
-            ? 1
-            : atual + 1
-      );
+      setFundoIA(png);
+      setVersaoIA(proximaVersao);
+      setLayout(proximoLayout);
 
       setBannerGerado(true);
 
       setStatus(
-        "✨ Fundo profissional criado. PAIIA aplicou produto, logo, preço e chamada."
+        "✨ Banner profissional criado internamente, sem gerador externo."
       );
     } catch (erro) {
       console.error(
-        "❌ BANNER IA:",
+        "❌ BANNER EXPRESS:",
         erro
       );
 
       const mensagem =
         erro?.message ||
-        "Não foi possível gerar o fundo com IA.";
+        "Não foi possível montar o banner.";
 
       setErroFundoIA(
         mensagem
       );
 
       setStatus(
-        "⚠️ Falha na geração por IA."
+        "⚠️ Falha na montagem do banner."
       );
 
       alert(
@@ -1311,7 +1891,7 @@ async function aprovarBanner() {
 
   if (!bannerGerado || !fundoIA) {
     alert(
-      "Gere o banner com IA antes de aprovar."
+      "Gere o banner antes de aprovar."
     );
     return;
   }
@@ -2607,6 +3187,7 @@ async function salvarBannerNasMidias(urlBanner) {
             </label>
           </div>
 
+          {formato !== "mercadoLivre" && (
           <div style={secaoCompactaStyle}>
             <button
               type="button"
@@ -2631,224 +3212,16 @@ async function salvarBannerNasMidias(urlBanner) {
             >
               <span>+ Informações extras</span>
               <span>
-                {formato === "mercadoLivre" || mostrarExtras ? "−" : "+"}
+                {mostrarExtras ? "−" : "+"}
               </span>
             </button>
 
-            {(formato === "mercadoLivre" || mostrarExtras) && (
+            {mostrarExtras && (
           <div style={{ marginTop: "14px" }}>
             <div style={passoTitulo}>
-              {formato === "mercadoLivre"
-                ? "Informações técnicas"
-                : "Campos opcionais"}
+              Campos opcionais
             </div>
 
-  {formato === "mercadoLivre" ? (
-    <div
-      style={{
-        display: "grid",
-        gap: "9px",
-      }}
-    >
-      <select
-        value={tipoPecaTecnica}
-        onChange={(event) => {
-          setTipoPecaTecnica(
-            event.target.value
-          );
-
-          setDetalhesTecnicos([
-  "",
-  "",
-  "",
-  "",
-  "",
-]);
-        }}
-        style={inputStyle}
-      >
-        {Object.entries(
-          CAMPOS_TECNICOS
-        ).map(
-          ([chave, config]) => (
-            <option
-              key={chave}
-              value={chave}
-            >
-              {config.nome}
-            </option>
-          )
-        )}
-      </select>
-
-      {CAMPOS_TECNICOS[
-        tipoPecaTecnica
-      ].campos.map(
-        (nomeCampo, indice) => (
-          <input
-            key={nomeCampo}
-            type="text"
-            value={
-              detalhesTecnicos[
-                indice
-              ] || ""
-            }
-            onChange={(event) => {
-              const novos = [
-                ...detalhesTecnicos,
-              ];
-
-              novos[indice] =
-                event.target.value;
-
-              setDetalhesTecnicos(
-                novos
-              );
-            }}
-            placeholder={`🔧 ${nomeCampo}`}
-            style={inputStyle}
-          />
-        )
-      )}
-<textarea
-  value={
-    detalhesTecnicos[4] || ""
-  }
-  onChange={(event) => {
-    const novos = [
-      ...detalhesTecnicos,
-    ];
-
-    novos[4] =
-      event.target.value;
-
-    setDetalhesTecnicos(
-      novos
-    );
-  }}
-  placeholder="✍️ Descrição técnica adicional — escreva aqui qualquer detalhe importante que queira destacar na imagem."
-  rows={4}
-  style={{
-    ...inputStyle,
-    resize: "vertical",
-    minHeight: "90px",
-    lineHeight: 1.45,
-  }}
-/>
-{/* FOTO DE DETALHE TÉCNICO */}
-<div
-  style={{
-    marginTop: "4px",
-    padding: "10px",
-    borderRadius: "10px",
-    border: "1px solid #334155",
-    background: "#020617",
-  }}
->
-  <div
-    style={{
-      color: "#cbd5e1",
-      fontSize: "12px",
-      fontWeight: "bold",
-      marginBottom: "8px",
-    }}
-  >
-    📷 Foto de detalhe técnico (opcional)
-  </div>
-
-  <label
-    style={{
-      ...botaoSecundario,
-      display: "block",
-      textAlign: "center",
-      cursor: "pointer",
-    }}
-  >
-    📂 Escolher foto de detalhe
-
-    <input
-      type="file"
-      accept="image/*"
-      onChange={
-        selecionarFotoDetalheTecnico
-      }
-      style={{
-        display: "none",
-      }}
-    />
-  </label>
-
-  {fotoDetalheTecnico?.url && (
-    <div
-      style={{
-        marginTop: "10px",
-      }}
-    >
-      <img
-        src={fotoDetalheTecnico.url}
-        alt="Detalhe técnico"
-        style={{
-          width: "100%",
-          height: "130px",
-          objectFit: "contain",
-          background: "#ffffff",
-          borderRadius: "10px",
-          display: "block",
-        }}
-      />
-
-      <button
-        type="button"
-        onClick={() => {
-          setFotoDetalheTecnico(null);
-          setAprovado(false);
-          setBannerSalvo(false);
-        }}
-        style={{
-          ...botaoSecundario,
-          width: "100%",
-          marginTop: "8px",
-        }}
-      >
-        🗑️ Remover foto
-      </button>
-    </div>
-  )}
-
-  <div
-    style={{
-      color: "#64748b",
-      fontSize: "10px",
-      lineHeight: 1.4,
-      marginTop: "8px",
-    }}
-  >
-    Use para mostrar conector, terminais,
-    ponta, encaixe, furos ou outro detalhe
-    da mesma peça.
-  </div>
-</div>
-
-      <div
-        style={{
-          color: "#67e8f9",
-          fontSize: "11px",
-          lineHeight: 1.45,
-          padding: "8px 10px",
-          borderRadius: "9px",
-          border:
-            "1px solid rgba(34,211,238,.25)",
-          background:
-            "rgba(8,145,178,.08)",
-        }}
-      >
-        🤖 O PAIIA tenta identificar
-        automaticamente o tipo da peça.
-        Você só completa as informações
-        que forem importantes.
-      </div>
-    </div>
-  ) : (
     <>
       <div
         style={{
@@ -2923,10 +3296,10 @@ async function salvarBannerNasMidias(urlBanner) {
         Campos vazios não entram na arte.
       </div>
     </>
-  )}
 </div>
             )}
           </div>
+          )}
 
           <div style={secaoCompactaStyle}>
             <div style={secaoTituloCompacto}>
@@ -3056,7 +3429,7 @@ async function salvarBannerNasMidias(urlBanner) {
                 fontSize: "12px",
               }}
             >
-              🎨 Criando direção de arte...
+              🎨 Montando banner...
             </div>
           )}
 
@@ -3822,10 +4195,10 @@ async function salvarBannerNasMidias(urlBanner) {
               }}
             >
               {gerandoFundoIA
-                ? "🎨 Criando..."
+                ? "🎨 Montando..."
                 : fundoIA
-                  ? "🔄 Gerar Banner com IA"
-                  : "✨ Gerar Banner com IA"}
+                  ? "🔄 Gerar novamente"
+                  : "✨ Gerar Banner"}
             </button>
 
             <button
