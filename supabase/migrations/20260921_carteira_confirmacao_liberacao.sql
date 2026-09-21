@@ -1,5 +1,52 @@
 ﻿begin;
 
+alter table public.creditos_appia
+  add column if not exists saldo_reservado integer not null default 0;
+
+alter table public.creditos_appia
+  add column if not exists migrado_carteira_paiia_em timestamptz;
+
+create table if not exists public.operacoes_creditos_paiia (
+  id uuid not null default gen_random_uuid(),
+  user_id uuid not null,
+  chave_idempotencia text not null,
+  recurso text not null,
+  creditos integer not null,
+  status text not null default 'reservado',
+  metadados jsonb not null default '{}'::jsonb,
+  resultado jsonb not null default '{}'::jsonb,
+  motivo_liberacao text,
+  reservado_em timestamptz not null default now(),
+  confirmado_em timestamptz,
+  liberado_em timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint operacoes_creditos_paiia_pkey primary key (id),
+  constraint operacoes_creditos_paiia_user_id_fkey
+    foreign key (user_id) references auth.users(id) on delete cascade,
+  constraint operacoes_creditos_paiia_creditos_check check (creditos > 0),
+  constraint operacoes_creditos_paiia_status_check
+    check (status in ('reservado', 'confirmado', 'liberado')),
+  constraint operacoes_creditos_paiia_user_id_chave_idempotencia_key
+    unique (user_id, chave_idempotencia)
+);
+
+create index if not exists operacoes_creditos_paiia_user_created_idx
+  on public.operacoes_creditos_paiia (user_id, created_at desc);
+
+alter table public.operacoes_creditos_paiia enable row level security;
+
+drop policy if exists usuario_visualiza_proprias_operacoes_creditos
+  on public.operacoes_creditos_paiia;
+
+create policy usuario_visualiza_proprias_operacoes_creditos
+  on public.operacoes_creditos_paiia
+  for select
+  to authenticated
+  using (auth.uid() = user_id);
+grant select on table public.operacoes_creditos_paiia to authenticated;
+grant all on table public.operacoes_creditos_paiia to service_role;
+
 create or replace function public.paiia_confirmar_consumo(
   p_operacao_id uuid,
   p_resultado jsonb default '{}'::jsonb
