@@ -3187,6 +3187,7 @@ async function salvarBannerNasMidias(urlBanner) {
             </label>
           </div>
 
+          {formato !== "mercadoLivre" && (
           <div style={secaoCompactaStyle}>
             <button
               type="button"
@@ -3211,224 +3212,16 @@ async function salvarBannerNasMidias(urlBanner) {
             >
               <span>+ Informações extras</span>
               <span>
-                {formato === "mercadoLivre" || mostrarExtras ? "−" : "+"}
+                {mostrarExtras ? "−" : "+"}
               </span>
             </button>
 
-            {(formato === "mercadoLivre" || mostrarExtras) && (
+            {mostrarExtras && (
           <div style={{ marginTop: "14px" }}>
             <div style={passoTitulo}>
-              {formato === "mercadoLivre"
-                ? "Informações técnicas"
-                : "Campos opcionais"}
+              Campos opcionais
             </div>
 
-  {formato === "mercadoLivre" ? (
-    <div
-      style={{
-        display: "grid",
-        gap: "9px",
-      }}
-    >
-      <select
-        value={tipoPecaTecnica}
-        onChange={(event) => {
-          setTipoPecaTecnica(
-            event.target.value
-          );
-
-          setDetalhesTecnicos([
-  "",
-  "",
-  "",
-  "",
-  "",
-]);
-        }}
-        style={inputStyle}
-      >
-        {Object.entries(
-          CAMPOS_TECNICOS
-        ).map(
-          ([chave, config]) => (
-            <option
-              key={chave}
-              value={chave}
-            >
-              {config.nome}
-            </option>
-          )
-        )}
-      </select>
-
-      {CAMPOS_TECNICOS[
-        tipoPecaTecnica
-      ].campos.map(
-        (nomeCampo, indice) => (
-          <input
-            key={nomeCampo}
-            type="text"
-            value={
-              detalhesTecnicos[
-                indice
-              ] || ""
-            }
-            onChange={(event) => {
-              const novos = [
-                ...detalhesTecnicos,
-              ];
-
-              novos[indice] =
-                event.target.value;
-
-              setDetalhesTecnicos(
-                novos
-              );
-            }}
-            placeholder={`🔧 ${nomeCampo}`}
-            style={inputStyle}
-          />
-        )
-      )}
-<textarea
-  value={
-    detalhesTecnicos[4] || ""
-  }
-  onChange={(event) => {
-    const novos = [
-      ...detalhesTecnicos,
-    ];
-
-    novos[4] =
-      event.target.value;
-
-    setDetalhesTecnicos(
-      novos
-    );
-  }}
-  placeholder="✍️ Descrição técnica adicional — escreva aqui qualquer detalhe importante que queira destacar na imagem."
-  rows={4}
-  style={{
-    ...inputStyle,
-    resize: "vertical",
-    minHeight: "90px",
-    lineHeight: 1.45,
-  }}
-/>
-{/* FOTO DE DETALHE TÉCNICO */}
-<div
-  style={{
-    marginTop: "4px",
-    padding: "10px",
-    borderRadius: "10px",
-    border: "1px solid #334155",
-    background: "#020617",
-  }}
->
-  <div
-    style={{
-      color: "#cbd5e1",
-      fontSize: "12px",
-      fontWeight: "bold",
-      marginBottom: "8px",
-    }}
-  >
-    📷 Foto de detalhe técnico (opcional)
-  </div>
-
-  <label
-    style={{
-      ...botaoSecundario,
-      display: "block",
-      textAlign: "center",
-      cursor: "pointer",
-    }}
-  >
-    📂 Escolher foto de detalhe
-
-    <input
-      type="file"
-      accept="image/*"
-      onChange={
-        selecionarFotoDetalheTecnico
-      }
-      style={{
-        display: "none",
-      }}
-    />
-  </label>
-
-  {fotoDetalheTecnico?.url && (
-    <div
-      style={{
-        marginTop: "10px",
-      }}
-    >
-      <img
-        src={fotoDetalheTecnico.url}
-        alt="Detalhe técnico"
-        style={{
-          width: "100%",
-          height: "130px",
-          objectFit: "contain",
-          background: "#ffffff",
-          borderRadius: "10px",
-          display: "block",
-        }}
-      />
-
-      <button
-        type="button"
-        onClick={() => {
-          setFotoDetalheTecnico(null);
-          setAprovado(false);
-          setBannerSalvo(false);
-        }}
-        style={{
-          ...botaoSecundario,
-          width: "100%",
-          marginTop: "8px",
-        }}
-      >
-        🗑️ Remover foto
-      </button>
-    </div>
-  )}
-
-  <div
-    style={{
-      color: "#64748b",
-      fontSize: "10px",
-      lineHeight: 1.4,
-      marginTop: "8px",
-    }}
-  >
-    Use para mostrar conector, terminais,
-    ponta, encaixe, furos ou outro detalhe
-    da mesma peça.
-  </div>
-</div>
-
-      <div
-        style={{
-          color: "#67e8f9",
-          fontSize: "11px",
-          lineHeight: 1.45,
-          padding: "8px 10px",
-          borderRadius: "9px",
-          border:
-            "1px solid rgba(34,211,238,.25)",
-          background:
-            "rgba(8,145,178,.08)",
-        }}
-      >
-        🤖 O PAIIA tenta identificar
-        automaticamente o tipo da peça.
-        Você só completa as informações
-        que forem importantes.
-      </div>
-    </div>
-  ) : (
     <>
       <div
         style={{
@@ -3503,10 +3296,10 @@ async function salvarBannerNasMidias(urlBanner) {
         Campos vazios não entram na arte.
       </div>
     </>
-  )}
 </div>
             )}
           </div>
+          )}
 
           <div style={secaoCompactaStyle}>
             <div style={secaoTituloCompacto}>
