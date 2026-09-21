@@ -1121,6 +1121,174 @@ async function padronizarImagemFinal1200({
         }
       );
 
+    const canvasAnalise =
+      document.createElement(
+        "canvas"
+      );
+
+    canvasAnalise.width =
+      imagem.naturalWidth ||
+      imagem.width;
+
+    canvasAnalise.height =
+      imagem.naturalHeight ||
+      imagem.height;
+
+    const ctxAnalise =
+      canvasAnalise.getContext(
+        "2d",
+        {
+          willReadFrequently: true,
+        }
+      );
+
+    if (!ctxAnalise) {
+      throw new Error(
+        "Não foi possível analisar a imagem para recortar a peça."
+      );
+    }
+
+    ctxAnalise.drawImage(
+      imagem,
+      0,
+      0,
+      canvasAnalise.width,
+      canvasAnalise.height
+    );
+
+    const pixels =
+      ctxAnalise.getImageData(
+        0,
+        0,
+        canvasAnalise.width,
+        canvasAnalise.height
+      ).data;
+
+    const totalPixels =
+      canvasAnalise.width *
+      canvasAnalise.height;
+
+    let pixelsTransparentes = 0;
+
+    for (
+      let indice = 3;
+      indice < pixels.length;
+      indice += 4
+    ) {
+      if (pixels[indice] < 245) {
+        pixelsTransparentes += 1;
+      }
+    }
+
+    const usaTransparencia =
+      pixelsTransparentes >
+      totalPixels * 0.005;
+
+    let minimoX =
+      canvasAnalise.width;
+    let minimoY =
+      canvasAnalise.height;
+    let maximoX = -1;
+    let maximoY = -1;
+
+    for (
+      let yPixel = 0;
+      yPixel < canvasAnalise.height;
+      yPixel += 1
+    ) {
+      for (
+        let xPixel = 0;
+        xPixel < canvasAnalise.width;
+        xPixel += 1
+      ) {
+        const indice =
+          (yPixel *
+            canvasAnalise.width +
+            xPixel) *
+          4;
+
+        const alpha =
+          pixels[indice + 3];
+
+        const pertencePeca =
+          usaTransparencia
+            ? alpha > 12
+            : alpha > 12 &&
+              (pixels[indice] < 248 ||
+                pixels[indice + 1] < 248 ||
+                pixels[indice + 2] < 248);
+
+        if (!pertencePeca) {
+          continue;
+        }
+
+        minimoX =
+          Math.min(minimoX, xPixel);
+        minimoY =
+          Math.min(minimoY, yPixel);
+        maximoX =
+          Math.max(maximoX, xPixel);
+        maximoY =
+          Math.max(maximoY, yPixel);
+      }
+    }
+
+    const encontrouPeca =
+      maximoX >= minimoX &&
+      maximoY >= minimoY;
+
+    let origemX = 0;
+    let origemY = 0;
+    let larguraRecorte =
+      canvasAnalise.width;
+    let alturaRecorte =
+      canvasAnalise.height;
+
+    if (encontrouPeca) {
+      const larguraDetectada =
+        maximoX - minimoX + 1;
+      const alturaDetectada =
+        maximoY - minimoY + 1;
+
+      const margemRecorte =
+        Math.max(
+          2,
+          Math.round(
+            Math.max(
+              larguraDetectada,
+              alturaDetectada
+            ) * 0.01
+          )
+        );
+
+      origemX =
+        Math.max(
+          0,
+          minimoX - margemRecorte
+        );
+      origemY =
+        Math.max(
+          0,
+          minimoY - margemRecorte
+        );
+
+      const limiteX =
+        Math.min(
+          canvasAnalise.width,
+          maximoX + margemRecorte + 1
+        );
+      const limiteY =
+        Math.min(
+          canvasAnalise.height,
+          maximoY + margemRecorte + 1
+        );
+
+      larguraRecorte =
+        limiteX - origemX;
+      alturaRecorte =
+        limiteY - origemY;
+    }
+
     const canvas =
       document.createElement(
         "canvas"
@@ -1157,17 +1325,19 @@ async function padronizarImagemFinal1200({
       );
     }
 
+    const areaUtil = 960;
+
     const escala =
       Math.min(
-        1200 / imagem.width,
-        1200 / imagem.height
+        areaUtil / larguraRecorte,
+        areaUtil / alturaRecorte
       );
 
     const largura =
-      imagem.width * escala;
+      larguraRecorte * escala;
 
     const altura =
-      imagem.height * escala;
+      alturaRecorte * escala;
 
     const x =
       (1200 - largura) / 2;
@@ -1177,6 +1347,10 @@ async function padronizarImagemFinal1200({
 
     ctx.drawImage(
       imagem,
+      origemX,
+      origemY,
+      larguraRecorte,
+      alturaRecorte,
       x,
       y,
       largura,
