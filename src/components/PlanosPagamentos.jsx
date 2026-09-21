@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { consultarCarteiraPaiia } from "../services/creditosPaiia";
 
 export default function PlanosPagamentos({
   setScreen,
   usuario,
 }) {
   const [planoSelecionado, setPlanoSelecionado] =
-    useState("prata");
+    useState("ouro");
+
+  const [carteira, setCarteira] = useState(null);
 
   const [formaPagamento, setFormaPagamento] =
     useState("pix");
@@ -50,28 +53,18 @@ export default function PlanosPagamentos({
   const planos = useMemo(
     () => [
       {
-        id: "prata",
-        nome: "Profissional Prata",
-        preco: "R$ 119,90",
-        periodo: "/ mês",
-        destaque: false,
-        recursos: [
-          "Criador Inteligente de Anúncios",
-          "Foto IA",
-          "Banner Studio",
-          "Catálogos técnicos",
-          "Consulta por Chassi",
-        ],
-      },
-      {
         id: "ouro",
-        nome: "Profissional Ouro",
+        nome: "Plano Profissional Ouro",
         preco: "R$ 149,90",
-        periodo: "/ mês",
-        creditos: 60,
+        periodo: "/mês",
         destaque: true,
         recursos: [
-          "Todos os recursos do Profissional Prata",
+          "Criador Inteligente de Anúncios",
+          "Foto IA profissional",
+          "50 Fotos IA profissionais por mês",
+          "Banner Express IA",
+          "Catálogos técnicos",
+          "Consulta por chassi",
           "60 créditos de Clip IA",
           "Maior volume de processamento",
           "Prioridade de processamento",
@@ -87,6 +80,20 @@ export default function PlanosPagamentos({
       (plano) =>
         plano.id === planoSelecionado
     ) || planos[0];
+
+  useEffect(() => {
+    let ativo = true;
+    consultarCarteiraPaiia()
+      .then((dados) => {
+        if (ativo) setCarteira(dados);
+      })
+      .catch(() => {
+        if (ativo) setCarteira(null);
+      });
+    return () => {
+      ativo = false;
+    };
+  }, [usuario?.id]);
 
   function formatarNumeroCartao(valor) {
     return String(valor || "")
@@ -209,7 +216,7 @@ export default function PlanosPagamentos({
         "💳 Checkout PAIIA",
         "",
         `Plano: ${planoAtual.nome}`,
-        `Valor: ${planoAtual.preco} ${planoAtual.periodo}`,
+        `Valor: ${planoAtual.preco}${planoAtual.periodo}`,
         `Pagamento: ${nomeFormaPagamento(
           formaPagamento
         )}`,
@@ -273,8 +280,8 @@ export default function PlanosPagamentos({
                 lineHeight: 1.55,
               }}
             >
-              Gerencie sua assinatura,
-              créditos PAIIA e formas de
+              Gerencie sua assinatura mensal do Plano
+              Profissional Ouro e escolha a forma de
               pagamento.
             </p>
           </div>
@@ -313,8 +320,8 @@ export default function PlanosPagamentos({
           icone="💎"
           titulo="Créditos disponíveis"
           valor={
-            planoAtual.creditos != null
-              ? `${planoAtual.creditos}`
+            carteira?.saldo != null
+              ? `${carteira.saldo}`
               : "—"
           }
         />
@@ -333,7 +340,7 @@ export default function PlanosPagamentos({
       </section>
 
       <h2 style={tituloSecao}>
-        Escolha seu plano
+        Plano Profissional Ouro
       </h2>
 
       <section
@@ -427,16 +434,6 @@ export default function PlanosPagamentos({
                 }}
               >
                 {plano.preco}
-              </div>
-
-              <div
-                style={{
-                  color:
-                    "#94a3b8",
-                  marginTop:
-                    "4px",
-                }}
-              >
                 {plano.periodo}
               </div>
 
@@ -473,8 +470,21 @@ export default function PlanosPagamentos({
       </section>
 
       <h2 style={tituloSecao}>
-        Forma de pagamento
+        Escolha como pagar sua assinatura
       </h2>
+
+      <p
+        style={{
+          margin: "-8px 0 16px",
+          color: "#94a3b8",
+          fontSize: "14px",
+          lineHeight: 1.55,
+        }}
+      >
+        Pix, cartão, boleto e transferência são formas de
+        pagamento da assinatura mensal do Plano Profissional
+        Ouro.
+      </p>
 
       <section
         style={{
@@ -488,7 +498,7 @@ export default function PlanosPagamentos({
           id="pix"
           icone="⚡"
           titulo="Pix"
-          texto="Pagamento rápido e confirmação automática."
+          texto="Pagamento da assinatura mensal com confirmação rápida."
           selecionado={
             formaPagamento === "pix"
           }
@@ -501,7 +511,7 @@ export default function PlanosPagamentos({
           id="cartao"
           icone="💳"
           titulo="Cartão de crédito"
-          texto="Ideal para assinatura mensal recorrente."
+          texto="Pagamento da assinatura mensal recorrente."
           selecionado={
             formaPagamento ===
             "cartao"
@@ -517,7 +527,7 @@ export default function PlanosPagamentos({
           id="boleto"
           icone="📄"
           titulo="Boleto"
-          texto="Opção adicional para pagamento da assinatura."
+          texto="Pagamento mensal da assinatura por boleto."
           selecionado={
             formaPagamento ===
             "boleto"
@@ -533,7 +543,7 @@ export default function PlanosPagamentos({
           id="transferencia"
           icone="🏦"
           titulo="Transferência"
-          texto="Transferência bancária para a conta da empresa."
+          texto="Pagamento da assinatura mensal para a conta da empresa."
           selecionado={
             formaPagamento ===
             "transferencia"
@@ -845,7 +855,7 @@ export default function PlanosPagamentos({
           >
             Plano: <strong>{planoAtual.nome}</strong>
             <br />
-            Valor: <strong>{planoAtual.preco}</strong>
+            Valor: <strong>{planoAtual.preco}{planoAtual.periodo}</strong>
             <br />
             O boleto real será gerado pelo gateway de
             pagamento na integração.
@@ -1123,24 +1133,8 @@ export default function PlanosPagamentos({
               }}
             >
               {planoAtual.nome} —{" "}
-              {planoAtual.preco}
+              {planoAtual.preco}{planoAtual.periodo}
             </div>
-
-            {planoAtual.creditos != null && (
-            <div
-              style={{
-                marginTop:
-                  "5px",
-                color:
-                  "#67e8f9",
-                fontSize:
-                  "13px",
-              }}
-            >
-              {planoAtual.creditos}{" "}
-              créditos de Clip IA
-            </div>
-            )}
           </div>
 
           <button
@@ -1153,6 +1147,52 @@ export default function PlanosPagamentos({
             🔒 Continuar para pagamento
           </button>
         </div>
+      </section>
+
+      <section
+        style={{
+          marginTop: "20px",
+          padding: "18px",
+          borderRadius: "16px",
+          border: "1px solid #2563eb",
+          background: "#0f172a",
+        }}
+      >
+        <h3 style={{ margin: 0, color: "#67e8f9" }}>
+          💎 Comprar créditos adicionais
+        </h3>
+        <p
+          style={{
+            color: "#cbd5e1",
+            fontSize: "14px",
+            lineHeight: 1.55,
+          }}
+        >
+          Precisou de mais? Compre créditos adicionais sem
+          alterar seu plano.
+        </p>
+        <p
+          style={{
+            color: "#94a3b8",
+            fontSize: "13px",
+            lineHeight: 1.55,
+          }}
+        >
+          Esta é uma compra avulsa para recursos que excederem
+          o limite mensal, principalmente Clip IA. Ela não
+          altera o Plano Profissional Ouro nem a renovação da
+          assinatura. Os pacotes e valores serão exibidos após
+          a configuração comercial e do gateway.
+        </p>
+        <button
+          type="button"
+          onClick={() =>
+            alert("Os pacotes de créditos ainda serão configurados. Seus dados desta tela foram preservados.")
+          }
+          style={botaoPrincipal}
+        >
+          Comprar créditos adicionais
+        </button>
       </section>
 
 
