@@ -305,6 +305,13 @@ function montarTituloMercadoLivreInteligente({
   for (
     const item of aplicacoesBrutas
   ) {
+    if (
+      String(item?.tipo_referencia || "")
+        .toLowerCase() === "nota_tecnica"
+    ) {
+      continue;
+    }
+
     const camposModelo = [
       item?.modelo,
       item?.veiculo,
@@ -2213,12 +2220,20 @@ async function buscarEMontarAnuncio() {
       null;
 
     const tituloResultado =
-      montarTituloMercadoLivreInteligente({
-        resultado,
-        pecaResultado,
-        codigoResultado,
-        oemResultado,
-      });
+      resultado?.avisoAplicacao && !resultado?.aplicacaoConfirmada
+        ? resultado?.titulo ||
+          montarTituloMercadoLivreInteligente({
+            resultado,
+            pecaResultado,
+            codigoResultado,
+            oemResultado,
+          })
+        : montarTituloMercadoLivreInteligente({
+            resultado,
+            pecaResultado,
+            codigoResultado,
+            oemResultado,
+          });
 
     const fontesAplicacoes = [
   ...(Array.isArray(
@@ -2380,6 +2395,13 @@ for (
     continue;
   }
 
+  if (
+    String(item?.tipo_referencia || "")
+      .toLowerCase() === "nota_tecnica"
+  ) {
+    continue;
+  }
+
   const chave = [
     montadora,
     modelo,
@@ -2488,6 +2510,25 @@ if (resultado?.fallbackExterno) {
   } else {
     linhasDescricao.push("Nenhuma aplicação adicional encontrada.");
   }
+} else if (resultado?.avisoAplicacao) {
+  linhasDescricao.push(resultado.avisoAplicacao);
+  linhasDescricao.push("");
+  linhasDescricao.push("APLICAÇÃO DE VEÍCULO");
+  linhasDescricao.push("Não informada nesta referência técnica.");
+  if (resultado?.referenciasTecnicas?.length) {
+    linhasDescricao.push("");
+    for (const nota of resultado.referenciasTecnicas) {
+      if (nota.origem_catalogo) {
+        linhasDescricao.push(`Fonte: ${nota.origem_catalogo}`);
+      }
+      if (nota.pagina_catalogo != null) {
+        linhasDescricao.push(`Página: ${nota.pagina_catalogo}`);
+      }
+      if (nota.observacao) {
+        linhasDescricao.push(`Referência técnica: ${nota.observacao}`);
+      }
+    }
+  }
 } else {
   linhasDescricao.push("APLICAÇÕES DO PRODUTO");
   linhasDescricao.push("");
@@ -2543,7 +2584,11 @@ for (
 }
 
 const descricaoResultado =
-  aplicacoesValidas.length > 0
+  resultado?.avisoAplicacao && aplicacoesValidas.length === 0
+    ? String(resultado?.descricao || linhasDescricao.join("\n"))
+        .replace(/[□�]+/g, " ")
+        .trim()
+    : aplicacoesValidas.length > 0
     ? linhasDescricao
         .join("\n")
         .trim()
@@ -2586,13 +2631,24 @@ const descricaoResultado =
         "Não informado",
 
       totalAplicacoes:
-        resultado
+        resultado?.aplicacaoConfirmada === false
+          ? 0
+          : resultado
           ?.resultadosCatalogo
           ?.length ||
         pecaResultado
           ?.aplicacoes
           ?.length ||
         0,
+
+      aplicacaoConfirmada:
+        resultado?.aplicacaoConfirmada ?? true,
+
+      avisoAplicacao:
+        resultado?.avisoAplicacao || null,
+
+      referenciasTecnicas:
+        resultado?.referenciasTecnicas || [],
 
       arquivoCatalogo:
         resultado
