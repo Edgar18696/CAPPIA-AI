@@ -61,7 +61,8 @@ export default function PlanosPagamentos({
         recursos: [
           "Criador Inteligente de Anúncios",
           "Foto IA profissional",
-          "50 Fotos IA profissionais por mês",
+          "50 Fotos IA profissionais incluídas por mês",
+          "Imagens prontas para anunciar: 1200 × 1200, fundo branco, recorte profissional, ótima nitidez e peça preservada",
           "Banner Express IA",
           "Catálogos técnicos",
           "Consulta por chassi",
@@ -454,13 +455,36 @@ export default function PlanosPagamentos({
               >
                 {plano.recursos.map(
                   (recurso) => (
-                    <span
+                    <div
                       key={
                         recurso
                       }
                     >
-                      ✅ {recurso}
-                    </span>
+                      <span>
+                        ✅ {recurso}
+                      </span>
+
+                      {recurso ===
+                        "Foto IA profissional" && (
+                        <div
+                          style={{
+                            marginTop: "6px",
+                            marginLeft: "22px",
+                            padding: "9px 11px",
+                            borderRadius: "10px",
+                            border: "1px solid #164e63",
+                            background: "rgba(8,47,73,.55)",
+                            color: "#bae6fd",
+                            fontSize: "12px",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          Envie sua foto e receba o produto pronto
+                          para anunciar, sem precisar escrever
+                          comandos ou configurar o tratamento.
+                        </div>
+                      )}
+                    </div>
                   )
                 )}
               </div>
