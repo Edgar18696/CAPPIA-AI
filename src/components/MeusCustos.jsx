@@ -164,21 +164,21 @@ export default function MeusCustos({ value, onChange }) {
           </div>
 
           <div style={resumoStyle}>
-            <div>
-              <span>Total fixo mensal</span>
-              <strong>{moeda(resumo.totalFixoMensal)}</strong>
+            <div style={resumoItem}>
+              <span style={resumoLabel}>Total fixo mensal</span>
+              <strong style={resumoValor}>{moeda(resumo.totalFixoMensal)}</strong>
             </div>
-            <div>
-              <span>Rateio fixo por venda</span>
-              <strong>
+            <div style={resumoItem}>
+              <span style={resumoLabel}>Rateio fixo por venda</span>
+              <strong style={resumoValor}>
                 {resumo.vendasMensais > 0
                   ? moeda(resumo.custoFixoPorVenda)
                   : "Informe as vendas/mês"}
               </strong>
             </div>
-            <div>
-              <span>Percentuais sobre a venda</span>
-              <strong>
+            <div style={resumoItem}>
+              <span style={resumoLabel}>Percentuais sobre a venda</span>
+              <strong style={resumoValor}>
                 {(resumo.comissaoPercentual + resumo.impostoPercentual).toFixed(2)}%
               </strong>
             </div>
@@ -310,6 +310,29 @@ const resumoStyle = {
   gap: "10px",
 };
 
+const resumoItem = {
+  minWidth: 0,
+  padding: "13px 14px",
+  borderRadius: "11px",
+  border: "1px solid #334155",
+  background: "rgba(2,6,23,.72)",
+  display: "flex",
+  flexDirection: "column",
+  gap: "6px",
+};
+
+const resumoLabel = {
+  color: "#94a3b8",
+  fontSize: "11px",
+};
+
+const resumoValor = {
+  color: "#f8fafc",
+  fontSize: "15px",
+  lineHeight: 1.3,
+  overflowWrap: "anywhere",
+};
+
 const rodape = {
   marginTop: "18px",
   display: "flex",
@@ -328,4 +351,3 @@ const botaoSalvar = {
   cursor: "pointer",
 };
 
-Object.assign(resumoStyle, {});
