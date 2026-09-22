@@ -88,6 +88,36 @@ Organize em: corrigir imediatamente; melhorar nesta semana; acompanhar; repor; n
     integracao: true,
   },
   {
+    id: "analisar-site",
+    icone: "🌐",
+    titulo: "Analisar meu site",
+    descricao: "Revisa 20 produtos, corrige informações e prepara um piloto para o Mercado Livre.",
+    objetivo: "Selecionar automaticamente 20 produtos do site, conferir e melhorar seus dados e preparar um lote seguro para exportação ao Mercado Livre.",
+    limites: "Somente leitura e preparação. Não alterar o site, estoque ou preços; não enviar ou publicar no Mercado Livre sem aprovação. Compatibilidade somente por catálogos autorizados.",
+    formato: "Auditar código, marca, categoria, título, descrição, OEM, atributos, aplicações, preço, estoque e fotos. Mostrar todas as correções em Antes × Depois.",
+    saida: "Resumo do site, 20 produtos analisados, correções propostas, itens aprovados ou bloqueados e lote pronto para criação como rascunho após aprovação.",
+    campos: [
+      ["origem", "Site analisado", "Site próprio"],
+      ["quantidade", "Quantidade do teste", "20 produtos"],
+      ["destino", "Preparar para", "Mercado Livre"],
+    ],
+    valoresIniciais: {
+      origem: "Site próprio",
+      quantidade: "20 produtos",
+      destino: "Mercado Livre",
+    },
+    promptExecutor: `Analise inicialmente 20 produtos escolhidos automaticamente no site. Use somente dados reais das integrações autorizadas.
+
+Confira código, marca, categoria, estoque, preço, título, descrição, OEM, atributos, fotos e aplicações. Corrija título e descrição antes da exportação. Preencha somente dados comprovados.
+
+Verifique toda compatibilidade nos catálogos técnicos autorizados. Se o site estiver errado, prepare a correção e apresente a fonte. Nunca deduza aplicações. Sem confirmação, informe “Não encontrei confirmação segura nos catálogos disponíveis.” e bloqueie o produto para exportação.
+
+Confira o preço mínimo com os custos configurados no PAIIA e sinalize fotos fora do padrão Mercado Livre: 1200 × 1200, fundo branco e peça fiel.
+
+Apresente resumo e comparação Antes × Depois por produto. Não altere o site nem publique. Após aprovação explícita, prepare somente rascunhos no Mercado Livre.`,
+    integracao: true,
+  },
+  {
     id: "concorrencia",
     icone: "📊",
     titulo: "Comparar meus preços com a concorrência",
@@ -209,7 +239,7 @@ Organize em: corrigir imediatamente; melhorar nesta semana; acompanhar; repor; n
   },
 ];
 
-const SUGESTOES = ["meus-custos", "prioridades", "nao-vende", "concorrencia", "estoque", "financeiro"];
+const SUGESTOES = ["meus-custos", "prioridades", "nao-vende", "analisar-site", "concorrencia", "estoque", "financeiro"];
 
 function lerJson(chave) {
   try { return JSON.parse(localStorage.getItem(chave) || "null"); } catch { return null; }
