@@ -1,15 +1,15 @@
 import { useMemo, useState } from "react";
 
 const CAMPOS_FIXOS = [
-  ["aluguel", "Aluguel"],
-  ["energia", "Energia"],
-  ["agua", "Água"],
-  ["internet", "Internet"],
-  ["folha", "Salários e encargos"],
-  ["contabilidade", "Contabilidade"],
-  ["sistemas", "Sistemas e assinaturas"],
-  ["transporte", "Transporte"],
-  ["outrosFixos", "Outras despesas fixas"],
+  ["aluguel", "Aluguel", "Aluguel do imóvel, condomínio e locação do espaço da empresa."],
+  ["energia", "Energia", "Conta mensal de energia usada pela empresa."],
+  ["agua", "Água", "Conta mensal de água da empresa."],
+  ["internet", "Internet", "Internet e telefonia usadas na operação."],
+  ["folha", "Salários e encargos", "Salários, pró-labore e encargos mensais ligados à operação."],
+  ["contabilidade", "Contabilidade", "Honorários mensais do contador e serviços contábeis recorrentes."],
+  ["sistemas", "Sistemas e assinaturas", "Ex.: ERP, emissor de nota, PAIIA, hospedagem, domínio, ferramentas e assinaturas usadas na empresa."],
+  ["transporte", "Transporte", "Ex.: combustível, motoboy, coleta, deslocamentos e fretes gerais que não pertencem a uma venda específica."],
+  ["outrosFixos", "Outras despesas fixas", "Ex.: telefone, limpeza, material de escritório, segurança, manutenção e despesas mensais não listadas acima."],
 ];
 
 function numero(valor) {
@@ -93,6 +93,11 @@ export default function MeusCustos({ value, onChange }) {
     setMensagem("✅ Perfil salvo neste computador e aplicado aos cálculos.");
   }
 
+  function carregarExemplo() {
+    onChange?.({ ...PERFIL_CUSTOS_INICIAL });
+    setMensagem("🧪 Exemplo carregado. Confira os valores antes de salvar.");
+  }
+
   return (
     <section style={bloco}>
       <button type="button" onClick={() => setAberto(!aberto)} style={cabecalho}>
@@ -112,17 +117,18 @@ export default function MeusCustos({ value, onChange }) {
       {aberto && (
         <div style={{ paddingTop: "20px" }}>
           <p style={aviso}>
-            Os valores iniciais são uma simulação de exemplo. Troque pelos custos
-            reais da sua empresa antes de salvar. O rateio divide as despesas
-            fixas pelo número esperado de vendas no mês.
+            Seus custos salvos são carregados automaticamente. Para testar a
+            peça de R$ 65,00, clique em “Carregar exemplo”. Passe o mouse sobre
+            o nome de cada campo para ver o que deve ser informado.
           </p>
 
           <h4 style={subtitulo}>Despesas fixas mensais</h4>
           <div style={grade}>
-            {CAMPOS_FIXOS.map(([campo, label]) => (
+            {CAMPOS_FIXOS.map(([campo, label, ajuda]) => (
               <CampoCusto
                 key={campo}
                 label={label}
+                ajuda={ajuda}
                 value={value[campo]}
                 onChange={(novoValor) => alterar(campo, novoValor)}
                 prefixo="R$"
@@ -140,24 +146,28 @@ export default function MeusCustos({ value, onChange }) {
           <div style={grade}>
             <CampoCusto
               label="Custo operacional por pedido"
+              ajuda="Ex.: etiqueta, fita, impressão, separação e materiais consumidos em cada pedido."
               value={value.custoOperacionalPedido}
               onChange={(novoValor) => alterar("custoOperacionalPedido", novoValor)}
               prefixo="R$"
             />
             <CampoCusto
               label="Comissão do marketplace"
+              ajuda="Percentual cobrado pelo Mercado Livre, Shopee ou outro canal sobre o valor da venda."
               value={value.comissaoPercentual}
               onChange={(novoValor) => alterar("comissaoPercentual", novoValor)}
               sufixo="%"
             />
             <CampoCusto
               label="Imposto sobre a venda"
+              ajuda="Percentual de imposto informado pela contabilidade para cada venda."
               value={value.impostoPercentual}
               onChange={(novoValor) => alterar("impostoPercentual", novoValor)}
               sufixo="%"
             />
             <CampoCusto
               label="Tarifa fixa por venda"
+              ajuda="Valor fixo cobrado pelo marketplace por unidade ou pedido, além da comissão percentual."
               value={value.taxaFixaMarketplace}
               onChange={(novoValor) => alterar("taxaFixaMarketplace", novoValor)}
               prefixo="R$"
@@ -192,6 +202,9 @@ export default function MeusCustos({ value, onChange }) {
           )}
 
           <div style={rodape}>
+            <button type="button" onClick={carregarExemplo} style={botaoExemplo}>
+              🧪 Carregar exemplo
+            </button>
             <button type="button" onClick={salvar} style={botaoSalvar}>
               💾 Salvar meus custos
             </button>
@@ -209,6 +222,7 @@ export default function MeusCustos({ value, onChange }) {
 
 function CampoCusto({
   label,
+  ajuda,
   value,
   onChange,
   prefixo,
@@ -216,9 +230,9 @@ function CampoCusto({
   placeholder = "0,00",
 }) {
   return (
-    <label style={{ display: "block" }}>
-      <span style={{ display: "block", color: "#cbd5e1", fontSize: "12px", marginBottom: "6px" }}>
-        {label}
+    <label style={{ display: "block" }} title={ajuda || ""}>
+      <span style={{ display: "block", color: "#cbd5e1", fontSize: "12px", marginBottom: "6px", cursor: ajuda ? "help" : "default" }}>
+        {label}{ajuda ? " ⓘ" : ""}
       </span>
       <div style={campoWrap}>
         {prefixo && <span style={adorno}>{prefixo}</span>}
@@ -340,6 +354,16 @@ const rodape = {
   alignItems: "center",
   gap: "12px",
   flexWrap: "wrap",
+};
+
+const botaoExemplo = {
+  padding: "11px 16px",
+  borderRadius: "10px",
+  border: "1px solid #64748b",
+  background: "#0f172a",
+  color: "#e2e8f0",
+  fontWeight: "bold",
+  cursor: "pointer",
 };
 
 const botaoSalvar = {
