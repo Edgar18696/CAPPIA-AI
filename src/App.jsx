@@ -51,6 +51,7 @@ import PublicacaoSite from "./components/PublicacaoSite";
 import MidiasAppia from "./components/MidiasAppia";
 import PlanosPagamentos from "./components/PlanosPagamentos";
 import CriarMascotePaizinho from "./components/CriarMascotePaizinho";
+import CentralPaizinho from "./components/CentralPaizinho";
 import {
   cardStyle,
   buttonBlue,
@@ -2508,6 +2509,12 @@ return (
 {screen === "contasMarketplace" && (
   <ContasMarketplace
     cardStyle={cardStyle}
+    setScreen={setScreen}
+  />
+)}
+
+{screen === "centralPaizinho" && (
+  <CentralPaizinho
     setScreen={setScreen}
   />
 )}

@@ -16,6 +16,14 @@ export default function Home({
 
   const cards = [
     {
+      titulo: "Central do Paizinho",
+      icone: "👨‍🔧",
+      texto:
+        "Não sabe por onde começar? O Paizinho orienta e leva você à função certa com os dados já preenchidos.",
+      tela: "centralPaizinho",
+      destaque: true,
+    },
+    {
       titulo: "Criar Anúncio",
       icone: "🚀",
       texto:
