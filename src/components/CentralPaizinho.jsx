@@ -15,14 +15,69 @@ const TAREFAS = [
   },
   {
     id: "nao-vende",
-    icone: "📉",
-    titulo: "Por que meus anúncios não estão vendendo?",
-    descricao: "Procura problemas de preço, conteúdo, procura e competitividade.",
-    objetivo: "Identificar por que os anúncios selecionados não estão gerando vendas.",
-    limites: "Não inventar métricas e não modificar anúncios. Usar apenas dados reais do marketplace.",
-    formato: "Comparar visitas, conversão, preço, frete, título, descrição, fotos, estoque e concorrência.",
-    saida: "Diagnóstico por anúncio, causa provável, prioridade e ação recomendada.",
-    campos: [["escopo", "Quais anúncios?", "Ex.: sem vendas há 30 dias"], ["periodo", "Período", "Últimos 30 dias"]],
+    icone: "📈",
+    titulo: "Analisar vendas e anúncios do mês",
+    descricao: "Mostra campeões, baixo desempenho, anúncios sem vendas e ações prioritárias.",
+    objetivo: "Analisar todos os anúncios da conta no período informado, identificar os produtos mais vendidos, menos vendidos e sem vendas, explicar causas prováveis e recomendar ações para melhorar vendas, receita e margem.",
+    limites: "Somente leitura. Não alterar preço, título, descrição, estoque, status, publicidade ou responder clientes. Usar somente dados reais das integrações autorizadas; não inventar métricas. Toda mudança depende da aprovação do usuário.",
+    formato: "Classificar em campeões, bom, intermediário, baixo desempenho, sem vendas ou sem dados. Separar fato confirmado, causa provável e sugestão. Priorizar por impacto financeiro, compatibilidade, estoque e reputação.",
+    saida: "Primeiro um resumo executivo; depois relatório dos anúncios problemáticos e plano de ação em: corrigir imediatamente, melhorar nesta semana, acompanhar, repor, não comprar, criar kit, confirmar tecnicamente ou dados insuficientes.",
+    campos: [
+      ["marketplace", "Marketplace", "Mercado Livre"],
+      ["periodo", "Mês analisado", "Mês atual"],
+      ["escopo", "Escopo", "Todos os anúncios da conta"],
+    ],
+    valoresIniciais: {
+      marketplace: "Mercado Livre",
+      periodo: new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" }),
+      escopo: "Todos os anúncios da conta",
+    },
+    promptExecutor: `Você é o Paizinho, analista comercial especializado em marketplaces de autopeças.
+
+OBJETIVO
+Analise os anúncios da conta no período informado e identifique: produtos mais vendidos, menos vendidos, sem vendas, motivos prováveis do desempenho, problemas de cada anúncio e ações recomendadas para melhorar vendas, receita e margem.
+
+DADOS AUTORIZADOS
+Use somente dados reais disponíveis nas integrações autorizadas: status dos anúncios; vendas; faturamento; visitas; conversão; estoque; última venda; idade; preço; frete; tarifas; envio; título; descrição; atributos; fotos; perguntas; reclamações; devoluções; publicidade; concorrentes realmente equivalentes; e catálogos técnicos autorizados no PAIIA. Não invente métricas ausentes.
+
+PERÍODO
+Analise o mês escolhido. Sem período informado, use o mês atual até a data da execução.
+
+CLASSIFICAÇÃO
+Classifique em: Campeões de venda; Bom desempenho; Desempenho intermediário; Baixo desempenho; Sem vendas; Sem dados suficientes. Considere conjuntamente quantidade vendida, faturamento, margem estimada, visitas, conversão, estoque, dias disponível, preço e última venda.
+
+MAIS VENDIDOS
+Verifique vendas, faturamento, margem estimada, conversão, estoque restante, duração do estoque, risco de ruptura, título, descrição, fotos, compatibilidade confirmada, preço frente à concorrência, reposição, kits, melhoria de margem e publicidade. Não recomende aumento de preço quando prejudicar claramente a competitividade.
+
+BAIXO DESEMPENHO E SEM VENDAS
+Analise:
+1. Preço: equivalência real, preço, frete, tarifas e limite sem prejuízo.
+2. Título: código, marca, nome da peça, termos irrelevantes e limite do canal.
+3. Descrição: produto, códigos/OEM, aplicações confirmadas, marca, condição, embalagem e contradições.
+4. Compatibilidade: somente catálogos autorizados; veículo, modelo, motor, ano e equivalentes confirmados.
+5. Fotos: nitidez, fundo branco, enquadramento, quantidade e detalhes; não confundir foto com confirmação técnica.
+6. Cadastro: categoria, atributos, código universal, marca e número da peça.
+7. Estoque: ruptura no período, excesso, saldo correto e indisponibilidade.
+8. Desempenho: visitas, conversão, tempo sem vender, perguntas, reclamações, devoluções, envio e reputação.
+9. Concorrência: original somente com original e importado somente com importado; nunca misture equivalentes, paralelos, incompatíveis ou kits diferentes.
+
+COMPATIBILIDADE
+Use somente catálogos confiáveis autorizados. Nunca deduza aplicações. Sem confirmação, informe exatamente: “Não encontrei confirmação segura nos catálogos disponíveis.” Zero resultado é melhor do que aplicação errada. Informe a fonte de cada confirmação.
+
+SEGURANÇA
+Trabalhe somente em leitura. Não altere anúncios, preço, conteúdo, estoque ou status; não publique, pause, reative, anuncie, responda clientes, inicie campanhas ou compre. Toda alteração é sugestão sujeita à aprovação. Diferencie fato confirmado, causa provável e sugestão.
+
+PRIORIDADE
+Classifique cada item como Urgente, Alta, Média, Baixa ou Oportunidade, considerando impacto financeiro, aplicação, estoque, reputação e potencial de venda.
+
+RESUMO INICIAL
+Informe período, total analisado, quantidade vendida e sem vendas, faturamento, campeões, piores, problemas de preço, descrição, compatibilidade, fotos, estoque baixo, valor estimado parado e cinco ações prioritárias.
+
+RELATÓRIO POR ANÚNCIO
+Mostre identificação, produto/código, vendas, faturamento, visitas/conversão quando disponíveis, estoque, última venda, problema, evidência, causa provável, correção, impacto esperado, prioridade, aprovação necessária e fonte técnica.
+
+PLANO FINAL
+Organize em: corrigir imediatamente; melhorar nesta semana; acompanhar; repor estoque; não comprar novamente; criar kit ou novo anúncio; encaminhar para confirmação técnica; dados insuficientes. Nunca prometa aumento de vendas; apresente oportunidades baseadas nos dados.`,
     integracao: true,
   },
   {
@@ -167,7 +222,7 @@ export default function CentralPaizinho({ setScreen }) {
   const [salva, setSalva] = useState(false);
 
   function escolher(tarefa) {
-    setSelecionada(tarefa); setValores({}); setCategoria(""); setEtapa("formulario"); setAviso(""); setSalva(false);
+    setSelecionada(tarefa); setValores(tarefa.valoresIniciais || {}); setCategoria(""); setEtapa("formulario"); setAviso(""); setSalva(false);
     setTimeout(() => document.getElementById("tarefa-paizinho")?.scrollIntoView({ behavior: "smooth" }), 30);
   }
 
@@ -181,7 +236,7 @@ export default function CentralPaizinho({ setScreen }) {
   }
 
   function salvarTarefa() {
-    const tarefa = { id: crypto.randomUUID?.() || String(Date.now()), tipo: selecionada.id, titulo: selecionada.titulo, categoria: categoria || null, dados: valores, status: selecionada.integracao ? "aguardando_integracao" : "pronta", criadoEm: new Date().toISOString() };
+    const tarefa = { id: crypto.randomUUID?.() || String(Date.now()), tipo: selecionada.id, titulo: selecionada.titulo, categoria: categoria || null, dados: valores, contrato: { objetivo: selecionada.objetivo, limites: selecionada.limites, formato: selecionada.formato, saida: selecionada.saida }, promptExecutor: selecionada.promptExecutor || null, status: selecionada.integracao ? "aguardando_integracao" : "pronta", criadoEm: new Date().toISOString() };
     const atuais = lerJson("paizinhoTarefasProntas") || [];
     localStorage.setItem("paizinhoTarefasProntas", JSON.stringify([tarefa, ...atuais]));
     setSalva(true);
