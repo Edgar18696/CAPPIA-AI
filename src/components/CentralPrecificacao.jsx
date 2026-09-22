@@ -8,7 +8,6 @@ import MeusCustos, {
 import {
   motorPrecificacao,
   motorMercado,
-  motorEstrategia,
   motorAlertas,
   motorConcorrencia,
   motorRecomendacao,
@@ -265,21 +264,26 @@ export default function CentralPrecificacao({
         true
       );
 
-      const estrategiasGeradas =
-        motorEstrategia({
-          precoRecomendado:
-            precoBase,
-          precoMercado:
-            mercado?.resumo
-              ?.precoMedio ||
-            0,
-        });
-
-      setEstrategias(
-        estrategiasGeradas
-          ?.opcoes ||
-        []
-      );
+      setEstrategias([
+        {
+          id: "ganhar-mercado",
+          titulo: "🚀 Ganhar Mercado",
+          preco: faixasPreco.margem10?.resultado?.precoRecomendado || 0,
+          descricao: "Preço final com margem líquida de 10%.",
+        },
+        {
+          id: "equilibrado",
+          titulo: "⚖ Equilibrado",
+          preco: faixasPreco.margem15?.resultado?.precoRecomendado || 0,
+          descricao: "Preço final recomendado com margem líquida de 15%.",
+        },
+        {
+          id: "maximo-lucro",
+          titulo: "💎 Máximo Lucro",
+          preco: faixasPreco.margem20?.resultado?.precoRecomendado || 0,
+          descricao: "Preço final com margem líquida de 20%.",
+        },
+      ]);
 
       const alertasGerados =
         motorAlertas({
@@ -386,18 +390,26 @@ export default function CentralPrecificacao({
         ?.precoMedio ||
       0;
 
-    const estrategiasGeradas =
-      motorEstrategia({
-        precoRecomendado:
-          precoBase,
-        precoMercado,
-      });
-
-    setEstrategias(
-      estrategiasGeradas
-        ?.opcoes ||
-      []
-    );
+    setEstrategias([
+      {
+        id: "ganhar-mercado",
+        titulo: "🚀 Ganhar Mercado",
+        preco: faixasPreco.margem10?.resultado?.precoRecomendado || 0,
+        descricao: "Preço final com margem líquida de 10%.",
+      },
+      {
+        id: "equilibrado",
+        titulo: "⚖ Equilibrado",
+        preco: faixasPreco.margem15?.resultado?.precoRecomendado || 0,
+        descricao: "Preço final recomendado com margem líquida de 15%.",
+      },
+      {
+        id: "maximo-lucro",
+        titulo: "💎 Máximo Lucro",
+        preco: faixasPreco.margem20?.resultado?.precoRecomendado || 0,
+        descricao: "Preço final com margem líquida de 20%.",
+      },
+    ]);
 
     setAlertas(
       motorAlertas({
