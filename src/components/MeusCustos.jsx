@@ -30,6 +30,7 @@ function moeda(valor) {
 }
 
 export const PERFIL_CUSTOS_INICIAL = {
+  versao: 2,
   aluguel: "1500,00",
   energia: "350,00",
   agua: "100,00",
@@ -48,9 +49,17 @@ export const PERFIL_CUSTOS_INICIAL = {
 
 export function carregarPerfilCustos() {
   try {
+    const salvo = JSON.parse(
+      localStorage.getItem("paiiaPerfilCustos") || "null"
+    );
+
+    if (!salvo || salvo.versao !== PERFIL_CUSTOS_INICIAL.versao) {
+      return { ...PERFIL_CUSTOS_INICIAL };
+    }
+
     return {
       ...PERFIL_CUSTOS_INICIAL,
-      ...JSON.parse(localStorage.getItem("paiiaPerfilCustos") || "{}"),
+      ...salvo,
     };
   } catch {
     return { ...PERFIL_CUSTOS_INICIAL };
@@ -89,7 +98,12 @@ export default function MeusCustos({ value, onChange }) {
   }
 
   function salvar() {
-    localStorage.setItem("paiiaPerfilCustos", JSON.stringify(value));
+    const perfilAtualizado = {
+      ...value,
+      versao: PERFIL_CUSTOS_INICIAL.versao,
+    };
+    onChange?.(perfilAtualizado);
+    localStorage.setItem("paiiaPerfilCustos", JSON.stringify(perfilAtualizado));
     setMensagem("✅ Perfil salvo neste computador e aplicado aos cálculos.");
   }
 
