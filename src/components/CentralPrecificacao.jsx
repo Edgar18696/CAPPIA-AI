@@ -71,11 +71,9 @@ export default function CentralPrecificacao({
       dadosSalvos.custo ||
       ""
   );
-  const [quantidade, setQuantidade] = useState("1");
   const [frete, setFrete] = useState("");
   const [embalagem, setEmbalagem] = useState("");
   const [outrosCustos, setOutrosCustos] = useState("");
-  const [lucroDesejado, setLucroDesejado] = useState("35");
   const [meuPreco, setMeuPreco] = useState(
     precoAtual ||
       dadosSalvos.precoAtual ||
@@ -114,29 +112,39 @@ export default function CentralPrecificacao({
     setRecomendacao,
   ] = useState(null);
 
-  const analiseFinanceira = useMemo(() => {
+  const faixasPreco = useMemo(() => {
     const custosRateados =
       resumoPerfil.custoFixoPorVenda +
       resumoPerfil.custoOperacionalPedido;
 
-    return motorPrecificacao({
-      custoProduto: custo,
-      frete,
-      embalagem,
-      outrosCustos: numero(outrosCustos) + custosRateados,
-      comissaoPercentual: resumoPerfil.comissaoPercentual,
-      impostoPercentual: resumoPerfil.impostoPercentual,
-      margemDesejadaPercentual: lucroDesejado,
-      taxaFixa: resumoPerfil.taxaFixaMarketplace,
-    });
+    const calcular = (margem) =>
+      motorPrecificacao({
+        custoProduto: custo,
+        frete,
+        embalagem,
+        outrosCustos: numero(outrosCustos) + custosRateados,
+        comissaoPercentual: resumoPerfil.comissaoPercentual,
+        impostoPercentual: resumoPerfil.impostoPercentual,
+        margemDesejadaPercentual: margem,
+        taxaFixa: resumoPerfil.taxaFixaMarketplace,
+      });
+
+    return {
+      semLucro: calcular(0),
+      margem10: calcular(10),
+      margem15: calcular(15),
+      margem20: calcular(20),
+      margem35: calcular(35),
+    };
   }, [
     custo,
     frete,
     embalagem,
     outrosCustos,
-    lucroDesejado,
     resumoPerfil,
   ]);
+
+  const analiseFinanceira = faixasPreco.margem15;
 
   const custoTotal =
     analiseFinanceira?.custos?.total ||
@@ -579,89 +587,60 @@ export default function CentralPrecificacao({
         onChange={setPerfilCustos}
       />
 
-      <div style={gradePrincipal}>
-        <section style={blocoStyle}>
-          <h3 style={tituloBloco}>📦 Dados do Produto</h3>
+      <section style={blocoStyle}>
+        <h3 style={tituloBloco}>💵 Simular preço do produto</h3>
 
+        <p
+          style={{
+            color: "#94a3b8",
+            fontSize: "12px",
+            lineHeight: 1.5,
+            marginTop: "-4px",
+          }}
+        >
+          Informe somente os custos desta peça. As despesas da empresa,
+          comissão, imposto e tarifa já vêm de “Meus Custos”.
+        </p>
+
+        <div style={gradeResultados}>
           <Campo
-            label="Código"
-            value={codigo}
-            onChange={setCodigo}
-            placeholder="Ex.: 0261230268"
+            label="Custo da peça"
+            value={custo}
+            onChange={setCusto}
+            placeholder="Ex.: 65,00"
+            prefixo="R$"
           />
 
-          <div style={{ height: "12px" }} />
-
           <Campo
-            label="Descrição"
-            value={descricao}
-            onChange={setDescricao}
-            placeholder="Ex.: Sensor MAP Bosch"
+            label="Frete pago pelo vendedor"
+            value={frete}
+            onChange={setFrete}
+            placeholder="0,00"
+            prefixo="R$"
           />
 
-          <div style={{ height: "12px" }} />
+          <Campo
+            label="Embalagem"
+            value={embalagem}
+            onChange={setEmbalagem}
+            placeholder="Ex.: 2,00"
+            prefixo="R$"
+          />
 
-          <div style={gradeDois}>
-            <Campo
-              label="Custo da peça"
-              value={custo}
-              onChange={setCusto}
-              placeholder="0,00"
-              prefixo="R$"
-            />
+          <Campo
+            label="Outros custos desta peça"
+            value={outrosCustos}
+            onChange={setOutrosCustos}
+            placeholder="0,00"
+            prefixo="R$"
+          />
+        </div>
 
-            <Campo
-              label="Quantidade"
-              value={quantidade}
-              onChange={setQuantidade}
-              placeholder="1"
-            />
-          </div>
-        </section>
-
-        <section style={blocoStyle}>
-          <h3 style={tituloBloco}>🧮 Custos e Margem</h3>
-
-          <div style={gradeDois}>
-            <Campo
-              label="Frete"
-              value={frete}
-              onChange={setFrete}
-              placeholder="0,00"
-              prefixo="R$"
-            />
-
-            <Campo
-              label="Embalagem"
-              value={embalagem}
-              onChange={setEmbalagem}
-              placeholder="0,00"
-              prefixo="R$"
-            />
-
-            <Campo
-              label="Outros custos"
-              value={outrosCustos}
-              onChange={setOutrosCustos}
-              placeholder="0,00"
-              prefixo="R$"
-            />
-
-            <Campo
-              label="Lucro desejado"
-              value={lucroDesejado}
-              onChange={setLucroDesejado}
-              placeholder="35"
-              sufixo="%"
-            />
-          </div>
-
-          <div style={resumoCustos}>
-            <span>Custo total por venda</span>
-            <strong>{formatarMoeda(custoTotal)}</strong>
-          </div>
-        </section>
-      </div>
+        <div style={resumoCustos}>
+          <span>Custo total considerado por venda</span>
+          <strong>{formatarMoeda(custoTotal)}</strong>
+        </div>
+      </section>
 
       <section style={blocoStyle}>
         <div
@@ -747,36 +726,51 @@ export default function CentralPrecificacao({
       </section>
 
       <section style={blocoStyle}>
-        <h3 style={tituloBloco}>💡 Resultado da Análise</h3>
+        <h3 style={tituloBloco}>📊 Preços calculados por margem líquida</h3>
 
         <div style={gradeResultados}>
           <Resultado
-            label="Preço mínimo"
+            label="Sem lucro"
             valor={
               precoMinimo > 0
-                ? formatarMoeda(
-                    precoMinimo
-                  )
+                ? formatarMoeda(precoMinimo)
                 : "—"
             }
           />
 
           <Resultado
-            label="Preço recomendado"
-            destaque
-            valor={precoBase > 0 ? formatarMoeda(precoBase) : "—"}
-          />
-
-          <Resultado
-            label="Lucro estimado"
-            valor={custoTotal > 0 ? formatarMoeda(lucroEstimado) : "—"}
-          />
-
-          <Resultado
-            label="Margem estimada"
+            label="Margem de 10%"
             valor={
-              custoTotal > 0
-                ? `${margemEstimada.toFixed(1)}%`
+              faixasPreco.margem10?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem10?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
+
+          <Resultado
+            label="Recomendado • 15%"
+            destaque
+            valor={
+              faixasPreco.margem15?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem15?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
+
+          <Resultado
+            label="Margem de 20%"
+            valor={
+              faixasPreco.margem20?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem20?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
+
+          <Resultado
+            label="Margem de 35%"
+            valor={
+              faixasPreco.margem35?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem35?.resultado?.precoRecomendado)
                 : "—"
             }
           />
