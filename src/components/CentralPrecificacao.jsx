@@ -69,11 +69,12 @@ export default function CentralPrecificacao({
   const [custo, setCusto] = useState(
     custoInicial ||
       dadosSalvos.custo ||
-      ""
+      "65,00"
   );
   const [frete, setFrete] = useState("");
-  const [embalagem, setEmbalagem] = useState("");
+  const [embalagem, setEmbalagem] = useState("2,00");
   const [outrosCustos, setOutrosCustos] = useState("");
+  const [calculoAtivo, setCalculoAtivo] = useState(false);
   const [meuPreco, setMeuPreco] = useState(
     precoAtual ||
       dadosSalvos.precoAtual ||
@@ -207,6 +208,25 @@ export default function CentralPrecificacao({
     precoEscolhido,
     lucroEstimado,
   ]);
+
+  function calcularPreco() {
+    if (numero(custo) <= 0) {
+      setStatusAnalise("Informe o custo da peça antes de calcular.");
+      setCalculoAtivo(false);
+      return;
+    }
+
+    setCalculoAtivo(true);
+    setStatusAnalise(
+      "✅ Preços calculados. Compare as margens e não venda abaixo do valor sem lucro."
+    );
+
+    setTimeout(() => {
+      document
+        .getElementById("resultado-precificacao")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 30);
+  }
 
   async function analisarMercado() {
     if (custoTotal <= 0) {
@@ -584,7 +604,10 @@ export default function CentralPrecificacao({
 
       <MeusCustos
         value={perfilCustos}
-        onChange={setPerfilCustos}
+        onChange={(novoPerfil) => {
+          setPerfilCustos(novoPerfil);
+          setCalculoAtivo(false);
+        }}
       />
 
       <section style={blocoStyle}>
@@ -606,7 +629,10 @@ export default function CentralPrecificacao({
           <Campo
             label="Custo da peça"
             value={custo}
-            onChange={setCusto}
+            onChange={(valor) => {
+              setCusto(valor);
+              setCalculoAtivo(false);
+            }}
             placeholder="Ex.: 65,00"
             prefixo="R$"
           />
@@ -614,7 +640,10 @@ export default function CentralPrecificacao({
           <Campo
             label="Frete pago pelo vendedor"
             value={frete}
-            onChange={setFrete}
+            onChange={(valor) => {
+              setFrete(valor);
+              setCalculoAtivo(false);
+            }}
             placeholder="0,00"
             prefixo="R$"
           />
@@ -622,7 +651,10 @@ export default function CentralPrecificacao({
           <Campo
             label="Embalagem"
             value={embalagem}
-            onChange={setEmbalagem}
+            onChange={(valor) => {
+              setEmbalagem(valor);
+              setCalculoAtivo(false);
+            }}
             placeholder="Ex.: 2,00"
             prefixo="R$"
           />
@@ -630,7 +662,10 @@ export default function CentralPrecificacao({
           <Campo
             label="Outros custos desta peça"
             value={outrosCustos}
-            onChange={setOutrosCustos}
+            onChange={(valor) => {
+              setOutrosCustos(valor);
+              setCalculoAtivo(false);
+            }}
             placeholder="0,00"
             prefixo="R$"
           />
@@ -640,6 +675,26 @@ export default function CentralPrecificacao({
           <span>Custo total considerado por venda</span>
           <strong>{formatarMoeda(custoTotal)}</strong>
         </div>
+
+        <button
+          type="button"
+          onClick={calcularPreco}
+          style={{
+            display: "block",
+            width: "min(100%,360px)",
+            margin: "18px auto 0",
+            padding: "14px 20px",
+            borderRadius: "12px",
+            border: "1px solid #22d3ee",
+            background: "linear-gradient(135deg,#2563eb,#0891b2)",
+            color: "#ffffff",
+            fontSize: "16px",
+            fontWeight: "bold",
+            cursor: "pointer",
+          }}
+        >
+          🧮 Calcular preço
+        </button>
       </section>
 
       <section style={blocoStyle}>
@@ -725,8 +780,11 @@ export default function CentralPrecificacao({
         </p>
       </section>
 
-      <section style={blocoStyle}>
+      <section id="resultado-precificacao" style={blocoStyle}>
         <h3 style={tituloBloco}>📊 Preços finais por margem</h3>
+
+        {calculoAtivo ? (
+          <>
 
         <p
           style={{
@@ -801,6 +859,22 @@ export default function CentralPrecificacao({
             }}
           >
             ⚠ Não venda abaixo de {formatarMoeda(precoMinimo)} para não ter prejuízo.
+          </div>
+        )}
+
+          </>
+        ) : (
+          <div
+            style={{
+              padding: "22px",
+              borderRadius: "14px",
+              border: "1px dashed #475569",
+              background: "#020617",
+              color: "#94a3b8",
+              textAlign: "center",
+            }}
+          >
+            Informe os valores e clique em “Calcular preço”.
           </div>
         )}
       </section>
