@@ -726,61 +726,72 @@ export default function CentralPrecificacao({
       </section>
 
       <section style={blocoStyle}>
-        <h3 style={tituloBloco}>💰 Resultado final</h3>
+        <h3 style={tituloBloco}>📊 Preços finais por margem</h3>
 
-        <div
+        <p
           style={{
-            maxWidth: "620px",
-            margin: "0 auto",
-            padding: "26px 20px",
-            borderRadius: "18px",
-            border: "2px solid #22d3ee",
-            background: "linear-gradient(135deg,rgba(37,99,235,.24),rgba(8,145,178,.18))",
+            color: "#94a3b8",
             textAlign: "center",
+            fontSize: "12px",
+            marginTop: "-5px",
           }}
         >
-          <span
-            style={{
-              display: "block",
-              color: "#bae6fd",
-              fontSize: "14px",
-              fontWeight: "bold",
-            }}
-          >
-            PREÇO RECOMENDADO PARA VENDER
-          </span>
+          Escolha a faixa mais adequada ao mercado. O valor de 15% é o recomendado.
+        </p>
 
-          <strong
-            style={{
-              display: "block",
-              marginTop: "8px",
-              color: "#67e8f9",
-              fontSize: "clamp(36px,7vw,58px)",
-              lineHeight: 1,
-            }}
-          >
-            {precoBase > 0 ? formatarMoeda(precoBase) : "Informe o custo da peça"}
-          </strong>
+        <div style={gradeResultados}>
+          <Resultado
+            label="Sem lucro"
+            valor={
+              precoMinimo > 0
+                ? formatarMoeda(precoMinimo)
+                : "—"
+            }
+          />
 
-          <small
-            style={{
-              display: "block",
-              marginTop: "10px",
-              color: "#cbd5e1",
-              lineHeight: 1.5,
-            }}
-          >
-            Calculado com margem líquida recomendada de 15%, incluindo os custos,
-            comissão, imposto e tarifas informados.
-          </small>
+          <Resultado
+            label="Margem de 10%"
+            valor={
+              faixasPreco.margem10?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem10?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
+
+          <Resultado
+            label="Recomendado • 15%"
+            destaque
+            valor={
+              faixasPreco.margem15?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem15?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
+
+          <Resultado
+            label="Margem de 20%"
+            valor={
+              faixasPreco.margem20?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem20?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
+
+          <Resultado
+            label="Margem de 35%"
+            valor={
+              faixasPreco.margem35?.resultado?.precoRecomendado > 0
+                ? formatarMoeda(faixasPreco.margem35?.resultado?.precoRecomendado)
+                : "—"
+            }
+          />
         </div>
 
         {precoMinimo > 0 && (
           <div
             style={{
-              maxWidth: "620px",
-              margin: "14px auto 0",
-              padding: "13px",
+              marginTop: "18px",
+              padding: "14px",
               borderRadius: "12px",
               border: "1px solid #ef4444",
               background: "rgba(127,29,29,.18)",
@@ -791,39 +802,6 @@ export default function CentralPrecificacao({
           >
             ⚠ Não venda abaixo de {formatarMoeda(precoMinimo)} para não ter prejuízo.
           </div>
-        )}
-
-        {precoBase > 0 && (
-          <details
-            style={{
-              maxWidth: "620px",
-              margin: "14px auto 0",
-              border: "1px solid #334155",
-              borderRadius: "12px",
-              background: "#020617",
-              color: "#cbd5e1",
-              padding: "12px 14px",
-            }}
-          >
-            <summary style={{ cursor: "pointer", color: "#67e8f9", fontWeight: "bold" }}>
-              Ver outras opções de margem
-            </summary>
-
-            <div style={{ ...gradeResultados, marginTop: "14px" }}>
-              <Resultado
-                label="10%"
-                valor={formatarMoeda(faixasPreco.margem10?.resultado?.precoRecomendado)}
-              />
-              <Resultado
-                label="20%"
-                valor={formatarMoeda(faixasPreco.margem20?.resultado?.precoRecomendado)}
-              />
-              <Resultado
-                label="35%"
-                valor={formatarMoeda(faixasPreco.margem35?.resultado?.precoRecomendado)}
-              />
-            </div>
-          </details>
         )}
       </section>
 
