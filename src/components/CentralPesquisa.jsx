@@ -183,7 +183,20 @@ export default function CentralPesquisa({
   setResultadoPesquisa = () => {},
 }) {
   const [busca, setBusca] =
-    useState("");
+    useState(() => {
+      const pesquisaInicial =
+        localStorage.getItem(
+          "paizinhoPesquisaInicial"
+        ) || "";
+
+      if (pesquisaInicial) {
+        localStorage.removeItem(
+          "paizinhoPesquisaInicial"
+        );
+      }
+
+      return pesquisaInicial;
+    });
 
   const [resultados, setResultados] =
     useState([]);
