@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 import Button from "./ui/Button";
+import MeusCustos, {
+  carregarPerfilCustos,
+  resumirPerfilCustos,
+} from "./MeusCustos";
 
 import {
   motorPrecificacao,
@@ -77,6 +81,14 @@ export default function CentralPrecificacao({
       dadosSalvos.precoAtual ||
       ""
   );
+  const [perfilCustos, setPerfilCustos] = useState(() =>
+    carregarPerfilCustos()
+  );
+  const resumoPerfil = useMemo(
+    () => resumirPerfilCustos(perfilCustos),
+    [perfilCustos]
+  );
+
   const [analisandoMercado, setAnalisandoMercado] = useState(false);
   const [mercadoAnalisado, setMercadoAnalisado] = useState(false);
   const [statusAnalise, setStatusAnalise] = useState(
@@ -103,16 +115,19 @@ export default function CentralPrecificacao({
   ] = useState(null);
 
   const analiseFinanceira = useMemo(() => {
+    const custosRateados =
+      resumoPerfil.custoFixoPorVenda +
+      resumoPerfil.custoOperacionalPedido;
+
     return motorPrecificacao({
       custoProduto: custo,
       frete,
       embalagem,
-      outrosCustos,
-      comissaoPercentual: 16,
-      impostoPercentual: 0,
-      margemDesejadaPercentual:
-        lucroDesejado,
-      taxaFixa: 0,
+      outrosCustos: numero(outrosCustos) + custosRateados,
+      comissaoPercentual: resumoPerfil.comissaoPercentual,
+      impostoPercentual: resumoPerfil.impostoPercentual,
+      margemDesejadaPercentual: lucroDesejado,
+      taxaFixa: resumoPerfil.taxaFixaMarketplace,
     });
   }, [
     custo,
@@ -120,6 +135,7 @@ export default function CentralPrecificacao({
     embalagem,
     outrosCustos,
     lucroDesejado,
+    resumoPerfil,
   ]);
 
   const custoTotal =
@@ -152,18 +168,21 @@ export default function CentralPrecificacao({
       return 0;
     }
 
-    const comissao =
-      precoEscolhido * 0.16;
+    const descontosPercentuais =
+      precoEscolhido *
+      ((resumoPerfil.comissaoPercentual +
+        resumoPerfil.impostoPercentual) /
+        100);
 
-    return Math.max(
-      0,
+    return (
       precoEscolhido -
-        custoTotal -
-        comissao
+      custoTotal -
+      descontosPercentuais
     );
   }, [
     precoEscolhido,
     custoTotal,
+    resumoPerfil,
   ]);
 
   const margemEstimada = useMemo(() => {
@@ -555,6 +574,11 @@ export default function CentralPrecificacao({
         )}
       </section>
 
+      <MeusCustos
+        value={perfilCustos}
+        onChange={setPerfilCustos}
+      />
+
       <div style={gradePrincipal}>
         <section style={blocoStyle}>
           <h3 style={tituloBloco}>📦 Dados do Produto</h3>
@@ -633,7 +657,7 @@ export default function CentralPrecificacao({
           </div>
 
           <div style={resumoCustos}>
-            <span>Custo total informado</span>
+            <span>Custo total por venda</span>
             <strong>{formatarMoeda(custoTotal)}</strong>
           </div>
         </section>
@@ -758,22 +782,22 @@ export default function CentralPrecificacao({
           />
         </div>
 
-        <div
-          style={{
-            marginTop: "20px",
-            maxWidth: "420px",
-            marginLeft: "auto",
-            marginRight: "auto",
-          }}
-        >
-          <Campo
-  label="Custo da mercadoria"
-  value={custo}
-  onChange={setCusto}
-  placeholder="0,00"
-  prefixo="R$"
-/>
-        </div>
+        {precoMinimo > 0 && (
+          <div
+            style={{
+              marginTop: "18px",
+              padding: "14px",
+              borderRadius: "12px",
+              border: "1px solid #ef4444",
+              background: "rgba(127,29,29,.18)",
+              color: "#fecaca",
+              textAlign: "center",
+              fontWeight: "bold",
+            }}
+          >
+            ⚠ Abaixo de {formatarMoeda(precoMinimo)} esta venda dará prejuízo.
+          </div>
+        )}
       </section>
 
       {analiseConcorrencia && (
