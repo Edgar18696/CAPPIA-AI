@@ -30,20 +30,20 @@ function moeda(valor) {
 }
 
 export const PERFIL_CUSTOS_INICIAL = {
-  aluguel: "",
-  energia: "",
-  agua: "",
-  internet: "",
-  folha: "",
-  contabilidade: "",
-  sistemas: "",
-  transporte: "",
-  outrosFixos: "",
-  vendasMensais: "",
-  custoOperacionalPedido: "",
-  comissaoPercentual: "",
-  impostoPercentual: "",
-  taxaFixaMarketplace: "",
+  aluguel: "1500,00",
+  energia: "350,00",
+  agua: "100,00",
+  internet: "150,00",
+  folha: "0,00",
+  contabilidade: "300,00",
+  sistemas: "200,00",
+  transporte: "200,00",
+  outrosFixos: "200,00",
+  vendasMensais: "300",
+  custoOperacionalPedido: "2,00",
+  comissaoPercentual: "16",
+  impostoPercentual: "6",
+  taxaFixaMarketplace: "6,00",
 };
 
 export function carregarPerfilCustos() {
@@ -112,8 +112,9 @@ export default function MeusCustos({ value, onChange }) {
       {aberto && (
         <div style={{ paddingTop: "20px" }}>
           <p style={aviso}>
-            Preencha apenas os custos que realmente possui. O rateio divide as
-            despesas fixas pelo número esperado de vendas no mês.
+            Os valores iniciais são uma simulação de exemplo. Troque pelos custos
+            reais da sua empresa antes de salvar. O rateio divide as despesas
+            fixas pelo número esperado de vendas no mês.
           </p>
 
           <h4 style={subtitulo}>Despesas fixas mensais</h4>
