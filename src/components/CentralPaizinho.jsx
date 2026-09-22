@@ -2,6 +2,19 @@ import { useMemo, useState } from "react";
 
 const TAREFAS = [
   {
+    id: "meus-custos",
+    icone: "🧾",
+    titulo: "Cadastrar meus custos",
+    descricao: "Salva despesas, taxas e impostos para calcular o preço mínimo sem prejuízo.",
+    objetivo: "Cadastrar os custos reais da operação para usar automaticamente na precificação.",
+    limites: "Não inventar valores e não alterar preços de anúncios automaticamente.",
+    formato: "Separar despesas fixas mensais, custos por venda, comissão, imposto e tarifa.",
+    saida: "Custo rateado por venda, preço mínimo sem prejuízo e preço recomendado.",
+    campos: [],
+    destino: "centralPrecificacao",
+    direto: true,
+  },
+  {
     id: "prioridades",
     icone: "🎯",
     titulo: "Mostrar as prioridades de hoje",
@@ -147,7 +160,7 @@ const TAREFAS = [
   },
 ];
 
-const SUGESTOES = ["prioridades", "nao-vende", "concorrencia", "estoque", "financeiro"];
+const SUGESTOES = ["meus-custos", "prioridades", "nao-vende", "concorrencia", "estoque", "financeiro"];
 
 function lerJson(chave) {
   try { return JSON.parse(localStorage.getItem(chave) || "null"); } catch { return null; }
@@ -167,6 +180,10 @@ export default function CentralPaizinho({ setScreen }) {
   const [salva, setSalva] = useState(false);
 
   function escolher(tarefa) {
+    if (tarefa?.direto && tarefa?.destino) {
+      setScreen(tarefa.destino);
+      return;
+    }
     setSelecionada(tarefa); setValores({}); setCategoria(""); setEtapa("formulario"); setAviso(""); setSalva(false);
     setTimeout(() => document.getElementById("tarefa-paizinho")?.scrollIntoView({ behavior: "smooth" }), 30);
   }
