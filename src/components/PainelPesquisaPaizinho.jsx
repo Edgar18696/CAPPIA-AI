@@ -74,11 +74,26 @@ function faixaStatus(status) {
   return { cor: COR.erro, texto: "Não identificado com segurança" };
 }
 
-export default function PainelPesquisaPaizinho({ pesquisa }) {
+export default function PainelPesquisaPaizinho({ pesquisa, onPesquisarNovamente }) {
   if (!pesquisa) return null;
 
-  const { status, codigoPesquisado, mensagem, validado, auditoria, deCache, campos } = pesquisa;
+  const { status, codigoPesquisado, mensagem, validado, auditoria, deCache, campos, gravacaoBase } = pesquisa;
+  const textoGravacao = (() => {
+    if (!gravacaoBase) return null;
+    if (gravacaoBase.erro) return { cor: COR.erro, t: `Não gravado: ${gravacaoBase.motivo || "falha"} (${gravacaoBase.erro})` };
+    if (!gravacaoBase.gravado) return { cor: COR.suave, t: `Não gravado: ${gravacaoBase.motivo}` };
+    const partes = [];
+    if (gravacaoBase.inseridos) partes.push(`${gravacaoBase.inseridos} registro(s) novo(s)`);
+    if (gravacaoBase.reaproveitados) partes.push(`${gravacaoBase.reaproveitados} já existente(s), reaproveitado(s) sem duplicar`);
+    if (gravacaoBase.atualizados) partes.push(`${gravacaoBase.atualizados} completado(s)`);
+    return {
+      cor: COR.ok,
+      t: `Gravado na Base PAIIA como “Pesquisa externa PAIIA” — ${partes.join(", ")}. Na próxima pesquisa deste código o PAIIA usa a própria base (sem nova consulta paga).`,
+    };
+  })();
   const naoConfirmados = campos?.naoConfirmados || [];
+  const baseIncompleta = pesquisa.origemFallback === "base_incompleta";
+  const divergenciasBase = pesquisa.divergenciasBase || [];
   const infoFonte = (url) =>
     (validado?.fontesConsultadas || []).find((f) => f.url === url) || {};
   const faixa = faixaStatus(status);
@@ -93,7 +108,13 @@ export default function PainelPesquisaPaizinho({ pesquisa }) {
       </h3>
 
       <Linha nome="Fonte interna (Base PAIIA)">
-        <strong style={{ color: COR.erro }}>não encontrado</strong>
+        {baseIncompleta ? (
+          <strong style={{ color: COR.alerta }}>
+            encontrado, mas sem aplicação de veículo (dados insuficientes)
+          </strong>
+        ) : (
+          <strong style={{ color: COR.erro }}>não encontrado</strong>
+        )}
       </Linha>
       <Linha nome="Pesquisa em fontes originais">
         <strong style={{ color: faixa.cor }} data-testid="paizinho-status">
@@ -116,7 +137,9 @@ export default function PainelPesquisaPaizinho({ pesquisa }) {
           {mensagem || MENSAGENS.NAO_IDENTIFICADO}
           <br />
           <span style={{ color: COR.suave }}>
-            Nenhum campo foi preenchido com dado não confirmado.
+            {baseIncompleta
+              ? "O anúncio ficou só com os dados da Base PAIIA; nada externo foi usado."
+              : "Nenhum campo foi preenchido com dado não confirmado."}
           </span>
         </p>
       )}
@@ -134,11 +157,15 @@ export default function PainelPesquisaPaizinho({ pesquisa }) {
           <Linha nome="Equivalentes">{listaCodigos(c.codigosEquivalentes)}</Linha>
           <Linha nome="Aplicações confirmadas">{c.aplicacoes?.length || 0}</Linha>
           <Linha nome="Nível de confiança">{validado?.confianca || "—"}</Linha>
-          <Linha nome="Situação na base">
-            <strong style={{ color: COR.alerta }}>
-              Pendente de validação/auditoria
-            </strong>
-            {deCache ? " (pesquisa anterior reaproveitada)" : ""}
+          <Linha nome="Base PAIIA">
+            {textoGravacao ? (
+              <strong style={{ color: textoGravacao.cor }} data-testid="paizinho-gravacao">
+                {textoGravacao.t}
+              </strong>
+            ) : (
+              <span style={{ color: COR.suave }}>—</span>
+            )}
+            {deCache ? " (pesquisa anterior reaproveitada, sem nova consulta paga)" : ""}
           </Linha>
 
           {c.especificacoes?.length > 0 && (
@@ -170,6 +197,28 @@ export default function PainelPesquisaPaizinho({ pesquisa }) {
             </>
           )}
         </>
+      )}
+
+      {divergenciasBase.length > 0 && (
+        <div
+          style={{
+            marginTop: "14px",
+            padding: "12px",
+            borderRadius: "12px",
+            border: `1px solid ${COR.alerta}`,
+            background: "#451a03",
+            color: "#fde68a",
+          }}
+          data-testid="paizinho-divergencia-base"
+        >
+          <strong>Fonte original diverge da Base PAIIA — revisão necessária.</strong>
+          <ul style={{ margin: "8px 0 0", paddingLeft: "18px" }}>
+            {divergenciasBase.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+          <span>Os dados externos não foram usados no anúncio nem gravados.</span>
+        </div>
       )}
 
       {validado?.conflitos?.length > 0 && (
@@ -262,6 +311,25 @@ export default function PainelPesquisaPaizinho({ pesquisa }) {
             ))}
           </ul>
         </details>
+      )}
+
+      {onPesquisarNovamente && status !== "pesquisando" && (deCache || !identificado) && (
+        <button
+          type="button"
+          onClick={onPesquisarNovamente}
+          style={{
+            marginTop: "12px",
+            padding: "8px 14px",
+            borderRadius: "10px",
+            border: `1px solid ${COR.info}`,
+            background: "transparent",
+            color: COR.info,
+            cursor: "pointer",
+          }}
+          data-testid="paizinho-pesquisar-novamente"
+        >
+          🔄 Pesquisar de novo nas fontes originais (nova consulta paga)
+        </button>
       )}
 
       {auditoria && (

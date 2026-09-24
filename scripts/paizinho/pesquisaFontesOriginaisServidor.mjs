@@ -14,6 +14,11 @@
 // =============================================================
 
 import { classificarFonte, dominiosOficiais } from "../../src/services/paizinhoPesquisa/fontesOriginais.js";
+import {
+  normalizarCodigo,
+  variantesEscrita,
+  textoContemCodigo,
+} from "../../src/services/paizinhoPesquisa/codigoPaizinho.js";
 
 const MODELO_PADRAO = "gpt-4.1-mini";
 const TEMPO_PAGINA_MS = 8000;
@@ -22,6 +27,9 @@ export const INSTRUCOES_PESQUISA = `Você é um pesquisador técnico de autopeç
 Pesquise o código informado usando a ferramenta de busca, SOMENTE nos domínios permitidos
 (catálogos e sites oficiais de montadoras e fabricantes de peças).
 Regras obrigatórias:
+- O código pode aparecer escrito com espaços, hífens ou pontos (as formas de escrita
+  informadas são o MESMO código). Nunca aceite um código diferente, mais longo, com
+  sufixo ou "parecido" — isso é outra peça.
 - Só registre uma fonte se a própria página mostrar LITERALMENTE o código pesquisado.
 - Use exatamente a URL da página consultada (a mesma que você cita).
 - Copie em "evidencia" o trecho literal da página onde o código aparece.
@@ -35,10 +43,10 @@ Responda APENAS com JSON válido, sem texto antes ou depois, no formato:
 {"fontes":[{"url":"","titulo":"","evidencia":"","codigoMencionado":"",
 "dados":{"fabricante":"","descricao":"","codigos_oem":[],"codigos_substitutos":[],
 "codigos_equivalentes":[],"aplicacoes":[{"montadora":"","modelo":"","versao":"",
-"motor":"","ano_inicio":null,"ano_fim":null}],"especificacoes":[{"nome":"","valor":""}]}}]}`;
+"motor":"","combustivel":"","ano_inicio":null,"ano_fim":null}],"especificacoes":[{"nome":"","valor":""}]}}]}`;
 
 export function normalizarCodigoServidor(v) {
-  return String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return normalizarCodigo(v);
 }
 
 /** URL comparável: sem www, sem barra final, sem #, sem parâmetros de rastreio. */
@@ -128,8 +136,7 @@ export async function verificarCodigoNaPagina(url, codigo, fetchImpl = fetch) {
     const tipo = r.headers.get("content-type") || "";
     if (!/text|html|json|xml/i.test(tipo)) return { resultado: null, motivo: `conteúdo ${tipo}` };
     const texto = htmlParaTexto(await r.text());
-    const compacto = normalizarCodigoServidor(texto);
-    if (compacto.includes(alvo)) return { resultado: true, motivo: "código presente na página" };
+    if (textoContemCodigo(texto, alvo)) return { resultado: true, motivo: "código presente na página" };
     // Página com conteúdo real e sem o código → não confirma.
     if (texto.trim().length >= 1500) return { resultado: false, motivo: "página lida e o código não aparece" };
     return { resultado: null, motivo: "página carregada por script (não deu para ler)" };
@@ -146,7 +153,7 @@ async function consultarModelo(openai, modelo, codigo, dominios) {
     tools: [{ type: "web_search", filters: { allowed_domains: dominios } }],
     include: ["web_search_call.action.sources"],
     instructions: INSTRUCOES_PESQUISA,
-    input: `Código pesquisado: ${codigo}`,
+    input: `Código pesquisado: ${codigo}\nFormas de escrita do mesmo código: ${variantesEscrita(codigo).join(" | ")}`,
   });
 }
 

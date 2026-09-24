@@ -22,6 +22,7 @@ import {
   MENSAGENS,
 } from "./validarResultadoPesquisa.js";
 import { montarCamposCriarAnuncio } from "./montarAnuncioPesquisa.js";
+import { gravarPesquisaConfirmadaNaBase } from "./gravarPesquisaNaBase.js";
 import {
   montarRegistroAuditoria,
   registrarAuditoriaPesquisa,
@@ -127,13 +128,19 @@ export async function provedorPadrao(codigo) {
 }
 
 function resultadoDoCache(registro) {
+  const quando = registro.criado_em
+    ? new Date(registro.criado_em).toLocaleDateString("pt-BR")
+    : "";
+  const mensagens = {
+    [STATUS_PESQUISA.CONFLITO]: MENSAGENS.CONFLITO,
+    [STATUS_PESQUISA.NAO_IDENTIFICADO]: `${MENSAGENS.NAO_IDENTIFICADO} (resultado da pesquisa de ${quando}, reaproveitado sem nova consulta paga)`,
+  };
   const validado = {
     codigoPesquisado: registro.codigo_pesquisado,
     status: registro.status,
     mensagem:
-      registro.status === STATUS_PESQUISA.CONFLITO
-        ? MENSAGENS.CONFLITO
-        : "Peça identificada em fonte original (pesquisa anterior, pendente de validação).",
+      mensagens[registro.status] ||
+      `Peça identificada em fonte original (pesquisa de ${quando}, reaproveitada sem nova consulta paga).`,
     confianca: registro.confianca,
     confirmado: registro.dados_confirmados || {},
     conflitos: registro.conflitos || [],
@@ -159,8 +166,20 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     armazenamento,
     userId = null,
     usarCache = true,
+    gravarNaBase = true,
     onProgresso,
   } = opcoes;
+
+  async function gravar(validado) {
+    if (!gravarNaBase) return null;
+    try {
+      progresso("Gravando na Base PAIIA os dados confirmados…", 90);
+      return await gravarPesquisaConfirmadaNaBase(validado, { cliente });
+    } catch (e) {
+      console.warn("[PAIZINHO_PESQUISA] falha ao gravar na base:", e);
+      return { gravado: false, inseridos: 0, reaproveitados: 0, atualizados: 0, motivo: "Falha ao gravar na base.", erro: String(e?.message || e) };
+    }
+  }
 
   const codigoPesquisado = String(codigoDigitado ?? "").trim();
   const progresso = (etapa, valor) => {
@@ -190,13 +209,19 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     if (recente) {
       const validado = resultadoDoCache(recente);
       validado.codigoPesquisado = codigoPesquisado;
-      progresso("Pesquisa anterior reaproveitada (pendente de validação).", 100);
+      // Se da outra vez a gravação não aconteceu, tenta de novo (sem duplicar).
+      const gravacaoBase =
+        validado.status === STATUS_PESQUISA.ENCONTRADO || validado.status === STATUS_PESQUISA.CONFLITO
+          ? await gravar(validado)
+          : null;
+      progresso("Pesquisa anterior reaproveitada (sem nova consulta paga).", 100);
       return {
         status: validado.status,
         mensagem: validado.mensagem,
         validado,
         campos: montarCamposCriarAnuncio(validado),
         auditoria: { id: recente.id, salvoEm: recente.origemCache, registro: recente },
+        gravacaoBase,
         deCache: true,
       };
     }
@@ -246,7 +271,10 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     erro ? { ...validado, status: STATUS_PESQUISA.NAO_IDENTIFICADO } : validado
   );
 
-  // 5. Auditoria (sempre, inclusive quando nada foi encontrado)
+  // 5. Gravação na Base PAIIA (somente o que foi confirmado)
+  const gravacaoBase = erro ? null : await gravar(validado);
+
+  // 6. Auditoria (sempre, inclusive quando nada foi encontrado)
   const registro = montarRegistroAuditoria({
     codigoPesquisado,
     validado,
@@ -257,6 +285,16 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     userId,
     erro,
   });
+  registro.gravacao_base = gravacaoBase
+    ? {
+        gravado: gravacaoBase.gravado,
+        inseridos: gravacaoBase.inseridos,
+        reaproveitados: gravacaoBase.reaproveitados,
+        atualizados: gravacaoBase.atualizados,
+        motivo: gravacaoBase.motivo || "",
+        erro: gravacaoBase.erro || null,
+      }
+    : null;
   let auditoria;
   try {
     const salvo = await registrarAuditoriaPesquisa(registro, { cliente, armazenamento });
@@ -273,6 +311,7 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     validado,
     campos,
     auditoria,
+    gravacaoBase,
     deCache: false,
   };
 }

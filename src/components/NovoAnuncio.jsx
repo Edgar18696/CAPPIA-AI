@@ -32,7 +32,15 @@ import {
 } from "../services/paizinhoPesquisa/pesquisarFontesOriginais";
 import {
   MENSAGENS as MENSAGENS_PAIZINHO,
+  STATUS_PESQUISA as STATUS_PAIZINHO,
 } from "../services/paizinhoPesquisa/validarResultadoPesquisa";
+import {
+  gravarPesquisaConfirmadaNaBase,
+} from "../services/paizinhoPesquisa/gravarPesquisaNaBase";
+import {
+  compararComBase,
+  complementoUtil,
+} from "../services/paizinhoPesquisa/complementarBase";
 
 const MENSAGEM_BASE_NAO_ENCONTROU =
   "Produto ainda não encontrado na Base PAIIA.";
@@ -2783,6 +2791,23 @@ const descricaoResultado =
       })
     );
 
+    // Base PAIIA achou o código mas sem aplicação de veículo → o Paizinho
+    // tenta completar em fontes originais (sem apagar o que veio da base).
+    if (
+      aplicacoesValidas.length === 0 &&
+      !resultado?.fallbackExterno
+    ) {
+      await complementarComPesquisaPaizinho(
+        codigoFinal,
+        {
+          pecaBase: pecaResultado,
+          oemBase: oemResultado,
+          diagnosticoBase: diagnosticoResultado,
+          auditoriaBase: auditoriaResultado,
+        }
+      );
+    }
+
     setProgressoProcessamento(
       100
     );
@@ -2825,9 +2850,11 @@ const descricaoResultado =
   }
 }
 async function executarPesquisaPaizinho(
-  codigoFinal
+  codigoFinal,
+  { forcar = false } = {}
 ) {
   // O código digitado é preservado como "Código pesquisado".
+  setProcessando(true);
   setCodigo(codigoFinal);
   setPesquisaPaizinho({
     status: "pesquisando",
@@ -2849,6 +2876,7 @@ async function executarPesquisaPaizinho(
         {
           userId:
             sessao?.user?.id || null,
+          usarCache: !forcar,
           onProgresso: (
             etapa,
             valor
@@ -2901,7 +2929,7 @@ async function executarPesquisaPaizinho(
         confianca:
           resultado?.validado?.confianca || "",
         avisoAplicacao:
-          "Dados encontrados pelo Paizinho em fonte original — pendentes de validação/auditoria. Confira a fonte antes de publicar." +
+          "Dados encontrados pelo Paizinho em fonte original (Pesquisa externa PAIIA). Confira a fonte antes de publicar." +
           (naoConfirmados.length
             ? ` Não confirmado: ${naoConfirmados.join("; ")}.`
             : ""),
@@ -2909,10 +2937,14 @@ async function executarPesquisaPaizinho(
       };
 
       const auditoriaPaizinho = {
-        aprovado: false,
+        aprovado:
+          resultado?.status ===
+            STATUS_PAIZINHO.ENCONTRADO &&
+          resultado?.validado
+            ?.confianca === "alta",
         origemPesquisaPaizinho: true,
         problemas: [
-          "Pendente de validação/auditoria (pesquisa em fonte original).",
+          "Dados de pesquisa externa em fonte original — confira a fonte antes de publicar.",
           ...naoConfirmados.map(
             (item) => `Não confirmado: ${item}`
           ),
@@ -2980,6 +3012,138 @@ async function executarPesquisaPaizinho(
     setProcessando(false);
     setEtapaProcessamento("");
     setProgressoProcessamento(0);
+  }
+}
+
+async function complementarComPesquisaPaizinho(
+  codigoFinal,
+  {
+    pecaBase,
+    oemBase,
+    diagnosticoBase,
+    auditoriaBase,
+  } = {}
+) {
+  try {
+    setEtapaProcessamento(
+      "Base PAIIA sem aplicação de veículo para este código. O Paizinho está pesquisando fontes originais…"
+    );
+    setProgressoProcessamento(60);
+
+    const {
+      data: sessao,
+    } = await supabase.auth.getUser();
+
+    // Aqui a gravação é decidida depois de conferir se é a mesma peça.
+    const resultado =
+      await pesquisarFontesOriginais(
+        codigoFinal,
+        {
+          userId:
+            sessao?.user?.id || null,
+          gravarNaBase: false,
+          onProgresso: (
+            etapa
+          ) => {
+            setEtapaProcessamento(etapa);
+          },
+        }
+      );
+
+    const comparacao =
+      compararComBase(
+        resultado?.validado,
+        pecaBase
+      );
+
+    let gravacaoBase = null;
+    const util =
+      complementoUtil(
+        resultado?.validado
+      );
+
+    if (util && comparacao.compativel) {
+      gravacaoBase =
+        await gravarPesquisaConfirmadaNaBase(
+          resultado.validado
+        );
+
+      const campos =
+        resultado?.campos || {};
+
+      if (campos.titulo) {
+        setTitulo(campos.titulo);
+      }
+
+      if (campos.descricao) {
+        setDescricao(campos.descricao);
+      }
+
+      if (!oemBase && campos.oem) {
+        setOem(campos.oem);
+      }
+
+      const aplicacoesExternas =
+        campos.pecaEncontrada
+          ?.aplicacoes || [];
+
+      setPecaEncontrada({
+        ...(pecaBase || {}),
+        aplicacoes: [
+          ...(Array.isArray(
+            pecaBase?.aplicacoes
+          )
+            ? pecaBase.aplicacoes
+            : []),
+          ...aplicacoesExternas,
+        ],
+      });
+
+      setDiagnostico({
+        ...(diagnosticoBase || {}),
+        totalAplicacoes:
+          aplicacoesExternas.length,
+        aplicacaoConfirmada: true,
+        avisoAplicacao:
+          "Aplicações completadas pelo Paizinho em fonte original (Pesquisa externa PAIIA). Confira a fonte antes de publicar.",
+      });
+
+      setAuditoria({
+        ...(auditoriaBase || {}),
+        aprovado: false,
+        problemas: [
+          ...((auditoriaBase?.problemas) || []),
+          "Aplicações vindas de pesquisa externa em fonte original — confira a fonte.",
+        ],
+      });
+
+      setMostrarAplicacoes(true);
+    }
+
+    setPesquisaPaizinho({
+      ...resultado,
+      codigoPesquisado: codigoFinal,
+      origemFallback: "base_incompleta",
+      divergenciasBase:
+        util && !comparacao.compativel
+          ? comparacao.divergencias
+          : [],
+      gravacaoBase:
+        gravacaoBase ||
+        (util && !comparacao.compativel
+          ? {
+              gravado: false,
+              motivo:
+                "A fonte original diverge da Base PAIIA — nada foi misturado nem gravado (revisão necessária).",
+            }
+          : resultado?.gravacaoBase || null),
+    });
+  } catch (erroComplemento) {
+    // O complemento nunca quebra o anúncio já montado pela base.
+    console.warn(
+      "[PAIZINHO_PESQUISA] complemento falhou:",
+      erroComplemento
+    );
   }
 }
 
@@ -5900,6 +6064,19 @@ const custoTotalVenda =
 {pesquisaPaizinho && (
   <PainelPesquisaPaizinho
     pesquisa={pesquisaPaizinho}
+    onPesquisarNovamente={
+      processando ||
+      pesquisaPaizinho?.origemFallback ===
+        "base_incompleta"
+        ? undefined
+        : () =>
+            executarPesquisaPaizinho(
+              pesquisaPaizinho
+                ?.codigoPesquisado ||
+                codigo,
+              { forcar: true }
+            )
+    }
   />
 )}
 

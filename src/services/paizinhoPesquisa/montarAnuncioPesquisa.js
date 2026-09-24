@@ -18,7 +18,7 @@ import { STATUS_PESQUISA } from "./validarResultadoPesquisa.js";
 
 const LIMITE_TITULO = 60;
 
-export const ORIGEM_PESQUISA = "Pesquisa Paizinho — fonte original (pendente de validação)";
+export const ORIGEM_PESQUISA = "Pesquisa externa PAIIA — fonte original";
 
 function texto(v) {
   return String(v ?? "").replace(/\s+/g, " ").trim();
@@ -83,7 +83,7 @@ export function montarTituloPesquisa({ codigoPesquisado, confirmado }) {
 }
 
 function linhaVeiculo(a) {
-  return [texto(a.modelo), texto(a.versao), texto(a.motor), periodo(a)]
+  return [texto(a.modelo), texto(a.versao), texto(a.motor), texto(a.combustivel), periodo(a)]
     .filter(Boolean)
     .join(" ");
 }
@@ -147,6 +147,8 @@ export function listarNaoConfirmados(validado) {
     const semMotor = apps.filter((a) => !a.motor).length;
     if (semAno) lista.push(`Anos de ${semAno} aplicação(ões) — a fonte não informa`);
     if (semMotor) lista.push(`Motor de ${semMotor} aplicação(ões) — a fonte não informa`);
+    const semComb = apps.filter((a) => !a.combustivel).length;
+    if (semComb) lista.push(`Combustível de ${semComb} aplicação(ões) — a fonte não informa`);
   }
   if (!c.especificacoes?.length) lista.push("Especificações técnicas");
   for (const cf of validado?.conflitos || []) lista.push(`${cf.campo} — fontes divergentes`);
@@ -191,9 +193,12 @@ export function montarCamposCriarAnuncio(validado) {
     montadora: a.montadora,
     modelo: [a.modelo, a.versao].filter(Boolean).join(" "),
     motor: a.motor,
+    combustivel: a.combustivel || "",
     ano_inicio: a.ano_inicio,
     ano_fim: a.ano_fim,
-    observacao: `Fonte: ${(a.fontes || []).join(" | ")}`,
+    observacao: [a.combustivel ? `Combustível: ${a.combustivel}` : "", `Fonte: ${(a.fontes || []).join(" | ")}`]
+      .filter(Boolean)
+      .join(" | "),
     codigo_oem: codigoPesquisado,
     codigo_equivalente: oem,
     origem_catalogo: ORIGEM_PESQUISA,
@@ -223,6 +228,7 @@ export function montarCamposCriarAnuncio(validado) {
       montadora: unicaAplicacao?.montadora || "",
       modelo: unicaAplicacao?.modelo || "",
       motor: unicaAplicacao?.motor || "",
+      combustivel: unicaAplicacao?.combustivel || "",
       observacao: naoConfirmados.length
         ? `Não confirmado em fonte original: ${naoConfirmados.join("; ")}.`
         : "",
@@ -230,7 +236,7 @@ export function montarCamposCriarAnuncio(validado) {
       aplicacoes,
       especificacoes: confirmado.especificacoes || [],
       origem: "paizinho_fontes_originais",
-      pendenteValidacao: true,
+      pendenteValidacao: false,
       emConflito,
       confianca: validado?.confianca || "baixa",
       fontes,

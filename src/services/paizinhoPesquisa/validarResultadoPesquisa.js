@@ -14,6 +14,11 @@
 // =============================================================
 
 import { classificarFonte, ROTULO_TIPO_FONTE } from "./fontesOriginais.js";
+import {
+  normalizarCodigo as normalizarCodigoBase,
+  textoContemCodigo,
+  listaContemCodigo,
+} from "./codigoPaizinho.js";
 
 export const STATUS_PESQUISA = {
   ENCONTRADO: "encontrado",
@@ -32,9 +37,7 @@ export const MENSAGENS = {
 
 // ---------- Normalização ----------
 export function normalizarCodigo(valor) {
-  return String(valor ?? "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+  return normalizarCodigoBase(valor);
 }
 
 function normalizarTexto(valor) {
@@ -120,23 +123,26 @@ function chaveAplicacao(a) {
 
 function mencionaCodigo(fonte, codigoNorm) {
   if (!codigoNorm) return false;
-  if (fonte?.mencionaCodigo === true && normalizarCodigo(fonte?.codigoMencionado) === codigoNorm) {
+  // Código exato: lista de códigos igual após normalizar, ou texto com o
+  // código inteiro (só separadores de escrita). "5181133" não casa com
+  // "51811330" nem com "5181133-1".
+  if (normalizarCodigo(fonte?.codigoMencionado) === codigoNorm) return true;
+  if (
+    listaContemCodigo(
+      [
+        ...(fonte?.dados?.codigos_oem || []),
+        ...(fonte?.dados?.codigos_equivalentes || []),
+        ...(fonte?.dados?.codigos_substitutos || []),
+        fonte?.dados?.codigo_fabricante,
+      ],
+      codigoNorm
+    )
+  ) {
     return true;
   }
-  const alvo = [
-    fonte?.evidencia,
-    fonte?.trecho,
-    fonte?.titulo,
-    fonte?.url,
-    fonte?.codigoMencionado,
-    ...(fonte?.dados?.codigos_oem || []),
-    ...(fonte?.dados?.codigos_equivalentes || []),
-    ...(fonte?.dados?.codigos_substitutos || []),
-    fonte?.dados?.codigo_fabricante,
-  ]
-    .map(normalizarCodigo)
-    .join(" ");
-  return alvo.includes(codigoNorm);
+  return [fonte?.evidencia, fonte?.trecho, fonte?.titulo].some((t) =>
+    textoContemCodigo(t, codigoNorm)
+  );
 }
 
 // ---------- Validação principal ----------
@@ -255,6 +261,7 @@ export function validarResultadoPesquisa({ codigoPesquisado, fontes = [] }) {
         modelo: texto(bruta?.modelo),
         versao: texto(bruta?.versao),
         motor: texto(bruta?.motor),
+        combustivel: texto(bruta?.combustivel),
         ano_inicio: anoOuNulo(bruta?.ano_inicio),
         ano_fim: anoOuNulo(bruta?.ano_fim),
       };
@@ -288,11 +295,18 @@ export function validarResultadoPesquisa({ codigoPesquisado, fontes = [] }) {
       });
       continue;
     }
+    // Combustível só fica se todas as fontes que o citam concordarem.
+    const combustiveis = new Set(
+      lista.map((x) => normalizarTexto(x.combustivel)).filter(Boolean)
+    );
+    const combustivel =
+      combustiveis.size === 1 ? lista.find((x) => x.combustivel)?.combustivel || "" : "";
     aplicacoesConfirmadas.push({
       montadora: base.montadora,
       modelo: base.modelo,
       versao: base.versao,
       motor: base.motor,
+      combustivel,
       ano_inicio: base.ano_inicio,
       ano_fim: base.ano_fim,
       fontes: [...new Set(lista.map((x) => x.fonte))],

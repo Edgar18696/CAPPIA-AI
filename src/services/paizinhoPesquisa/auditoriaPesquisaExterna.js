@@ -22,6 +22,7 @@ export const TABELA_AUDITORIA = "paiia_pesquisas_externas";
 export const CHAVE_LOCAL = "paiia_pesquisas_externas_local";
 const LIMITE_LOCAL = 50;
 const VALIDADE_CACHE_DIAS = 30;
+const VALIDADE_NEGATIVO_DIAS = 7;
 
 export const STATUS_VALIDACAO = {
   PENDENTE: "pendente_validacao",
@@ -141,7 +142,12 @@ export async function buscarPesquisaRecente(
   const alvo = normalizarCodigo(codigo);
   if (!alvo) return null;
   const limite = new Date(agora - VALIDADE_CACHE_DIAS * 86400000).toISOString();
-  const aceitos = [STATUS_PESQUISA.ENCONTRADO, STATUS_PESQUISA.CONFLITO];
+  // "Não identificado" também é reaproveitado por 7 dias, para não pagar de
+  // novo pela mesma pesquisa sem resultado (o usuário pode forçar outra).
+  const limiteNegativo = new Date(agora - VALIDADE_NEGATIVO_DIAS * 86400000).toISOString();
+  const aceitos = [STATUS_PESQUISA.ENCONTRADO, STATUS_PESQUISA.CONFLITO, STATUS_PESQUISA.NAO_IDENTIFICADO];
+  const dentroDoPrazo = (r) =>
+    String(r.criado_em) >= (r.status === STATUS_PESQUISA.NAO_IDENTIFICADO ? limiteNegativo : limite);
 
   if (cliente) {
     try {
@@ -151,11 +157,12 @@ export async function buscarPesquisaRecente(
         .eq("codigo_normalizado", alvo)
         .in("status", aceitos)
         .neq("status_validacao", STATUS_VALIDACAO.REJEITADO)
-        .gte("criado_em", limite)
+        .gte("criado_em", limiteNegativo < limite ? limiteNegativo : limite)
         .order("criado_em", { ascending: false })
-        .limit(1);
-      if (!error && Array.isArray(data) && data.length > 0) {
-        return { ...data[0], origemCache: "supabase" };
+        .limit(5);
+      const valido = (Array.isArray(data) ? data : []).find(dentroDoPrazo);
+      if (!error && valido) {
+        return { ...valido, origemCache: "supabase" };
       }
     } catch {
       // segue para o local
@@ -167,7 +174,8 @@ export async function buscarPesquisaRecente(
       r.codigo_normalizado === alvo &&
       aceitos.includes(r.status) &&
       r.status_validacao !== STATUS_VALIDACAO.REJEITADO &&
-      String(r.criado_em) >= limite
+      !r.erro &&
+      dentroDoPrazo(r)
   );
   return local ? { ...local, origemCache: "local" } : null;
 }
