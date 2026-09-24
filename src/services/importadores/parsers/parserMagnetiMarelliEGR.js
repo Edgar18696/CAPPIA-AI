@@ -56,89 +56,143 @@ function extrairTodosCodigosMarelli(
   ];
 }
 
+const MONTADORAS_EGR = new Set([
+  "ABARTH",
+  "ALFA ROMEO",
+  "AUDI",
+  "BMW",
+  "CHEVROLET",
+  "CHRYSLER",
+  "CITROEN",
+  "CITROËN",
+  "DACIA",
+  "DAEWOO",
+  "FIAT",
+  "FORD",
+  "HONDA",
+  "HYUNDAI",
+  "IVECO",
+  "JAGUAR",
+  "JEEP",
+  "KIA",
+  "LANCIA",
+  "LAND ROVER",
+  "MAZDA",
+  "MERCEDES",
+  "MERCEDES-BENZ",
+  "MINI",
+  "MITSUBISHI",
+  "NISSAN",
+  "OPEL",
+  "PEUGEOT",
+  "PORSCHE",
+  "RENAULT",
+  "LEXUS",
+  "MG",
+  "MULTICAR",
+  "RENAULT TRUCKS",
+  "ROVER",
+  "SAAB",
+  "SEAT",
+  "SKODA",
+  "SMART",
+  "SSANGYONG",
+  "SUBARU",
+  "SUZUKI",
+  "TOYOTA",
+  "VAUXHALL",
+  "VOLKSWAGEN",
+  "VOLVO",
+  "VW",
+]);
+
+function normalizarMontadora(valor = "") {
+  const texto = limparTexto(valor)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+
+  if (texto === "VW") {
+    return "VW";
+  }
+
+  if (texto === "CITROEN" || texto === "CITROËN") {
+    return "CITROEN";
+  }
+
+  if (texto === "MERCEDES") {
+    return "MERCEDES-BENZ";
+  }
+
+  return texto;
+}
+
 function pareceMontadora(linha = "") {
-  const texto = String(linha || "").trim();
+  const texto = normalizarMontadora(linha);
 
-  if (!texto) {
+  if (!texto || /\d/.test(texto) || /\bEV\d{3}/i.test(texto)) {
     return false;
   }
 
-  if (texto.length > 40) {
-    return false;
-  }
+  return MONTADORAS_EGR.has(texto);
+}
 
-  if (
-    /\d/.test(texto) ||
-    /\bEV\d{3}/i.test(texto)
-  ) {
-    return false;
-  }
-
-  const ignorar = [
-    "KW",
-    "O.E.",
-    "OE",
-    "WIRE",
-    "COOLER",
-    "EL",
-    "PN",
-    "MAGNETI MARELLI",
-    "VEHICLE APPLICATION GUIDE",
-    "APPLICAZIONE PER MARCA E VEICOLO",
-    "TECHNICAL INFORMATION",
-    "INFORMAZIONI TECNICHE",
-    "OE CROSS REFERENCE GUIDE",
-    "IAM CROSS REFERENCE GUIDE",
-  ];
-
-  if (
-    ignorar.includes(
-      texto.toUpperCase()
-    )
-  ) {
-    return false;
-  }
-
-  return (
-    texto === texto.toUpperCase() &&
-    /^[A-ZÀ-Ü .&'\-]+$/.test(texto)
+function ehLinhaTecnica(linha = "") {
+  return /^(?:KW|PN|EL|WIRE|COOLER|METAL COVER|O\.E\.|OE)\b/i.test(
+    limparTexto(linha)
   );
 }
 
 function pareceModelo(linha = "") {
   const texto = String(linha || "").trim();
 
-  if (!texto) {
+  if (!texto || texto.length > 80) {
     return false;
   }
 
-  if (ehCodigoMarelli(texto)) {
+  if (ehCodigoMarelli(texto) || pareceMontadora(texto) || ehLinhaTecnica(texto)) {
     return false;
   }
 
-  if (
-    /\b\d{4}\.\d{2}\s*-\s*\d{4}\.\d{2}\b/.test(
-      texto
-    )
-  ) {
+  if (/\d{4}\.\d{2}\s*-/.test(texto)) {
     return false;
   }
 
-  if (
-    /\bEV\d{3}C?\b/i.test(texto)
-  ) {
+  if (/\bEV\d{3}C?\b/i.test(texto)) {
+    return false;
+  }
+
+  if (/^\d+[.,]\d+\s/.test(texto)) {
+    return false;
+  }
+
+  if (/\(/.test(texto) && !/^\d+[.,]\d+/.test(texto)) {
+    return true;
+  }
+
+  if (/^\d/.test(texto)) {
+    return false;
+  }
+
+  if (/\d/.test(texto) && !/[ \-\/]/.test(texto) && !/\(/.test(texto)) {
+    return false;
+  }
+
+  const compacto = texto.replace(/\s+/g, "");
+  if (compacto.length <= 5 && /^[A-Z0-9]+$/i.test(compacto)) {
     return false;
   }
 
   return (
-    /\d/.test(texto) &&
-    texto.length <= 80
+    texto.length >= 4 &&
+    /[A-Z]/i.test(texto) &&
+    /^[A-Z0-9][A-Z0-9 .\/\-]*$/i.test(texto)
   );
 }
 
 function extrairPeriodo(linha = "") {
   const match = String(linha).match(
-    /(\d{4}\.\d{2})\s*-\s*(\d{4}\.\d{2}|(?:\s*)?)/
+    /(\d{4}\.\d{2})\s*-\s*(\d{4}\.\d{2})?/
   );
 
   if (!match) {
@@ -163,38 +217,25 @@ function extrairPeriodo(linha = "") {
         ? Number(fim.slice(0, 4))
         : null,
 
-    periodo: `${inicio} - ${fim}`.trim(),
+    periodo: fim
+      ? `${inicio} - ${fim}`
+      : `${inicio} -`,
   };
 }
 
 function extrairKw(linha = "") {
-  const periodo =
-    String(linha).match(
-      /\d{4}\.\d{2}\s*-\s*(?:\d{4}\.\d{2})?/
-    );
+  const texto = String(linha || "");
 
-  if (!periodo) {
-    return null;
-  }
-
-  const antesPeriodo = String(linha)
-    .slice(0, periodo.index)
-    .trim();
-
-  const numeros =
-    antesPeriodo.match(
-      /(?:^|\s)(\d{2,3})(?=\s|$)/g
-    ) || [];
-
-  if (!numeros.length) {
-    return null;
-  }
-
-  const valor = Number(
-    numeros[
-      numeros.length - 1
-    ].trim()
+  const antesEv = texto.match(
+    /(?:^|\s)(\d{2,3})(?=\s+EV\d{3}C?\b)/i
   );
+
+  const antesPeriodo = texto.match(
+    /(?:^|\s)(\d{2,3})(?=\s+\d{4}\.\d{2})/
+  );
+
+  const bruto = (antesEv || antesPeriodo || [])[1];
+  const valor = Number(bruto);
 
   if (
     !Number.isFinite(valor) ||
@@ -222,6 +263,8 @@ function extrairMotor(
       ""
     );
   }
+
+  texto = texto.replace(/\([^)]*\)/g, " ");
 
   texto = texto.replace(
     /\d{4}\.\d{2}\s*-\s*(?:\d{4}\.\d{2})?/,
@@ -251,8 +294,20 @@ function extrairMotor(
         return false;
       }
 
+      if (
+        /^(?:TDI|HDI|JTD|JTDM|CDI|CDTI|DTI|SDI|TD|KW|GDI|MPI|TWINPORT)$/i.test(
+          item
+        )
+      ) {
+        return false;
+      }
+
+      if (/^[A-Z]{2,6}$/i.test(item)) {
+        return true;
+      }
+
       return (
-        /[A-Z]/.test(item) &&
+        /[A-Z]/i.test(item) &&
         /\d/.test(item)
       );
     }
@@ -262,72 +317,69 @@ function extrairMotor(
     return null;
   }
 
-  return ignorar[
-    ignorar.length - 1
-  ];
+  return ignorar.join(", ");
 }
 
 function extrairMotorizacao(
   linha = ""
 ) {
-  const match = String(linha).match(
-    /^\s*((?:\d+[.,]\d+|[A-Z0-9]+)\s+[A-Z0-9 .+\-_/()]+?)(?=\s+\d{2,3}\s+\d{4}\.\d{2})/i
-  );
-
-  if (match) {
-    return limparTexto(match[1]);
-  }
-
-  const periodo =
-    String(linha).search(
-      /\d{4}\.\d{2}\s*-/
-    );
-
-  if (periodo === -1) {
-    return null;
-  }
-
-  let inicio = String(linha)
-    .slice(0, periodo)
+  const texto = String(linha || "")
+    .replace(/\bEV\d{3}C?\b/gi, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
-  inicio = inicio.replace(
-    /\s+\d{2,3}\s*$/,
-    ""
+  const comCilindrada = texto.match(
+    /^(\d+[.,]\d+\s+[A-Z][A-Z0-9+\/\-]*(?:\s*\([^)]+\))?)/i
   );
 
-  return limparTexto(inicio) || null;
+  if (comCilindrada) {
+    return limparTexto(comCilindrada[1]);
+  }
+
+  const bmw = texto.match(
+    /^(\d{3,4}\s+[A-Za-z][A-Za-z0-9]*)/
+  );
+
+  if (bmw) {
+    return limparTexto(bmw[1]);
+  }
+
+  return null;
 }
 
 function montarRegistroAplicacao({
   linha,
   montadora,
   modelo,
+  contexto = {},
 }) {
   const codigoMarelli =
     extrairCodigoMarelli(linha);
 
-  if (!codigoMarelli) {
+  if (!codigoMarelli || !montadora || !modelo) {
     return null;
   }
 
-  const {
-    anoInicio,
-    anoFim,
-    periodo,
-  } = extrairPeriodo(linha);
+  const extraido = extrairPeriodo(linha);
+  const anoInicio = extraido.anoInicio || contexto.anoInicio || null;
+  const anoFim =
+    extraido.anoInicio
+      ? extraido.anoFim
+      : contexto.anoFim || null;
+  const periodo = extraido.periodo || contexto.periodo || null;
 
   const potenciaKw =
-    extrairKw(linha);
+    extrairKw(linha) || contexto.potenciaKw || null;
 
   const motor =
-    extrairMotor(
-      linha,
-      codigoMarelli
-    );
+    extrairMotor(linha, codigoMarelli) || contexto.motor || null;
 
   const motorizacao =
-    extrairMotorizacao(linha);
+    extrairMotorizacao(linha) || contexto.motorizacao || null;
+
+  if (!anoInicio) {
+    return null;
+  }
 
   return {
     peca: "Válvula EGR",
@@ -396,29 +448,80 @@ function montarRegistroAplicacao({
   };
 }
 
+function recortarGuiaAplicacoes(texto = "") {
+  const conteudo = String(texto || "");
+  const inicio = conteudo.search(
+    /Applicazione per marca e veicolo|Vehicle application guide/i
+  );
+
+  if (inicio >= 0) {
+    return conteudo.slice(inicio);
+  }
+
+  return conteudo;
+}
+
+function atualizarContexto(linha, contexto, codigoMarelli) {
+  const periodo = extrairPeriodo(linha);
+  const proximo = { ...contexto };
+
+  if (periodo.periodo) {
+    proximo.anoInicio = periodo.anoInicio;
+    proximo.anoFim = periodo.anoFim;
+    proximo.periodo = periodo.periodo;
+    proximo.motor = null;
+    proximo.potenciaKw = null;
+    proximo.motorizacao = null;
+  }
+
+  const potenciaKw = extrairKw(linha);
+  if (potenciaKw) {
+    proximo.potenciaKw = potenciaKw;
+  }
+
+  const motor = extrairMotor(linha, codigoMarelli);
+  if (motor) {
+    proximo.motor = motor;
+  }
+
+  const motorizacao = extrairMotorizacao(linha);
+  if (motorizacao) {
+    proximo.motorizacao = motorizacao;
+  }
+
+  return proximo;
+}
+
 function extrairAplicacoes(
   texto = ""
 ) {
-  const linhas =
-    extrairLinhas(texto);
+  const linhas = extrairLinhas(
+    recortarGuiaAplicacoes(texto)
+  );
 
   const registros = [];
 
   let montadora = null;
   let modelo = null;
+  let contexto = {};
 
-  for (
-    let i = 0;
-    i < linhas.length;
-    i++
-  ) {
-    const linha = linhas[i];
-
+  for (const linha of linhas) {
     if (
-      pareceMontadora(linha)
+      /informazioni tecniche|technical information|oe cross reference|iam cross reference|tavole di comparazione/i.test(
+        linha
+      )
     ) {
-      montadora = linha;
+      break;
+    }
+
+    if (ehLinhaTecnica(linha) && !extrairCodigoMarelli(linha)) {
+      continue;
+    }
+
+    if (pareceMontadora(linha)) {
+      montadora = normalizarMontadora(linha);
       modelo = null;
+      contexto = {};
       continue;
     }
 
@@ -427,24 +530,46 @@ function extrairAplicacoes(
       !extrairCodigoMarelli(linha)
     ) {
       modelo = linha;
+      contexto = {};
       continue;
     }
 
-    if (
-      !extrairCodigoMarelli(linha)
-    ) {
+    const codigos = extrairTodosCodigosMarelli(linha);
+
+    const soListaEv =
+      linha.replace(/\bEV\d{3}C?\b/gi, "").replace(/\s+/g, "").length === 0 &&
+      codigos.length > 1;
+
+    if (soListaEv) {
       continue;
     }
 
-    const registro =
-      montarRegistroAplicacao({
+    if (!codigos.length) {
+      if (/\d{4}\.\d{2}\s*-/.test(linha) || extrairMotorizacao(linha)) {
+        contexto = atualizarContexto(linha, contexto, "");
+      }
+      continue;
+    }
+
+    contexto = atualizarContexto(linha, contexto, codigos[0]);
+
+    for (const codigo of codigos) {
+      const registro = montarRegistroAplicacao({
         linha,
         montadora,
         modelo,
+        contexto,
       });
 
-    if (registro) {
-      registros.push(registro);
+      if (!registro) {
+        continue;
+      }
+
+      registros.push({
+        ...registro,
+        codigo_oem: codigo,
+        codigo_marelli: codigo,
+      });
     }
   }
 
@@ -735,6 +860,11 @@ function separarSecoes(
   const conteudo =
     String(texto || "");
 
+  const posGuia =
+    conteudo.search(
+      /Applicazione per marca e veicolo|Vehicle application guide/i
+    );
+
   const posTecnica =
     conteudo.search(
       /Informazioni tecniche|Technical information/i
@@ -742,7 +872,7 @@ function separarSecoes(
 
   const posOE =
     conteudo.search(
-      /Tavole di comparazione OE|OE cross reference guide/i
+      /Tavole di comparazione OE|OE cross reference guide|Tavole di comparazione/i
     );
 
   const posIAM =
@@ -751,21 +881,26 @@ function separarSecoes(
     );
 
   let aplicacoes =
-    conteudo;
+    posGuia >= 0
+      ? conteudo.slice(posGuia)
+      : conteudo;
 
   let oe = "";
   let iam = "";
 
-  if (posTecnica > 0) {
+  const inicioApps =
+    posGuia >= 0 ? posGuia : 0;
+
+  if (posTecnica > inicioApps) {
     aplicacoes =
       conteudo.slice(
-        0,
+        inicioApps,
         posTecnica
       );
-  } else if (posOE > 0) {
+  } else if (posOE > inicioApps) {
     aplicacoes =
       conteudo.slice(
-        0,
+        inicioApps,
         posOE
       );
   }

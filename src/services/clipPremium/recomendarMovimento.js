@@ -65,13 +65,19 @@ function margemRelativa(imagem) {
   return { ocupacao, recorteApertado };
 }
 
+// O Clip Premium tem um único movimento oficial (slide lateral 10–20° +
+// aproximação final). A análise da foto serve só para explicar o motivo.
+const RECOMENDACAO_OFICIAL = {
+  id: "slide-push-in",
+  nome: "Slide lateral + aproximação",
+};
+
 export async function recomendarMovimentoClipPremium(imagemUrl) {
   if (!imagemUrl) {
     return {
-      id: "giro-suave",
-      nome: "Giro Suave",
+      ...RECOMENDACAO_OFICIAL,
       motivo:
-        "Mantém esta peça inteira no enquadramento e valoriza seus detalhes.",
+        "A peça fica parada no mesmo ângulo da foto; só a câmera desliza de leve e se aproxima.",
     };
   }
 
@@ -79,27 +85,17 @@ export async function recomendarMovimentoClipPremium(imagemUrl) {
     const imagem = await carregarImagem(imagemUrl);
     const { recorteApertado } = margemRelativa(imagem);
 
-    if (recorteApertado) {
-      return {
-        id: "giro-suave",
-        nome: "Giro Suave",
-        motivo:
-          "Mantém esta peça inteira no enquadramento e valoriza seus detalhes.",
-      };
-    }
-
     return {
-      id: "giro-suave",
-      nome: "Giro Suave",
-      motivo:
-        "A foto mostra principalmente um lado da peça. Giro Suave é mais seguro do que reconstruir um 360°.",
+      ...RECOMENDACAO_OFICIAL,
+      motivo: recorteApertado
+        ? "A peça ocupa quase toda a foto: a aproximação será bem discreta para não cortar a peça."
+        : "A foto mostra um lado da peça: o movimento preserva esse ângulo e não revela lados ocultos.",
     };
   } catch {
     return {
-      id: "giro-suave",
-      nome: "Giro Suave",
+      ...RECOMENDACAO_OFICIAL,
       motivo:
-        "Mantém esta peça inteira no enquadramento e valoriza seus detalhes.",
+        "A peça fica parada no mesmo ângulo da foto; só a câmera desliza de leve e se aproxima.",
     };
   }
 }

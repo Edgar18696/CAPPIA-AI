@@ -47,6 +47,78 @@ function normalizarCodigoPecaAuditoria(valor) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+function compactarCodigoDiagnostico(valor = "") {
+  return String(valor || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .trim();
+}
+
+function obterCodigosDiagnosticoCatalogo(
+  tipoCatalogo = "",
+  fabricante = ""
+) {
+  const tipo = String(tipoCatalogo || "")
+    .trim()
+    .toLowerCase();
+
+  const mapa = {
+    sondas: ["0258003300"],
+    gasolina_2023: ["0280158448"],
+    gasolina_2025: ["0280158276"],
+    bicos_gasolina: ["0280155742"],
+    sistemas_eletronicos: ["IWP049"],
+    valvulas_egr: ["EV073C", "EV004", "EV075"],
+  };
+
+  if (tipo === "sistemas_eletronicos") {
+    return mapa.sistemas_eletronicos;
+  }
+
+  return mapa[tipo] || [];
+}
+
+function registroTemCodigoDiagnostico(registro, codigo) {
+  const alvo = compactarCodigoDiagnostico(codigo);
+
+  if (!alvo) {
+    return false;
+  }
+
+  const candidatos = [
+    registro?.codigo_oem,
+    registro?.codigo_marelli,
+    registro?.codigo,
+    registro?.codigoBosch,
+    registro?.referencia,
+    registro?.codigo_referencia,
+    registro?.codigo_equivalente,
+    registro?.equivalentes,
+  ];
+
+  return candidatos.some((valor) => {
+    const lista = Array.isArray(valor) ? valor : [valor];
+
+    return lista.some((item) => {
+      const compacto = compactarCodigoDiagnostico(item);
+
+      if (!compacto) {
+        return false;
+      }
+
+      if (compacto === alvo) {
+        return true;
+      }
+
+      if (/^\d+$/.test(alvo)) {
+        return compacto.replace(/\D/g, "") === alvo;
+      }
+
+      return false;
+    });
+  });
+}
+
 function normalizarCampoDuplicidade(valor) {
   return String(valor ?? "")
     .trim()
@@ -250,111 +322,48 @@ export default function ImportadorCatalogos({
 
   const detalhesBlocoFase2Ref = useRef({});
 
-  const obterCodigoDiagnostico = (
-  tipoCatalogo = ""
-) => {
-  const tipo = String(
-    tipoCatalogo || ""
-  )
-    .trim()
-    .toLowerCase();
-
-  const codigos = {
-    sondas:
-      "0258003300",
-
-    gasolina_2023:
-  "0280158448",
-
-    gasolina_2025:
-      "0280158276",
-
-    bicos_gasolina:
-      "0280155742",
-  };
-
-  return (
-    codigos[tipo] ||
-    "0258003300"
-  );
-};
-  function normalizarCodigo(valor = "") {
-    return String(valor || "")
-      .replace(/\D/g, "")
-      .trim();
-  }
-
   const tipoCatalogoDiagnostico =
-  String(
-    preview?.tipoCatalogo ||
-      preview?.tipo_catalogo ||
-      preview?.configuracao?.tipoCatalogo ||
-      ""
-  )
-    .trim()
-    .toLowerCase();
-const CODIGO_DIAGNOSTICO =
-  fabricante ===
-    "magneti_marelli" &&
-  tipoCatalogoDiagnostico ===
-    "sistemas_eletronicos"
-    ? "IWP049"
-    : tipoCatalogoDiagnostico ===
-      "gasolina_2023"
-    ? "0280158448"
-    : tipoCatalogoDiagnostico ===
-      "gasolina_2025"
-    ? "0280158276"
-    : tipoCatalogoDiagnostico ===
-      "bicos_gasolina"
-    ? "0280155742"
-    : "0258003300";
-    
-const registrosDiagnostico =
-  Array.isArray(preview?.registros)
-    ? preview.registros.filter(
-        (registro) => {
-          const candidatos = [
-  registro?.codigo_oem,
-  registro?.codigo,
-  registro?.codigoBosch,
-  registro?.referencia,
-  registro?.codigo_referencia,
-  registro?.codigo_equivalente,
-  registro?.equivalentes,
-];
+    String(
+      preview?.tipoCatalogo ||
+        preview?.tipo_catalogo ||
+        preview?.configuracao?.tipoCatalogo ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
 
-          return candidatos.some(
-  (valor) => {
-    if (
-      Array.isArray(
-        valor
-      )
-    ) {
-      return valor.some(
-        (item) =>
-          normalizarCodigo(
-            item
-          ) ===
-          normalizarCodigo(
-            CODIGO_DIAGNOSTICO
-          )
-      );
-    }
-
-    return (
-      normalizarCodigo(
-        valor
-      ) ===
-      normalizarCodigo(
-        CODIGO_DIAGNOSTICO
-      )
+  const CODIGOS_DIAGNOSTICO =
+    obterCodigosDiagnosticoCatalogo(
+      tipoCatalogoDiagnostico,
+      fabricante
     );
-  }
-);
-        }
-      )
-    : [];
+
+  const CODIGO_DIAGNOSTICO =
+    CODIGOS_DIAGNOSTICO[0] || "";
+
+  const diagnosticosPorCodigo =
+    CODIGOS_DIAGNOSTICO.map((codigo) => {
+      const registros = Array.isArray(preview?.registros)
+        ? preview.registros.filter((registro) =>
+            registroTemCodigoDiagnostico(registro, codigo)
+          )
+        : [];
+
+      return {
+        codigo,
+        registros,
+      };
+    });
+
+  const registrosDiagnostico =
+    diagnosticosPorCodigo.flatMap(
+      (item) => item.registros
+    );
+
+  const diagnosticosAusentes =
+    diagnosticosPorCodigo.filter(
+      (item) => item.registros.length === 0
+    );
 
   function selecionarArquivo(
     event
@@ -527,20 +536,22 @@ const registrosDiagnostico =
       setResultado(resposta);
 
       setProgresso(
-        `✅ Importação concluída. ${
-          resposta?.total || 0
-        } registro(s) processado(s).`
+        String(
+          resposta?.mensagem ||
+            `✅ Importação concluída. ${
+              resposta?.total || 0
+            } registro(s) processado(s).`
+        ).replace(/\n/g, " | ")
       );
 
       alert(
-        `✅ Catálogo importado com sucesso.\n\n` +
-          `Fabricante: ${
-            resposta?.fabricante ||
-            fabricante
-          }\n` +
-          `Registros: ${
-            resposta?.total || 0
-          }`
+        `${
+          resposta?.mensagem ||
+          "✅ Catálogo importado com sucesso."
+        }\n\nFabricante: ${
+          resposta?.fabricante ||
+          fabricante
+        }`
       );
     } catch (erro) {
       console.error(
@@ -1513,7 +1524,7 @@ const registrosDiagnostico =
             <div style={diagnosticoCabecalhoStyle}>
               <div>
                 <div style={etiquetaDiagnosticoStyle}>
-                  DIAGNÓSTICO BOSCH
+                  DIAGNÓSTICO DO CATÁLOGO
                 </div>
 
                 <h3
@@ -1522,28 +1533,55 @@ const registrosDiagnostico =
                     margin: "5px 0 0",
                   }}
                 >
-                  Código {CODIGO_DIAGNOSTICO}
+                  {CODIGOS_DIAGNOSTICO.length
+                    ? `Códigos ${CODIGOS_DIAGNOSTICO.join(" · ")}`
+                    : "Sem código de diagnóstico deste tipo"}
                 </h3>
               </div>
 
               <div style={contadorDiagnosticoStyle}>
-                {registrosDiagnostico.length} aplicação(ões)
+                {diagnosticosPorCodigo
+                  .map(
+                    (item) =>
+                      `${item.codigo}: ${item.registros.length}`
+                  )
+                  .join(" · ") || "0 aplicação(ões)"}
               </div>
             </div>
 
-            {registrosDiagnostico.length === 0 ? (
+            {CODIGOS_DIAGNOSTICO.length === 0 ? (
               <div style={alertaDiagnosticoStyle}>
-                ⚠️ O código {CODIGO_DIAGNOSTICO} não apareceu
-                no preview. Não importe o catálogo até
-                verificarmos o parser.
+                ⚠️ Este tipo de catálogo não tem código de
+                diagnóstico específico. Não reutilize código
+                de outra família.
+              </div>
+            ) : diagnosticosAusentes.length > 0 ? (
+              <div style={alertaDiagnosticoStyle}>
+                ⚠️ O(s) código(s){" "}
+                {diagnosticosAusentes
+                  .map((item) => item.codigo)
+                  .join(", ")}{" "}
+                não apareceu(ram) no preview. Não importe o
+                catálogo até verificarmos o parser.
               </div>
             ) : (
               <div style={tabelaDiagnosticoStyle}>
-                {registrosDiagnostico.map((registro, indice) => (
+                {diagnosticosPorCodigo.map((bloco) =>
+                  bloco.registros.slice(0, 8).map((registro, indice) => (
                   <div
-                    key={`${CODIGO_DIAGNOSTICO}-${indice}`}
+                    key={`${bloco.codigo}-${indice}`}
                     style={linhaDiagnosticoStyle}
                   >
+                    <div>
+                      <span style={rotuloStyle}>
+                        Código
+                      </span>
+
+                      <strong>
+                        {bloco.codigo}
+                      </strong>
+                    </div>
+
                     <div>
                       <span style={rotuloStyle}>
                         Montadora
@@ -1600,7 +1638,8 @@ const registrosDiagnostico =
                       </strong>
                     </div>
                   </div>
-                ))}
+                ))
+                )}
               </div>
             )}
           </div>
@@ -1653,9 +1692,20 @@ const registrosDiagnostico =
               marginTop: "7px",
             }}
           >
-            {resultado.total || 0}{" "}
-            registro(s) processado(s)
-            pelo importador técnico.
+            {(resultado.mensagem ||
+              `${resultado.total || 0} registro(s) processado(s) pelo importador técnico.`)
+              .split("\n")
+              .map((linha, indice) => (
+                <div
+                  key={`${linha}-${indice}`}
+                  style={{
+                    marginTop: indice === 0 ? "7px" : "2px",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {linha}
+                </div>
+              ))}
           </div>
         </div>
       )}

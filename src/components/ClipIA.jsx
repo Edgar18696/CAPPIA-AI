@@ -17,7 +17,10 @@ import {
 } from "../services/mascoteMarcaService";
 import PaizinhoConversa from "./PaizinhoConversa";
 import ClipProduto from "./ClipProduto";
-import { consultarCreditosClip } from "../services/clipProdutoPipeline";
+import {
+  consultarCreditosClip,
+  lerCorpoErroFuncao,
+} from "../services/clipProdutoPipeline";
 import {
   consumirNovaCriacaoMidia,
   deveIniciarNovaCriacaoMidia,
@@ -37,7 +40,7 @@ const ESTILOS_CLIP = [
     titulo: "B — Marketplace",
     icone: "🛒",
     descricao:
-      "Rotação 360° suave no próprio eixo, mantendo a peça centralizada e estável.",
+      "Slide lateral sutil da câmera (10–20°) + aproximação final. A peça não gira.",
     duracao: 12,
   },
   {
@@ -462,31 +465,17 @@ const MOVIMENTOS = [
     nome: "Pan para direita",
   },
   {
-    id: "orbita",
-    nome: "↔️ Órbita lateral",
-  },
-  {
     id: "detalhe",
     nome: "🔬 Detalhes técnicos",
   },
 ];
 
+// Giro 360° e Órbita lateral removidos: no Clip Premium a peça nunca gira.
 const MOVIMENTOS_DESTAQUE = [
-  {
-    id: "giro-360",
-    movimentoId: "orbita",
-    nome: "🔄 Giro 360°",
-    avisoFotoUnica: true,
-  },
   {
     id: "aproximacao",
     movimentoId: "zoom-in",
     nome: "🔍 Aproximação",
-  },
-  {
-    id: "orbita-lateral",
-    movimentoId: "orbita",
-    nome: "↔️ Órbita lateral",
   },
   {
     id: "detalhes",
@@ -560,8 +549,8 @@ function mensagemAmigavelClip(
     )
   ) {
     return (
-      "O PAIIA recusou esta geração pelo filtro automático de conteúdo. " +
-      "Isso pode acontecer mesmo com uma foto normal de autopeça."
+      "O provedor de vídeo recusou esta geração (E005). Nenhum crédito PAIIA foi usado. " +
+      "O PAIIA não tenta de novo sozinho: gere novamente só se quiser uma nova tentativa."
     );
   }
 
@@ -927,6 +916,14 @@ async function chamarGerarClipProduto(body) {
       },
     }
   );
+
+  // Não-2xx: lê o corpo para manter o código (ex.: E005).
+  if (error && !data) {
+    return {
+      data: await lerCorpoErroFuncao(error),
+      error,
+    };
+  }
 
   return {
     data,
@@ -1929,8 +1926,10 @@ const inputFotoClipRef =
         } =
           await supabase
             .from("processamentos")
+            // Só os últimos clips/vídeos, em colunas leves (sem
+            // imagem_original e sem banners em base64).
             .select(
-              "id, imagem_processada, imagem_original, tipo, status, modelo_banner, created_at"
+              "id, imagem_processada, tipo, status, modelo_banner, created_at"
             )
             .eq("user_id", usuario.id)
             .in(
@@ -1938,7 +1937,6 @@ const inputFotoClipRef =
               [
                 "clip",
                 "video",
-                "banner",
               ]
             )
             .eq(
@@ -1953,7 +1951,8 @@ const inputFotoClipRef =
             .order(
               "created_at",
               { ascending: false }
-            );
+            )
+            .limit(5);
 
         if (error) {
           throw error;
@@ -2457,22 +2456,27 @@ function importarFotoComputador(
     const rotacaoMarketplace =
       estilo.id === "marketplace";
 
+    // Movimento oficial (set/2026): a peça nunca gira.
     const movimentos = rotacaoMarketplace
       ? [
-          "A peça deve girar suavemente 360 graus ao redor do próprio eixo vertical.",
-          "Manter o centro da peça praticamente fixo durante toda a rotação.",
-          "A câmera deve permanecer estável, sem orbitar ao redor do produto.",
-          "Manter escala, altura e enquadramento constantes, sem zoom ou deslocamentos laterais.",
-          "A rotação deve ser contínua, lenta, uniforme e com aparência de vídeo profissional de produto.",
-          "Não deformar a peça durante a rotação e não alterar conectores, furos, pinos, encaixes, gravações, cores ou proporções.",
+          "A peça fica completamente parada, no mesmo ângulo da foto, e nunca gira (sem 180° ou 360°).",
+          "Somente a câmera se move: deslizamento lateral muito suave de aproximadamente 10–20 graus.",
+          "Terminar com uma aproximação (push-in) lenta, sem cortar a peça.",
+          "Não orbitar ao redor da peça e não revelar lados ocultos.",
+          "Não deformar a peça e não alterar conectores, furos, pinos, encaixes, gravações, cores ou proporções.",
         ].join(" ")
       : cenas
           .map((cena, indice) => {
+            // "orbita" (legado) não é mais permitido: vira aproximação.
+            const movimentoCena =
+              cena.movimento === "orbita"
+                ? "zoom-in"
+                : cena.movimento;
             const movimento =
               MOVIMENTOS.find(
                 (item) =>
-                  item.id === cena.movimento
-              )?.nome || cena.movimento;
+                  item.id === movimentoCena
+              )?.nome || movimentoCena;
 
             return `Cena ${indice + 1}: ${movimento}, duração aproximada de ${cena.duracao} segundos.`;
           })
@@ -2497,7 +2501,7 @@ function importarFotoComputador(
       "Manter fundo limpo e aparência de fotografia profissional.",
       "A peça deve permanecer totalmente visível e não pode ser cortada.",
       rotacaoMarketplace
-        ? "No estilo Marketplace, priorizar exclusivamente a rotação da peça no próprio eixo, sem movimentos de câmera."
+        ? "No estilo Marketplace, a peça permanece parada; apenas slide lateral sutil da câmera (10–20°) e aproximação final."
         : "Os movimentos devem simular câmera e profundidade sem deformar o produto.",
       `Formato final ${formatoSelecionado.proporcao}, ${formatoSelecionado.largura}x${formatoSelecionado.altura}.`,
       `Estilo escolhido: ${estilo.titulo}.`,
@@ -2552,21 +2556,18 @@ function importarFotoComputador(
           }
         );
 
+      // E005: não repetir automaticamente (sem consumo silencioso).
+      // A nova tentativa só acontece por ação/confirmação do usuário.
       if (
-        !tentativaNeutra &&
-        estilo.id ===
-          "marketplace" &&
         erroSensivelE005(
           mensagemOriginal
-        )
+        ) ||
+        String(data?.codigo || "").toUpperCase() === "E005"
       ) {
-        setStatusClip(
-          "⚠️ O PAIIA recusou a primeira tentativa. Tentando uma apresentação neutra do produto..."
-        );
-
-        return gerarVersao(
-          estilo,
-          true
+        throw new Error(
+          mensagemAmigavelClip(
+            "E005"
+          )
         );
       }
 
@@ -2763,17 +2764,17 @@ function importarFotoComputador(
                   }
                 );
 
+              // E005: sem nova tentativa automática.
               if (
-                !tentativaNeutra &&
-                dadosGeracao
-                  .estilo.id ===
-                  "marketplace" &&
                 erroSensivelE005(
                   mensagem
-                )
+                ) ||
+                String(data?.codigo || "").toUpperCase() === "E005"
               ) {
-                return gerar(
-                  true
+                throw new Error(
+                  mensagemAmigavelClip(
+                    "E005"
+                  )
                 );
               }
 
@@ -3301,7 +3302,7 @@ function importarFotoComputador(
         erroSensivelE005(
           mensagemErro
         )
-          ? "❌ O PAIIA recusou esta geração pelo filtro automático de conteúdo. Tente outra foto da peça ou outro estilo."
+          ? "⚠️ O provedor de vídeo recusou esta geração (E005). Nenhum crédito PAIIA foi usado. O PAIIA não tenta de novo sozinho — clique em gerar novamente se quiser outra tentativa."
           : `❌ ${mensagemErro}`
       );
     } finally {
@@ -4406,19 +4407,6 @@ function importarFotoComputador(
                       )
                     )}
                   </div>
-                  {movimentoDestaqueUi ===
-                    "giro-360" && (
-                    <p
-                      style={{
-                        margin: "8px 0 0",
-                        color: "#94a3b8",
-                        fontSize: "11px",
-                        lineHeight: 1.45,
-                      }}
-                    >
-                      Com uma única foto, o giro é uma simulação visual de apresentação. Não é um 360° técnico fiel.
-                    </p>
-                  )}
                 </div>
               )}
 

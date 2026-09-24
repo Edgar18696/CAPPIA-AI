@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { supabase } from "../supabase";
 
 const TAREFAS = [
   {
@@ -257,13 +258,15 @@ export default function CentralPaizinho({ setScreen }) {
   const [livre, setLivre] = useState("");
   const [aviso, setAviso] = useState("");
   const [salva, setSalva] = useState(false);
+  const [executando, setExecutando] = useState(false);
+  const [resultadoSite, setResultadoSite] = useState(null);
 
   function escolher(tarefa) {
     if (tarefa?.direto && tarefa?.destino) {
       setScreen(tarefa.destino);
       return;
     }
-    setSelecionada(tarefa); setValores(tarefa.valoresIniciais || {}); setCategoria(""); setEtapa("formulario"); setAviso(""); setSalva(false);
+    setSelecionada(tarefa); setValores(tarefa.valoresIniciais || {}); setCategoria(""); setEtapa("formulario"); setAviso(""); setSalva(false); setResultadoSite(null);
     setTimeout(() => document.getElementById("tarefa-paizinho")?.scrollIntoView({ behavior: "smooth" }), 30);
   }
 
@@ -276,10 +279,150 @@ export default function CentralPaizinho({ setScreen }) {
     setAviso(""); setEtapa("contrato");
   }
 
-  function salvarTarefa() {
-    const tarefa = { id: crypto.randomUUID?.() || String(Date.now()), tipo: selecionada.id, titulo: selecionada.titulo, categoria: categoria || null, dados: valores, contrato: { objetivo: selecionada.objetivo, limites: selecionada.limites, formato: selecionada.formato, saida: selecionada.saida }, promptExecutor: selecionada.promptExecutor || null, status: selecionada.integracao ? "aguardando_integracao" : "pronta", criadoEm: new Date().toISOString() };
-    const atuais = lerJson("paizinhoTarefasProntas") || [];
-    localStorage.setItem("paizinhoTarefasProntas", JSON.stringify([tarefa, ...atuais]));
+  async function salvarTarefa() {
+    let resultadoExecucao = null;
+
+    if (selecionada.id === "analisar-site") {
+      setExecutando(true);
+      setAviso("");
+
+      try {
+        const { data, error } =
+          await supabase.functions.invoke(
+            "testar-woocommerce",
+            {
+              body: {
+                acao: "analisar-site",
+                limite: 20,
+              },
+            }
+          );
+
+        if (error) {
+          throw error;
+        }
+
+        if (!data?.sucesso) {
+          throw new Error(
+            data?.erro ||
+            "Não foi possível analisar o site."
+          );
+        }
+
+        const produtos =
+          Array.isArray(data?.produtos)
+            ? data.produtos
+            : [];
+
+        const precos =
+          produtos
+            .map((produto) =>
+              Number.parseFloat(produto?.preco)
+            )
+            .filter(Number.isFinite);
+
+        resultadoExecucao = {
+          total: produtos.length,
+          semSku: produtos.filter(
+            (produto) => !String(produto?.sku || "").trim()
+          ).length,
+          semPreco: produtos.filter(
+            (produto) => !String(produto?.preco || "").trim()
+          ).length,
+          semDescricao: produtos.filter(
+            (produto) => !String(produto?.descricao || "").trim()
+          ).length,
+          semDescricaoCurta: produtos.filter(
+            (produto) => !String(produto?.descricao_curta || "").trim()
+          ).length,
+          semFotos: produtos.filter(
+            (produto) => !produto?.imagens?.length
+          ).length,
+          semAtributos: produtos.filter(
+            (produto) => !produto?.atributos?.length
+          ).length,
+          semQuantidade: produtos.filter(
+            (produto) =>
+              produto?.estoque_quantidade === null ||
+              produto?.estoque_quantidade === undefined
+          ).length,
+          semControleEstoque: produtos.filter(
+            (produto) => produto?.gerencia_estoque !== true
+          ).length,
+          menorPreco:
+            precos.length ? Math.min(...precos) : null,
+          maiorPreco:
+            precos.length ? Math.max(...precos) : null,
+          precoMedio:
+            precos.length
+              ? precos.reduce((total, valor) => total + valor, 0) /
+                precos.length
+              : null,
+          produtosComProblema:
+            produtos
+              .filter(
+                (produto) =>
+                  !produto?.atributos?.length ||
+                  !produto?.imagens?.length ||
+                  !String(produto?.sku || "").trim() ||
+                  produto?.estoque_quantidade === null ||
+                  produto?.estoque_quantidade === undefined
+              )
+              .map((produto) => ({
+                id: produto?.id,
+                nome: produto?.nome,
+                sku: produto?.sku,
+                semAtributos: !produto?.atributos?.length,
+                semFotos: !produto?.imagens?.length,
+                semQuantidade:
+                  produto?.estoque_quantidade === null ||
+                  produto?.estoque_quantidade === undefined,
+              })),
+        };
+
+        setResultadoSite(resultadoExecucao);
+      } catch (erro) {
+        setAviso(
+          erro?.message ||
+          "Não foi possível executar a análise."
+        );
+        return;
+      } finally {
+        setExecutando(false);
+      }
+    }
+
+    const tarefa = {
+      id: crypto.randomUUID?.() || String(Date.now()),
+      tipo: selecionada.id,
+      titulo: selecionada.titulo,
+      categoria: categoria || null,
+      dados: valores,
+      contrato: {
+        objetivo: selecionada.objetivo,
+        limites: selecionada.limites,
+        formato: selecionada.formato,
+        saida: selecionada.saida,
+      },
+      promptExecutor: selecionada.promptExecutor || null,
+      resultado: resultadoExecucao,
+      status:
+        selecionada.id === "analisar-site"
+          ? "concluida"
+          : selecionada.integracao
+            ? "aguardando_integracao"
+            : "pronta",
+      criadoEm: new Date().toISOString(),
+    };
+
+    const atuais =
+      lerJson("paizinhoTarefasProntas") || [];
+
+    localStorage.setItem(
+      "paizinhoTarefasProntas",
+      JSON.stringify([tarefa, ...atuais])
+    );
+
     setSalva(true);
   }
 
@@ -320,7 +463,61 @@ export default function CentralPaizinho({ setScreen }) {
           <div style={S.contratoGrade}><Bloco titulo="🎯 Objetivo" texto={selecionada.objetivo}/><Bloco titulo="🔒 Limites" texto={selecionada.limites}/><Bloco titulo="📋 Formato" texto={selecionada.formato}/><Bloco titulo="✅ Saída" texto={selecionada.saida}/></div>
           {categoria && <p style={S.categoria}><strong>Categoria:</strong> {categoria === "original" ? "Peças originais" : "Peças importadas"} — resultados não serão misturados.</p>}
           {Object.values(valores).some(Boolean) && <div style={S.dados}><strong>Dados fornecidos:</strong>{Object.entries(valores).filter(([,v]) => v).map(([k,v]) => <div key={k}>{k}: {v}</div>)}</div>}
-          {salva ? <div style={S.sucesso}><strong>Tarefa preparada e salva.</strong><p>{selecionada.integracao ? "A execução será liberada quando o Paizinho Executor e o marketplace estiverem conectados. Nenhum resultado foi simulado." : "A tarefa está pronta para seguir para o módulo correspondente."}</p>{selecionada.destino && <button onClick={() => setScreen(selecionada.destino)} style={S.primario}>Continuar para o módulo</button>}</div> : <div style={S.acoes}><button onClick={() => setEtapa("formulario")} style={S.secundario}>Editar solicitação</button><button onClick={salvarTarefa} style={S.primario}>Confirmar tarefa</button></div>}
+          {salva ? (
+            selecionada.id === "analisar-site" && resultadoSite ? (
+              <div style={S.sucesso}>
+                <strong>✅ Análise real concluída</strong>
+                <p>O Paizinho analisou {resultadoSite.total} produtos do WooCommerce em modo somente leitura.</p>
+                <ul>
+                  <li>Sem SKU: {resultadoSite.semSku}</li>
+                  <li>Sem preço: {resultadoSite.semPreco}</li>
+                  <li>Sem descrição: {resultadoSite.semDescricao}</li>
+                  <li>Sem descrição curta: {resultadoSite.semDescricaoCurta}</li>
+                  <li>Sem fotos: {resultadoSite.semFotos}</li>
+                  <li>Sem atributos: {resultadoSite.semAtributos}</li>
+                  <li>Sem quantidade informada: {resultadoSite.semQuantidade}</li>
+                  <li>Sem controle de estoque: {resultadoSite.semControleEstoque}</li>
+                </ul>
+                {resultadoSite.precoMedio !== null && (
+                  <p>
+                    Preços da amostra:{" "}
+                    {resultadoSite.menorPreco.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    {" até "}
+                    {resultadoSite.maiorPreco.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    {". Média: "}
+                    {resultadoSite.precoMedio.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}.
+                  </p>
+                )}
+                <p>
+                  <strong>Prioridade:</strong>{" "}
+                  revisar os {resultadoSite.semAtributos} produtos sem atributos e conferir os itens sem quantidade ou controle de estoque.
+                </p>
+              </div>
+            ) : (
+              <div style={S.sucesso}>
+                <strong>Tarefa preparada e salva.</strong>
+                <p>
+                  {selecionada.integracao
+                    ? "A execução será liberada quando o Paizinho Executor e o marketplace estiverem conectados. Nenhum resultado foi simulado."
+                    : "A tarefa está pronta para seguir para o módulo correspondente."}
+                </p>
+                {selecionada.destino && (
+                  <button onClick={() => setScreen(selecionada.destino)} style={S.primario}>
+                    Continuar para o módulo
+                  </button>
+                )}
+              </div>
+            )
+          ) : (
+            <div style={S.acoes}>
+              <button onClick={() => setEtapa("formulario")} style={S.secundario} disabled={executando}>
+                Editar solicitação
+              </button>
+              <button onClick={salvarTarefa} style={S.primario} disabled={executando}>
+                {executando ? "🔄 Paizinho analisando..." : "Confirmar tarefa"}
+              </button>
+            </div>
+          )}
         </>}
       </section>}
     </main>

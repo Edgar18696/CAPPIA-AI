@@ -281,13 +281,13 @@ export const configuracaoMagnetiMarelli = {
         "Catálogo Magneti Marelli Electronic Systems and Ignition 2020",
 
       paginaInicialAplicacoes: 15,
-      paginaFinalAplicacoes: 480,
+      paginaFinalAplicacoes: 1250,
 
-      paginaInicialReferencias: 481,
-      paginaFinalReferencias: 652,
+      paginaInicialReferencias: 2200,
+      paginaFinalReferencias: 2396,
 
-      paginaInicialEquivalencias: 653,
-      paginaFinalEquivalencias: 672,
+      paginaInicialEquivalencias: 2200,
+      paginaFinalEquivalencias: 2396,
 
       palavrasChave: [
         "parts electronics systems",
@@ -995,23 +995,23 @@ export const configuracaoMagnetiMarelli = {
       origemCatalogo:
         "Catálogo Magneti Marelli Válvulas EGR 2019",
 
-      paginaInicialAplicacoes: 11,
-      paginaFinalAplicacoes: 103,
+      paginaInicialAplicacoes: 14,
+      paginaFinalAplicacoes: 105,
 
       paginaInicialReferencias: null,
       paginaFinalReferencias: null,
 
-      paginaInicialEquivalencias: 120,
+      paginaInicialEquivalencias: 123,
       paginaFinalEquivalencias: 136,
 
       secoesEquivalencias: {
         oe: {
-          paginaInicial: 120,
-          paginaFinal: 124,
+          paginaInicial: 123,
+          paginaFinal: 127,
         },
 
         iam: {
-          paginaInicial: 125,
+          paginaInicial: 128,
           paginaFinal: 136,
         },
       },

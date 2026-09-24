@@ -16,14 +16,8 @@ function arquivosDemo(arquivoBase) {
 }
 
 export const DEMOS_MOVIMENTO_CLIP = {
-  "360": arquivosDemo("giro-360"),
-  "giro-suave": arquivosDemo("giro-suave"),
-  "zoom-cinematico": arquivosDemo("zoom-cinematico"),
-  panoramico: arquivosDemo("panoramico"),
-  "detalhes-produto": arquivosDemo("detalhes-produto"),
-  "comercial-dinamico": arquivosDemo("comercial-dinamico"),
-  "flutuacao-premium": arquivosDemo("flutuacao-premium"),
-  "entrada-giro": arquivosDemo("entrada-giro"),
+  // Único movimento oficial: slide lateral 10–20° + push-in. Sem rotação.
+  "slide-push-in": arquivosDemo("slide-push-in"),
 };
 
 export function obterDemoMovimento(movimentoId) {
@@ -31,6 +25,6 @@ export function obterDemoMovimento(movimentoId) {
   return (
     DEMOS_MOVIMENTO_CLIP[movimentoId] ||
     DEMOS_MOVIMENTO_CLIP[movimento?.demo] ||
-    DEMOS_MOVIMENTO_CLIP["giro-suave"]
+    DEMOS_MOVIMENTO_CLIP["slide-push-in"]
   );
 }

@@ -137,7 +137,7 @@ export async function processarFotoAction({
   instrucoesQualidade,
 ].join(" "),
  };
-  const maximoTentativas = 4;
+  const maximoTentativas = 1;
   let ultimoErro = null;
 
   for (
@@ -178,25 +178,82 @@ export async function processarFotoAction({
       } catch {
         dados = {};
       }
-
-      const mensagemErro =
+console.log(
+  "🔎 RESPOSTA FOTO-PROFISSIONAL:",
+  {
+    status: respostaApi.status,
+    ok: respostaApi.ok,
+    dados,
+  }
+);
+            const mensagemErro =
         obterMensagemErro(
           dados,
           respostaApi.status
         );
 
-      if (
-        respostaApi.ok &&
-        dados?.imagem_processada
-      ) {
-        return {
-          imagemProcessada:
-            dados.imagem_processada,
+      /*
+       * FOTO PROFISSIONAL GEMINI
+       *
+       * A função nova pode devolver:
+       * - imagem_processada: URL
+       * - imagem_base64: imagem em Base64
+       *
+       * Mantemos compatibilidade com os dois formatos.
+       */
 
-          fundoTransparente,
+      if (respostaApi.ok) {
+        if (dados?.imagem_processada) {
+          return {
+            imagemProcessada:
+              dados.imagem_processada,
 
-          dados,
-        };
+            fundoTransparente,
+
+            dados,
+          };
+        }
+
+        if (dados?.imagem_base64) {
+          const mimeType =
+            dados?.mime_type ||
+            (fundoTransparente
+              ? "image/png"
+              : "image/jpeg");
+
+          const imagemDataUrl =
+            `data:${mimeType};base64,${dados.imagem_base64}`;
+
+          console.log(
+            "✅ FOTO PROFISSIONAL GEMINI RECEBIDA",
+            {
+              mimeType,
+              modelo:
+                dados?.modelo ||
+                null,
+            }
+          );
+
+          return {
+            imagemProcessada:
+              imagemDataUrl,
+
+            fundoTransparente,
+
+            dados,
+          };
+        }
+
+        console.error(
+          "❌ FOTO PROFISSIONAL — HTTP 200 SEM IMAGEM",
+          dados
+        );
+
+        throw new Error(
+          dados?.erro ||
+          dados?.error ||
+          "A Foto Profissional respondeu com sucesso, mas não retornou uma imagem."
+        );
       }
 
       if (

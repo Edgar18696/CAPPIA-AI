@@ -3,7 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import CardMovimentoClip from "./clipPremium/CardMovimentoClip";
 import "./clipPremium/clipPremium.css";
 import { baixarClip as baixarClipArquivo } from "./utils/downloadUtils";
-import { MOVIMENTOS_CLIP_PREMIUM } from "../services/clipPremium/catalogoMovimentos";
+import {
+  MOVIMENTO_OFICIAL_CLIP_PREMIUM_ID,
+  MOVIMENTOS_CLIP_PREMIUM,
+  normalizarMovimentoClipPremium,
+} from "../services/clipPremium/catalogoMovimentos";
 import {
   rotuloCustoClipPremium,
   gerarVideoClipPremium,
@@ -18,13 +22,13 @@ import {
   FORMATOS_CLIP,
   consultarCreditosClip,
   criarCenaProduto,
-  erroSensivelE005,
   garantirImagemPublicaProduto,
   mensagemAmigavelClip,
   montarInstrucoesClipProduto,
   montarInstrucoesNeutrasMarketplace,
   obterMensagemErro,
   obterUsuarioAtualClip,
+  respostaEhRecusaE005,
   importarClipProduto,
   salvarClipProdutoNaGaleria,
 } from "../services/clipProdutoPipeline";
@@ -71,14 +75,21 @@ export default function ClipProduto({
   const inputVideoRef = useRef(null);
   const [imagemClip, setImagemClip] = useState("");
   const [formatoClip, setFormatoClip] = useState("quadrado");
+  // Clip Premium tem um único movimento oficial: slide lateral 10–20° +
+  // aproximação final. A peça nunca gira (sem 180°/360°).
   const [movimentoProdutoVisual, setMovimentoProdutoVisual] =
-    useState("giro-suave");
+    useState(MOVIMENTO_OFICIAL_CLIP_PREMIUM_ID);
   const [recomendacao, setRecomendacao] = useState({
-    id: "giro-suave",
-    nome: "Giro Suave",
+    id: MOVIMENTO_OFICIAL_CLIP_PREMIUM_ID,
+    nome: MOVIMENTOS_CLIP_PREMIUM[0].nome,
     motivo:
-      "Mantém esta peça inteira no enquadramento e valoriza seus detalhes.",
+      "A peça fica parada no mesmo ângulo da foto; só a câmera desliza de leve e se aproxima.",
   });
+  // Recusa do provedor (E005): nunca repetir sozinho nem cobrar em silêncio.
+  const [recusaE005, setRecusaE005] = useState(false);
+  const [confirmandoNovaTentativa, setConfirmandoNovaTentativa] =
+    useState(false);
+  const gerandoRef = useRef(false);
   const [processando, setProcessando] = useState(false);
   const [carregandoCreditos, setCarregandoCreditos] = useState(false);
   const [saldoCreditos, setSaldoCreditos] = useState(null);
@@ -121,18 +132,6 @@ export default function ClipProduto({
     setImagemClip(url);
     localStorage.setItem("imagemClipProdutoSelecionada", url);
   }
-function importarFoto(event) {
-  const arquivo = event.target.files?.[0];
-  event.target.value = "";
-
-  if (!arquivo?.type?.startsWith("image/")) {
-    return;
-  }
-
-  const url = URL.createObjectURL(arquivo);
-  setImagemClip(url);
-  localStorage.setItem("imagemClipProdutoSelecionada", url);
-}
 
 async function importarVideo(event) {
   const arquivo = event.target.files?.[0];
@@ -195,6 +194,8 @@ async function importarVideo(event) {
     setVideosGerados([]);
     setStatusClip("");
     setProcessando(false);
+    setRecusaE005(false);
+    setConfirmandoNovaTentativa(false);
   }
 
   async function baixarClipGerado() {
@@ -234,7 +235,9 @@ async function importarVideo(event) {
       setStatusClip("");
       setProcessando(false);
       setFormatoClip("quadrado");
-      setMovimentoProdutoVisual("giro-suave");
+      setMovimentoProdutoVisual(MOVIMENTO_OFICIAL_CLIP_PREMIUM_ID);
+      setRecusaE005(false);
+      setConfirmandoNovaTentativa(false);
       consumirNovaCriacaoMidia();
       return;
     }
@@ -253,8 +256,11 @@ async function importarVideo(event) {
       setFormatoClip(
         localStorage.getItem("clipPremiumFormato") || "quadrado"
       );
+      // Movimentos antigos salvos (360°, giro etc.) viram o oficial.
       setMovimentoProdutoVisual(
-        localStorage.getItem("clipPremiumMovimento") || "giro-suave"
+        normalizarMovimentoClipPremium(
+          localStorage.getItem("clipPremiumMovimento")
+        )
       );
     }
   }, []);
@@ -345,11 +351,12 @@ async function importarVideo(event) {
       const mensagemOriginal = obterMensagemErro(
         data || { erro: error?.message }
       );
-      if (!tentativaNeutra && erroSensivelE005(mensagemOriginal)) {
-        setStatusClip(
-          "⚠️ O PAIIA recusou a primeira tentativa. Tentando uma apresentação neutra do produto..."
-        );
-        return gerarVersao(true);
+      if (respostaEhRecusaE005(data, error)) {
+        // Não repete automaticamente: a nova tentativa só acontece
+        // depois que o usuário confirmar (evita consumo silencioso).
+        const erroRecusa = new Error(mensagemAmigavelClip("E005"));
+        erroRecusa.codigo = "E005";
+        throw erroRecusa;
       }
       throw new Error(mensagemAmigavelClip(mensagemOriginal));
     }
@@ -366,8 +373,9 @@ async function importarVideo(event) {
     };
   }
 
-  async function gerarClip() {
-    if (processando) {
+  async function gerarClip(opcoes = {}) {
+    const tentativaNeutra = opcoes?.tentativaNeutra === true;
+    if (processando || gerandoRef.current) {
       return;
     }
     if (!imagemClip) {
@@ -380,7 +388,10 @@ async function importarVideo(event) {
       return;
     }
 
+    gerandoRef.current = true;
     setProcessando(true);
+    setRecusaE005(false);
+    setConfirmandoNovaTentativa(false);
 
     try {
       setCarregandoCreditos(true);
@@ -389,6 +400,7 @@ async function importarVideo(event) {
       if (saldoAtual < 1) {
         setMostrarModalCreditos(true);
         setProcessando(false);
+        gerandoRef.current = false;
         return;
       }
     } catch (erro) {
@@ -396,6 +408,7 @@ async function importarVideo(event) {
         erro?.message || "Não foi possível verificar seus créditos PAIIA."
       );
       setProcessando(false);
+      gerandoRef.current = false;
       return;
     } finally {
       setCarregandoCreditos(false);
@@ -407,7 +420,7 @@ async function importarVideo(event) {
     try {
       setStatusClip("🎬 Gerando Clip Premium...");
       persistirEstado();
-      const resultado = await gerarVersao();
+      const resultado = await gerarVersao(tentativaNeutra);
       setVideosGerados([resultado]);
       const usuario = await obterUsuarioAtualClip();
       await salvarClipProdutoNaGaleria({
@@ -418,10 +431,30 @@ async function importarVideo(event) {
       });
       setStatusClip("✅ Clip salvo automaticamente na Galeria");
     } catch (erro) {
-      setStatusClip(`❌ ${erro?.message || "Erro ao gerar o Clip Premium."}`);
+      if (erro?.codigo === "E005") {
+        setRecusaE005(true);
+        setStatusClip(`⚠️ ${erro.message}`);
+      } else {
+        setStatusClip(`❌ ${erro?.message || "Erro ao gerar o Clip Premium."}`);
+      }
     } finally {
       setProcessando(false);
+      gerandoRef.current = false;
     }
+  }
+
+  function pedirNovaTentativaE005() {
+    setConfirmandoNovaTentativa(true);
+  }
+
+  function cancelarNovaTentativaE005() {
+    setConfirmandoNovaTentativa(false);
+  }
+
+  function confirmarNovaTentativaE005() {
+    setConfirmandoNovaTentativa(false);
+    // Nova tentativa explícita, com apresentação neutra do produto.
+    gerarClip({ tentativaNeutra: true });
   }
 
   return (
@@ -439,7 +472,8 @@ async function importarVideo(event) {
         Vídeo profissional do seu produto, pronto para anunciar.
       </p>
       <p style={{ color: "#94a3b8", margin: "0 0 16px", fontSize: "14px" }}>
-        Escolha o movimento. O Paizinho cuida do resto.
+        Movimento oficial: slide lateral suave + aproximação final. A peça
+        não gira e mantém o ângulo da sua foto.
       </p>
 
       <div style={{ ...estiloCard, padding: "18px", marginBottom: "16px" }}>
@@ -740,7 +774,7 @@ async function importarVideo(event) {
           {!processando ? (
             <button
               type="button"
-              onClick={gerarClip}
+              onClick={() => gerarClip()}
               disabled={carregandoCreditos}
               style={{
                 width: "100%",
@@ -792,6 +826,65 @@ async function importarVideo(event) {
           }}
         >
           {statusClip}
+        </div>
+      ) : null}
+
+      {recusaE005 && !processando ? (
+        <div
+          style={{
+            ...estiloCard,
+            padding: "16px",
+            marginTop: "12px",
+            border: "1px solid #f59e0b",
+            color: "#fde68a",
+            textAlign: "center",
+          }}
+        >
+          {!confirmandoNovaTentativa ? (
+            <>
+              <p style={{ margin: "0 0 10px", fontSize: "13px" }}>
+                Nada foi gerado e nenhum crédito foi usado. O PAIIA não tenta
+                de novo sozinho.
+              </p>
+              <button
+                type="button"
+                onClick={pedirNovaTentativaE005}
+                style={botaoAcao("#f59e0b", "#451a03", "#fde68a")}
+              >
+                🔁 Tentar novamente
+              </button>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: "0 0 10px", fontSize: "13px" }}>
+                Confirmar nova tentativa? Se o vídeo for gerado, será usado 1
+                crédito PAIIA. Se o provedor recusar de novo, nada é cobrado.
+              </p>
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  justifyContent: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={confirmarNovaTentativaE005}
+                  style={botaoAcao("#22c55e", "#052e16", "#bbf7d0")}
+                >
+                  ✅ Sim, tentar de novo
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelarNovaTentativaE005}
+                  style={botaoAcao("#475569", "#0f172a", "#e2e8f0")}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
 

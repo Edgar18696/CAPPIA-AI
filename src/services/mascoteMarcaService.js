@@ -1,4 +1,8 @@
 import { supabase } from "../supabase";
+import {
+  SALDO_INTERNO_TESTE,
+  usuarioPodeUsarSemPagamento,
+} from "./usuarioPodeUsarSemPagamento";
 
 const CHAVE_LOCAL = "paiiaMascoteOficial";
 
@@ -238,6 +242,11 @@ export function rotuloCustoCriarMascote() {
 }
 
 export async function consultarCreditosPaiia() {
+  const { data: sessao } = await supabase.auth.getUser();
+  if (usuarioPodeUsarSemPagamento(sessao?.user)) {
+    return SALDO_INTERNO_TESTE;
+  }
+
   const { data, error } = await supabase.rpc("consultar_creditos_appia");
 
   if (error) {

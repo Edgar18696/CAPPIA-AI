@@ -4,6 +4,7 @@ import {
   salvarBaseMestre,
 } from "../inteligencia";
 import enriquecerRegistro from "../inteligencia/enriquecerRegistro";
+import { classificarEGravarCatalogoPecas } from "./protegerDuplicidadeCatalogo";
 
 function textoOuNull(valor) {
   const texto = String(
@@ -2084,17 +2085,10 @@ export async function salvarCatalogo({
   });
 
   /*
-   * ============================================================
-   * LIMPEZA DA VERSÃO ANTERIOR
-   * ============================================================
+   * A versão anterior do catálogo NÃO é mais apagada.
+   * Duplicidade e complemento seguro são resolvidos
+   * registro a registro na Base Técnica.
    */
-
-  await limparVersaoAnteriorCatalogo({
-    registros:
-      dadosUnicos,
-
-    onProgresso,
-  });
 
   /*
    * ============================================================
@@ -2103,32 +2097,35 @@ export async function salvarCatalogo({
    */
 
   onProgresso?.(
-    `💾 Gravando ${dadosUnicos.length} aplicação(ões) na Base Técnica...`
+    `💾 Conferindo duplicidade de ${dadosUnicos.length} aplicação(ões) na Base Técnica...`
   );
 
   let totalGravados =
     0;
 
-  try {
-    totalGravados =
-      await salvarEmLotes({
-        tabela:
-          "catalogo_pecas",
+  let resumoDuplicidade =
+    {
+      novos: 0,
+      atualizados: 0,
+      jaExistentes: 0,
+      rejeitados: 0,
+      totalAnalisado:
+        dadosUnicos.length,
+      mensagem: "",
+    };
 
+  try {
+    resumoDuplicidade =
+      await classificarEGravarCatalogoPecas({
         registros:
           dadosUnicos,
 
-        tamanhoLote:
-          250,
-
-        colunasConflito:
-          CONFLITO_CATALOGO_PECAS,
-
         onProgresso,
-
-        mensagem:
-          "Base Técnica",
       });
+
+    totalGravados =
+      resumoDuplicidade.totalGravados ||
+      0;
   } catch (erro) {
     console.error(
       "❌ Erro ao gravar catalogo_pecas:",
@@ -2312,6 +2309,11 @@ export async function salvarCatalogo({
   );
 
   console.log(
+    resumoDuplicidade.mensagem ||
+      ""
+  );
+
+  console.log(
     "BASE MESTRE:",
     totalMestre
   );
@@ -2326,7 +2328,8 @@ export async function salvarCatalogo({
   );
 
   onProgresso?.(
-    `✅ Importação concluída: ${totalGravados} registro(s) gravado(s).`
+    resumoDuplicidade.mensagem ||
+      `✅ Importação concluída: ${totalGravados} registro(s) gravado(s).`
   );
 
   return {
@@ -2357,7 +2360,28 @@ export async function salvarCatalogo({
 
     totalMestre,
 
+    novos:
+      resumoDuplicidade.novos ||
+      0,
+
+    atualizados:
+      resumoDuplicidade.atualizados ||
+      0,
+
+    jaExistentes:
+      resumoDuplicidade.jaExistentes ||
+      0,
+
+    rejeitados:
+      resumoDuplicidade.rejeitados ||
+      0,
+
+    totalAnalisado:
+      resumoDuplicidade.totalAnalisado ||
+      dadosUnicos.length,
+
     mensagem:
+      resumoDuplicidade.mensagem ||
       `Importação concluída com ${totalGravados} registro(s).`,
   };
 }

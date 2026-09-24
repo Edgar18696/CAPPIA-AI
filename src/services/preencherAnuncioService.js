@@ -15,6 +15,13 @@ import {
   ROTULO_FONTE_MERCADO_LIVRE,
 } from "./buscaPecaInternetProvisoria";
 
+import { resolverProdutosPorChave } from "./catalogos/resolverCatalogoChaves";
+import {
+  AVISO_CODIGO_SEM_APLICACAO,
+  ehReferenciaTecnicaSemAplicacao,
+  resumirApresentacaoCriarAnuncio,
+} from "./importadores/referenciaTecnica";
+
 /*
  * ============================================================
  * NORMALIZAÇÃO
@@ -42,10 +49,92 @@ function normalizarCodigo(valor) {
 function variantesCodigoPesquisa(valor) {
   const original = String(valor ?? "")
     .trim()
-    .toUpperCase();
+    .toUpperCase()
+    .replace(/\s+/g, " ");
   const compacto = normalizarCodigo(valor);
-  return [...new Set([original, compacto].filter(Boolean))];
+  const variantes = new Set([original, compacto].filter(Boolean));
+
+  if (
+    /^\d{10}$/.test(compacto) ||
+    /^(0580|0280)\d{6}$/.test(compacto) ||
+    /^F000[A-Z]{2}[A-Z0-9]{4,}$/.test(compacto)
+  ) {
+    variantes.add(
+      [
+        compacto.slice(0, 1),
+        compacto.slice(1, 4),
+        compacto.slice(4, 7),
+        compacto.slice(7),
+      ].join(" ")
+    );
+  }
+
+  if (/^\d{7}$/.test(compacto)) {
+    variantes.add(
+      [compacto.slice(0, 1), compacto.slice(1, 4), compacto.slice(4, 7)].join(" ")
+    );
+  }
+
+  /*
+   * Códigos alfanuméricos gravados com espaço entre letras e números
+   * (ex.: "H 300" x "H300", "AR 22U" x "AR22U"). Gera a forma com UM
+   * espaço em cada fronteira letra/número (no máximo 3 fronteiras).
+   */
+  if (
+    /^[A-Z0-9]{3,14}$/.test(compacto) &&
+    /[A-Z]/.test(compacto) &&
+    /\d/.test(compacto)
+  ) {
+    const fronteiras = [];
+    for (let i = 1; i < compacto.length; i += 1) {
+      const antes = /\d/.test(compacto[i - 1]);
+      const depois = /\d/.test(compacto[i]);
+      if (antes !== depois) fronteiras.push(i);
+    }
+    if (fronteiras.length <= 3) {
+      for (const i of fronteiras) {
+        variantes.add(`${compacto.slice(0, i)} ${compacto.slice(i)}`);
+      }
+    }
+  }
+
+  if (/^\d{8}$/.test(compacto)) {
+    variantes.add(
+      [
+        compacto.slice(0, 1),
+        compacto.slice(1, 4),
+        compacto.slice(4, 7),
+        compacto.slice(7),
+      ].join(" ")
+    );
+  }
+
+  return [...variantes];
 }
+
+function ehErroTecnicoPesquisa(erro) {
+  if (!erro) {
+    return false;
+  }
+
+  const bruto = String(erro?.message || erro || "");
+
+  return /TIMEOUT_|statement timeout|57014|Erro técnico de pesquisa|Failed to fetch|network|fetch failed/i.test(
+    bruto
+  );
+}
+
+function mensagemErroTecnicoPesquisa(erro) {
+  const bruto = String(erro?.message || erro || "erro desconhecido");
+
+  if (/TIMEOUT_|statement timeout|57014/i.test(bruto)) {
+    return "Erro técnico de pesquisa: a Base PAIIA excedeu o tempo de resposta. Isso não significa que o código não existe. Tente novamente.";
+  }
+
+  return `Erro técnico de pesquisa na Base PAIIA (${bruto}). Isso não significa que o código não existe. Tente novamente.`;
+}
+
+let catalogoMestreTemCodigoPrincipal = true;
 
 function tokensEquivalentes(valor) {
   return String(valor ?? "")
@@ -60,6 +149,10 @@ function registroTemCodigoNormalizado(registro, compacto) {
   }
 
   if (normalizarCodigo(registro?.codigo_oem) === compacto) {
+    return true;
+  }
+
+  if (normalizarCodigo(registro?.codigo_principal) === compacto) {
     return true;
   }
 
@@ -136,19 +229,7 @@ function pareceCodigoPesquisa(
       valor || ""
     ).trim();
 
-  if (
-    !original ||
-    original.length < 4 ||
-    original.length > 40
-  ) {
-    return false;
-  }
-
-  if (
-    /\s/.test(
-      original
-    )
-  ) {
+  if (!original) {
     return false;
   }
 
@@ -158,7 +239,8 @@ function pareceCodigoPesquisa(
     );
 
   if (
-    normalizado.length < 4
+    normalizado.length < 4 ||
+    normalizado.length > 40
   ) {
     return false;
   }
@@ -930,32 +1012,45 @@ async function pesquisarNaTabela({
  */
 
 async function consultarMestrePorCodigo(compacto, variantes) {
-  const { data, error } = await supabase
+  const formas = [...new Set((variantes || []).filter(Boolean))];
+  const porOem = await supabase
     .from("catalogo_mestre")
     .select("*")
-    .in("codigo_oem", variantes)
+    .in("codigo_oem", formas)
     .eq("ativo", true)
     .limit(50);
 
-  if (error) {
-    throw error;
+  if (porOem.error) {
+    throw porOem.error;
   }
 
-  let rows = Array.isArray(data) ? data : [];
+  let rows = [...(porOem.data || [])];
 
-  if (!rows.some((registro) => registroTemCodigoNormalizado(registro, compacto))) {
-    const extra = await supabase
+  if (catalogoMestreTemCodigoPrincipal) {
+    const porPrincipal = await supabase
       .from("catalogo_mestre")
       .select("*")
+      .in("codigo_principal", formas)
       .eq("ativo", true)
-      .ilike("codigo_equivalente", `%${compacto}%`)
-      .limit(40);
+      .limit(50);
 
-    if (extra.error) {
-      throw extra.error;
+    if (porPrincipal.error) {
+      if (/codigo_principal/i.test(String(porPrincipal.error.message || ""))) {
+        catalogoMestreTemCodigoPrincipal = false;
+      } else {
+        throw porPrincipal.error;
+      }
+    } else {
+      rows = [...rows, ...(porPrincipal.data || [])];
     }
+  }
 
-    rows = [...rows, ...(extra.data || [])];
+  const jaNoMestre = rows.filter((registro) =>
+    registroTemCodigoNormalizado(registro, compacto)
+  );
+
+  if (jaNoMestre.length > 0) {
+    return jaNoMestre;
   }
 
   return rows.filter((registro) =>
@@ -964,7 +1059,7 @@ async function consultarMestrePorCodigo(compacto, variantes) {
 }
 
 async function consultarPecasPorCodigos(codigos) {
-  const variantes = [
+  const formas = [
     ...new Set(
       (codigos || [])
         .flatMap((codigo) => variantesCodigoPesquisa(codigo))
@@ -972,24 +1067,22 @@ async function consultarPecasPorCodigos(codigos) {
     ),
   ];
 
+  const compactosPedido = [
+    ...new Set(
+      (codigos || []).map((codigo) => normalizarCodigo(codigo)).filter(Boolean)
+    ),
+  ];
+
+  if (!formas.length) {
+    return [];
+  }
+
   const encontrados = [];
   const vistos = new Set();
 
-  for (let i = 0; i < variantes.length; i += 40) {
-    const lote = variantes.slice(i, i + 40);
-    const { data, error } = await supabase
-      .from("catalogo_pecas")
-      .select("*")
-      .in("codigo_oem", lote)
-      .eq("ativo", true)
-      .limit(300);
-
-    if (error) {
-      throw error;
-    }
-
-    for (const registro of data || []) {
-      if (vistos.has(registro.id)) {
+  function acumular(lista) {
+    for (const registro of lista || []) {
+      if (!registro?.id || vistos.has(registro.id)) {
         continue;
       }
       vistos.add(registro.id);
@@ -997,10 +1090,63 @@ async function consultarPecasPorCodigos(codigos) {
     }
   }
 
-  return encontrados;
+  const porOem = await supabase
+    .from("catalogo_pecas")
+    .select("*")
+    .in("codigo_oem", formas)
+    .eq("ativo", true)
+    .limit(200);
+
+  if (porOem.error) {
+    throw porOem.error;
+  }
+
+  acumular(porOem.data);
+
+  return encontrados.filter((registro) =>
+    compactosPedido.some((compacto) =>
+      registroTemCodigoNormalizado(registro, compacto)
+    )
+  );
 }
 
-async function pesquisarBaseAppia(
+/*
+ * Termo com texto + código (ex.: "Bosch 0580314389", "bomba F 000 TE1 43D"):
+ * remove palavras só de letras com 3+ caracteres e devolve o que sobra,
+ * desde que pareça um código (tem número e 6+ caracteres normalizados).
+ */
+function extrairCodigoDeTextoMisto(termo) {
+  const texto = limparTexto(termo);
+  const partes = texto.split(" ");
+  if (partes.length < 2) return "";
+  const resto = partes
+    .filter((parte) => !/^[A-Za-zÀ-ÿ]{3,}[.:,;]?$/.test(parte))
+    .join(" ")
+    .trim();
+  if (!resto || resto === texto) return "";
+  const compacto = normalizarCodigo(resto);
+  if (compacto.length < 6 || !/\d/.test(compacto)) return "";
+  return resto;
+}
+
+export async function pesquisarBaseAppia(termo) {
+  const resultado = await pesquisarBaseAppiaTermo(termo);
+  if (Array.isArray(resultado?.data) && resultado.data.length > 0) {
+    return resultado;
+  }
+  const codigoExtraido = extrairCodigoDeTextoMisto(termo);
+  if (!codigoExtraido) {
+    return resultado;
+  }
+  const segundo = await pesquisarBaseAppiaTermo(codigoExtraido);
+  if (Array.isArray(segundo?.data) && segundo.data.length > 0) {
+    console.log("✅ Código extraído do texto pesquisado:", codigoExtraido);
+    return { ...segundo, codigoExtraido };
+  }
+  return resultado;
+}
+
+async function pesquisarBaseAppiaTermo(
   termo
 ) {
   const ehCodigo =
@@ -1010,49 +1156,78 @@ async function pesquisarBaseAppia(
 
   /*
    * ==========================================================
-   * CÓDIGO — MESTRE → OEM/EQUIV → PECAS
-   * Sem internet e sem Mercado Livre.
+   * CÓDIGO — lookup pontual em OEM / principal / equivalente
+   * Sem internet, sem ILIKE em listas gigantes e sem
+   * expandir equivalentes relacionados.
    * ==========================================================
    */
 
   if (ehCodigo) {
     const compacto = normalizarCodigo(termo);
     const variantes = variantesCodigoPesquisa(termo);
+    let erroParcial = null;
+    let produtosChave = [];
 
     let pecas = await consultarPecasPorCodigos(variantes);
-    let mestres = [];
 
-    try {
-      mestres = await consultarMestrePorCodigo(compacto, variantes);
-    } catch (erroMestre) {
-      console.warn("⚠️ catalogo_mestre:", erroMestre);
+    if (pecas.length === 0) {
+      try {
+        produtosChave = await executarComTimeout(
+          resolverProdutosPorChave(termo),
+          2000,
+          "CHAVES"
+        );
+      } catch (erro) {
+        console.warn("⚠️ catalogo_chaves:", erro);
+      }
+
+      const pecasPorChave = (produtosChave || [])
+        .flatMap((produto) => produto.pecas || [])
+        .filter((registro) =>
+          registroTemCodigoNormalizado(registro, compacto)
+        );
+
+      if (pecasPorChave.length > 0) {
+        console.log(
+          "✅ CÓDIGO ENCONTRADO: catalogo_chaves",
+          pecasPorChave.length
+        );
+
+        return {
+          data: pecasPorChave,
+          tabela: "catalogo_pecas",
+          error: null,
+          produtosChave,
+        };
+      }
     }
 
-    const codigosRelacionados = [
-      compacto,
-      ...variantes,
-      ...mestres.flatMap((registro) => [
-        registro.codigo_oem,
-        ...tokensEquivalentes(registro.codigo_equivalente),
-      ]),
-    ];
+    if (pecas.length === 0) {
+      let mestres = [];
 
-    if (mestres.length > 0) {
-      const pecasExpandidas = await consultarPecasPorCodigos(codigosRelacionados);
-      pecas = pecasExpandidas.length ? pecasExpandidas : pecas;
+      try {
+        mestres = await consultarMestrePorCodigo(compacto, variantes);
+      } catch (erroMestre) {
+        console.warn("⚠️ catalogo_mestre:", erroMestre);
+        erroParcial = erroParcial || erroMestre;
+      }
+
+      const oemsMestre = [
+        ...new Set(
+          mestres.flatMap((registro) =>
+            [registro.codigo_oem, registro.codigo_principal].filter(Boolean)
+          )
+        ),
+      ];
+
+      if (oemsMestre.length > 0) {
+        pecas = await consultarPecasPorCodigos(oemsMestre);
+      }
     }
 
-    const compactosRelacionados = new Set(
-      codigosRelacionados.map((codigo) => normalizarCodigo(codigo)).filter(Boolean)
+    const registros = pecas.filter((registro) =>
+      registroTemCodigoNormalizado(registro, compacto)
     );
-
-    const registros = pecas.filter((registro) => {
-      const oem = normalizarCodigo(registro.codigo_oem);
-      return (
-        compactosRelacionados.has(oem) ||
-        registroTemCodigoNormalizado(registro, compacto)
-      );
-    });
 
     if (registros.length > 0) {
       console.log(
@@ -1064,7 +1239,12 @@ async function pesquisarBaseAppia(
         data: registros,
         tabela: "catalogo_pecas",
         error: null,
+        produtosChave,
       };
+    }
+
+    if (erroParcial) {
+      throw erroParcial;
     }
 
     return {
@@ -1651,6 +1831,8 @@ export async function preencherAnuncioAutomaticamente({
   let tabela =
     "catalogo_pecas";
 
+  let produtosChave = [];
+
 
   try {
     const resultadoBase =
@@ -1684,19 +1866,19 @@ export async function preencherAnuncioAutomaticamente({
       resultadoBase?.tabela ||
       "catalogo_pecas";
 
+    produtosChave =
+      Array.isArray(
+        resultadoBase?.produtosChave
+      )
+        ? resultadoBase.produtosChave
+        : [];
+
     console.info("[PAIIA_FALLBACK] 1 consulta base PAIIA", {
       codigo: termoFinal,
       encontrados: data.length,
       aplicacoesTecnicas: temAplicacoesTecnicas(data),
       tabela,
     });
-
-    if (
-      ehCodigo &&
-      !temAplicacoesTecnicas(data)
-    ) {
-      data = [];
-    }
   } catch (
     erroBase
   ) {
@@ -1705,11 +1887,11 @@ export async function preencherAnuncioAutomaticamente({
       erroBase
     );
 
-
-    data = [];
-
-    error =
-      erroBase;
+    throw new Error(
+      mensagemErroTecnicoPesquisa(
+        erroBase
+      )
+    );
   }
 
 
@@ -1765,20 +1947,27 @@ export async function preencherAnuncioAutomaticamente({
   if (
     data.length === 0
   ) {
-    if (ehCodigo) {
-      throw new Error(
-        "Produto ainda não encontrado na Base PAIIA."
-      );
-    }
-
-    if (error) {
+    if (
+      error ||
+      ehErroTecnicoPesquisa(
+        error
+      )
+    ) {
       console.error(
         "❌ ERRO NA PESQUISA TÉCNICA:",
         error
       );
 
       throw new Error(
-        "A base técnica demorou a responder. Tente novamente."
+        mensagemErroTecnicoPesquisa(
+          error
+        )
+      );
+    }
+
+    if (ehCodigo) {
+      throw new Error(
+        "Produto ainda não encontrado na Base PAIIA."
       );
     }
 
@@ -1809,10 +1998,24 @@ export async function preencherAnuncioAutomaticamente({
           enriquecerRegistro(registro)
         );
 
+  const apresentacao =
+    resumirApresentacaoCriarAnuncio({
+      registros: resultadosComInteligencia,
+      termo: termoFinal,
+    });
+
+  const registrosComAplicacao =
+    resultadosComInteligencia.filter(
+      (registro) =>
+        !ehReferenciaTecnicaSemAplicacao(registro)
+    );
+
 
   onProgresso?.(
     65,
-    "📚 Catálogo localizado. Validando aplicações e equivalências..."
+    apresentacao.somenteNotaTecnica
+      ? AVISO_CODIGO_SEM_APLICACAO
+      : "📚 Catálogo localizado. Validando aplicações e equivalências..."
   );
 
 
@@ -1823,16 +2026,14 @@ export async function preencherAnuncioAutomaticamente({
    */
 
   const item =
-    resultadosComInteligencia
-      .find(
-        (registro) =>
-          registro.montadora ||
-          registro.modelo ||
-          registro.motor
-      ) ||
-    resultadosComInteligencia[
-      0
-    ];
+    registrosComAplicacao.find(
+      (registro) =>
+        registro.montadora ||
+        registro.modelo ||
+        registro.motor
+    ) ||
+    registrosComAplicacao[0] ||
+    resultadosComInteligencia[0];
 
 
   if (!item) {
@@ -1871,7 +2072,14 @@ export async function preencherAnuncioAutomaticamente({
     "Peça Automotiva";
 
 
+  const produtoChaveUnico =
+    produtosChave.length === 1
+      ? produtosChave[0]
+      : null;
+
   const codigoPrincipal =
+    produtoChaveUnico
+      ?.codigo_tecnico_principal ||
     item.codigo_oem ||
     item.codigo_equivalente ||
     termoFinal;
@@ -1892,10 +2100,12 @@ export async function preencherAnuncioAutomaticamente({
    */
 
   const titulo =
-    montarTitulo(
-      itemPrincipal,
-      codigoPrincipal
-    );
+    apresentacao.somenteNotaTecnica && apresentacao.titulo
+      ? apresentacao.titulo
+      : montarTitulo(
+          itemPrincipal,
+          codigoPrincipal
+        );
 
 
   /*
@@ -1918,10 +2128,37 @@ export async function preencherAnuncioAutomaticamente({
    * ========================================================
    */
 
+  const registrosParaAplicacao =
+    registrosComAplicacao.length
+      ? registrosComAplicacao
+      : [];
+
   const aplicacoes =
-    consolidarAplicacoes(
-      resultadosComInteligencia
-    );
+    produtoChaveUnico
+      ? consolidarAplicacoes(
+          registrosParaAplicacao.filter(
+            (registro) =>
+              registro.origem_catalogo ===
+              produtoChaveUnico.origem_catalogo
+          )
+        )
+      : produtosChave.length > 1
+        ? produtosChave.flatMap(
+            (produto) =>
+              consolidarAplicacoes(
+                (produto.pecas || []).filter(
+                  (registro) =>
+                    !ehReferenciaTecnicaSemAplicacao(registro)
+                )
+              ).map((aplicacao) => ({
+                ...aplicacao,
+                origem_catalogo:
+                  produto.origem_catalogo,
+              }))
+          )
+        : consolidarAplicacoes(
+            registrosParaAplicacao
+          );
 
 
   /*
@@ -2000,7 +2237,9 @@ export async function preencherAnuncioAutomaticamente({
 
 
   const descricao =
-    aplicacoesUnicas.length > 0
+    apresentacao.somenteNotaTecnica && apresentacao.descricao
+      ? apresentacao.descricao
+      : aplicacoesUnicas.length > 0
       ? `${descricaoBase}
 
 APLICAÇÕES COMPLETAS:
@@ -2079,16 +2318,26 @@ ${descricao}`
 
 
   const equivalentes =
-    listaUnica(
-      resultadosComInteligencia
-        .flatMap(
-          (registro) =>
-            separarEquivalentes(
-              registro
-                .codigo_equivalente
-            )
+    produtoChaveUnico
+      ? listaUnica(
+          (produtoChaveUnico.equivalentes || []).map(
+            (item) =>
+              item.codigo_exibido ||
+              item.codigo_normalizado
+          )
         )
-    );
+      : produtosChave.length > 1
+        ? []
+        : listaUnica(
+            resultadosComInteligencia
+              .flatMap(
+                (registro) =>
+                  separarEquivalentes(
+                    registro
+                      .codigo_equivalente
+                  )
+              )
+          );
 
 
   const confiabilidade =
@@ -2151,6 +2400,26 @@ ${descricao}`
     totalAplicacoes:
       aplicacoes.length,
 
+    chaveCatalogo:
+      produtoChaveUnico
+        ? {
+            codigo_pesquisado:
+              produtoChaveUnico.codigo_pesquisado,
+            tipo_chave:
+              produtoChaveUnico.tipo_chave,
+            marca_chave:
+              produtoChaveUnico.marca_chave,
+            origem_catalogo:
+              produtoChaveUnico.origem_catalogo,
+            codigo_tecnico_principal:
+              produtoChaveUnico.codigo_tecnico_principal,
+            equivalentes:
+              produtoChaveUnico.equivalentes,
+          }
+        : null,
+
+    produtosChave,
+
     confianca: {
       percentual:
         fonteProvisoria
@@ -2205,6 +2474,8 @@ ${descricao}`
 
   return {
     codigo:
+      produtoChaveUnico
+        ?.codigo_tecnico_principal ||
       itemPrincipal
         .codigo_oem ||
       codigoPrincipal,
@@ -2214,10 +2485,24 @@ ${descricao}`
         .codigo_equivalente ||
       "",
 
+    chaveCatalogo:
+      baseMestre.chaveCatalogo,
+
+    produtosChave,
+
     titulo,
 
     descricao:
       descricaoFinal,
+
+    aplicacaoConfirmada:
+      apresentacao.aplicacaoConfirmada,
+
+    avisoAplicacao:
+      apresentacao.avisoAplicacao,
+
+    referenciasTecnicas:
+      apresentacao.referenciasTecnicas,
 
     preco:
       "",
@@ -2268,6 +2553,15 @@ ${descricao}`
 
       totalAplicacoes:
         aplicacoes.length,
+
+      aplicacaoConfirmada:
+        apresentacao.aplicacaoConfirmada,
+
+      avisoAplicacao:
+        apresentacao.avisoAplicacao,
+
+      referenciasTecnicas:
+        apresentacao.referenciasTecnicas,
 
       arquivoCatalogo:
         fonteProvisoria

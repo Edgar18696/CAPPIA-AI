@@ -277,6 +277,8 @@ const abaGaleriaFixa = (() => {
 
 const [limiteGaleria, setLimiteGaleria] =
   useState(8);
+const [carregandoMaisMidias, setCarregandoMaisMidias] =
+  useState(false);
 
 useEffect(() => {
   setLimiteGaleria((atual) =>
@@ -347,7 +349,10 @@ useEffect(() => {
         error,
       } = await supabase
         .from("processamentos")
-        .select("*")
+        // Colunas leves: não baixa imagem_original (pode ser base64).
+        .select(
+          "id, user_id, tipo, status, created_at, imagem_processada, modelo_banner"
+        )
         .eq(
           "user_id",
           usuario.id
@@ -1598,7 +1603,7 @@ item.tipo === "clip" ? (
 )}
               <p style={{ color: "#93c5fd", fontWeight: "bold" }}>
                 {item.tipo === "banner"
-  ? "🎨 Banner IA"
+  ? "🎨 Banner"
   : item.tipo === "clip"
   ? "🎬 Clip IA"
   : item.tipo === "mascote"
@@ -1668,6 +1673,27 @@ item.tipo === "clip" ? (
         </button>
       )}
 
+      {item.tipo === "banner" && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            // Reabre o banner no Banner Express com os mesmos parâmetros.
+            localStorage.setItem(
+              "bannerParaEditar",
+              url
+            );
+            localStorage.removeItem(
+              "modoGaleria"
+            );
+            setScreen("bannerStudio");
+          }}
+          style={botaoAzulPequeno}
+        >
+          ✏️ Editar
+        </button>
+      )}
+
       <button
         type="button"
         onClick={(e) => {
@@ -1707,16 +1733,33 @@ item.tipo === "clip" ? (
           return;
         }
 
-        await carregarMaisGaleria?.(
-          filtroGaleria
-        );
-        setLimiteGaleria(
-          (atual) => atual + 8
-        );
+        if (carregandoMaisMidias) {
+          return;
+        }
+
+        // Busca só a próxima página (colunas leves) no servidor.
+        setCarregandoMaisMidias(true);
+        try {
+          await carregarMaisGaleria?.(
+            filtroGaleria
+          );
+          setLimiteGaleria(
+            (atual) => atual + 8
+          );
+        } finally {
+          setCarregandoMaisMidias(false);
+        }
       }}
-      style={botaoAzul}
+      disabled={carregandoMaisMidias}
+      style={{
+        ...botaoAzul,
+        opacity: carregandoMaisMidias ? 0.7 : 1,
+        cursor: carregandoMaisMidias ? "wait" : "pointer",
+      }}
     >
-      📷 Carregar mais imagens
+      {carregandoMaisMidias
+        ? "⏳ Carregando..."
+        : "⬇️ Carregar mais"}
     </button>
   </div>
 )}

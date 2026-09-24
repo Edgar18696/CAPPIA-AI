@@ -61,6 +61,8 @@ export default function DadosPeca({
         tipoAnuncio={tipoAnuncio}
         setTipoAnuncio={setTipoAnuncio}
         pecaEncontrada={pecaEncontrada}
+        buscarEMontarAnuncio={buscarEMontarAnuncio}
+        processando={processando}
       />
     </section>
   );

@@ -311,6 +311,21 @@ export default function PainelCatalogo({
 
       {mostrarAplicacoes && (
         <div style={detalhesStyle}>
+          {diagnostico?.avisoAplicacao ? (
+            <div
+              style={{
+                marginTop: "12px",
+                padding: "12px",
+                borderRadius: "10px",
+                background: "#78350f",
+                border: "1px solid #f59e0b",
+                color: "#fde68a",
+              }}
+            >
+              {diagnostico.avisoAplicacao}
+            </div>
+          ) : null}
+
           <Linha
             titulo="Peça"
             valor={pecaEncontrada.peca}

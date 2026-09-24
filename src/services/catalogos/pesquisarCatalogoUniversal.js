@@ -222,6 +222,20 @@ function criarVariantesCodigo(
     );
   }
 
+  const velaComercial =
+    compacto.match(
+      /^(WR|FR|HR|YR|ZR|VR|MR|FGR)(\d)([A-Z0-9]+)$/i
+    );
+
+  if (velaComercial) {
+    variantes.add(
+      `${velaComercial[1]} ${velaComercial[2]} ${velaComercial[3]}`
+    );
+    variantes.add(
+      `${velaComercial[1]}${velaComercial[2]}${velaComercial[3]}`
+    );
+  }
+
 
   /*
    * ========================================================
@@ -236,7 +250,46 @@ function criarVariantesCodigo(
    */
 
   if (
-    /^\d{10}$/.test(
+    /^\d{7}$/.test(
+      compacto
+    )
+  ) {
+    variantes.add(
+      [
+        compacto.slice(
+          0,
+          1
+        ),
+        compacto.slice(
+          1,
+          4
+        ),
+        compacto.slice(
+          4,
+          7
+        ),
+      ].join(" ")
+    );
+  }
+
+  if (
+    /^F000TE[A-Z0-9]{4}$/.test(
+      compacto
+    )
+  ) {
+    variantes.add(
+      [
+        "F",
+        "000",
+        compacto.slice(4, 7),
+        compacto.slice(7),
+      ].join(" ")
+    );
+    variantes.add(compacto);
+  }
+
+  if (
+    /^(0580|0280)\d{6}$/.test(
       compacto
     )
   ) {
@@ -261,6 +314,21 @@ function criarVariantesCodigo(
           7,
           10
         ),
+      ].join(" ")
+    );
+  }
+
+  if (
+    /^\d{10}$/.test(
+      compacto
+    )
+  ) {
+    variantes.add(
+      [
+        compacto.slice(0, 1),
+        compacto.slice(1, 4),
+        compacto.slice(4, 7),
+        compacto.slice(7, 10),
       ].join(" ")
     );
   }

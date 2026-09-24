@@ -1,3 +1,6 @@
+import { useState } from "react";
+import CatalogosOnline from "./CatalogosOnline";
+
 export default function Catalogos({
   setScreen,
   cardStyle,
@@ -27,6 +30,8 @@ export default function Catalogos({
     "NGK",
     "Denso",
   ];
+
+  const [abaCatalogos, setAbaCatalogos] = useState("existentes");
 
   function voltar() {
     setScreen?.("home");
@@ -108,6 +113,45 @@ function abrirCatalogo(catalogo) {
         </button>
       </div>
 
+      {/* ABAS: Catálogos já existentes / Catálogos Online */}
+
+      <div style={barraAbas} role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={abaCatalogos === "existentes"}
+          onClick={() => setAbaCatalogos("existentes")}
+          style={botaoAba(abaCatalogos === "existentes")}
+        >
+          📘 Catálogos já existentes
+          <span style={subtituloAba}>Base interna PAIIA (importados)</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={abaCatalogos === "online"}
+          onClick={() => setAbaCatalogos("online")}
+          style={botaoAba(abaCatalogos === "online")}
+        >
+          🌐 Catálogos Online
+          <span style={subtituloAba}>Sites externos dos fabricantes</span>
+        </button>
+      </div>
+
+      {abaCatalogos === "online" && (
+        <CatalogosOnline
+          onVoltarCentral={() => setAbaCatalogos("existentes")}
+        />
+      )}
+
+      {abaCatalogos === "existentes" && (
+      <>
+      <div style={avisoBaseInterna}>
+        📘 <strong>Base interna PAIIA</strong> — catálogos já importados
+        (códigos, aplicações e equivalências pesquisados dentro do PAIIA).
+        Para abrir os sites oficiais dos fabricantes, use a aba{" "}
+        <em>🌐 Catálogos Online</em>.
+      </div>
       <button
         type="button"
         onClick={abrirImportadorCatalogos}
@@ -205,8 +249,52 @@ function abrirCatalogo(catalogo) {
           )
         )}
       </div>
+      </>
+      )}
     </div>
   );
+}
+
+const barraAbas = {
+  display: "flex",
+  gap: "10px",
+  flexWrap: "wrap",
+  marginBottom: "20px",
+};
+
+const subtituloAba = {
+  display: "block",
+  marginTop: "3px",
+  fontSize: "11px",
+  fontWeight: 500,
+  color: "#cbd5e1",
+};
+
+const avisoBaseInterna = {
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1px solid #1e40af",
+  background: "rgba(30,64,175,.18)",
+  color: "#dbeafe",
+  fontSize: "13px",
+  lineHeight: 1.5,
+  marginBottom: "16px",
+  textAlign: "left",
+};
+
+function botaoAba(ativa) {
+  return {
+    padding: "11px 18px",
+    borderRadius: "12px",
+    border: `1px solid ${ativa ? "#22d3ee" : "#334155"}`,
+    background: ativa
+      ? "linear-gradient(135deg,#0e7490,#1e40af)"
+      : "#0f172a",
+    color: "#ffffff",
+    fontWeight: 800,
+    cursor: "pointer",
+    textAlign: "left",
+  };
 }
 
 const botaoCatalogo = {

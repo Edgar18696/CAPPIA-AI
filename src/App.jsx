@@ -76,9 +76,7 @@ import {
   salvarFotoNaGaleriaAction,
 } from "./services/fotoActions";
 
-import {
-  processarBannerAction,
-} from "./services/bannerActions";
+import { caminhoStorageDaUrl } from "./services/fotoIA/pipelineFotoIA.js";
 
 import {
   gerarRespostaIAAction,
@@ -181,26 +179,7 @@ const {
   setUltimosProjetos,
 } = useProjetoState();
 const {
-  bannerModelo,
-  setBannerModelo,
-
-  modeloPremiumBanner,
-  setModeloPremiumBanner,
-
-  imagemBanner,
   setImagemBanner,
-
-  categoriaBanner,
-  setCategoriaBanner,
-
-  estiloBanner,
-  setEstiloBanner,
-
-  tamanhoBanner,
-  setTamanhoBanner,
-
-  fundoBanner,
-  setFundoBanner,
 } = useBannerState();
 const {
   categoriaFoto,
@@ -887,7 +866,8 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
 
   const { data: fotosRecentes } = await supabase
     .from("processamentos")
-    .select("*")
+    // Colunas leves: evita baixar imagem_original/base64 no painel.
+    .select(COLUNAS_LEVES_GALERIA)
     .eq("user_id", usuario.id)
     .eq("tipo", "foto")
     .not("imagem_processada", "is", null)
@@ -898,7 +878,8 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
 
   const { data: bannersRecentes } = await supabase
     .from("processamentos")
-    .select("*")
+    // Colunas leves: evita baixar imagem_original/base64 no painel.
+    .select(COLUNAS_LEVES_GALERIA)
     .eq("user_id", usuario.id)
     .eq("tipo", "banner")
     .not("imagem_processada", "is", null)
@@ -1016,7 +997,6 @@ async function carregarGaleria() {
     TAMANHO_PAGINA_GALERIA - 1
   );
 
-  
   console.log("ERRO GALERIA:", error);
 
   if (error) {
@@ -1026,7 +1006,6 @@ async function carregarGaleria() {
   }
 
   const lista = data || [];
-  
 
   setGaleria(lista);
   setGaleriaTemMais(lista.length === TAMANHO_PAGINA_GALERIA);
@@ -1083,8 +1062,7 @@ async function padronizarImagemFinal1200({
     );
   }
 
-  const resposta =
-    await fetch(url);
+  const resposta = await fetch(url);
 
   if (!resposta.ok) {
     throw new Error(
@@ -1096,16 +1074,13 @@ async function padronizarImagemFinal1200({
     await resposta.blob();
 
   const urlTemporaria =
-    URL.createObjectURL(
-      blobOriginal
-    );
+    URL.createObjectURL(blobOriginal);
 
   try {
     const imagem =
       await new Promise(
         (resolve, reject) => {
-          const img =
-            new Image();
+          const img = new Image();
 
           img.onload = () =>
             resolve(img);
@@ -1117,18 +1092,613 @@ async function padronizarImagemFinal1200({
               )
             );
 
-          img.src =
-            urlTemporaria;
+          img.src = urlTemporaria;
         }
       );
+
+    /*
+     * =====================================================
+     * DETECTAR A ÁREA REAL DA PEÇA
+     * =====================================================
+     *
+     * O Gemini normalmente devolve:
+     * - peça
+     * - fundo branco
+     *
+     * Aqui removemos virtualmente o excesso de fundo branco
+     * antes de montar o arquivo final.
+     */
+
+    const canvasAnalise =
+      document.createElement("canvas");
+
+    canvasAnalise.width =
+      imagem.width;
+
+    canvasAnalise.height =
+      imagem.height;
+
+    const ctxAnalise =
+      canvasAnalise.getContext(
+        "2d",
+        {
+          willReadFrequently: true,
+        }
+      );
+
+    if (!ctxAnalise) {
+      throw new Error(
+        "Não foi possível analisar a imagem."
+      );
+    }
+
+    ctxAnalise.drawImage(
+      imagem,
+      0,
+      0
+    );
+
+    const dados =
+      ctxAnalise.getImageData(
+        0,
+        0,
+        imagem.width,
+        imagem.height
+      );
+
+    const pixels = dados.data;
+
+    let minX = imagem.width;
+    let minY = imagem.height;
+    let maxX = -1;
+    let maxY = -1;
+
+    /*
+     * Consideramos fundo os pixels
+     * praticamente brancos.
+     *
+     * Isso permite encontrar somente
+     * a área ocupada pela peça.
+     */
+   /*
+ * =====================================================
+ * DETECÇÃO ROBUSTA DA PEÇA
+ * =====================================================
+ *
+ * Não usamos mais um único pixel para definir
+ * os limites da peça.
+ *
+ * Pequenos resíduos do fundo branco são ignorados.
+ */
+
+/*
+ * =====================================================
+ * DETECTOR DE FUNDO ADAPTATIVO — PAIIA
+ * =====================================================
+ *
+ * Descobre a cor real do fundo usando os cantos
+ * da imagem e separa a peça pelas diferenças de cor.
+ */
+
+const quantidadePorLinha =
+  new Uint32Array(
+    imagem.height
+  );
+
+const quantidadePorColuna =
+  new Uint32Array(
+    imagem.width
+  );
+
+function obterPixel(
+  x,
+  y
+) {
+  const indice =
+    (y * imagem.width + x) * 4;
+
+  return {
+    r: pixels[indice],
+    g: pixels[indice + 1],
+    b: pixels[indice + 2],
+    a: pixels[indice + 3],
+  };
+}
+
+/*
+ * Amostramos pequenas áreas nos quatro cantos.
+ * Isso é mais confiável do que olhar apenas
+ * um único pixel.
+ */
+const TAMANHO_AMOSTRA =
+  Math.max(
+    5,
+    Math.round(
+      Math.min(
+        imagem.width,
+        imagem.height
+      ) * 0.03
+    )
+  );
+
+let somaR = 0;
+let somaG = 0;
+let somaB = 0;
+let totalAmostras = 0;
+
+const cantos = [
+  [0, 0],
+
+  [
+    imagem.width -
+      TAMANHO_AMOSTRA,
+    0,
+  ],
+
+  [
+    0,
+    imagem.height -
+      TAMANHO_AMOSTRA,
+  ],
+
+  [
+    imagem.width -
+      TAMANHO_AMOSTRA,
+    imagem.height -
+      TAMANHO_AMOSTRA,
+  ],
+];
+
+for (
+  const [
+    inicioX,
+    inicioY,
+  ] of cantos
+) {
+  for (
+    let y = inicioY;
+    y <
+    Math.min(
+      inicioY +
+        TAMANHO_AMOSTRA,
+      imagem.height
+    );
+    y++
+  ) {
+    for (
+      let x = inicioX;
+      x <
+      Math.min(
+        inicioX +
+          TAMANHO_AMOSTRA,
+        imagem.width
+      );
+      x++
+    ) {
+      const pixel =
+        obterPixel(
+          x,
+          y
+        );
+
+      if (
+        pixel.a > 0
+      ) {
+        somaR += pixel.r;
+        somaG += pixel.g;
+        somaB += pixel.b;
+
+        totalAmostras++;
+      }
+    }
+  }
+}
+
+const fundoR =
+  totalAmostras > 0
+    ? somaR /
+      totalAmostras
+    : 255;
+
+const fundoG =
+  totalAmostras > 0
+    ? somaG /
+      totalAmostras
+    : 255;
+
+const fundoB =
+  totalAmostras > 0
+    ? somaB /
+      totalAmostras
+    : 255;
+
+/*
+ * Quanto maior este número,
+ * mais tolerante somos com pequenas
+ * diferenças existentes no fundo.
+ */
+const TOLERANCIA_FUNDO = 38;
+
+console.log(
+  "🎨 FUNDO DETECTADO PAIIA:",
+  {
+    r:
+      Math.round(
+        fundoR
+      ),
+
+    g:
+      Math.round(
+        fundoG
+      ),
+
+    b:
+      Math.round(
+        fundoB
+      ),
+
+    tolerancia:
+      TOLERANCIA_FUNDO,
+  }
+);
+
+for (
+  let y = 0;
+  y < imagem.height;
+  y++
+) {
+  for (
+    let x = 0;
+    x < imagem.width;
+    x++
+  ) {
+    const indice =
+      (
+        y *
+          imagem.width +
+        x
+      ) * 4;
+
+    const r =
+      pixels[indice];
+
+    const g =
+      pixels[
+        indice + 1
+      ];
+
+    const b =
+      pixels[
+        indice + 2
+      ];
+
+    const a =
+      pixels[
+        indice + 3
+      ];
+
+    const diferencaR =
+      Math.abs(
+        r - fundoR
+      );
+
+    const diferencaG =
+      Math.abs(
+        g - fundoG
+      );
+
+    const diferencaB =
+      Math.abs(
+        b - fundoB
+      );
+
+    const maiorDiferenca =
+      Math.max(
+        diferencaR,
+        diferencaG,
+        diferencaB
+      );
+
+    const ehFundo =
+      a === 0 ||
+      maiorDiferenca <=
+        TOLERANCIA_FUNDO;
+
+    if (!ehFundo) {
+      quantidadePorLinha[y]++;
+      quantidadePorColuna[x]++;
+    }
+  }
+}
+/*
+ * Uma linha ou coluna só pertence à peça
+ * quando possui quantidade suficiente
+ * de pixels reais.
+ *
+ * Isso elimina pontinhos e resíduos
+ * espalhados pelo fundo.
+ */
+
+const MIN_PIXELS_LINHA =
+  Math.max(
+    12,
+    Math.round(
+      imagem.width * 0.015
+    )
+  );
+
+const MIN_PIXELS_COLUNA =
+  Math.max(
+    12,
+    Math.round(
+      imagem.height * 0.015
+    )
+  );
+minX = imagem.width;
+minY = imagem.height;
+maxX = -1;
+maxY = -1;
+
+/*
+ * Localiza esquerda e direita.
+ */
+for (
+  let x = 0;
+  x < imagem.width;
+  x++
+) {
+  if (
+    quantidadePorColuna[x] >=
+    MIN_PIXELS_COLUNA
+  ) {
+    minX = x;
+    break;
+  }
+}
+
+for (
+  let x = imagem.width - 1;
+  x >= 0;
+  x--
+) {
+  if (
+    quantidadePorColuna[x] >=
+    MIN_PIXELS_COLUNA
+  ) {
+    maxX = x;
+    break;
+  }
+}
+
+/*
+ * Localiza topo e base.
+ */
+for (
+  let y = 0;
+  y < imagem.height;
+  y++
+) {
+  if (
+    quantidadePorLinha[y] >=
+    MIN_PIXELS_LINHA
+  ) {
+    minY = y;
+    break;
+  }
+}
+
+for (
+  let y = imagem.height - 1;
+  y >= 0;
+  y--
+) {
+  if (
+    quantidadePorLinha[y] >=
+    MIN_PIXELS_LINHA
+  ) {
+    maxY = y;
+    break;
+  }
+}
+
+/*
+ * Segurança:
+ * se por algum motivo a peça
+ * não for encontrada, usamos
+ * a imagem completa.
+ */
+if (
+  maxX < minX ||
+  maxY < minY
+) {
+  console.warn(
+    "⚠️ PAIIA não conseguiu detectar a peça. Usando imagem completa."
+  );
+
+  minX = 0;
+  minY = 0;
+
+  maxX =
+    imagem.width - 1;
+
+  maxY =
+    imagem.height - 1;
+}
+
+/*
+ * Margem de segurança de 2%.
+ */
+const larguraDetectada =
+  maxX - minX + 1;
+
+const alturaDetectada =
+  maxY - minY + 1;
+
+const margemX =
+  Math.round(
+    larguraDetectada * 0.01
+  );
+
+const margemY =
+  Math.round(
+    alturaDetectada * 0.01
+  );
+
+minX =
+  Math.max(
+    0,
+    minX - margemX
+  );
+
+minY =
+  Math.max(
+    0,
+    minY - margemY
+  );
+
+maxX =
+  Math.min(
+    imagem.width - 1,
+    maxX + margemX
+  );
+
+maxY =
+  Math.min(
+    imagem.height - 1,
+    maxY + margemY
+  );
+
+const larguraRecorte =
+  maxX - minX + 1;
+
+const alturaRecorte =
+  maxY - minY + 1;
+
+console.log(
+  "📐 RECORTE FOTO PAIIA:",
+  {
+    imagem: {
+      largura:
+        imagem.width,
+
+      altura:
+        imagem.height,
+    },
+
+    limites: {
+      minX,
+      minY,
+      maxX,
+      maxY,
+    },
+
+    recorte: {
+      largura:
+        larguraRecorte,
+
+      altura:
+        alturaRecorte,
+    },
+
+    ocupacaoDetectada: {
+      largura:
+        (
+          larguraRecorte /
+          imagem.width *
+          100
+        ).toFixed(1) + "%",
+
+      altura:
+        (
+          alturaRecorte /
+          imagem.height *
+          100
+        ).toFixed(1) + "%",
+    },
+  }
+);
+console.log(
+  "📐 RECORTE FOTO PAIIA:",
+  {
+    imagemOriginal: {
+      largura: imagem.width,
+      altura: imagem.height,
+    },
+
+    limites: {
+      minX,
+      minY,
+      maxX,
+      maxY,
+    },
+
+    recorte: {
+      largura: larguraRecorte,
+      altura: alturaRecorte,
+    },
+
+    ocupacaoDetectada: {
+      largura:
+        (
+          larguraRecorte /
+          imagem.width *
+          100
+        ).toFixed(1) + "%",
+
+      altura:
+        (
+          alturaRecorte /
+          imagem.height *
+          100
+        ).toFixed(1) + "%",
+    },
+  }
+);
+
+    const TAMANHO_FINAL = 1200;
+
+    /*
+     * 1020 = aproximadamente 85%
+     * dos 1200 pixels.
+     *
+     * A peça ficará grande sem encostar
+     * nas bordas.
+     */
+    const AREA_MAXIMA_PECA = 1080;
+
+    const escala =
+      Math.min(
+        AREA_MAXIMA_PECA /
+          larguraRecorte,
+
+        AREA_MAXIMA_PECA /
+          alturaRecorte
+      );
+
+    const larguraFinal =
+      larguraRecorte * escala;
+
+    const alturaFinal =
+      alturaRecorte * escala;
+
+    const xFinal =
+      (TAMANHO_FINAL -
+        larguraFinal) / 2;
+
+    const yFinal =
+      (TAMANHO_FINAL -
+        alturaFinal) / 2;
 
     const canvas =
       document.createElement(
         "canvas"
       );
 
-    canvas.width = 1200;
-    canvas.height = 1200;
+    canvas.width =
+      TAMANHO_FINAL;
+
+    canvas.height =
+      TAMANHO_FINAL;
 
     const ctx =
       canvas.getContext("2d");
@@ -1142,48 +1712,63 @@ async function padronizarImagemFinal1200({
     ctx.clearRect(
       0,
       0,
-      1200,
-      1200
+      TAMANHO_FINAL,
+      TAMANHO_FINAL
     );
 
     if (!transparente) {
-      ctx.fillStyle =
-        "#ffffff";
+      ctx.fillStyle = "#ffffff";
 
       ctx.fillRect(
         0,
         0,
-        1200,
-        1200
+        TAMANHO_FINAL,
+        TAMANHO_FINAL
       );
     }
 
-    const escala =
-      Math.min(
-        1200 / imagem.width,
-        1200 / imagem.height
-      );
-
-    const largura =
-      imagem.width * escala;
-
-    const altura =
-      imagem.height * escala;
-
-    const x =
-      (1200 - largura) / 2;
-
-    const y =
-      (1200 - altura) / 2;
-
+    /*
+     * IMPORTANTE:
+     * não criamos sombra,
+     * não alteramos proporção,
+     * não deformamos a peça.
+     */
     ctx.drawImage(
       imagem,
-      x,
-      y,
-      largura,
-      altura
-    );
 
+      minX,
+      minY,
+      larguraRecorte,
+      alturaRecorte,
+
+      xFinal,
+      yFinal,
+      larguraFinal,
+      alturaFinal
+    );
+console.log(
+  "🎯 FOTO FINAL 1200 PAIIA:",
+  {
+    recorte: {
+      largura: larguraRecorte,
+      altura: alturaRecorte,
+    },
+
+    escala,
+
+    final: {
+      largura: Math.round(larguraFinal),
+      altura: Math.round(alturaFinal),
+      x: Math.round(xFinal),
+      y: Math.round(yFinal),
+    },
+
+    canvas: {
+      largura: canvas.width,
+      altura: canvas.height,
+    },
+  }
+);
     const tipoArquivo =
       transparente
         ? "image/png"
@@ -1211,10 +1796,12 @@ async function padronizarImagemFinal1200({
 
               resolve(blob);
             },
+
             tipoArquivo,
+
             transparente
               ? undefined
-              : 0.95
+              : 0.97
           );
         }
       );
@@ -1235,6 +1822,7 @@ async function padronizarImagemFinal1200({
           {
             contentType:
               tipoArquivo,
+
             upsert: false,
           }
         );
@@ -1255,13 +1843,28 @@ async function padronizarImagemFinal1200({
           nomeArquivo
         );
 
-    if (
-      !dadosUrl?.publicUrl
-    ) {
+    if (!dadosUrl?.publicUrl) {
       throw new Error(
         "Não foi possível gerar a URL da foto final 1200x1200."
       );
     }
+
+    console.log(
+      "📐 FOTO ML PADRONIZADA:",
+      {
+        original:
+          `${imagem.width}x${imagem.height}`,
+
+        areaDetectada:
+          `${larguraRecorte}x${alturaRecorte}`,
+
+        tamanhoFinal:
+          "1200x1200",
+
+        ocupacaoMaxima:
+          `${AREA_MAXIMA_PECA}px`,
+      }
+    );
 
     return dadosUrl.publicUrl;
   } finally {
@@ -1541,7 +2144,15 @@ async function processarSelecionadas() {
   }
 }
 async function baixarImagem(url) {
-  await baixarImagemUtil(url);
+  try {
+    await baixarImagemUtil(url);
+  } catch (erro) {
+    mostrarNotificacao(
+      "❌ " +
+        (erro?.message ||
+          "Não foi possível baixar a imagem.")
+    );
+  }
 }
 
 
@@ -1552,6 +2163,87 @@ function alternarSelecionada(id) {
       : [...atual, id]
   );
 }
+
+// Arquivos no Storage que pertencem SÓ ao item excluído (Foto IA e Banner).
+// A foto usada para criar um banner não é apagada junto com o banner.
+function caminhosDoItemParaExcluir(item) {
+  if (!usuario?.id || !item) {
+    return [];
+  }
+
+  const pasta = `${usuario.id}/`;
+  const caminhos = [];
+  const processada = caminhoStorageDaUrl(item.imagem_processada);
+  const original = caminhoStorageDaUrl(item.imagem_original);
+
+  if (item.tipo === "foto") {
+    if (processada.startsWith(`${pasta}processadas/`)) {
+      caminhos.push(processada);
+    }
+    if (original.startsWith(`${pasta}originais/`)) {
+      caminhos.push(original);
+    }
+  }
+
+  if (item.tipo === "banner") {
+    if (processada.startsWith(`${pasta}banners/`)) {
+      const base = processada.replace(/\.png$/i, "");
+      caminhos.push(
+        processada,
+        `${base}-thumb.webp`,
+        `${base}-thumb.jpg`,
+        `${base}.json`
+      );
+    }
+    if (
+      original.startsWith(`${pasta}banners/`) &&
+      original.includes("-original.")
+    ) {
+      caminhos.push(original);
+    }
+  }
+
+  return caminhos;
+}
+
+async function excluirItensDaGaleria(ids) {
+  const idsValidos = (ids || []).filter(Boolean);
+
+  if (!usuario?.id || idsValidos.length === 0) {
+    return { error: { message: "Nenhuma imagem selecionada." } };
+  }
+
+  const { data: itens } = await supabase
+    .from("processamentos")
+    .select("id, tipo, imagem_original, imagem_processada")
+    .in("id", idsValidos)
+    .eq("user_id", usuario.id);
+
+  const { error } = await removerProcessamentosSelecionados(
+    supabase,
+    idsValidos,
+    usuario
+  );
+
+  if (error) {
+    return { error };
+  }
+
+  const caminhos = (itens || []).flatMap(
+    caminhosDoItemParaExcluir
+  );
+
+  if (caminhos.length > 0) {
+    // Limpeza de arquivos: falha aqui não desfaz a exclusão.
+    await supabase.storage
+      .from("imagens")
+      .remove(caminhos)
+      .catch(() => {});
+  }
+
+  return { error: null };
+}
+
 async function excluirSelecionadas() {
   if (!selecionadas || selecionadas.length === 0) {
     alert("Selecione pelo menos uma imagem para excluir.");
@@ -1562,13 +2254,9 @@ async function excluirSelecionadas() {
     return;
   }
 
-  const { error } = await supabase
-    .from("processamentos")
-    .delete()
-    .in("created_at", selecionadas);
+  const { error } = await excluirItensDaGaleria(selecionadas);
 
   if (error) {
-    console.error("Erro ao excluir:", error);
     alert("Erro ao excluir imagens: " + error.message);
     return;
   }
@@ -1578,45 +2266,59 @@ async function excluirSelecionadas() {
 
   alert("✅ Imagens selecionadas excluídas.");
 }
+
 async function baixarSelecionadas() {
   if (selecionadas.length === 0) return;
 
   setBaixandoLote(true);
 
+  let falhas = 0;
+
   try {
     const imagens = galeria.filter((item) =>
-      selecionadas.includes(item.created_at)
+      selecionadas.includes(item.id)
     );
 
     for (const item of imagens) {
-      const link = document.createElement("a");
+      const url =
+        item.imagem_processada ||
+        item.imagem_original;
 
-      link.href = item.imagem_processada || item.imagem_original;
-      link.download = `imagem-${item.created_at}.jpg`;
+      if (!url) {
+        falhas += 1;
+        continue;
+      }
 
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      try {
+        await baixarImagemUtil(url);
+      } catch {
+        falhas += 1;
+      }
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
   } finally {
     setBaixandoLote(false);
   }
+
+  if (falhas > 0) {
+    mostrarNotificacao(
+      `⚠️ ${falhas} imagem(ns) não puderam ser baixadas.`
+    );
+  }
 }
+
 async function excluirImagem(item) {
   if (!confirm("Deseja realmente excluir esta imagem?")) return;
 
-  console.log("ITEM PARA EXCLUIR:", item);
+  if (!item?.id) {
+    alert("Não foi possível identificar esta imagem.");
+    return;
+  }
 
-  const { error } = await supabase
-    .from("processamentos")
-    .delete()
-    .eq("created_at", item.created_at)
-    .eq("user_id", usuario.id);
+  const { error } = await excluirItensDaGaleria([item.id]);
 
   if (error) {
-    console.log("ERRO EXCLUIR:", error);
     alert(error.message);
     return;
   }
@@ -1636,117 +2338,6 @@ async function excluirImagem(item) {
     setProcessando(false);
   }
 
-async function processarBannerIA() {
-  if (!usuario) {
-    mostrarNotificacao(
-      "Faça login primeiro"
-    );
-
-    setScreen("login");
-    return;
-  }
-
-  if (!imagemBanner) {
-    mostrarNotificacao(
-      "📸 Escolha uma imagem primeiro"
-    );
-    return;
-  }
-
-  setProcessando(true);
-
-  setStatusProcesso(
-    "🎨 Gerando banner com IA..."
-  );
-
-  try {
-    const {
-      imagemProcessada,
-    } = await processarBannerAction({
-      apiProcessarImagem:
-        API_PROCESSAR_IMAGEM,
-
-      supabaseKey,
-
-      imagem: imagemBanner,
-
-      bannerModelo,
-
-      categoriaBanner,
-
-      estiloBanner,
-
-      tamanhoBanner,
-
-      fundoBanner,
-
-      modeloPremiumBanner,
-    });
-
-    setResultadoIA(
-      imagemProcessada
-    );
-
-    const {
-      error: erroSalvar,
-    } = await supabase
-      .from("processamentos")
-      .insert([
-        {
-          user_id: usuario.id,
-
-          imagem_original:
-            imagemBanner,
-
-          imagem_processada:
-            imagemProcessada,
-
-          status: "finalizado",
-
-          tipo: "banner",
-
-          modelo_banner:
-            bannerModelo,
-        },
-      ]);
-
-    if (erroSalvar) {
-      throw new Error(
-        "O banner foi processado, mas não foi salvo na galeria."
-      );
-    }
-
-    await carregarGaleria();
-await carregarDashboard();
-
-localStorage.setItem(
-  "abrirUltimasFotos",
-  "true"
-);
-
-localStorage.setItem(
-  "filtroGaleria",
-  "foto"
-);
-
-    setStatusProcesso(
-      "✅ Banner gerado e salvo!"
-    );
-  } catch (erro) {
-    console.error(
-      "ERRO AO GERAR BANNER:",
-      erro
-    );
-
-    setStatusProcesso(
-      "❌ " +
-        (erro?.message ||
-          "Erro ao gerar banner.")
-    );
-  } finally {
-    setProcessando(false);
-  }
-}
 async function criarProjeto() {
   if (!usuario) {
     mostrarNotificacao("Faça login primeiro");
@@ -2355,6 +2946,8 @@ return (
 {(screen === "banner" || screen === "bannerStudio") && (
   <BannerStudio
     galeria={galeria}
+    galeriaTemMais={galeriaTemMais}
+    carregarMaisGaleria={carregarMaisGaleria}
     setScreen={setScreen}
     cardStyle={cardStyle}
   />

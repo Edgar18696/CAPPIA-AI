@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { supabase } from "../supabase";
+
 import {
   consumirNovaCriacaoMidia,
   deveIniciarNovaCriacaoMidia,
@@ -172,6 +174,13 @@ export default function CriarMascotePaizinho({
   const [mostrarAjuste, setMostrarAjuste] = useState(
     Boolean(inicio.mostrarAjuste)
   );
+  const [modoCriacao, setModoCriacao] =
+  useState("paizinho");
+
+const [
+  descricaoPublicidade,
+  setDescricaoPublicidade,
+] = useState("");
   const [promptPaizinho, setPromptPaizinho] = useState("");
   const [versao, setVersao] = useState(null);
   const [aprovado, setAprovado] = useState(false);
@@ -184,19 +193,97 @@ export default function CriarMascotePaizinho({
   const [pacoteEscolhido, setPacoteEscolhido] = useState(
     PACOTES_CREDITOS_PAIIA[0].creditos
   );
+const [vozGenero, setVozGenero] = useState("masculina");
+const [estiloVoz, setEstiloVoz] = useState("comercial");
+const [falaMascote, setFalaMascote] = useState(
+  "Olá! Quer dar mais vida à sua marca? Com um mascote personalizado, sua empresa ganha identidade e se destaca de verdade!"
+);
 
+const [direcaoCena, setDirecaoCena] = useState(
+  "Mascote olhando para a câmera, falando de forma alegre e profissional, com movimentos leves das mãos. Permanecer no mesmo enquadramento durante toda a apresentação e finalizar olhando para a câmera."
+);
+const [mostrarPublicidade, setMostrarPublicidade] = useState(false);
+const [gerandoPublicidade, setGerandoPublicidade] = useState(false);
+const [statusPublicidade, setStatusPublicidade] = useState("");
+const [videoPublicidadeUrl, setVideoPublicidadeUrl] = useState("");
+const [mascoteImportado, setMascoteImportado] = useState(false);
   const custo = CUSTO_CREDITOS_CRIAR_MASCOTE;
   const saldoZero = saldoCreditos === 0;
   const saldoInsuficiente =
     saldoCreditos !== null && saldoCreditos < custo;
-  const previewAtual = versao?.preview || "";
+  const previewAtual =
+  versao?.preview ||
+  fotoReferencia ||
+  "";
 
   useEffect(() => {
-    localStorage.removeItem("voltarParaCriarMascote");
-    if (pularPrimeiroRascunho.current) {
-      consumirNovaCriacaoMidia();
-    }
-  }, []);
+  localStorage.removeItem("voltarParaCriarMascote");
+
+  if (pularPrimeiroRascunho.current) {
+    consumirNovaCriacaoMidia();
+  }
+
+  const videoSalvo =
+    localStorage.getItem(
+      "paiiaMascoteVideoUrl"
+    );
+
+  if (videoSalvo) {
+    setVideoPublicidadeUrl(
+      videoSalvo
+    );
+
+    setStatusPublicidade(
+      "✅ Última publicidade recuperada."
+    );
+  }
+}, []);
+
+  useEffect(() => {
+  const operationName =
+    localStorage.getItem(
+      "paiiaMascoteVeoOperation"
+    );
+
+  if (!operationName) {
+    return;
+  }
+
+  console.log(
+    "🎬 Recuperando geração Veo:",
+    operationName
+  );
+
+  setStatusPublicidade(
+    "🎬 Recuperando a publicidade que estava sendo gerada..."
+  );
+
+  aguardarPublicidadeMascote(operationName)
+    .then((videoUrl) => {
+      if (videoUrl) {
+        localStorage.removeItem(
+          "paiiaMascoteVeoOperation"
+        );
+
+        setStatusPublicidade(
+          "✅ Publicidade concluída e salva no PAIIA."
+        );
+      }
+    })
+    .catch((erro) => {
+      console.error(
+        "❌ ERRO RECUPERAR PUBLICIDADE:",
+        erro
+      );
+
+      setStatusPublicidade(
+        `❌ ${
+          erro?.message ||
+          "Não foi possível recuperar a publicidade."
+        }`
+      );
+    });
+}, []);
 
   useEffect(() => {
     if (pularPrimeiroRascunho.current) {
@@ -381,7 +468,302 @@ export default function CriarMascotePaizinho({
 
     return { logoUrl, fotoUrl };
   }
+async function prepararComPaizinho() {
+  if (!fotoReferencia) {
+    alert(
+      "Envie a foto do mascote ou produto."
+    );
+    return;
+  }
 
+  if (!descricaoPublicidade.trim()) {
+    alert(
+      "Descreva em poucas palavras a publicidade que deseja."
+    );
+    return;
+  }
+
+  try {
+    setStatus(
+      "🧠 O Paizinho está preparando a fala e a direção da cena..."
+    );
+
+    setOrigem("foto");
+    setCenaId("paizinho");
+
+    setObservacoes(
+      descricaoPublicidade.trim()
+    );
+
+    setMostrarAjuste(false);
+
+    const { data, error } =
+      await supabase.functions.invoke(
+        "paizinho-publicidade",
+        {
+          body: {
+            pedido:
+              descricaoPublicidade.trim(),
+
+            empresa:
+              nome?.trim() || "",
+          },
+        }
+      );
+
+    if (error) {
+      console.error(
+        "ERRO PAIZINHO PUBLICIDADE:",
+        error
+      );
+
+      throw new Error(
+        error.message ||
+          "Não foi possível chamar o Paizinho."
+      );
+    }
+
+    if (!data?.sucesso) {
+      throw new Error(
+        data?.erro ||
+          "O Paizinho não conseguiu preparar a publicidade."
+      );
+    }
+
+    setFalaMascote(
+      data.fala || ""
+    );
+
+    setDirecaoCena(
+      data.direcaoCena || ""
+    );
+
+    if (data.vozGenero) {
+      setVozGenero(
+        data.vozGenero
+      );
+    }
+
+    if (data.estiloVoz) {
+      setEstiloVoz(
+        data.estiloVoz
+      );
+    }
+
+    setMostrarPublicidade(true);
+
+    setStatus(
+      "✨ Pronto! O Paizinho preparou a fala e a direção da cena."
+    );
+
+    console.log(
+      "✅ PAIZINHO PREPAROU PUBLICIDADE:",
+      data
+    );
+  } catch (erro) {
+    console.error(
+      "❌ ERRO PREPARAR COM PAIZINHO:",
+      erro
+    );
+
+    setStatus(
+      `❌ ${
+        erro instanceof Error
+          ? erro.message
+          : String(erro)
+      }`
+    );
+  }
+}
+async function aguardarPublicidadeMascote(operationName) {
+  const intervalo = 5000;
+  const maxTentativas = 60;
+
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa += 1) {
+    setStatusPublicidade(
+      `🎬 Veo criando a publicidade... ${tentativa}`
+    );
+
+    const { data, error } = await supabase.functions.invoke(
+      "consultar-mascote-veo",
+      {
+        body: {
+          operation_name: operationName,
+        },
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data?.sucesso) {
+      throw new Error(
+        data?.erro || "Erro ao consultar a geração do vídeo."
+      );
+    }
+
+   if (data?.concluido && data?.video_url) {
+  const videoUrl = data.video_url;
+
+  setVideoPublicidadeUrl(videoUrl);
+
+  localStorage.setItem(
+    "paiiaMascoteVideoUrl",
+    videoUrl
+  );
+
+  localStorage.removeItem(
+    "paiiaMascoteVeoOperation"
+  );
+
+  // Salvar a publicidade na Galeria → Mascote
+  const usuarioGaleria = await obterUsuarioMascote();
+
+if (usuarioGaleria?.id) {
+  const { error: erroGaleria } = await supabase
+      .from("processamentos")
+      .insert({
+        user_id: usuarioGaleria.id,
+        imagem_processada: videoUrl,
+        tipo: "mascote",
+      });
+
+    if (erroGaleria) {
+      console.error(
+        "❌ ERRO SALVAR PUBLICIDADE NA GALERIA:",
+        erroGaleria
+      );
+    } else {
+      console.log(
+        "✅ PUBLICIDADE SALVA NA GALERIA MASCOTE"
+      );
+    }
+  }
+
+  setStatusPublicidade(
+    "✅ Publicidade concluída e salva na Galeria Mascote."
+  );
+
+  return videoUrl;
+}
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, intervalo)
+    );
+  }
+
+  throw new Error(
+    "A geração está demorando mais que o esperado. Tente consultar novamente."
+  );
+}
+async function gerarPublicidadeMascote() {
+  if (gerandoPublicidade) return;
+
+  if (!previewAtual) {
+    alert("Aprove um mascote antes de criar a publicidade.");
+    return;
+  }
+
+  if (!falaMascote.trim()) {
+    alert("Informe o que o mascote vai falar.");
+    return;
+  }
+
+  if (!direcaoCena.trim()) {
+    alert("Informe a direção da cena.");
+    return;
+  }
+
+  try {
+    setGerandoPublicidade(true);
+    setStatusPublicidade("🎬 Enviando publicidade para o Veo...");
+    setVideoPublicidadeUrl("");
+
+    const { data, error } = await supabase.functions.invoke(
+      "iniciar-mascote-veo",
+      {
+        body: {
+          imagemUrl: previewAtual,
+          fala: falaMascote.trim(),
+          empresa: nome?.trim() || "LOJAONLINESP",
+          instrucao: `
+Direção da cena:
+${direcaoCena.trim()}
+
+Voz:
+${vozGenero}
+
+Estilo da voz:
+${estiloVoz}
+          `.trim(),
+          formato: "9:16",
+        },
+      }
+    );
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data?.sucesso) {
+      throw new Error(
+        data?.erro || "Não foi possível iniciar a publicidade."
+      );
+    }
+
+    if (!data?.operation_name) {
+      throw new Error(
+        "O Veo iniciou a solicitação, mas não retornou operation_name."
+      );
+    }
+
+    console.log(
+  "🎬 VEO operation_name:",
+  data.operation_name
+);
+
+// Guarda a geração para não perder
+// se a página atualizar ou o usuário sair da tela.
+localStorage.setItem(
+  "paiiaMascoteVeoOperation",
+  data.operation_name
+);
+
+setStatusPublicidade(
+  "🎬 Veo recebeu a publicidade. Criando o vídeo..."
+);
+
+const videoUrl =
+  await aguardarPublicidadeMascote(
+    data.operation_name
+  );
+
+// Só apaga a operação depois que
+// o vídeo realmente voltar pronto.
+if (videoUrl) {
+  localStorage.removeItem(
+    "paiiaMascoteVeoOperation"
+  );
+}
+
+return videoUrl;
+
+  } catch (erro) {
+    console.error("❌ ERRO PUBLICIDADE VEO:", erro);
+
+    setStatusPublicidade("");
+
+    alert(
+      erro?.message ||
+        "Erro ao iniciar a publicidade do mascote."
+    );
+
+    return null;
+  } finally {
+    setGerandoPublicidade(false);
+  }
+}
   async function gerarMascote() {
     if (gerando) {
       return;
@@ -394,6 +776,15 @@ export default function CriarMascotePaizinho({
       alert("Envie uma foto de referência para usar esta origem.");
       return;
     }
+    if (modoCriacao === "manual" && !falaMascote.trim()) {
+  alert("Digite o que o mascote vai falar.");
+  return;
+}
+
+if (modoCriacao === "manual" && !direcaoCena.trim()) {
+  alert("Descreva a direção da cena.");
+  return;
+}
     if (saldoInsuficiente) {
       setMostrarCompra(true);
       return;
@@ -416,18 +807,18 @@ export default function CriarMascotePaizinho({
       }
 
       const { logoUrl, fotoUrl } = await publicarReferencias();
-      const resultado = await gerarImagemMascotePaiia({
-        prompt: promptPaizinho,
-        descricao: promptPaizinho,
-        nome,
-        cores,
-        estilo,
-        logoUrl,
-        fotoReferenciaUrl: fotoUrl,
-        cenaId,
-        cenaNome: cenaNoPrompt?.nome || "",
-      });
 
+      const resultado = await gerarImagemMascotePaiia({
+  prompt: promptPaizinho,
+  descricao: promptPaizinho,
+  nome,
+  cores,
+  estilo,
+  logoUrl,
+  fotoReferenciaUrl: fotoUrl,
+  cenaId,
+  cenaNome: cenaNoPrompt?.nome || "",
+});
       setVersao({
         preview: resultado.imagem,
         prompt: resultado.promptBase || promptPaizinho,
@@ -476,6 +867,24 @@ export default function CriarMascotePaizinho({
         userId: usuario.id,
         imagem,
       });
+      const { error: erroGaleria } = await supabase
+  .from("processamentos")
+  .insert({
+    user_id: usuario.id,
+    imagem_processada: imagemPublica,
+    tipo: "mascote",
+  });
+
+if (erroGaleria) {
+  console.error(
+    "❌ ERRO SALVAR MASCOTE NA GALERIA:",
+    erroGaleria
+  );
+} else {
+  console.log(
+    "✅ MASCOTE SALVO NA GALERIA"
+  );
+}
       await salvarMascoteNoKit({
         userId: usuario.id,
         nome: nome.trim(),
@@ -539,292 +948,680 @@ export default function CriarMascotePaizinho({
       >
         ← Voltar
       </button>
+{!mascoteImportado ? (
+  <section
+  style={{
+    ...estiloCard,
+    padding: "22px",
+    marginBottom: "16px",
+  }}
+>
+  <h2
+    style={{
+      margin: "0 0 6px",
+      color: "#fde68a",
+      fontSize: "24px",
+    }}
+  >
+    👨‍🔧 Paizinho — Mascote IA
+  </h2>
 
-      <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
-        <h2
+  <p
+    style={{
+      color: "#cbd5e1",
+      margin: "0 0 4px",
+      fontSize: "15px",
+    }}
+  >
+    Crie, importe e use seu mascote em suas campanhas.
+  </p>
+
+  <p
+    style={{
+      color: "#64748b",
+      margin: 0,
+      fontSize: "13px",
+    }}
+  >
+    O Paizinho cuida da criação e prepara sua publicidade.
+  </p>
+</section>
+) : null}
+<section
+  style={{
+    ...estiloCard,
+    padding: "22px",
+    marginBottom: "16px",
+  }}
+>
+  <h3 style={tituloSecao}>
+    Como você quer criar?
+  </h3>
+
+  <div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: "12px",
+  }}
+>
+    <button
+      type="button"
+      onClick={() =>
+        setModoCriacao("paizinho")
+      }
+      style={{
+        textAlign: "left",
+        padding: "18px",
+        borderRadius: "14px",
+        cursor: "pointer",
+
+        border:
+          modoCriacao === "paizinho"
+            ? "2px solid #22d3ee"
+            : "1px solid #334155",
+
+        background:
+          modoCriacao === "paizinho"
+            ? "#083344"
+            : "#020617",
+
+        color: "#f8fafc",
+      }}
+    >
+      <strong
+        style={{
+          display: "block",
+          fontSize: "17px",
+          marginBottom: "6px",
+        }}
+      >
+        ✨ Deixa com o Paizinho
+      </strong>
+
+      <span
+        style={{
+          color: "#94a3b8",
+          fontSize: "13px",
+        }}
+      >
+        Envie uma foto e diga o que
+        deseja. O Paizinho prepara o
+        restante.
+      </span>
+    </button>
+
+    {/* CRIAR OU IMPORTAR MASCOTE */}
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "12px",
+    marginTop: "12px",
+  }}
+>
+  {/* CRIAR MEU MASCOTE */}
+  <button
+    type="button"
+    onClick={() => setScreen?.("criarMascotePaizinho")}
+    style={{
+      textAlign: "left",
+      padding: "18px",
+      borderRadius: "14px",
+      cursor: "pointer",
+      border: "1px solid #334155",
+      background: "#020617",
+      color: "#f8fafc",
+    }}
+  >
+    <strong
+      style={{
+        display: "block",
+        fontSize: "17px",
+        marginBottom: "6px",
+      }}
+    >
+      🎭 Criar meu mascote
+    </strong>
+
+    <span
+      style={{
+        color: "#94a3b8",
+        fontSize: "13px",
+      }}
+    >
+      Ainda não tem mascote? Crie o seu agora.
+    </span>
+  </button>
+
+  {/* IMPORTAR MEU MASCOTE */}
+<button
+  type="button"
+  onClick={() => {
+    setMascoteImportado(true);
+    setOrigem("foto");
+    referenciaRef.current?.click();
+  }}
+  style={{
+    textAlign: "left",
+    padding: "18px",
+    borderRadius: "14px",
+    cursor: "pointer",
+    border: "1px solid #334155",
+    background: "#020617",
+    color: "#f8fafc",
+  }}
+>
+  <strong
+    style={{
+      display: "block",
+      fontSize: "17px",
+      marginBottom: "6px",
+    }}
+  >
+    📤 Importar meu mascote
+  </strong>
+
+  <span
+    style={{
+      color: "#94a3b8",
+      fontSize: "13px",
+    }}
+  >
+    Já tem um mascote? Envie sua imagem e continue.
+  </span>
+</button>
+</div>
+
+{/* CRIAÇÃO MANUAL */}
+<button
+  type="button"
+  onClick={() => {
+  setModoCriacao("manual");
+  setMostrarPublicidade(true);
+
+  setStatus(
+    "🛠️ Publicidade pronta para você personalizar. Edite se quiser."
+  );
+}}
+  style={{
+    width: "100%",
+    textAlign: "left",
+    padding: "18px",
+    marginTop: "12px",
+    borderRadius: "14px",
+    cursor: "pointer",
+
+    border:
+      modoCriacao === "manual"
+        ? "2px solid #22d3ee"
+        : "1px solid #334155",
+
+    background:
+      modoCriacao === "manual"
+        ? "#083344"
+        : "#020617",
+
+    color: "#f8fafc",
+  }}
+>
+  <strong
+    style={{
+      display: "block",
+      fontSize: "17px",
+      marginBottom: "6px",
+    }}
+  >
+    🛠️ Não quer usar o Paizinho? Crie você!
+  </strong>
+
+  <span
+    style={{
+      color: "#94a3b8",
+      fontSize: "13px",
+    }}
+  >
+    Escolha a fala, voz, direção da cena e os detalhes da publicidade.
+  </span>
+</button>
+
+</div>
+</section>
+{modoCriacao === "paizinho" ? (
+  <section
+    style={{
+      ...estiloCard,
+      padding: "22px",
+      marginBottom: "16px",
+    }}
+  >
+    <h3 style={tituloSecao}>
+      ✨ Deixa com o Paizinho
+    </h3>
+
+    <p
+      style={{
+        color: "#94a3b8",
+        fontSize: "13px",
+        marginTop: 0,
+      }}
+    >
+      Só precisamos da foto e de uma
+      descrição curta. O Paizinho cuida
+      do restante.
+    </p>
+
+    <input
+      ref={referenciaRef}
+      type="file"
+      accept="image/*"
+      style={{ display: "none" }}
+      onChange={(event) => {
+        const arquivo =
+          event.target.files?.[0];
+
+        event.target.value = "";
+
+        lerImagemLocal(
+          arquivo,
+          (imagem) => {
+            setFotoReferencia(imagem);
+            setOrigem("foto");
+          }
+        );
+      }}
+    />
+
+    <button
+      type="button"
+      onClick={() =>
+        referenciaRef.current?.click()
+      }
+      style={botaoSecundario}
+    >
+      {fotoReferencia
+        ? "📷 Trocar foto"
+        : "📷 Enviar foto do mascote/produto"}
+    </button>
+
+    {fotoReferencia ? (
+      <img
+        src={fotoReferencia}
+        alt="Referência"
+        style={{
+          ...miniatura,
+          width: "150px",
+          height: "150px",
+          marginTop: "14px",
+        }}
+      />
+    ) : null}
+
+    <label style={labelStyle}>
+      O que você deseja?
+    </label>
+
+    <textarea
+      value={descricaoPublicidade}
+      onChange={(event) =>
+        setDescricaoPublicidade(
+          event.target.value
+        )
+      }
+      rows={5}
+      placeholder="Ex.: Quero uma publicidade da LOJAONLINESP apresentando a loja e falando sobre peças automotivas."
+      style={{
+        ...campoStyle,
+        resize: "vertical",
+      }}
+    />
+
+        <button
+      type="button"
+      onClick={prepararComPaizinho}
+      style={botaoPrincipal}
+    >
+      ✨ Deixa com o Paizinho
+    </button>
+
+    {falaMascote && direcaoCena && (
+      <div
+        style={{
+          marginTop: "20px",
+          padding: "20px",
+          borderRadius: "14px",
+          border: "1px solid #334155",
+          background: "#020617",
+        }}
+      >
+        <h3
           style={{
-            margin: "0 0 6px",
-            color: "#fde68a",
-            fontSize: "24px",
+            margin: "0 0 18px",
+            color: "#67e8f9",
+            fontSize: "18px",
           }}
         >
-          👨‍🔧 Paizinho — Criar meu Mascote
-        </h2>
-        <p style={{ color: "#cbd5e1", margin: "0 0 4px", fontSize: "15px" }}>
-          Crie o personagem da sua empresa e reutilize em suas campanhas.
-        </p>
-        <p style={{ color: "#64748b", margin: 0, fontSize: "13px" }}>
-          Módulo independente do Clip Premium. O mascote aprovado fica no Kit da
-          Marca.
-        </p>
-      </section>
+          ✨ Publicidade preparada pelo Paizinho
+        </h3>
 
-      <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
-        <h3 style={tituloSecao}>Como você quer começar?</h3>
-        <input
-          id="mascote-logo-arquivo"
-          ref={logoRef}
-          type="file"
-          accept={ACEITAR_LOGO}
-          style={inputArquivoOculto}
-          onChange={(event) => {
-            const arquivo = event.target.files?.[0];
-            if (!arquivo) {
-              return;
-            }
-            aplicarLogoSelecionado(arquivo);
-            event.target.value = "";
-          }}
-        />
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-            gap: "10px",
-          }}
-        >
-          {ORIGENS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                if (item.id === "logo") {
-                  abrirSeletorLogo();
-                  return;
-                }
-                setOrigem(item.id);
-              }}
-              style={{
-                textAlign: "left",
-                padding: "14px",
-                borderRadius: "12px",
-                border:
-                  origem === item.id ? "2px solid #22d3ee" : "1px solid #334155",
-                background: origem === item.id ? "#083344" : "#020617",
-                color: "#e2e8f0",
-                cursor: "pointer",
-              }}
-            >
-              <strong style={{ display: "block", marginBottom: "6px" }}>
-                {item.titulo}
-              </strong>
-              <span style={{ color: "#94a3b8", fontSize: "12px" }}>
-                {item.texto}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {origem === "logo" ? (
-          <div style={{ marginTop: "14px" }}>
-            {logo ? (
-              <div
-                style={{
-                  display: "flex",
-                  gap: "14px",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  padding: "12px",
-                  borderRadius: "12px",
-                  border: "1px solid #155e75",
-                  background: "#082f49",
-                }}
-              >
-                <img src={logo} alt="Preview do logo" style={miniatura} />
-                <div style={{ flex: "1 1 180px" }}>
-                  <div
-                    style={{
-                      color: "#e0f2fe",
-                      fontWeight: "bold",
-                      fontSize: "13px",
-                      wordBreak: "break-all",
-                    }}
-                  >
-                    {nomeArquivoLogo || "logo selecionado"}
-                  </div>
-                  <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "4px" }}>
-                    Preview local. Ainda não foi enviado nem gera créditos.
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                      flexWrap: "wrap",
-                      marginTop: "10px",
-                    }}
-                  >
-                    <label
-                      htmlFor="mascote-logo-arquivo"
-                      onClick={() => setOrigem("logo")}
-                      style={{ ...botaoSecundario, display: "inline-block" }}
-                    >
-                      Trocar logo
-                    </label>
-                    <button
-                      type="button"
-                      onClick={removerLogo}
-                      style={{
-                        ...botaoSecundario,
-                        border: "1px solid #64748b",
-                        background: "#020617",
-                        color: "#cbd5e1",
-                      }}
-                    >
-                      Remover
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <label
-                htmlFor="mascote-logo-arquivo"
-                onClick={() => setOrigem("logo")}
-                style={{ ...botaoSecundario, display: "inline-block" }}
-              >
-                Enviar logo
-              </label>
-            )}
-          </div>
-        ) : origem !== "zero" ? (
-          <div style={{ marginTop: "14px" }}>
-            <input
-              ref={referenciaRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(event) => {
-                const arquivo = event.target.files?.[0];
-                event.target.value = "";
-                lerImagemLocal(arquivo, setFotoReferencia);
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => referenciaRef.current?.click()}
-              style={botaoSecundario}
-            >
-              {fotoReferencia
-                ? "Trocar foto de referência"
-                : "Enviar foto de referência"}
-            </button>
-            {fotoReferencia ? (
-              <img
-                src={fotoReferencia}
-                alt="Referência"
-                style={{ ...miniatura, width: "120px", height: "120px" }}
-              />
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-
-      <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
-        <h3 style={tituloSecao}>Onde você quer seu mascote?</h3>
-        <p style={{ color: "#94a3b8", fontSize: "13px", marginTop: 0 }}>
-          O Paizinho lê a foto e recomenda a cena. Você só confirma ou troca o
-          card.
-        </p>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-            gap: "10px",
-          }}
-        >
-          {CENAS_MASCOTE.map((item) => {
-            const selecionado = cenaId === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setCenaId(item.id)}
-                style={{
-                  textAlign: "left",
-                  padding: "12px",
-                  borderRadius: "12px",
-                  border: selecionado
-                    ? "2px solid #22d3ee"
-                    : "1px solid #334155",
-                  background: selecionado ? "#083344" : "#020617",
-                  color: "#e2e8f0",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ fontSize: "22px", marginBottom: "6px" }}>
-                  {item.icone}
-                </div>
-                <strong style={{ display: "block", fontSize: "13px" }}>
-                  {item.nome}
-                </strong>
-                {item.padrao ? (
-                  <span
-                    style={{
-                      display: "block",
-                      color: "#fde68a",
-                      fontSize: "11px",
-                      marginTop: "4px",
-                    }}
-                  >
-                    Padrão
-                  </span>
-                ) : (
-                  <span
-                    style={{
-                      display: "block",
-                      color: "#94a3b8",
-                      fontSize: "11px",
-                      marginTop: "4px",
-                    }}
-                  >
-                    {item.descricao}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        {cenaRecomendada ? (
-          <div
+        <div style={{ marginBottom: "16px" }}>
+          <strong
             style={{
-              marginTop: "14px",
-              padding: "12px 14px",
-              borderRadius: "12px",
-              border: "1px solid #fbbf24",
-              background: "#1c1917",
-              color: "#fde68a",
-              fontSize: "13px",
-              lineHeight: 1.45,
+              display: "block",
+              marginBottom: "7px",
+              color: "#f8fafc",
             }}
           >
-            ⭐ Paizinho recomenda: {cenaRecomendada.icone} {cenaRecomendada.nome}
-            . {cenaRecomendada.motivo}
-            {cenaId === "paizinho" ? (
-              <div style={{ color: "#bbf7d0", marginTop: "6px" }}>
-                Cena no prompt: {cenaNoPrompt?.icone} {cenaNoPrompt?.nome}
-              </div>
-            ) : (
-              <div style={{ color: "#bae6fd", marginTop: "6px" }}>
-                Você escolheu: {cenaNoPrompt?.icone} {cenaNoPrompt?.nome}
-              </div>
-            )}
-          </div>
-        ) : null}
-        <button
-          type="button"
-          onClick={() => setMostrarAjuste((atual) => !atual)}
+            🎙️ Fala do mascote
+          </strong>
+
+          <textarea
+            value={falaMascote}
+            onChange={(e) =>
+              setFalaMascote(e.target.value)
+            }
+            rows={4}
+            style={{
+              width: "100%",
+              padding: "12px",
+              borderRadius: "10px",
+              border: "1px solid #334155",
+              background: "#020617",
+              color: "#f8fafc",
+              resize: "vertical",
+            }}
+          />
+        </div>
+
+        <div style={{ marginBottom: "16px" }}>
+          <strong
+            style={{
+              display: "block",
+              marginBottom: "7px",
+              color: "#f8fafc",
+            }}
+          >
+            🎬 Direção da cena
+          </strong>
+
+          <textarea
+            value={direcaoCena}
+            onChange={(e) =>
+              setDirecaoCena(e.target.value)
+            }
+            rows={4}
+            style={{
+              width: "100%",
+              padding: "12px",
+              borderRadius: "10px",
+              border: "1px solid #334155",
+              background: "#020617",
+              color: "#f8fafc",
+              resize: "vertical",
+            }}
+          />
+        </div>
+
+        <div
           style={{
-            ...botaoSecundario,
-            marginTop: "14px",
+            display: "grid",
+            gridTemplateColumns:
+              "repeat(2, minmax(0, 1fr))",
+            gap: "12px",
+            marginBottom: "18px",
           }}
         >
-          {mostrarAjuste ? "Ocultar ajustes" : "Quero ajustar"}
-        </button>
-      </section>
+          <div>
+            <strong
+              style={{
+                display: "block",
+                marginBottom: "6px",
+                color: "#f8fafc",
+              }}
+            >
+              🎤 Voz
+            </strong>
 
-      {mostrarAjuste ? (
-        <>
-      <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
-        <h3 style={tituloSecao}>Briefing do mascote, opcional</h3>
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: "10px",
+                border: "1px solid #334155",
+                color: "#cbd5e1",
+              }}
+            >
+              {vozGenero ||
+                "Definida pelo Paizinho"}
+            </div>
+          </div>
+
+          <div>
+            <strong
+              style={{
+                display: "block",
+                marginBottom: "6px",
+                color: "#f8fafc",
+              }}
+            >
+              🎧 Estilo da voz
+            </strong>
+
+            <div
+              style={{
+                padding: "10px 12px",
+                borderRadius: "10px",
+                border: "1px solid #334155",
+                color: "#cbd5e1",
+              }}
+            >
+              {estiloVoz ||
+                "Definido pelo Paizinho"}
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={gerarPublicidadeMascote}
+          disabled={gerandoPublicidade}
+          style={{
+            ...botaoPrincipal,
+            width: "100%",
+            opacity:
+              gerandoPublicidade ? 0.7 : 1,
+          }}
+        >
+          {gerandoPublicidade
+            ? "🎬 Enviando para o Veo..."
+            : "🎬 Gerar Publicidade"}
+        </button>
+        {statusPublicidade ? (
+  <div
+    style={{
+      marginTop: "14px",
+      color: "#67e8f9",
+      textAlign: "center",
+      fontSize: "13px",
+    }}
+  >
+    {statusPublicidade}
+  </div>
+) : null}
+
+{videoPublicidadeUrl ? (
+  <div
+    style={{
+      marginTop: "18px",
+    }}
+  >
+    <div
+      style={{
+        color: "#f8fafc",
+        fontWeight: 700,
+        marginBottom: "10px",
+      }}
+    >
+      🎬 Publicidade pronta
+    </div>
+
+    <video
+      src={videoPublicidadeUrl}
+      controls
+      playsInline
+      style={{
+        width: "100%",
+        maxHeight: "620px",
+        borderRadius: "14px",
+        background: "#000000",
+        display: "block",
+      }}
+    />
+
+    <div
+      style={{
+        marginTop: "10px",
+        color: "#94a3b8",
+        fontSize: "13px",
+      }}
+    >
+      ✅ Vídeo concluído e salvo no PAIIA.
+    </div>
+  </div>
+) : null}
+      </div>
+    )}
+    {status ? (
+      <p
+        style={{
+          color: "#7dd3fc",
+          marginTop: "12px",
+        }}
+      >
+        {status}
+      </p>
+    ) : null}
+  </section>
+) : null}
+     
+{modoCriacao === "manual" && (
+  <>
+      
+     
+
+    <section
+      style={{
+        ...estiloCard,
+        padding: "22px",
+        marginBottom: "16px",
+      }}
+    >
+      <h3 style={tituloSecao}>
+        🗣️ Voz e fala do mascote
+      </h3>
+
+      <p
+        style={{
+          color: "#94a3b8",
+          fontSize: "13px",
+          marginTop: 0,
+        }}
+      >
+        Defina como o mascote deve falar na publicidade.
+      </p>
+
+      <label style={labelStyle}>
+        Voz
+      </label>
+
+      <select
+        value={vozGenero}
+        onChange={(event) =>
+          setVozGenero(event.target.value)
+        }
+        style={campoStyle}
+      >
+        <option value="masculina">
+          Masculina
+        </option>
+
+        <option value="feminina">
+          Feminina
+        </option>
+      </select>
+
+      <label style={labelStyle}>
+        Estilo da voz
+      </label>
+
+      <select
+        value={estiloVoz}
+        onChange={(event) =>
+          setEstiloVoz(event.target.value)
+        }
+        style={campoStyle}
+      >
+        <option value="comercial">
+          Comercial
+        </option>
+
+        <option value="amigavel">
+          Amigável
+        </option>
+
+        <option value="animada">
+          Animada
+        </option>
+
+        <option value="profissional">
+          Profissional
+        </option>
+      </select>
+
+      <label style={labelStyle}>
+        O que o mascote vai falar?
+      </label>
+
+      <textarea
+        value={falaMascote}
+        onChange={(event) =>
+          setFalaMascote(event.target.value)
+        }
+        rows={4}
+        placeholder="Ex.: Eu sou o mascote da LOJAONLINESP!"
+        style={{
+          ...campoStyle,
+          resize: "vertical",
+        }}
+      />
+<label style={labelStyle}>
+  🎬 Direção da cena
+</label>
+
+<textarea
+  value={direcaoCena}
+  onChange={(event) =>
+    setDirecaoCena(event.target.value)
+  }
+  rows={4}
+  placeholder="Ex.: O mascote olha para a câmera, movimenta os braços enquanto fala e no final aponta para o logo da empresa."
+  style={{
+    ...campoStyle,
+    resize: "vertical",
+  }}
+/>
+      
+    </section>
+
+    <section
+      style={{
+        ...estiloCard,
+        padding: "22px",
+        marginBottom: "16px",
+      }}
+    >
+      <h3 style={tituloSecao}>
+        Briefing do mascote, opcional
+      </h3>
         <label style={labelStyle}>Nome do mascote</label>
         <input
           value={nome}
@@ -901,8 +1698,9 @@ export default function CriarMascotePaizinho({
         </div>
       </section>
         </>
-      ) : null}
-
+     
+  )}
+  {!mascoteImportado ? (
       <section style={{ ...estiloCard, padding: "22px", marginBottom: "16px" }}>
         <div
           style={{
@@ -973,7 +1771,7 @@ export default function CriarMascotePaizinho({
           <p style={{ color: "#7dd3fc", marginTop: "12px" }}>{status}</p>
         ) : null}
       </section>
-
+) : null}
       {versao ? (
         <section style={{ ...estiloCard, padding: "22px" }}>
           <h3 style={{ ...tituloSecao, marginTop: 0 }}>Resultado</h3>
@@ -1024,6 +1822,20 @@ export default function CriarMascotePaizinho({
             <button type="button" onClick={aprovarMascote} style={botaoAprovar}>
               ✅ Aprovar Mascote
             </button>
+            {aprovado && previewAtual ? (
+  <button
+    type="button"
+    onClick={() => setMostrarPublicidade(true)}
+    style={{
+      ...botaoPrincipal,
+      width: "auto",
+      marginTop: 0,
+      padding: "10px 16px",
+    }}
+  >
+    🎬 Criar publicidade com este mascote
+  </button>
+) : null}
             <button
               type="button"
               onClick={gerarNovaVersao}
@@ -1038,7 +1850,154 @@ export default function CriarMascotePaizinho({
           </div>
         </section>
       ) : null}
+{(mostrarPublicidade || videoPublicidadeUrl) && previewAtual ? (
+  <section
+    style={{
+      ...estiloCard,
+      padding: "22px",
+      marginTop: "16px",
+      marginBottom: "16px",
+    }}
+  >
+    <h3 style={tituloSecao}>
+      🎬 Criar publicidade com o mascote
+    </h3>
 
+    <p
+      style={{
+        color: "#94a3b8",
+        fontSize: "13px",
+        marginTop: 0,
+      }}
+    >
+      Use o mascote aprovado para criar uma publicidade em vídeo.
+    </p>
+
+    <img
+      src={previewAtual}
+      alt="Mascote aprovado"
+      style={{
+        display: "block",
+        width: "140px",
+        height: "140px",
+        objectFit: "contain",
+        background: "#fff",
+        borderRadius: "12px",
+        marginBottom: "16px",
+      }}
+    />
+
+    <label style={labelStyle}>
+      Voz
+    </label>
+
+    <select
+      value={vozGenero}
+      onChange={(event) =>
+        setVozGenero(event.target.value)
+      }
+      style={campoStyle}
+    >
+      <option value="masculina">
+        Masculina
+      </option>
+
+      <option value="feminina">
+        Feminina
+      </option>
+    </select>
+
+    <label style={labelStyle}>
+      Estilo da voz
+    </label>
+
+    <select
+      value={estiloVoz}
+      onChange={(event) =>
+        setEstiloVoz(event.target.value)
+      }
+      style={campoStyle}
+    >
+      <option value="comercial">
+        Comercial
+      </option>
+
+      <option value="amigavel">
+        Amigável
+      </option>
+
+      <option value="animada">
+        Animada
+      </option>
+
+      <option value="profissional">
+        Profissional
+      </option>
+    </select>
+
+    <label style={labelStyle}>
+      O que o mascote vai falar?
+    </label>
+
+    <textarea
+      value={falaMascote}
+      onChange={(event) =>
+        setFalaMascote(event.target.value)
+      }
+      rows={4}
+      placeholder="Ex.: Eu sou o mascote da LOJAONLINESP!"
+      style={{
+        ...campoStyle,
+        resize: "vertical",
+      }}
+    />
+
+    <label style={labelStyle}>
+      🎬 Direção da cena
+    </label>
+
+    <textarea
+      value={direcaoCena}
+      onChange={(event) =>
+        setDirecaoCena(event.target.value)
+      }
+      rows={4}
+      placeholder="Ex.: O mascote olha para a câmera, movimenta os braços enquanto fala e no final aponta para o logo."
+      style={{
+        ...campoStyle,
+        resize: "vertical",
+      }}
+    />
+
+    <button
+  type="button"
+  onClick={gerarPublicidadeMascote}
+  disabled={gerandoPublicidade}
+  style={{
+    ...botaoPrincipal,
+    opacity: gerandoPublicidade ? 0.65 : 1,
+    cursor: gerandoPublicidade ? "not-allowed" : "pointer",
+  }}
+>
+  {gerandoPublicidade
+    ? "⏳ Enviando para o Veo..."
+    : "🎬 Gerar publicidade"}
+</button>
+
+{statusPublicidade ? (
+  <div
+    style={{
+      marginTop: "12px",
+      color: "#67e8f9",
+      textAlign: "center",
+      fontSize: "13px",
+    }}
+  >
+    {statusPublicidade}
+  </div>
+) : null}
+  </section>
+) : null}
       {mostrarCompra ? (
         <div
           style={{

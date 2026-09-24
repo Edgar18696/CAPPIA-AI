@@ -1,8 +1,4 @@
 import { supabase } from "../supabase";
-import {
-  SALDO_INTERNO_TESTE,
-  usuarioPodeUsarSemPagamento,
-} from "./usuarioPodeUsarSemPagamento";
 import { obterMovimentoClipPremium } from "./clipPremium/catalogoMovimentos";
 import { textoPreservacaoProduto } from "./clipPremium/preservacaoProduto";
 
@@ -12,7 +8,7 @@ export const ESTILOS_CLIP_PRODUTO = [
     titulo: "B — Marketplace",
     icone: "🛒",
     descricao:
-      "Rotação 360° suave no próprio eixo, mantendo a peça centralizada e estável.",
+      "Slide lateral sutil da câmera (10–20°) + aproximação final. A peça não gira.",
     duracao: 12,
   },
   {
@@ -82,25 +78,15 @@ export const MOVIMENTOS = [
   { id: "zoom-out", nome: "Zoom de afastamento" },
   { id: "pan-esquerda", nome: "Pan para esquerda" },
   { id: "pan-direita", nome: "Pan para direita" },
-  { id: "orbita", nome: "↔️ Órbita lateral" },
   { id: "detalhe", nome: "🔬 Detalhes técnicos" },
 ];
 
+// Giro 360° e Órbita lateral removidos: a peça nunca gira no Clip Premium.
 export const MOVIMENTOS_DESTAQUE = [
-  {
-    id: "giro-360",
-    movimentoId: "orbita",
-    nome: "🔄 Giro 360°",
-  },
   {
     id: "aproximacao",
     movimentoId: "zoom-in",
     nome: "🔍 Aproximação",
-  },
-  {
-    id: "orbita-lateral",
-    movimentoId: "orbita",
-    nome: "↔️ Órbita lateral",
   },
   {
     id: "detalhes",
@@ -136,19 +122,36 @@ export function obterMensagemErro(data) {
   );
 }
 
+export const CODIGO_RECUSA_PROVEDOR = "E005";
+
 export function erroSensivelE005(mensagem = "") {
   const texto = String(mensagem || "").toLowerCase();
   return (
     texto.includes("e005") ||
+    texto.includes("recusa_provedor") ||
+    texto.includes("raimediafiltered") ||
     texto.includes("flagged") ||
     texto.includes("sensitive") ||
     texto.includes("nsfw")
   );
 }
 
+// Verifica a resposta inteira da Edge Function (código + mensagem).
+export function respostaEhRecusaE005(data, error) {
+  const codigo = String(data?.codigo || data?.code || "").toUpperCase();
+  if (codigo === CODIGO_RECUSA_PROVEDOR) {
+    return true;
+  }
+  return erroSensivelE005(
+    [data?.erro, data?.error, data?.detalhes, data?.message, error?.message]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
 export function mensagemAmigavelClip(mensagem = "") {
   if (erroSensivelE005(mensagem)) {
-    return "O PAIIA recusou esta geração pelo filtro automático de conteúdo. Tente outra foto da peça ou outro estilo.";
+    return "O provedor de vídeo recusou esta geração (E005). Nenhum crédito PAIIA foi usado. Você pode tentar novamente — o PAIIA só gera de novo com a sua confirmação.";
   }
   return mensagem || "Erro ao gerar o Clip IA.";
 }
@@ -159,7 +162,7 @@ export function montarInstrucoesNeutrasMarketplace() {
     "Usar somente a peça mostrada na imagem enviada.",
     "Manter a peça centralizada e totalmente visível.",
     "Fundo branco ou neutro.",
-    "Movimento suave e discreto de apresentação do produto.",
+    "A peça fica parada e nunca gira. Somente a câmera faz um deslizamento lateral sutil de 10–20 graus e uma aproximação suave no final, sem revelar lados ocultos.",
     "Sem pessoas, mãos, rostos, animais, veículos ou objetos adicionais.",
     "Sem textos, logotipos, marcas-d'água ou efeitos dramáticos.",
     "Preservar exatamente formato, cores e proporções do produto.",
@@ -193,6 +196,7 @@ export function montarInstrucoesClipProduto({
     "Utilizar somente a imagem enviada como referência visual.",
     `Modalidade: Clip Premium.`,
     "Movimento do Clip Premium: manter a peça completamente parada. Aplicar somente um deslocamento lateral muito suave da câmera, limitado a aproximadamente 10–20 graus, combinado com uma aproximação lenta. Não girar a peça, não orbitar ao redor dela e não revelar partes ocultas.",
+    movimento?.promptMovimento || "",
     `Formato final ${formato.proporcao}, ${formato.largura}x${formato.altura}.`,
     textoOverlay,
     trilha,
@@ -221,7 +225,29 @@ export async function chamarGerarClipProduto(body) {
     }
   );
 
+  // Em respostas não-2xx o supabase-js não preenche `data`; lemos o
+  // corpo para não perder o código (ex.: E005) e a mensagem pública.
+  if (error && !data) {
+    const corpo = await lerCorpoErroFuncao(error);
+    return { data: corpo, error };
+  }
+
   return { data, error };
+}
+
+export async function lerCorpoErroFuncao(error) {
+  try {
+    const resposta = error?.context;
+    if (resposta && typeof resposta.clone === "function") {
+      return await resposta.clone().json();
+    }
+    if (resposta && typeof resposta.json === "function") {
+      return await resposta.json();
+    }
+  } catch {
+    // corpo não era JSON
+  }
+  return null;
 }
 
 export async function obterUsuarioAtualClip() {
@@ -235,11 +261,6 @@ export async function obterUsuarioAtualClip() {
 }
 
 export async function consultarCreditosClip() {
-  const { data: sessao } = await supabase.auth.getUser();
-  if (usuarioPodeUsarSemPagamento(sessao?.user)) {
-    return SALDO_INTERNO_TESTE;
-  }
-
   const { data, error } = await supabase.rpc("consultar_creditos_appia");
 
   if (error) {

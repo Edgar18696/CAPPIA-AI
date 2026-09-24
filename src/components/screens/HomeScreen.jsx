@@ -7,6 +7,7 @@ export default function HomeScreen({
   cardStyle,
   setScreen,
   ehAdministrador = false,
+  ehContaInternaTeste = false,
   mostrarPaizinho = false,
   setMostrarPaizinho,
 }) {
@@ -18,6 +19,7 @@ export default function HomeScreen({
       cardStyle={cardStyle}
       setScreen={setScreen}
       ehAdministrador={ehAdministrador}
+      ehContaInternaTeste={ehContaInternaTeste}
       mostrarPaizinho={mostrarPaizinho}
       setMostrarPaizinho={setMostrarPaizinho}
     />

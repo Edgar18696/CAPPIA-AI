@@ -25,6 +25,18 @@ import {
   preencherAnuncioAutomaticamente,
 } from "../services/preencherAnuncioService";
 
+// Paizinho — pesquisa em fontes originais (só quando a Base PAIIA não encontra o código)
+import PainelPesquisaPaizinho from "./PainelPesquisaPaizinho";
+import {
+  pesquisarFontesOriginais,
+} from "../services/paizinhoPesquisa/pesquisarFontesOriginais";
+import {
+  MENSAGENS as MENSAGENS_PAIZINHO,
+} from "../services/paizinhoPesquisa/validarResultadoPesquisa";
+
+const MENSAGEM_BASE_NAO_ENCONTROU =
+  "Produto ainda não encontrado na Base PAIIA.";
+
 import {
   marcarAnuncioPronto,
 } from "../services/projetoAtualService";
@@ -1475,6 +1487,7 @@ const [veioDaCentralTecnica, setVeioDaCentralTecnica] =
 
   const [processando, setProcessando] = useState(false);
   const [etapaProcessamento, setEtapaProcessamento] = useState("");
+  const [pesquisaPaizinho, setPesquisaPaizinho] = useState(null);
   const [progressoProcessamento, setProgressoProcessamento] =
     useState(0);
 
@@ -2172,6 +2185,7 @@ async function buscarEMontarAnuncio() {
   setPecaEncontrada(null);
   setDiagnostico(null);
   setAuditoria(null);
+  setPesquisaPaizinho(null);
   setMostrarAplicacoes(false);
   localStorage.removeItem(
     "novoAnuncioTemporario"
@@ -2783,6 +2797,18 @@ const descricaoResultado =
       setProgressoProcessamento(0);
     }, 1000);
   } catch (erro) {
+    // Base PAIIA não tem o código → Paizinho pesquisa em fontes originais.
+    // Erros técnicos continuam no fluxo antigo (alerta).
+    if (
+      String(erro?.message || "").trim() ===
+      MENSAGEM_BASE_NAO_ENCONTROU
+    ) {
+      await executarPesquisaPaizinho(
+        codigoFinal
+      );
+      return;
+    }
+
     console.error(
       "ERRO AO PREENCHER ANÚNCIO:",
       erro
@@ -2798,6 +2824,165 @@ const descricaoResultado =
     );
   }
 }
+async function executarPesquisaPaizinho(
+  codigoFinal
+) {
+  // O código digitado é preservado como "Código pesquisado".
+  setCodigo(codigoFinal);
+  setPesquisaPaizinho({
+    status: "pesquisando",
+    codigoPesquisado: codigoFinal,
+  });
+  setProgressoProcessamento(15);
+  setEtapaProcessamento(
+    MENSAGENS_PAIZINHO.PESQUISANDO
+  );
+
+  try {
+    const {
+      data: sessao,
+    } = await supabase.auth.getUser();
+
+    const resultado =
+      await pesquisarFontesOriginais(
+        codigoFinal,
+        {
+          userId:
+            sessao?.user?.id || null,
+          onProgresso: (
+            etapa,
+            valor
+          ) => {
+            setEtapaProcessamento(etapa);
+            setProgressoProcessamento(valor);
+          },
+        }
+      );
+
+    const campos =
+      resultado?.campos || {};
+
+    // Só dado confirmado em fonte original preenche o anúncio.
+    if (campos.oem) {
+      setOem(campos.oem);
+    }
+
+    if (campos.titulo) {
+      setTitulo(campos.titulo);
+    }
+
+    if (campos.descricao) {
+      setDescricao(campos.descricao);
+    }
+
+    const fontesUsadas =
+      resultado?.validado
+        ?.fontesOficiaisUsadas || [];
+
+    const naoConfirmados =
+      campos.naoConfirmados || [];
+
+    if (campos.pecaEncontrada) {
+      // Mostra a peça, o fabricante e as aplicações confirmadas no
+      // painel do catálogo, sempre como "REVISAR" (pendente de validação).
+      const diagnosticoPaizinho = {
+        codigoPrincipal: codigoFinal,
+        fabricante:
+          campos.pecaEncontrada.fabricante || "",
+        totalAplicacoes:
+          campos.pecaEncontrada.aplicacoes
+            ?.length || 0,
+        arquivoCatalogo:
+          fontesUsadas.length
+            ? `Fonte original: ${fontesUsadas.join(" | ")}`
+            : "Fonte original",
+        paginaCatalogo: "",
+        fontes: fontesUsadas,
+        confianca:
+          resultado?.validado?.confianca || "",
+        avisoAplicacao:
+          "Dados encontrados pelo Paizinho em fonte original — pendentes de validação/auditoria. Confira a fonte antes de publicar." +
+          (naoConfirmados.length
+            ? ` Não confirmado: ${naoConfirmados.join("; ")}.`
+            : ""),
+        origemPesquisaPaizinho: true,
+      };
+
+      const auditoriaPaizinho = {
+        aprovado: false,
+        origemPesquisaPaizinho: true,
+        problemas: [
+          "Pendente de validação/auditoria (pesquisa em fonte original).",
+          ...naoConfirmados.map(
+            (item) => `Não confirmado: ${item}`
+          ),
+        ],
+      };
+
+      setPecaEncontrada(
+        campos.pecaEncontrada
+      );
+      setDiagnostico(
+        diagnosticoPaizinho
+      );
+      setAuditoria(
+        auditoriaPaizinho
+      );
+      setMostrarAplicacoes(true);
+
+      try {
+        localStorage.setItem(
+          "rascunhoNovoAnuncioTemp",
+          JSON.stringify({
+            codigo: codigoFinal,
+            oem: campos.oem || "",
+            titulo: campos.titulo || "",
+            descricao:
+              campos.descricao || "",
+            preco: "",
+            tipoAnuncio: "classico",
+            pecaEncontrada:
+              campos.pecaEncontrada,
+            diagnostico:
+              diagnosticoPaizinho,
+            auditoria:
+              auditoriaPaizinho,
+            baseMestre: null,
+            fotos: Array.isArray(
+              fotosAnuncio
+            )
+              ? fotosAnuncio
+              : [],
+          })
+        );
+      } catch {
+        // rascunho é só conveniência
+      }
+    }
+
+    setPesquisaPaizinho({
+      ...resultado,
+      codigoPesquisado: codigoFinal,
+    });
+  } catch (erroPaizinho) {
+    console.error(
+      "[PAIZINHO_PESQUISA] falha:",
+      erroPaizinho
+    );
+
+    setPesquisaPaizinho({
+      status: "indisponivel",
+      codigoPesquisado: codigoFinal,
+      mensagem:
+        MENSAGENS_PAIZINHO.NAO_IDENTIFICADO,
+    });
+  } finally {
+    setProcessando(false);
+    setEtapaProcessamento("");
+    setProgressoProcessamento(0);
+  }
+}
+
 async function analisarAntesDePublicar() {
   const temDadosObrigatorios =
     Boolean(
@@ -5711,6 +5896,12 @@ const custoTotalVenda =
             </span>
           </div>
         </div>
+
+{pesquisaPaizinho && (
+  <PainelPesquisaPaizinho
+    pesquisa={pesquisaPaizinho}
+  />
+)}
 
 {pecaEncontrada && (() => {
   const baseMestreAtual =

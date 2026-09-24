@@ -8,6 +8,8 @@ export default function DadosPrincipaisAnuncio({
   descricao,
   setDescricao,
   pecaEncontrada,
+  buscarEMontarAnuncio,
+  processando,
 }) {
   return (
     <div style={{ marginTop: "20px" }}>
@@ -22,6 +24,24 @@ export default function DadosPrincipaisAnuncio({
         onChange={(e) =>
           setCodigo(e.target.value)
         }
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") {
+            return;
+          }
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (processando) {
+            return;
+          }
+
+          if (!String(codigo || "").trim()) {
+            return;
+          }
+
+          buscarEMontarAnuncio();
+        }}
         placeholder="Código da peça"
         style={inputStyle}
       />

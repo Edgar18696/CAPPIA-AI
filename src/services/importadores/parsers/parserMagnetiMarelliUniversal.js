@@ -4347,6 +4347,44 @@ export async function parserMagnetiMarelliUniversal({
       .trim()
       .toLowerCase();
 
+  const origemCatalogo =
+    String(
+      configuracao?.origemCatalogo ||
+      ""
+    );
+
+  const ehMm2020 =
+    /Electronic Systems and Ignition 2020/i.test(
+      origemCatalogo
+    );
+
+  if (
+    ehMm2020 &&
+    configuracao?.pdfPath
+  ) {
+    const fs = await import("fs");
+    const pdfjs = await import(
+      "pdfjs-dist/legacy/build/pdf.mjs"
+    ).catch(() =>
+      import("pdfjs-dist/build/pdf.mjs")
+    );
+    const { parsearMm2020Geometrico } =
+      await import("./parserMm2020Geometrico.js");
+    const data = new Uint8Array(
+      fs.readFileSync(configuracao.pdfPath)
+    );
+    const doc = await pdfjs
+      .getDocument({ data, verbosity: 0 })
+      .promise;
+    onProgresso?.(
+      "Parser geométrico MM 2020 (TYPE + Y)..."
+    );
+    return parsearMm2020Geometrico(
+      doc,
+      onProgresso
+    );
+  }
+
   /*
    * ========================================================
    * TEXTOS

@@ -1,7 +1,9 @@
+import { useState } from "react";
 import {
   ehTelaNovaCriacaoMidia,
   prepararNovaCriacaoMidia,
 } from "../services/limparEstadoTemporarioMidia";
+import { ROTULO_CONTA_INTERNA_TESTE } from "../config/contasInternasPaiia";
 
 export default function Home({
   totalFotos,
@@ -10,9 +12,25 @@ export default function Home({
   cardStyle,
   setScreen,
   ehAdministrador = false,
+  ehContaInternaTeste = false,
   mostrarPaizinho = false,
   setMostrarPaizinho,
 }) {
+  const [tarefaPaizinhoSelecionada, setTarefaPaizinhoSelecionada] =
+    useState("");
+  const [pedidoPaizinho, setPedidoPaizinho] = useState("");
+
+  const tarefasPaizinho = [
+    "🔍 Encontrar anúncios que não estão vendendo",
+    "📊 Analisar preços e concorrência",
+    "📈 Encontrar oportunidades para vender mais",
+    "📸 Verificar e melhorar fotos dos anúncios",
+    "🔗 Encontrar códigos equivalentes e OEM",
+    "🚗 Conferir aplicações e compatibilidade",
+    "✍️ Melhorar títulos e descrições",
+    "💰 Verificar preço, margem e estratégia de venda",
+    "🚀 Encontrar anúncios que podem subir no ranking",
+  ];
 
   const cards = [
     {
@@ -133,17 +151,6 @@ export default function Home({
     setScreen(card.tela);
   }
 
-  function abrirPeloPaizinho(
-    tela
-  ) {
-    if (ehTelaNovaCriacaoMidia(tela)) {
-      prepararNovaCriacaoMidia();
-    }
-
-    setMostrarPaizinho(false);
-    setScreen(tela);
-  }
-
   return (
     <div
       className="paiia-home-conteudo"
@@ -157,6 +164,24 @@ export default function Home({
       }}
     >
       <h1 className="paiia-home-marca">🚀 PAIIA AI</h1>
+
+      {ehContaInternaTeste && (
+        <p
+          style={{
+            display: "inline-block",
+            margin: "0 auto 18px",
+            padding: "8px 14px",
+            borderRadius: "999px",
+            border: "1px solid #fbbf24",
+            background: "rgba(120,53,15,.45)",
+            color: "#fde68a",
+            fontWeight: 800,
+            fontSize: "13px",
+          }}
+        >
+          {ROTULO_CONTA_INTERNA_TESTE} — conta interna, não é cliente pagante
+        </p>
+      )}
 
       <p
         className="paiia-home-slogan"
@@ -429,13 +454,14 @@ export default function Home({
                   style={{
                     color: "#fff",
                     fontSize:
-                      "32px",
+                      "clamp(22px, 4.2vw, 32px)",
                     margin:
                       "8px 0 10px",
+                    paddingRight: "36px",
+                    lineHeight: 1.2,
                   }}
                 >
-                  Veja como eu posso
-                  ajudar.
+                  Paizinho trabalha enquanto você dorme!
                 </h2>
 
                 <p
@@ -445,124 +471,99 @@ export default function Home({
                     lineHeight:
                       1.65,
                     marginBottom:
-                      "14px",
+                      "16px",
                     fontSize:
                       "16px",
                   }}
                 >
-                  Com o PAIIA, seu anúncio
-                  trabalha melhor por você.
-                  Inteligência artificial,
-                  palavras-chave estratégicas,
-                  análise de preços e
-                  inteligência de mercado
-                  ajudam a deixar seu produto
-                  mais competitivo e em
-                  evidência.
+                  O que você quer que eu faça?
                 </p>
-
-                <div
-                  style={{
-                    marginBottom:
-                      "22px",
-                    padding:
-                      "13px 15px",
-                    borderRadius:
-                      "14px",
-                    background:
-                      "rgba(14,165,233,.10)",
-                    border:
-                      "1px solid rgba(56,189,248,.28)",
-                    color:
-                      "#bae6fd",
-                    fontWeight:
-                      800,
-                    lineHeight:
-                      1.45,
-                  }}
-                >
-                  PAIIA AI. Transformando
-                  imagens em vendas.
-                </div>
 
                 <div
                   style={{
                     display:
                       "grid",
                     gridTemplateColumns:
-                      "repeat(auto-fit, minmax(min(100%, 160px), 1fr))",
-                    gap: "12px",
+                      "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+                    gap: "10px",
+                    marginBottom: "18px",
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      abrirPeloPaizinho(
-                        "novoAnuncio"
-                      )
-                    }
-                    style={
-                      botaoPaizinho
-                    }
-                  >
-                    🚀 Criar Anúncio
-                  </button>
+                  {tarefasPaizinho.map((tarefa) => {
+                    const selecionada =
+                      tarefaPaizinhoSelecionada === tarefa;
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      abrirPeloPaizinho(
-                        "foto"
-                      )
-                    }
-                    style={
-                      botaoPaizinho
-                    }
-                  >
-                    📸 Foto IA
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      abrirPeloPaizinho(
-                        "bannerStudio"
-                      )
-                    }
-                    style={
-                      botaoPaizinho
-                    }
-                  >
-                    ⚡ Banner Express
-                  </button>
-
-                  
+                    return (
+                      <button
+                        key={tarefa}
+                        type="button"
+                        onClick={() =>
+                          setTarefaPaizinhoSelecionada(tarefa)
+                        }
+                        style={{
+                          ...botaoPaizinho,
+                          textAlign: "left",
+                          fontSize: "13px",
+                          padding: "12px 14px",
+                          border: selecionada
+                            ? "1px solid #38bdf8"
+                            : "1px solid #334155",
+                          background: selecionada
+                            ? "linear-gradient(135deg,#082f49,#155e75)"
+                            : botaoPaizinho.background,
+                          boxShadow: selecionada
+                            ? "0 0 0 1px rgba(56,189,248,.35)"
+                            : "none",
+                        }}
+                      >
+                        {tarefa}
+                      </button>
+                    );
+                  })}
                 </div>
 
-                <div
+                <textarea
+                  value={pedidoPaizinho}
+                  onChange={(evento) =>
+                    setPedidoPaizinho(evento.target.value)
+                  }
+                  placeholder="Ex.: Veja meus anúncios que não estão vendendo e descubra o motivo..."
+                  rows={4}
                   style={{
-                    marginTop:
-                      "22px",
-                    padding:
-                      "14px 16px",
-                    borderRadius:
-                      "14px",
+                    width: "100%",
+                    boxSizing: "border-box",
+                    resize: "vertical",
+                    minHeight: "96px",
+                    marginBottom: "14px",
+                    padding: "14px 16px",
+                    borderRadius: "14px",
+                    border: "1px solid #334155",
+                    background: "#020617",
+                    color: "#fff",
+                    fontSize: "15px",
+                    lineHeight: 1.5,
+                    outline: "none",
+                  }}
+                />
+
+                <button
+                  type="button"
+                  style={{
+                    width: "100%",
+                    border: "1px solid #38bdf8",
+                    borderRadius: "14px",
+                    padding: "16px 18px",
                     background:
-                      "rgba(8,145,178,.10)",
-                    border:
-                      "1px solid rgba(34,211,238,.25)",
-                    color:
-                      "#bae6fd",
-                    fontSize:
-                      "14px",
-                    lineHeight:
-                      1.5,
+                      "linear-gradient(135deg,#1d4ed8,#0891b2)",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontWeight: 800,
+                    fontSize: "16px",
+                    textAlign: "center",
                   }}
                 >
-                  💙 Da peça ao anúncio.
-                  Da imagem à venda.
-                  Esse é o PAIIA.
-                </div>
+                  ▶ Deixa com o Paizinho
+                </button>
               </div>
             </div>
           </div>

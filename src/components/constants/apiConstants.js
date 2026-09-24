@@ -8,4 +8,4 @@ export const API_PROCESSAR_CLIP =
   "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/processar-clip";
 
 export const API_PROCESSAR_FOTO =
-  "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/processar-foto";
+  "https://arqzpqkkpwikyecdbopf.supabase.co/functions/v1/foto-profissional";

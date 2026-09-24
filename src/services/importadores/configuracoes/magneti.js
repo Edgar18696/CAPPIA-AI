@@ -463,13 +463,13 @@ bicosInjetores2016: {
         "Catálogo Magneti Marelli Electronic Systems and Ignition 2020",
 
       paginaInicialAplicacoes: 15,
-      paginaFinalAplicacoes: 480,
+      paginaFinalAplicacoes: 1250,
 
-      paginaInicialReferencias: 481,
-      paginaFinalReferencias: 652,
+      paginaInicialReferencias: 2200,
+      paginaFinalReferencias: 2396,
 
-      paginaInicialEquivalencias: 653,
-      paginaFinalEquivalencias: 672,
+      paginaInicialEquivalencias: 2200,
+      paginaFinalEquivalencias: 2396,
 
       palavrasChave: [
         "electronic systems and ignition",

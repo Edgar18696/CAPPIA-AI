@@ -522,7 +522,11 @@ if (
     )
   ) {
     chaveForcada =
-      "bicosInjetores2016";
+      arquivoNormalizado.includes(
+        "2016"
+      )
+        ? "bicosInjetores2016"
+        : "sistemasEletronicos";
 
   /*
    * =======================================================

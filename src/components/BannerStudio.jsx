@@ -7,9 +7,39 @@
 
 import { supabase } from "../supabase";
 import {
+  assinaturaArteBanner,
+  extrairPrecoDoTexto,
+  formatarPrecoBanner,
+  formatoCitadoNoTexto,
+} from "../services/banner/bannerTexto.js";
+import {
   consumirNovaCriacaoMidia,
   deveIniciarNovaCriacaoMidia,
 } from "../services/limparEstadoTemporarioMidia";
+import {
+  CHAMADAS_MERCADO_LIVRE,
+  dadosComerciaisDoBanner,
+  descreverZonaProduto,
+  descreverZonasLivres,
+  mapearParaQuadroIA,
+  planejarLayout,
+  tamanhoQuadroIA,
+  textoChamadaMercadoLivre,
+} from "../services/banner/composicaoBanner.js";
+import {
+  montarBannerProfissional,
+  montarBaseCenarioParaIA,
+} from "../services/banner/desenhoBanner.js";
+import { gerarCenarioComIA } from "../services/banner/bannerIA.js";
+import { buscarMascoteOficial } from "../services/mascoteMarcaService";
+
+const EXIBIR_PADRAO = {
+  logo: true,
+  preco: true,
+  codigo: true,
+  site: true,
+  whatsapp: true,
+};
 
 const FORMATOS = {
   instagram: {
@@ -125,77 +155,47 @@ const MODELOS_DESCRICAO = [
   },
   
 ];
-const CAMPOS_TECNICOS = {
-  sonda: {
-    nome: "Sonda Lambda",
-    campos: [
-      "Quantidade de fios",
-      "Quantidade de pinos / vias",
-      "Comprimento do chicote",
-      "Conector / terminal",
-    ],
+// Chamadas comerciais de cada estilo (sem prometer nada que o usuário não
+// informou: nada de prazo, garantia, desconto ou aplicação inventados).
+const COPIA_POR_ESTILO = {
+  oferta: {
+    objetivo: "oferta",
+    titulo: "OFERTA ESPECIAL",
+    apoio: "Aproveite esta condição",
+    cta: "APROVEITE AGORA",
   },
-
-  bico: {
-    nome: "Bico Injetor",
-    campos: [
-      "Quantidade de furos",
-      "Tipo de conector",
-      "Encaixe / O-ring",
-      "Detalhe técnico",
-    ],
+  produto: {
+    objetivo: "produto",
+    titulo: "PRODUTO EM DESTAQUE",
+    apoio: "Consulte a aplicação antes da compra",
+    cta: "CONSULTE AGORA",
   },
-
-  vela: {
-    nome: "Vela de Ignição",
-    campos: [
-      "Rosca",
-      "Medida da chave",
-      "Comprimento da rosca",
-      "Tipo de eletrodo",
-    ],
+  premium: {
+    objetivo: "produto",
+    titulo: "QUALIDADE PREMIUM",
+    apoio: "Desempenho e confiança para o seu carro",
+    cta: "FALE COM A GENTE",
   },
-
-  bomba: {
-    nome: "Bomba de Combustível",
-    campos: [
-      "Conexão de entrada",
-      "Conexão de saída",
-      "Conector elétrico",
-      "Diâmetro / medida",
-    ],
+  estoque: {
+    objetivo: "produto",
+    titulo: "PRONTA ENTREGA",
+    apoio: "Produto disponível para envio",
+    cta: "FALE COM A GENTE",
   },
-
-  sensor: {
-    nome: "Sensor",
-    campos: [
-      "Quantidade de pinos",
-      "Tipo de conector",
-      "Tipo de fixação",
-      "Detalhe técnico",
-    ],
+  institucional: {
+    objetivo: "institucional",
+    titulo: "COMUNICADO",
+    apoio: "Informação importante para nossos clientes",
+    cta: "SAIBA MAIS",
   },
-
-  bobina: {
-    nome: "Bobina de Ignição",
-    campos: [
-      "Quantidade de pinos",
-      "Tipo de conector",
-      "Tipo de encaixe",
-      "Detalhe técnico",
-    ],
-  },
-
-  generico: {
-    nome: "Outro produto",
-    campos: [
-      "Detalhe técnico 1",
-      "Detalhe técnico 2",
-      "Detalhe técnico 3",
-      "Detalhe técnico 4",
-    ],
+  qualidade: {
+    objetivo: "produto",
+    titulo: "QUALIDADE QUE SEU CARRO MERECE",
+    apoio: "Qualidade e confiança",
+    cta: "CONSULTE AGORA",
   },
 };
+
 const PALETAS = {
   azul: {
     nome: "Azul Elétrico",
@@ -260,42 +260,6 @@ const PALETAS = {
  * 9. Exportação no tamanho real do formato selecionado.
  * 10. Layout alternativo automático sem exigir editor manual.
  */
-const COMANDOS_BANNER_IA = {
-  oferta: {
-    prioridade: "preco",
-    tituloCurto: true,
-    cta: "COMPRE AGORA",
-    selo: "OFERTA ESPECIAL",
-    regra:
-      "Produto grande, preço dominante e chamada curta.",
-  },
-  produto: {
-    prioridade: "produto",
-    tituloCurto: true,
-    cta: "CONSULTE APLICAÇÕES",
-    selo: "PRODUTO EM DESTAQUE",
-    regra:
-      "Produto dominante, título técnico e benefício curto.",
-  },
-  horario: {
-    prioridade: "informacao",
-    tituloCurto: true,
-    cta: "FALE COM A GENTE",
-    selo: "ATENDIMENTO",
-    regra:
-      "Horário legível, marca forte e contato visível.",
-  },
-  institucional: {
-    prioridade: "mensagem",
-    tituloCurto: true,
-    cta: "SAIBA MAIS",
-    selo: "COMUNICADO",
-    regra:
-      "Mensagem principal limpa, marca e contato bem distribuídos.",
-  },
-};
-
-
 const COPYS_AUTOMATICAS = {
   oferta: [
     {
@@ -427,6 +391,73 @@ function escaparHtml(valor = "") {
     .replace(/>/g, "&gt;");
 }
 
+// Limita a foto a um tamanho seguro antes da remoção de fundo
+// (celular não trava nem estoura memória). Só escala uniforme.
+const LADO_MAXIMO_PRODUTO_BANNER = 1600;
+
+function limitarTamanhoImagem(imagem, ladoMaximo = LADO_MAXIMO_PRODUTO_BANNER) {
+  const largura = imagem.naturalWidth || imagem.width;
+  const altura = imagem.naturalHeight || imagem.height;
+  const maior = Math.max(largura, altura);
+
+  if (!maior || maior <= ladoMaximo) {
+    return imagem;
+  }
+
+  const escala = ladoMaximo / maior;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(largura * escala));
+  canvas.height = Math.max(1, Math.round(altura * escala));
+  const contexto = canvas.getContext("2d");
+  contexto.imageSmoothingEnabled = true;
+  contexto.imageSmoothingQuality = "high";
+  contexto.drawImage(imagem, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+// Guarda o logo ORIGINAL importado pelo usuário (mesmo arquivo, sem
+// reprocessar). Só um arquivo muito grande é reduzido em tamanho, em PNG,
+// mantendo proporção, cores e transparência.
+async function reduzirLogo(arquivo, ladoMaximo = 1024) {
+  const dataUrl = await lerArquivoComoDataUrl(arquivo);
+  const imagem = await carregarImagemParaCanvas(dataUrl);
+
+  if (dataUrl.length < 1200000) {
+    return dataUrl;
+  }
+
+  const reduzida = limitarTamanhoImagem(imagem, ladoMaximo);
+
+  const canvas =
+    reduzida instanceof HTMLCanvasElement
+      ? reduzida
+      : (() => {
+          const c = document.createElement("canvas");
+          c.width = imagem.naturalWidth || imagem.width;
+          c.height = imagem.naturalHeight || imagem.height;
+          c.getContext("2d").drawImage(imagem, 0, 0);
+          return c;
+        })();
+
+  return canvas.toDataURL("image/png");
+}
+
+function salvarKitMarcaLocal(marca) {
+  try {
+    localStorage.setItem("appiaKitMarca", JSON.stringify(marca));
+  } catch {
+    // Sem espaço no navegador: tenta guardar sem o logo.
+    try {
+      localStorage.setItem(
+        "appiaKitMarca",
+        JSON.stringify({ ...marca, logo: "" })
+      );
+    } catch {
+      // armazenamento local indisponível; a tela continua funcionando
+    }
+  }
+}
+
 function carregarImagemParaCanvas(fonte) {
   return new Promise((resolve, reject) => {
     const imagem = new Image();
@@ -439,43 +470,144 @@ function carregarImagemParaCanvas(fonte) {
   });
 }
 
-function desenharImagemContida(
-  contexto,
-  imagem,
-  area,
-  margem = 0
-) {
-  const larguraDisponivel = Math.max(
-    1,
-    area.largura - margem * 2
-  );
-  const alturaDisponivel = Math.max(
-    1,
-    area.altura - margem * 2
-  );
-  const larguraImagem =
-    imagem.naturalWidth || imagem.width;
-  const alturaImagem =
-    imagem.naturalHeight || imagem.height;
-  const escala = Math.min(
-    larguraDisponivel / larguraImagem,
-    alturaDisponivel / alturaImagem
-  );
-  const largura = larguraImagem * escala;
-  const altura = alturaImagem * escala;
-  const x = area.x + (area.largura - largura) / 2;
-  const y = area.y + (area.altura - altura) / 2;
 
-  contexto.drawImage(
-    imagem,
-    x,
-    y,
-    largura,
-    altura
-  );
+// =====================================================
+// REMOÇÃO DE FUNDO BRANCO — PROTEGIDA (Banner Express)
+// - Só remove fundo claro e uniforme ligado às bordas da foto.
+// - Borda "degrau" (sombra/contorno) interrompe a remoção, então
+//   peças brancas/claras não são "comidas".
+// - Se a remoção tolerante apagar bem mais que a conservadora,
+//   usa a conservadora. Se o resultado parecer errado, mantém a
+//   foto original. A peça nunca é redesenhada ou alterada: só os
+//   pixels do fundo ficam transparentes.
+// =====================================================
+function analisarFundoPelaBorda(pixels, largura, altura) {
+  const amostras = [];
+  const passo = Math.max(1, Math.floor(Math.max(largura, altura) / 400));
+
+  const coletar = (x, y) => {
+    const i = (y * largura + x) * 4;
+    amostras.push([pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]);
+  };
+
+  for (let x = 0; x < largura; x += passo) {
+    coletar(x, 0);
+    coletar(x, altura - 1);
+  }
+  for (let y = 0; y < altura; y += passo) {
+    coletar(0, y);
+    coletar(largura - 1, y);
+  }
+
+  const claros = amostras.filter(([r, g, b, a]) => {
+    if (a <= 12) return true;
+    const minimo = Math.min(r, g, b);
+    const maximo = Math.max(r, g, b);
+    return minimo >= 225 && maximo - minimo <= 24;
+  });
+
+  const fracaoClara = amostras.length
+    ? claros.length / amostras.length
+    : 0;
+
+  const mediana = (canal) => {
+    const valores = claros
+      .filter((item) => item[3] > 12)
+      .map((item) => item[canal])
+      .sort((a, b) => a - b);
+    return valores.length
+      ? valores[Math.floor(valores.length / 2)]
+      : 255;
+  };
+
+  return {
+    fracaoClara,
+    fundo: [mediana(0), mediana(1), mediana(2)],
+  };
 }
 
-function removerFundoBrancoConectadoAsBordas(imagem) {
+function inundarFundo({
+  pixels,
+  largura,
+  altura,
+  fundo,
+  tolerancia,
+  degrauMaximo,
+}) {
+  const total = largura * altura;
+  const removidos = new Uint8Array(total);
+  const fila = new Int32Array(total);
+  let inicioFila = 0;
+  let fimFila = 0;
+
+  const pertoDoFundo = (indicePixel) => {
+    const i = indicePixel * 4;
+    if (pixels[i + 3] <= 12) return true;
+    return (
+      Math.abs(pixels[i] - fundo[0]) <= tolerancia &&
+      Math.abs(pixels[i + 1] - fundo[1]) <= tolerancia &&
+      Math.abs(pixels[i + 2] - fundo[2]) <= tolerancia
+    );
+  };
+
+  const degrau = (a, b) => {
+    const i = a * 4;
+    const j = b * 4;
+    return Math.max(
+      Math.abs(pixels[i] - pixels[j]),
+      Math.abs(pixels[i + 1] - pixels[j + 1]),
+      Math.abs(pixels[i + 2] - pixels[j + 2])
+    );
+  };
+
+  const tentar = (indicePixel, origem) => {
+    if (removidos[indicePixel]) return;
+    if (!pertoDoFundo(indicePixel)) return;
+    if (origem >= 0 && degrau(indicePixel, origem) > degrauMaximo) return;
+    removidos[indicePixel] = 1;
+    fila[fimFila] = indicePixel;
+    fimFila += 1;
+  };
+
+  for (let x = 0; x < largura; x += 1) {
+    tentar(x, -1);
+    tentar((altura - 1) * largura + x, -1);
+  }
+  for (let y = 1; y < altura - 1; y += 1) {
+    tentar(y * largura, -1);
+    tentar(y * largura + largura - 1, -1);
+  }
+
+  while (inicioFila < fimFila) {
+    const atual = fila[inicioFila];
+    inicioFila += 1;
+    const x = atual % largura;
+    const y = Math.floor(atual / largura);
+    if (x > 0) tentar(atual - 1, atual);
+    if (x + 1 < largura) tentar(atual + 1, atual);
+    if (y > 0) tentar(atual - largura, atual);
+    if (y + 1 < altura) tentar(atual + largura, atual);
+  }
+
+  return { removidos, quantidade: fimFila };
+}
+
+function removerFundoBrancoConectadoAsBordas(imagem, opcoes = {}) {
+  const resultado = removerFundoBrancoProtegido(imagem, opcoes);
+  return resultado.imagem;
+}
+
+function removerFundoBrancoProtegido(imagem, opcoes = {}) {
+  const semRemocao = (motivo) => ({
+    imagem,
+    aplicado: false,
+    motivo,
+  });
+
+  if (opcoes?.ativo === false) {
+    return semRemocao("desativado");
+  }
+
   const largura = imagem.naturalWidth || imagem.width;
   const altura = imagem.naturalHeight || imagem.height;
   const canvas = document.createElement("canvas");
@@ -487,7 +619,7 @@ function removerFundoBrancoConectadoAsBordas(imagem) {
   });
 
   if (!contexto || !largura || !altura) {
-    return imagem;
+    return semRemocao("sem-canvas");
   }
 
   contexto.drawImage(imagem, 0, 0, largura, altura);
@@ -496,69 +628,55 @@ function removerFundoBrancoConectadoAsBordas(imagem) {
   try {
     dadosImagem = contexto.getImageData(0, 0, largura, altura);
   } catch {
-    return imagem;
+    return semRemocao("imagem-protegida");
   }
 
   const pixels = dadosImagem.data;
   const total = largura * altura;
-  const visitados = new Uint8Array(total);
-  const fila = new Int32Array(total);
-  let inicioFila = 0;
-  let fimFila = 0;
+  const { fracaoClara, fundo } = analisarFundoPelaBorda(
+    pixels,
+    largura,
+    altura
+  );
 
-  const ehBrancoDeFundo = (indicePixel) => {
-    const indice = indicePixel * 4;
-    const vermelho = pixels[indice];
-    const verde = pixels[indice + 1];
-    const azul = pixels[indice + 2];
-    const alpha = pixels[indice + 3];
-    const minimo = Math.min(vermelho, verde, azul);
-    const maximo = Math.max(vermelho, verde, azul);
-
-    return alpha <= 12 || (
-      minimo >= 232 &&
-      maximo - minimo <= 24
-    );
-  };
-
-  const tentarAdicionar = (indicePixel) => {
-    if (
-      indicePixel < 0 ||
-      indicePixel >= total ||
-      visitados[indicePixel]
-    ) {
-      return;
-    }
-
-    visitados[indicePixel] = 1;
-    if (ehBrancoDeFundo(indicePixel)) {
-      fila[fimFila] = indicePixel;
-      fimFila += 1;
-    }
-  };
-
-  for (let x = 0; x < largura; x += 1) {
-    tentarAdicionar(x);
-    tentarAdicionar((altura - 1) * largura + x);
+  // Fundo não é branco/uniforme: não mexe na foto.
+  if (fracaoClara < 0.6) {
+    return semRemocao("fundo-nao-uniforme");
   }
 
-  for (let y = 1; y < altura - 1; y += 1) {
-    tentarAdicionar(y * largura);
-    tentarAdicionar(y * largura + largura - 1);
+  const tolerante = inundarFundo({
+    pixels,
+    largura,
+    altura,
+    fundo,
+    tolerancia: 20,
+    degrauMaximo: 10,
+  });
+  const conservadora = inundarFundo({
+    pixels,
+    largura,
+    altura,
+    fundo,
+    tolerancia: 8,
+    degrauMaximo: 6,
+  });
+
+  // Se a versão tolerante apaga muito mais, provavelmente entrou
+  // em partes claras da peça: usa a conservadora.
+  const diferenca =
+    (tolerante.quantidade - conservadora.quantidade) / total;
+  const escolhida = diferenca > 0.06 ? conservadora : tolerante;
+
+  const restantes = total - escolhida.quantidade;
+  if (restantes < total * 0.02) {
+    // Sobraria quase nada: foto provavelmente toda clara.
+    return semRemocao("peca-clara-demais");
   }
 
-  while (inicioFila < fimFila) {
-    const indicePixel = fila[inicioFila];
-    inicioFila += 1;
-    const x = indicePixel % largura;
-    const y = Math.floor(indicePixel / largura);
-
-    pixels[indicePixel * 4 + 3] = 0;
-
-    if (x > 0) tentarAdicionar(indicePixel - 1);
-    if (x + 1 < largura) tentarAdicionar(indicePixel + 1);
-    if (y > 0) tentarAdicionar(indicePixel - largura);
-    if (y + 1 < altura) tentarAdicionar(indicePixel + largura);
+  for (let indicePixel = 0; indicePixel < total; indicePixel += 1) {
+    if (escolhida.removidos[indicePixel]) {
+      pixels[indicePixel * 4 + 3] = 0;
+    }
   }
 
   contexto.putImageData(dadosImagem, 0, 0);
@@ -580,7 +698,7 @@ function removerFundoBrancoConectadoAsBordas(imagem) {
   }
 
   if (maximoX < minimoX || maximoY < minimoY) {
-    return imagem;
+    return semRemocao("sem-peca");
   }
 
   const margemSegura = Math.max(
@@ -598,7 +716,13 @@ function removerFundoBrancoConectadoAsBordas(imagem) {
   recorte.height = limiteY - origemY;
   const contextoRecorte = recorte.getContext("2d");
 
-  if (!contextoRecorte) return canvas;
+  if (!contextoRecorte) {
+    return {
+      imagem: canvas,
+      aplicado: true,
+      motivo: escolhida === conservadora ? "conservadora" : "normal",
+    };
+  }
 
   contextoRecorte.drawImage(
     canvas,
@@ -612,393 +736,91 @@ function removerFundoBrancoConectadoAsBordas(imagem) {
     recorte.height
   );
 
-  return recorte;
-}
-
-function quebrarTexto(contexto, texto, larguraMaxima) {
-  const palavras = String(texto || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  const linhas = [];
-  let linha = "";
-
-  for (const palavra of palavras) {
-    const candidata = linha
-      ? `${linha} ${palavra}`
-      : palavra;
-
-    if (
-      linha &&
-      contexto.measureText(candidata).width > larguraMaxima
-    ) {
-      linhas.push(linha);
-      linha = palavra;
-    } else {
-      linha = candidata;
-    }
-  }
-
-  if (linha) linhas.push(linha);
-  return linhas;
-}
-
-function prepararBlocoTexto({
-  contexto,
-  texto,
-  largura,
-  tamanhoInicial,
-  tamanhoMinimo,
-  peso,
-  maximoLinhas,
-  fatorAltura = 1.12,
-}) {
-  let tamanho = tamanhoInicial;
-  let linhas = [];
-
-  while (tamanho >= tamanhoMinimo) {
-    contexto.font = `${peso} ${tamanho}px Arial`;
-    linhas = quebrarTexto(contexto, texto, largura);
-    if (
-      linhas.length <= maximoLinhas &&
-      linhas.every((linha) => contexto.measureText(linha).width <= largura)
-    ) {
-      break;
-    }
-    tamanho -= 2;
-  }
-
-  contexto.font = `${peso} ${Math.max(tamanho, tamanhoMinimo)}px Arial`;
-  linhas = quebrarTexto(contexto, texto, largura);
-
-  if (linhas.length > maximoLinhas) {
-    linhas = linhas.slice(0, maximoLinhas);
-    let ultima = linhas[maximoLinhas - 1];
-    while (
-      ultima.length > 1 &&
-      contexto.measureText(`${ultima}…`).width > largura
-    ) {
-      ultima = ultima.slice(0, -1).trimEnd();
-    }
-    linhas[maximoLinhas - 1] = `${ultima}…`;
-  }
-
   return {
-    linhas,
-    tamanho: Math.max(tamanho, tamanhoMinimo),
-    alturaLinha: Math.ceil(Math.max(tamanho, tamanhoMinimo) * fatorAltura),
+    imagem: recorte,
+    aplicado: true,
+    motivo: escolhida === conservadora ? "conservadora" : "normal",
   };
 }
 
-function desenharBlocoTexto(contexto, bloco, x, y) {
-  bloco.linhas.forEach((linha, indice) => {
-    contexto.fillText(linha, x, y + indice * bloco.alturaLinha);
-  });
-  return y + bloco.linhas.length * bloco.alturaLinha;
-}
+// Foto original do banner: nunca vai em base64 para o banco.
+// Se não for URL, sobe para o Storage e devolve a URL pública.
+async function obterUrlImagemOriginalBanner(
+  fonte,
+  usuarioId,
+  carimbo
+) {
+  const valor = String(fonte || "").trim();
 
-function limitarTextoEmUmaLinha(contexto, texto, larguraMaxima) {
-  const original = String(texto || "").trim();
-  if (contexto.measureText(original).width <= larguraMaxima) {
-    return original;
+  if (!valor) {
+    return null;
   }
 
-  let reduzido = original;
-  while (
-    reduzido.length > 1 &&
-    contexto.measureText(`${reduzido}…`).width > larguraMaxima
+  if (/^https?:\/\//i.test(valor)) {
+    return valor;
+  }
+
+  if (
+    !valor.startsWith("data:") &&
+    !valor.startsWith("blob:")
   ) {
-    reduzido = reduzido.slice(0, -1).trimEnd();
-  }
-  return `${reduzido}…`;
-}
-
-async function criarBannerDeterministico({
-  formato,
-  paleta,
-  paletaId,
-  imagemProduto,
-  logo,
-  nomeEmpresa,
-  chamada,
-  titulo,
-  apoio,
-  preco,
-  contato,
-  rodape,
-  layout,
-}) {
-  const canvas = document.createElement("canvas");
-  canvas.width = formato.largura;
-  canvas.height = formato.altura;
-
-  const contexto = canvas.getContext("2d");
-  if (!contexto) {
-    throw new Error("Não foi possível montar o banner.");
+    return null;
   }
 
-  contexto.imageSmoothingEnabled = true;
-  contexto.imageSmoothingQuality = "high";
+  try {
+    const resposta = await fetch(valor);
+    const blob = await resposta.blob();
 
-  const largura = canvas.width;
-  const altura = canvas.height;
-  const claro = paletaId === "clean";
-  const gradiente = contexto.createLinearGradient(
-    0,
-    0,
-    largura,
-    altura
-  );
+    if (!blob?.size) {
+      return null;
+    }
 
-  if (claro) {
-    gradiente.addColorStop(0, "#ffffff");
-    gradiente.addColorStop(0.58, "#eff6ff");
-    gradiente.addColorStop(1, "#bfdbfe");
-  } else if (paletaId === "vermelho") {
-    gradiente.addColorStop(0, "#120407");
-    gradiente.addColorStop(0.58, "#4c0519");
-    gradiente.addColorStop(1, "#b91c1c");
-  } else if (paletaId === "escuro") {
-    gradiente.addColorStop(0, "#020617");
-    gradiente.addColorStop(0.62, "#0f172a");
-    gradiente.addColorStop(1, "#0c4a6e");
-  } else {
-    gradiente.addColorStop(0, "#020617");
-    gradiente.addColorStop(0.58, "#071a3d");
-    gradiente.addColorStop(1, "#0b3ea8");
+    const extensao =
+      blob.type === "image/jpeg"
+        ? "jpg"
+        : blob.type === "image/webp"
+          ? "webp"
+          : "png";
+
+    const caminho =
+      `${usuarioId}/banners/paiia-banner-${carimbo}-original.${extensao}`;
+
+    const { error: erroUpload } =
+      await supabase.storage
+        .from("imagens")
+        .upload(caminho, blob, {
+          contentType:
+            blob.type || "image/png",
+          upsert: true,
+        });
+
+    if (erroUpload) {
+      console.warn(
+        "Foto original do banner não enviada ao Storage:",
+        erroUpload
+      );
+      return null;
+    }
+
+    const { data: dadosPublicos } =
+      supabase.storage
+        .from("imagens")
+        .getPublicUrl(caminho);
+
+    return dadosPublicos?.publicUrl || null;
+  } catch (erro) {
+    console.warn(
+      "Foto original do banner não enviada ao Storage:",
+      erro
+    );
+    return null;
   }
-
-  contexto.fillStyle = gradiente;
-  contexto.fillRect(0, 0, largura, altura);
-
-  const brilho = contexto.createRadialGradient(
-    largura * 0.84,
-    altura * 0.16,
-    0,
-    largura * 0.84,
-    altura * 0.16,
-    Math.max(largura, altura) * 0.42
-  );
-  brilho.addColorStop(0, claro
-    ? "rgba(8,145,178,.22)"
-    : "rgba(103,232,249,.30)");
-  brilho.addColorStop(1, "rgba(0,0,0,0)");
-  contexto.fillStyle = brilho;
-  contexto.fillRect(0, 0, largura, altura);
-
-  const margem = Math.round(Math.min(largura, altura) * 0.055);
-  const espaco = Math.round(margem * 0.6);
-  const topo = Math.round(altura * 0.14);
-  const rodapeAltura = Math.round(altura * 0.105);
-  const conteudoAltura = altura - topo - rodapeAltura - margem;
-  const produtoNaDireita = layout === 2;
-  const larguraProduto = Math.round(largura * 0.46);
-  const areaProduto = {
-    x: produtoNaDireita
-      ? largura - margem - larguraProduto
-      : margem,
-    y: topo,
-    largura: larguraProduto,
-    altura: conteudoAltura,
-  };
-  const areaTexto = {
-    x: produtoNaDireita
-      ? margem
-      : areaProduto.x + areaProduto.largura + espaco,
-    y: topo + Math.round(conteudoAltura * 0.12),
-    largura:
-      largura - margem * 2 - larguraProduto - espaco,
-    altura: conteudoAltura,
-  };
-
-  const produtoOriginal = await carregarImagemParaCanvas(
-    imagemProduto
-  );
-  const produto = removerFundoBrancoConectadoAsBordas(
-    produtoOriginal
-  );
-  contexto.save();
-  contexto.shadowColor = "rgba(2,6,23,.30)";
-  contexto.shadowBlur = Math.round(margem * 0.65);
-  contexto.shadowOffsetY = Math.round(margem * 0.22);
-  desenharImagemContida(
-    contexto,
-    produto,
-    areaProduto,
-    Math.round(margem * 0.45)
-  );
-  contexto.restore();
-
-  if (logo) {
-    const imagemLogo = await carregarImagemParaCanvas(logo);
-    desenharImagemContida(
-      contexto,
-      imagemLogo,
-      {
-        x: margem,
-        y: Math.round(margem * 0.55),
-        largura: Math.round(largura * 0.12),
-        altura: Math.round(altura * 0.075),
-      }
-    );
-  }
-
-  contexto.fillStyle = paleta.texto;
-  contexto.textBaseline = "top";
-  contexto.font = `800 ${Math.max(18, Math.round(largura * 0.022))}px Arial`;
-  contexto.fillText(
-    String(nomeEmpresa || "PAIIA").toUpperCase(),
-    logo
-      ? margem + Math.round(largura * 0.135)
-      : margem,
-    Math.round(margem * 0.7)
-  );
-
-  contexto.fillStyle = paleta.destaque;
-  const blocoChamada = prepararBlocoTexto({
-    contexto,
-    texto: String(chamada || "PRODUTO EM DESTAQUE").toUpperCase(),
-    largura: areaTexto.largura,
-    tamanhoInicial: Math.max(16, Math.round(largura * 0.021)),
-    tamanhoMinimo: Math.max(13, Math.round(largura * 0.014)),
-    peso: 900,
-    maximoLinhas: 2,
-  });
-  let cursorY = desenharBlocoTexto(
-    contexto,
-    blocoChamada,
-    areaTexto.x,
-    areaTexto.y
-  );
-
-  contexto.fillStyle = paleta.texto;
-  const blocoTitulo = prepararBlocoTexto({
-    contexto,
-    texto: String(titulo || "QUALIDADE PARA O SEU CARRO").toUpperCase(),
-    largura: areaTexto.largura,
-    tamanhoInicial: Math.max(30, Math.round(largura * 0.044)),
-    tamanhoMinimo: Math.max(22, Math.round(largura * 0.025)),
-    peso: 900,
-    maximoLinhas: 3,
-    fatorAltura: 1.08,
-  });
-  cursorY = desenharBlocoTexto(
-    contexto,
-    blocoTitulo,
-    areaTexto.x,
-    cursorY + Math.round(margem * 0.28)
-  );
-
-  if (preco) {
-    const textoPreco = String(preco);
-    contexto.font = `900 ${Math.max(38, Math.round(largura * 0.06))}px Arial`;
-    const medida = contexto.measureText(textoPreco);
-    const paddingX = Math.round(margem * 0.42);
-    const paddingY = Math.round(margem * 0.22);
-    const caixaLargura = Math.min(
-      areaTexto.largura,
-      medida.width + paddingX * 2
-    );
-    const caixaAltura = Math.round(largura * 0.085);
-    const gradientePreco = contexto.createLinearGradient(
-      areaTexto.x,
-      cursorY,
-      areaTexto.x + caixaLargura,
-      cursorY + caixaAltura
-    );
-    gradientePreco.addColorStop(0, paleta.destaque);
-    gradientePreco.addColorStop(1, paleta.destaque2);
-    contexto.fillStyle = gradientePreco;
-    contexto.beginPath();
-    contexto.roundRect(
-      areaTexto.x,
-      cursorY + Math.round(margem * 0.18),
-      caixaLargura,
-      caixaAltura,
-      Math.round(margem * 0.25)
-    );
-    contexto.fill();
-    contexto.fillStyle = claro ? "#ffffff" : "#020617";
-    contexto.fillText(
-      textoPreco,
-      areaTexto.x + paddingX,
-      cursorY + Math.round(margem * 0.18) + paddingY
-    );
-    cursorY += caixaAltura + Math.round(margem * 0.42);
-  }
-
-  contexto.fillStyle = paleta.apoio;
-  const blocoApoio = prepararBlocoTexto({
-    contexto,
-    texto: apoio || "Qualidade e confiança para o seu carro",
-    largura: areaTexto.largura,
-    tamanhoInicial: Math.max(17, Math.round(largura * 0.022)),
-    tamanhoMinimo: Math.max(14, Math.round(largura * 0.015)),
-    peso: 600,
-    maximoLinhas: 3,
-    fatorAltura: 1.2,
-  });
-  desenharBlocoTexto(
-    contexto,
-    blocoApoio,
-    areaTexto.x,
-    cursorY + Math.round(margem * 0.22)
-  );
-
-  const yRodape = altura - margem - rodapeAltura;
-  contexto.fillStyle = paleta.caixa;
-  contexto.beginPath();
-  contexto.roundRect(
-    margem,
-    yRodape,
-    largura - margem * 2,
-    rodapeAltura,
-    Math.round(margem * 0.3)
-  );
-  contexto.fill();
-  contexto.strokeStyle = paleta.destaque;
-  contexto.lineWidth = Math.max(2, largura * 0.0015);
-  contexto.stroke();
-
-  contexto.fillStyle = paleta.texto;
-  contexto.font = `700 ${Math.max(14, Math.round(largura * 0.017))}px Arial`;
-  contexto.textBaseline = "middle";
-  const larguraRodapeDisponivel = largura - margem * 2 - Math.round(margem * 0.8);
-  const larguraContato = rodape
-    ? larguraRodapeDisponivel * 0.62
-    : larguraRodapeDisponivel;
-  const textoContato = limitarTextoEmUmaLinha(
-    contexto,
-    contato || "Consulte aplicações e disponibilidade",
-    larguraContato
-  );
-  contexto.fillText(
-    textoContato,
-    margem + Math.round(margem * 0.4),
-    yRodape + rodapeAltura / 2
-  );
-
-  if (rodape) {
-    contexto.textAlign = "right";
-    contexto.fillStyle = paleta.destaque;
-    const textoRodape = limitarTextoEmUmaLinha(
-      contexto,
-      rodape,
-      larguraRodapeDisponivel * 0.32
-    );
-    contexto.fillText(
-      textoRodape,
-      largura - margem - Math.round(margem * 0.4),
-      yRodape + rodapeAltura / 2
-    );
-    contexto.textAlign = "left";
-  }
-
-  return canvas.toDataURL("image/png");
 }
 
 export default function BannerStudio({
   galeria = [],
+  galeriaTemMais = false,
+  carregarMaisGaleria,
   setScreen,
   cardStyle,
 }) {
@@ -1042,8 +864,9 @@ useEffect(() => {
   const [modeloSelecionado, setModeloSelecionado] =
     useState("");
 
+  // Dados comerciais visíveis por padrão (preço, código, logo, site, WhatsApp).
   const [mostrarExtras, setMostrarExtras] =
-    useState(false);
+    useState(true);
 
   const [precoPedido, setPrecoPedido] =
     useState("");
@@ -1069,154 +892,113 @@ useEffect(() => {
   const [imagemSelecionada, setImagemSelecionada] =
   useState("");
 
-  const [mostrarGaleria, setMostrarGaleria] =
-    useState(false);
-const [
-  tipoPecaTecnica,
-  setTipoPecaTecnica,
-] = useState("generico");
-
-const [
-  detalhesTecnicos,
-  setDetalhesTecnicos,
-] = useState([
-  "",
-  "",
-  "",
-  "",
-  "",
-]);
-const [
-  fotoDetalheTecnico,
-  setFotoDetalheTecnico,
-] = useState(null);
-
-function detectarTipoPecaTecnica() {
-  try {
-    const salvo =
-      localStorage.getItem(
-        "rascunhoNovoAnuncioTemp"
-      );
-
-    const rascunho =
-      salvo
-        ? JSON.parse(salvo)
-        : {};
-
-    const texto = JSON.stringify(
-      rascunho
-    )
-      .normalize("NFD")
-      .replace(
-        /[\u0300-\u036f]/g,
-        ""
-      )
-      .toLowerCase();
-
-    if (
-      /sonda|lambda|oxigenio/.test(
-        texto
-      )
-    ) {
-      return "sonda";
-    }
-
-    if (
-      /bico injetor|injetor|injector/.test(
-        texto
-      )
-    ) {
-      return "bico";
-    }
-
-    if (
-      /vela de ignicao|vela ignicao|spark plug/.test(
-        texto
-      )
-    ) {
-      return "vela";
-    }
-
-    if (
-      /bomba de combustivel|fuel pump/.test(
-        texto
-      )
-    ) {
-      return "bomba";
-    }
-
-    if (
-      /bobina de ignicao|bobina|ignition coil/.test(
-        texto
-      )
-    ) {
-      return "bobina";
-    }
-
-    if (
-      /sensor/.test(texto)
-    ) {
-      return "sensor";
-    }
-
-    return "generico";
-  } catch {
-    return "generico";
-  }
-}
-function selecionarFotoDetalheTecnico(
-  event
-) {
-  const arquivo =
-    event.target.files?.[0];
-
-  if (!arquivo) {
-    return;
-  }
-
-  if (
-    !arquivo.type.startsWith(
-      "image/"
-    )
-  ) {
-    alert(
-      "Selecione uma imagem válida."
-    );
-    return;
-  }
-
-  const leitor =
-    new FileReader();
-
-  leitor.onload = () => {
-    setFotoDetalheTecnico({
-      arquivo,
-      url: leitor.result,
-      nome: arquivo.name,
+  // Campos comerciais estruturados (nunca inventados pela IA).
+  const [codigoProduto, setCodigoProduto] =
+    useState("");
+  const [exibirComercial, setExibirComercial] =
+    useState(() => {
+      try {
+        return {
+          ...EXIBIR_PADRAO,
+          ...JSON.parse(
+            localStorage.getItem("paiiaBannerExibir") || "{}"
+          ),
+        };
+      } catch {
+        return { ...EXIBIR_PADRAO };
+      }
     });
-
-    setAprovado(false);
-    setBannerSalvo(false);
-  };
-
-  leitor.onerror = () => {
-    alert(
-      "Não foi possível carregar a foto de detalhe."
-    );
-  };
-
-  leitor.readAsDataURL(
-    arquivo
+  // Chamada curta opcional no formato Mercado Livre.
+  const [chamadaMl, setChamadaMl] =
+    useState("");
+  // Cenário criado com IA (OpenAI). Sem IA, usa o cenário PAIIA.
+  const [usarIA, setUsarIA] =
+    useState(() => {
+      try {
+        return (
+          localStorage.getItem("paiiaBannerUsarIA") !== "false"
+        );
+      } catch {
+        return true;
+      }
+    });
+  const [infoIA, setInfoIA] = useState("");
+  // Falha da IA: mostrada com a causa e opção de tentar de novo.
+  const [falhaIA, setFalhaIA] = useState(null);
+  // Ponto de partida das variações (cada "Gerar novamente" muda a composição).
+  const [sementeVariacao] = useState(() =>
+    Math.floor(Math.random() * 997)
   );
 
-  event.target.value = "";
-}
+  function alternarExibir(campo) {
+    setExibirComercial((atual) => {
+      const novo = { ...atual, [campo]: !atual[campo] };
+      try {
+        localStorage.setItem(
+          "paiiaBannerExibir",
+          JSON.stringify(novo)
+        );
+      } catch {
+        // preferência só local
+      }
+      return novo;
+    });
+  }
+
+  function alternarUsarIA(ativo) {
+    setUsarIA(ativo);
+    try {
+      localStorage.setItem(
+        "paiiaBannerUsarIA",
+        ativo ? "true" : "false"
+      );
+    } catch {
+      // preferência só local
+    }
+  }
+
+  // Remoção automática do fundo branco (pode ser desativada).
+  const [removerFundoAuto, setRemoverFundoAuto] =
+    useState(() => {
+      try {
+        return (
+          localStorage.getItem(
+            "paiiaBannerRemoverFundo"
+          ) !== "false"
+        );
+      } catch {
+        return true;
+      }
+    });
+
+  // URL pública do banner já salvo (evita repassar base64 adiante).
+  const urlBannerSalvoRef = useRef("");
+  // Evita salvar duas vezes com cliques repetidos.
+  const salvandoRef = useRef(false);
+  // Parâmetros exatos da arte gerada (reabrir/editar e exportar por canal).
+  const [parametrosArte, setParametrosArte] = useState(null);
+  const [bannerNoAnuncio, setBannerNoAnuncio] = useState(false);
+  const inputFotoAparelhoRef = useRef(null);
+  // Detalhes da última arte (layout, cenário, IA, campos bloqueados).
+  const ultimoRegistroRef = useRef(null);
+
+  function alternarRemoverFundoAuto(ativo) {
+    setRemoverFundoAuto(ativo);
+    try {
+      localStorage.setItem(
+        "paiiaBannerRemoverFundo",
+        ativo ? "true" : "false"
+      );
+    } catch {
+      // preferência só local
+    }
+  }
+
+  const [mostrarGaleria, setMostrarGaleria] =
+    useState(false);
   const [carregandoGaleria, setCarregandoGaleria] =
   useState(false);
   
-useEffect(() => {
-  console.log("ESTADO DA GALERIA:", mostrarGaleria);
-}, [mostrarGaleria]);
 
   /*
    * Conteúdo textual 100% automático.
@@ -1283,7 +1065,16 @@ useEffect(() => {
 
   const imagensDisponiveis =
     useMemo(
-      () => normalizarGaleria(galeria),
+      () =>
+        normalizarGaleria(
+          (Array.isArray(galeria) ? galeria : []).filter(
+            (item) =>
+              typeof item === "string" ||
+              !["banner", "clip", "video", "mascote"].includes(
+                String(item?.tipo || "").toLowerCase()
+              )
+          )
+        ),
       [galeria]
     );
 useEffect(() => {
@@ -1311,6 +1102,78 @@ useEffect(() => {
   imagensDisponiveis.length,
 ]);
 
+  const assinaturaSalvaRef = useRef("");
+
+  // A arte gerada continua válida enquanto as opções não mudarem.
+  const assinaturaAtual = useMemo(
+    () =>
+      assinaturaArteBanner({
+        formato,
+        paleta,
+        objetivo: formato === "mercadoLivre" ? "produto" : objetivo,
+        imagem: imagemSelecionada,
+        preco:
+          formato === "mercadoLivre"
+            ? ""
+            : formatarPrecoBanner(precoPedido),
+        removerFundo: removerFundoAuto,
+        marca,
+        codigo: formato === "mercadoLivre" ? "" : codigoProduto,
+        exibir: exibirComercial,
+        chamadaMl: formato === "mercadoLivre" ? chamadaMl : "",
+      }),
+    [
+      formato,
+      paleta,
+      objetivo,
+      imagemSelecionada,
+      precoPedido,
+      removerFundoAuto,
+      marca,
+      codigoProduto,
+      exibirComercial,
+      chamadaMl,
+    ]
+  );
+
+  const arteDesatualizada = Boolean(
+    bannerGerado &&
+      parametrosArte &&
+      assinaturaArteBanner(parametrosArte) !== assinaturaAtual
+  );
+
+  const arteLiberada = Boolean(
+    bannerGerado && fundoIA && !arteDesatualizada && !gerandoFundoIA
+  );
+
+  function temAnuncioEmAndamento() {
+    try {
+      return Boolean(
+        localStorage.getItem("novoAnuncioTemporario") ||
+          localStorage.getItem("rascunhoNovoAnuncioTemp")
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function selecionarFotoDoAparelho(evento) {
+    const arquivo = evento.target.files?.[0];
+    evento.target.value = "";
+
+    if (!arquivo) {
+      return;
+    }
+
+    if (!String(arquivo.type || "").startsWith("image/")) {
+      alert("Escolha um arquivo de imagem (JPG, PNG ou WEBP).");
+      return;
+    }
+
+    setImagemSelecionada(URL.createObjectURL(arquivo));
+    setMostrarGaleria(false);
+  }
+
   const dadosFormato =
     FORMATOS[formato];
 
@@ -1320,9 +1183,6 @@ useEffect(() => {
         item.id === objetivo
     ) || OBJETIVOS[0];
 
-  const comandoBanner =
-    COMANDOS_BANNER_IA[objetivo] ||
-    COMANDOS_BANNER_IA.produto;
 
   const cores =
     PALETAS[paleta];
@@ -1376,19 +1236,124 @@ useEffect(() => {
   setGerandoFundoIA(false);
   setErroFundoIA("");
 
-  setMarca((atual) => ({
-    ...atual,
-    logo: "",
-    nome: "",
-  }));
+  setParametrosArte(null);
+  setBannerNoAnuncio(false);
+
+  // Reabrir um banner da Galeria para editar.
+  const bannerParaEditar =
+    localStorage.getItem("bannerParaEditar") || "";
+  localStorage.removeItem("bannerParaEditar");
+
+  if (bannerParaEditar) {
+    const urlParametros = bannerParaEditar
+      .split("?")[0]
+      .replace(/\.png$/i, ".json");
+
+    fetch(urlParametros)
+      .then((resposta) => (resposta.ok ? resposta.json() : null))
+      .then((dados) => {
+        if (!dados || typeof dados !== "object") {
+          setStatus(
+            "ℹ️ Este banner foi criado antes da edição ser possível. Monte um novo com a mesma foto."
+          );
+          return;
+        }
+
+        if (FORMATOS[dados.formato]) setFormato(dados.formato);
+        if (PALETAS[dados.paleta]) setPaleta(dados.paleta);
+        if (OBJETIVOS.some((item) => item.id === dados.objetivo)) {
+          setObjetivo(dados.objetivo);
+        }
+        if (dados.imagem) setImagemSelecionada(dados.imagem);
+        setPrecoPedido(dados.preco || "");
+        setCodigoProduto(dados.codigo || "");
+        if (dados.exibir && typeof dados.exibir === "object") {
+          setExibirComercial({ ...EXIBIR_PADRAO, ...dados.exibir });
+        }
+        setChamadaMl(dados.chamadaMl || "");
+        setCopyPedido(dados.copy || null);
+        if (dados.layout === 1 || dados.layout === 2) {
+          setLayout(dados.layout === 1 ? 2 : 1);
+        }
+        setStatus(
+          "✏️ Banner reaberto para edição. Ajuste o que quiser e clique em Gerar Banner."
+        );
+      })
+      .catch(() => {
+        setStatus(
+          "⚠️ Não foi possível reabrir os dados deste banner."
+        );
+      });
+  }
 }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      "appiaKitMarca",
-      JSON.stringify(marca)
-    );
+    salvarKitMarcaLocal(marca);
   }, [marca]);
+
+  // Completa o nome com os dados da empresa já cadastrados no PAIIA
+  // (mascote oficial). Nunca substitui o que o usuário já preencheu.
+  useEffect(() => {
+    if (!usuario?.id) return;
+    let ativo = true;
+    buscarMascoteOficial(usuario.id)
+      .then((oficial) => {
+        if (!ativo || !oficial) return;
+        const empresa = String(oficial.empresa || "").trim();
+        // O logo NÃO é puxado do cadastro do mascote (pode ter sido criado
+        // por IA): no banner entra só o logo importado pelo usuário.
+        setMarca((atual) => ({
+          ...atual,
+          nome: atual.nome || empresa,
+        }));
+      })
+      .catch(() => {
+        // sem cadastro: segue com o kit da marca local
+      });
+    return () => {
+      ativo = false;
+    };
+  }, [usuario?.id]);
+
+  // Completa nome da loja e WhatsApp com o cadastro do PAIIA (login).
+  // Nunca substitui o que o usuário já preencheu no kit da marca.
+  useEffect(() => {
+    const dados = usuario?.user_metadata || {};
+    const nomeLoja = String(dados.nome_loja || "").trim();
+    const telefoneCadastro = String(dados.telefone || "").trim();
+    if (!nomeLoja && !telefoneCadastro) return;
+    setMarca((atual) => ({
+      ...atual,
+      nome: atual.nome || nomeLoja,
+      telefone: atual.telefone || telefoneCadastro,
+    }));
+  }, [usuario?.id, usuario?.user_metadata]);
+
+  // Completa preço e código com o anúncio em andamento (Novo Anúncio),
+  // só quando os campos do banner ainda estão vazios.
+  useEffect(() => {
+    let rascunho = null;
+    for (const chave of ["novoAnuncioTemporario", "rascunhoNovoAnuncioTemp"]) {
+      try {
+        const salvo = JSON.parse(localStorage.getItem(chave) || "null");
+        if (salvo && typeof salvo === "object" && (salvo.codigo || salvo.preco)) {
+          rascunho = salvo;
+          break;
+        }
+      } catch {
+        // rascunho ilegível: ignora
+      }
+    }
+    if (!rascunho) return;
+    const codigoRascunho = String(rascunho.codigo || "").trim();
+    const precoRascunho = String(rascunho.preco ?? "").trim();
+    if (codigoRascunho) {
+      setCodigoProduto((atual) => atual || codigoRascunho);
+    }
+    if (precoRascunho && Number(precoRascunho.replace(/[^\d,.]/g, "").replace(",", ".")) > 0) {
+      setPrecoPedido((atual) => atual || precoRascunho);
+    }
+  }, []);
 
   useEffect(() => {
     setAprovado(false);
@@ -1402,23 +1367,7 @@ useEffect(() => {
   ]);
 
   function formatarPreco(valor) {
-    const texto = String(
-      valor || ""
-    ).trim();
-
-    if (!texto) {
-      return "";
-    }
-
-    if (
-      texto.toLowerCase().includes(
-        "r$"
-      )
-    ) {
-      return texto;
-    }
-
-    return `R$ ${texto}`;
+    return formatarPrecoBanner(valor);
   }
 
   function interpretarPedidoAppia() {
@@ -1433,7 +1382,8 @@ useEffect(() => {
 
     let novoObjetivo = "produto";
     let novaPaleta = paleta;
-    let novoFormato = "instagram";
+    // Mantém o formato que o usuário escolheu; só troca se o texto pedir.
+    let novoFormato = formatoCitadoNoTexto(original) || formato;
 
     if (
       /promoc|oferta|desconto|r\$|preco|por\s+\d/.test(
@@ -1481,44 +1431,10 @@ useEffect(() => {
       novaPaleta = "azul";
     }
 
-    if (
-      /story|stories|reels|vertical/.test(
-        pedido
-      )
-    ) {
-      novoFormato = "story";
-    } else if (
-      /quadrado|1080x1080/.test(
-        pedido
-      )
-    ) {
-      novoFormato = "quadrado";
-    } else if (
-      /facebook/.test(
-        pedido
-      )
-    ) {
-      novoFormato = "facebook";
-    }
-
-    const precoEncontrado =
-      original.match(
-        /(?:r\$\s*)?(\d{1,6}(?:[.\s]\d{3})*(?:,\d{2})|\d{1,6}(?:\.\d{2})?)/i
-      );
-
-    let precoFormatado = "";
-
-    if (precoEncontrado?.[1]) {
-      const valor =
-        precoEncontrado[1]
-          .replace(/\s/g, "")
-          .trim();
-
-      precoFormatado =
-        valor.includes(",")
-          ? `R$ ${valor}`
-          : `R$ ${valor.replace(".", ",")}`;
-    }
+    // O preço digitado em "Informações extras" sempre vale mais.
+    const precoFormatado =
+      formatarPrecoBanner(precoPedido) ||
+      extrairPrecoDoTexto(original);
 
     let tituloGerado =
       "QUALIDADE PARA O SEU CARRO";
@@ -1573,10 +1489,24 @@ useEffect(() => {
         "CONSULTE AGORA";
     }
 
+    // Estilo escolhido nos botões (texto sem edição): chamada própria do estilo.
+    const estiloEscolhido = COPIA_POR_ESTILO[modeloSelecionado];
+    const textoDoEstilo = MODELOS_DESCRICAO.find(
+      (modelo) => modelo.id === modeloSelecionado
+    )?.texto;
+    if (estiloEscolhido && original === String(textoDoEstilo || "").trim()) {
+      novoObjetivo = estiloEscolhido.objetivo;
+      tituloGerado = estiloEscolhido.titulo;
+      apoioGerado = estiloEscolhido.apoio;
+      ctaGerado = estiloEscolhido.cta;
+    }
+
     setObjetivo(novoObjetivo);
     setPaleta(novaPaleta);
     setFormato(novoFormato);
-    setPrecoPedido(precoFormatado);
+    if (precoFormatado) {
+      setPrecoPedido(precoFormatado);
+    }
     const copyGerada = {
       chamada:
         novoObjetivo === "oferta"
@@ -1602,151 +1532,188 @@ useEffect(() => {
     };
   }
 
- function montarPedidoCompleto() {
-  const partes = [
-    String(
-      pedidoAppia || ""
-    ).trim(),
-  ];
-
-  /*
-   * =========================================
-   * MERCADO LIVRE TÉCNICO
-   * =========================================
-   */
-  if (
-    formato ===
-    "mercadoLivre"
+  // Monta a arte: cenário (IA OpenAI ou PAIIA) + foto real da peça
+  // colada por cima + textos e dados comerciais desenhados pelo PAIIA.
+  // No Mercado Livre, preço, código, logo, site e WhatsApp são
+  // bloqueados automaticamente, mesmo preenchidos.
+  async function montarArteBanner(
+    parametros,
+    formatoDestino,
+    _paletaDestino,
+    opcoes = {}
   ) {
-    const configuracaoTecnica =
-      CAMPOS_TECNICOS[
-        tipoPecaTecnica
-      ] ||
-      CAMPOS_TECNICOS.generico;
+    const formatoId =
+      Object.keys(FORMATOS).find(
+        (chave) => FORMATOS[chave] === formatoDestino
+      ) || parametros.formato;
+    const ehMl = formatoId === "mercadoLivre";
+    const largura = formatoDestino.largura;
+    const altura = formatoDestino.altura;
+    const marcaArte = parametros.marca || {};
 
-    const linhasTecnicas =
-      configuracaoTecnica.campos
-        .map(
-          (
-            nomeCampo,
-            indice
-          ) => {
-            const valor =
-              String(
-                detalhesTecnicos[
-                  indice
-                ] || ""
-              ).trim();
-
-            if (!valor) {
-              return "";
-            }
-
-            return `${nomeCampo}: ${valor}`;
-          }
-        )
-        .filter(Boolean);
-
-    const descricaoLivre =
-      String(
-        detalhesTecnicos[4] ||
-          ""
-      ).trim();
-
-    partes.push(
-      `
-MODO MERCADO LIVRE TÉCNICO.
-
-Produto:
-${configuracaoTecnica.nome}
-
-FORMATO:
-- Imagem quadrada 1200x1200.
-- Fundo branco.
-- Visual técnico, limpo e profissional.
-- Produto principal em grande destaque no centro.
-- Organizar os detalhes técnicos ao redor do produto.
-- Manter excelente legibilidade.
-
-REGRAS OBRIGATÓRIAS:
-- Não mostrar preço.
-- Não mostrar promoção.
-- Não mostrar telefone ou WhatsApp.
-- Não mostrar e-mail.
-- Não mostrar endereço.
-- Não criar chamada comercial.
-- Não inventar especificações técnicas.
-- Não alterar características físicas da peça.
-- Manter fidelidade visual ao produto original.
-
-INFORMAÇÕES TÉCNICAS:
-${
-  linhasTecnicas.length
-    ? linhasTecnicas.join(
-        "\n"
-      )
-    : "Nenhuma informação técnica adicional preenchida."
-}
-
-DESCRIÇÃO TÉCNICA DO USUÁRIO:
-${
-  descricaoLivre ||
-  "Nenhuma descrição adicional."
-}
-      `.trim()
+    const produtoOriginal = await carregarImagemParaCanvas(
+      parametros.imagem
     );
+    // Remoção de fundo protegida e opcional; a peça não é alterada.
+    const produto = removerFundoBrancoConectadoAsBordas(
+      limitarTamanhoImagem(produtoOriginal),
+      { ativo: parametros.removerFundo !== false }
+    );
+    const larguraPeca = produto.naturalWidth || produto.width;
+    const alturaPeca = produto.naturalHeight || produto.height;
 
-    return partes
-      .filter(Boolean)
-      .join("\n");
+    const comerciais = dadosComerciaisDoBanner({
+      formato: formatoId,
+      dados: {
+        logo: marcaArte.logo,
+        preco: parametros.preco,
+        codigo: parametros.codigo,
+        site: marcaArte.site,
+        whatsapp: marcaArte.telefone,
+        nomeLoja: marcaArte.nome,
+      },
+      exibir: parametros.exibir || EXIBIR_PADRAO,
+      formatarPreco: formatarPrecoBanner,
+    });
+    const chamada = ehMl
+      ? textoChamadaMercadoLivre(parametros.chamadaMl)
+      : "";
+    const variacao = Number(parametros.variacao) || 0;
+    const plano = planejarLayout({
+      largura,
+      altura,
+      formato: formatoId,
+      proporcaoProduto: larguraPeca / Math.max(1, alturaPeca),
+      variacao,
+      temLogo: Boolean(comerciais.logo || comerciais.nomeLoja),
+      temContato: Boolean(comerciais.whatsapp || comerciais.site),
+      temChamadaMl: Boolean(chamada),
+      temPreco: Boolean(comerciais.preco),
+      temCodigo: Boolean(comerciais.codigo),
+    });
+
+    let cenarioIA = null;
+    let resultadoIA = null;
+    if (opcoes.usarIANesta) {
+      try {
+        const quadro = tamanhoQuadroIA(largura, altura);
+        const retanguloNoQuadro = mapearParaQuadroIA(
+          plano.produto,
+          { largura, altura },
+          quadro
+        );
+        // A IA recebe só uma base de cenário SEM a peça (nem silhueta):
+        // assim ela não consegue alongar, duplicar ou redesenhar a peça.
+        // A foto real é colada depois, intacta, com pedestal/sombra do PAIIA.
+        const referencia = montarBaseCenarioParaIA({
+          retanguloNoQuadro,
+          quadro,
+          paletaId: parametros.paleta,
+        });
+        const resposta = await gerarCenarioComIA({
+          supabase,
+          referencia,
+          mascara: "",
+          tamanho: quadro.texto,
+          formato: formatoId,
+          paleta: parametros.paleta,
+          estilo: parametros.estilo || parametros.objetivo,
+          cenario: plano.cenario.id,
+          zonasLivres: descreverZonasLivres(plano, largura, altura),
+          pedestal: false,
+          modo: "cenario-vazio",
+          zonaProduto: descreverZonaProduto(retanguloNoQuadro, quadro),
+          variacao,
+        });
+        cenarioIA = await carregarImagemParaCanvas(resposta.imagem);
+        resultadoIA = { ok: true, ...resposta, imagem: undefined };
+        console.info(
+          `[PAIIA Banner IA] cenário recebido da OpenAI: modelo=${resposta.modelo} origem=${resposta.origem} tempo=${(resposta.duracaoMs / 1000).toFixed(1)}s x-request-id=${resposta.idPedido || "-"}`
+        );
+      } catch (erro) {
+        console.error("[PAIIA Banner IA] falha:", erro?.codigo, erro?.message, erro?.detalhe || "");
+        resultadoIA = {
+          ok: false,
+          erro: erro?.message || "IA indisponível.",
+          codigo: erro?.codigo || "",
+          detalhe: erro?.detalhe || "",
+        };
+        // Com "Cenário com IA" marcado, a falha NÃO vira banner de fallback.
+        if (opcoes.exigirIA) {
+          const falha = new Error(resultadoIA.erro);
+          falha.codigo = resultadoIA.codigo || "FALHA_IA";
+          falha.falhaIA = true;
+          falha.detalhe = resultadoIA.detalhe;
+          throw falha;
+        }
+      }
+    }
+
+    let logoImagem = null;
+    if (comerciais.logo) {
+      try {
+        logoImagem = await carregarImagemParaCanvas(comerciais.logo);
+      } catch {
+        logoImagem = null;
+      }
+    }
+
+    const { dataUrl, registro } = await montarBannerProfissional({
+      largura,
+      altura,
+      paletaId: PALETAS[parametros.paleta] ? parametros.paleta : "azul",
+      produto,
+      plano,
+      textos: ehMl
+        ? {}
+        : {
+            titulo: parametros.copy?.titulo,
+            apoio: parametros.copy?.apoio,
+            cta: parametros.copy?.cta,
+          },
+      comerciais,
+      chamadaMl: chamada,
+      cenarioIA,
+      logoImagem,
+      variacao,
+    });
+
+    registro.bloqueados = comerciais.bloqueados;
+    registro.ia = resultadoIA;
+    ultimoRegistroRef.current = registro;
+    try {
+      if (localStorage.getItem("paiiaBannerDebug") === "1") {
+        const copia = document.createElement("canvas");
+        copia.width = largura;
+        copia.height = altura;
+        const contextoCopia = copia.getContext("2d");
+        contextoCopia.imageSmoothingEnabled = true;
+        contextoCopia.imageSmoothingQuality = "high";
+        contextoCopia
+          .drawImage(
+            produto,
+            plano.produto.x,
+            plano.produto.y,
+            plano.produto.largura,
+            plano.produto.altura
+          );
+        Reflect.set(window, "__paiiaBannerDebug", {
+          registro,
+          produtoPosicionado: copia.toDataURL("image/png"),
+          largura,
+          altura,
+        });
+      }
+    } catch {
+      // depuração opcional
+    }
+    return dataUrl;
   }
 
-  /*
-   * =========================================
-   * BANNERS NORMAIS
-   * =========================================
-   */
-
-  if (
-    precoPedido?.trim()
-  ) {
-    partes.push(
-      `Preço informado pelo usuário: ${formatarPreco(
-        precoPedido
-      )}. O preço deve aparecer com grande destaque comercial no banner.`
-    );
-  }
-
-  if (
-    marca.telefone?.trim()
-  ) {
-    partes.push(
-      `Telefone/WhatsApp informado pelo usuário: ${marca.telefone.trim()}.`
-    );
-  }
-
-  if (
-    marca.email?.trim()
-  ) {
-    partes.push(
-      `E-mail informado pelo usuário: ${marca.email.trim()}.`
-    );
-  }
-
-  if (
-    marca.endereco?.trim()
-  ) {
-    partes.push(
-      `Localização informada pelo usuário: ${marca.endereco.trim()}.`
-    );
-  }
-
-  return partes
-    .filter(Boolean)
-    .join("\n");
-}
-
-  async function gerarComIA() {
+  async function gerarComIA(opcoesGeracao = {}) {
+    // Sem IA só quando o usuário escolhe explicitamente.
+    const semIANesta = opcoesGeracao?.semIA === true;
+    const usarIANesta = usarIA && !semIANesta;
     if (gerandoFundoIA) return;
     if (!imagemSelecionada) {
       alert(
@@ -1768,7 +1735,6 @@ ${
       interpretado = {
         ...interpretado,
         objetivo: "produto",
-        paleta: "clean",
         formato: "mercadoLivre",
         preco: "",
       };
@@ -1787,8 +1753,12 @@ ${
     const proximaVersao =
       versaoIA + 1;
 
+    setInfoIA("");
+    setFalhaIA(null);
     setStatus(
-      "🎨 PAIIA montando o banner profissional..."
+      usarIANesta
+        ? "🎨 Criando o cenário com IA e montando o banner (pode levar até 1 minuto)..."
+        : "🎨 PAIIA montando o banner profissional..."
     );
 
     try {
@@ -1811,16 +1781,19 @@ ${
         );
       const proximoLayout =
         layout === 1 ? 2 : 1;
-      const png =
-        await criarBannerDeterministico({
-          formato: formatoFinal,
-          paleta: paletaFinal,
-          paletaId: interpretado.paleta,
-          imagemProduto:
-            imagemSelecionada,
-          logo: marca.logo || "",
-          nomeEmpresa:
-            marca.nome || "Sua Empresa",
+      const parametros = {
+        versao: 1,
+        formato: interpretado.formato,
+        paleta: interpretado.paleta,
+        objetivo: interpretado.objetivo,
+        imagem: imagemSelecionada,
+        preco:
+          interpretado.formato === "mercadoLivre"
+            ? ""
+            : formatarPrecoBanner(
+                interpretado.preco || precoPedido
+              ),
+        copy: {
           chamada:
             copyFinal.chamada ||
             objetivoFinal.chamada,
@@ -1830,23 +1803,58 @@ ${
           apoio:
             copyFinal.apoio ||
             objetivoFinal.apoio,
-          preco:
-            interpretado.formato === "mercadoLivre"
-              ? ""
-              : interpretado.preco ||
-                precoPedido,
-          contato:
-            marca.telefone
-              ? `Contato: ${marca.telefone}`
-              : copyFinal.cta ||
-                "Consulte aplicações e disponibilidade",
-          rodape:
-            marca.site ||
-            marca.endereco ||
-            "PAIIA",
-          layout: proximoLayout,
-        });
+          cta: copyFinal.cta || "",
+        },
+        marca: {
+          nome: marca.nome || "",
+          logo: marca.logo || "",
+          telefone: marca.telefone || "",
+          email: marca.email || "",
+          site: marca.site || "",
+          endereco: marca.endereco || "",
+        },
+        layout: proximoLayout,
+        removerFundo: removerFundoAuto,
+        codigo:
+          interpretado.formato === "mercadoLivre"
+            ? ""
+            : codigoProduto,
+        exibir: { ...exibirComercial },
+        chamadaMl:
+          interpretado.formato === "mercadoLivre"
+            ? chamadaMl
+            : "",
+        estilo: modeloSelecionado || interpretado.objetivo,
+        variacao:
+          sementeVariacao + proximaVersao,
+        usarIA: usarIANesta,
+      };
+      const png =
+        await montarArteBanner(
+          parametros,
+          formatoFinal,
+          paletaFinal,
+          { usarIANesta, exigirIA: usarIANesta }
+        );
+      const registroIA =
+        ultimoRegistroRef.current?.ia || null;
+      if (registroIA?.ok) {
+        parametros.cenarioOrigem = `openai:${registroIA.modelo}`;
+        setInfoIA(
+          `✅ Cenário gerado pela OpenAI (${registroIA.modelo || "OpenAI"}, ${((registroIA.duracaoMs || 0) / 1000).toFixed(0)} s, ${registroIA.origem === "openai-local" ? "servidor local" : "Supabase"}${registroIA.idPedido ? `, pedido ${registroIA.idPedido}` : ""}).`
+        );
+      } else {
+        parametros.cenarioOrigem = "paiia";
+        setInfoIA(
+          semIANesta
+            ? "Banner montado com o cenário PAIIA (sem IA), por sua escolha."
+            : "Banner montado com o cenário PAIIA (opção de IA desmarcada)."
+        );
+      }
 
+      urlBannerSalvoRef.current = "";
+      setParametrosArte(parametros);
+      setBannerNoAnuncio(false);
       setFundoIA(png);
       setVersaoIA(proximaVersao);
       setLayout(proximoLayout);
@@ -1854,9 +1862,20 @@ ${
       setBannerGerado(true);
 
       setStatus(
-        "✨ Banner profissional criado internamente, sem gerador externo."
+        "✨ Banner pronto. Confira e clique em Aprovar para salvar na Galeria."
       );
     } catch (erro) {
+      if (erro?.falhaIA) {
+        // Não mostra template no lugar do banner com IA: mostra a causa.
+        setFalhaIA({
+          mensagem: erro.message,
+          codigo: erro.codigo,
+          detalhe: erro.detalhe || "",
+        });
+        setStatus("⚠️ A IA da OpenAI não gerou o cenário deste banner.");
+        return;
+      }
+
       console.error(
         "❌ BANNER EXPRESS:",
         erro
@@ -1882,16 +1901,20 @@ ${
     }
   }
 async function aprovarBanner() {
-  if (gerandoFundoIA) {
+  if (gerandoFundoIA || salvandoRef.current) {
+    return;
+  }
+
+  if (!bannerGerado || !fundoIA || !parametrosArte) {
     alert(
-      "Aguarde o PAIIA terminar a criação do banner."
+      "Gere o banner antes de aprovar."
     );
     return;
   }
 
-  if (!bannerGerado || !fundoIA) {
+  if (arteDesatualizada) {
     alert(
-      "Gere o banner antes de aprovar."
+      "Você mudou opções depois de gerar. Clique em “Gerar novamente” para atualizar a arte antes de aprovar."
     );
     return;
   }
@@ -1907,126 +1930,44 @@ async function aprovarBanner() {
     return;
   }
 
+  const assinatura =
+    assinaturaArteBanner(parametrosArte);
+
+  salvandoRef.current = true;
+
   try {
     setStatus(
-      "⏳ Salvando banner..."
+      "⏳ Salvando banner na Galeria..."
     );
 
-    if (!bannerSalvo) {
-      await salvarBannerNasMidias(
-        fundoIA
-      );
+    // A mesma arte nunca é salva duas vezes.
+    if (
+      !urlBannerSalvoRef.current ||
+      assinaturaSalvaRef.current !== assinatura
+    ) {
+      const urlSalva =
+        await salvarBannerNasMidias(
+          fundoIA,
+          parametrosArte
+        );
 
-      setBannerSalvo(true);
+      urlBannerSalvoRef.current =
+        urlSalva || "";
+      assinaturaSalvaRef.current =
+        assinatura;
     }
 
-    // =====================================================
-    // ADICIONA O BANNER NAS FOTOS DO ANÚNCIO
-    // =====================================================
-
-    try {
-      const salvas =
-        localStorage.getItem(
-          "fotosSelecionadasAnuncio"
-        );
-
-      let fotosAtuais =
-        salvas
-          ? JSON.parse(salvas)
-          : [];
-
-      if (
-        !Array.isArray(
-          fotosAtuais
-        )
-      ) {
-        fotosAtuais = [];
-      }
-
-      const jaExiste =
-        fotosAtuais.some(
-          (foto) => {
-            const url =
-              typeof foto === "string"
-                ? foto
-                : foto?.imagem_processada ||
-                  foto?.imagem_original ||
-                  foto?.url ||
-                  "";
-
-            return url === fundoIA;
-          }
-        );
-
-      if (!jaExiste) {
-        fotosAtuais.push({
-          id:
-            `banner-${Date.now()}`,
-
-          imagem_processada:
-            fundoIA,
-
-          imagem_original:
-            fundoIA,
-
-          tipo:
-            "banner",
-
-          created_at:
-            new Date().toISOString(),
-        });
-      }
-
-      localStorage.setItem(
-        "fotosSelecionadasAnuncio",
-        JSON.stringify(
-          fotosAtuais
-        )
-      );
-
-      // Também atualiza o rascunho
-      // temporário do Criar Anúncio.
-      const rascunhoSalvo =
-        localStorage.getItem(
-          "rascunhoNovoAnuncioTemp"
-        );
-
-      const rascunho =
-        rascunhoSalvo
-          ? JSON.parse(
-              rascunhoSalvo
-            )
-          : {};
-
-      localStorage.setItem(
-        "rascunhoNovoAnuncioTemp",
-        JSON.stringify({
-          ...rascunho,
-          fotos:
-            fotosAtuais,
-        })
-      );
-    } catch (erroFotos) {
-      console.error(
-        "Erro ao adicionar banner às fotos do anúncio:",
-        erroFotos
-      );
-    }
-
+    setBannerSalvo(true);
     setAprovado(true);
 
-    window.dispatchEvent(
-      new Event(
-        "appia:banner-pronto"
-      )
-    );
-
     setStatus(
-      "✅ Banner aprovado e adicionado às fotos do anúncio."
+      temAnuncioEmAndamento()
+        ? "✅ Banner salvo na Galeria. Para incluir no anúncio em andamento, clique em “Usar no anúncio”."
+        : "✅ Banner salvo na Galeria. Baixe o PNG ou crie as versões para outros canais."
     );
   } catch (erro) {
     console.error(
-      "❌ SALVAR BANNER:",
+      "Banner Express: falha ao salvar.",
       erro
     );
 
@@ -2035,6 +1976,97 @@ async function aprovarBanner() {
     alert(
       erro?.message ||
         "Não foi possível salvar o banner."
+    );
+  } finally {
+    salvandoRef.current = false;
+  }
+}
+
+// Só quando o usuário pede: adiciona o banner salvo às fotos do anúncio.
+function usarBannerNoAnuncio() {
+  const urlBannerAnuncio =
+    urlBannerSalvoRef.current;
+
+  if (!urlBannerAnuncio) {
+    alert(
+      "Aprove o banner antes de usar no anúncio."
+    );
+    return;
+  }
+
+  try {
+    const salvas =
+      localStorage.getItem(
+        "fotosSelecionadasAnuncio"
+      );
+
+    let fotosAtuais =
+      salvas
+        ? JSON.parse(salvas)
+        : [];
+
+    if (!Array.isArray(fotosAtuais)) {
+      fotosAtuais = [];
+    }
+
+    const jaExiste =
+      fotosAtuais.some((foto) => {
+        const url =
+          typeof foto === "string"
+            ? foto
+            : foto?.imagem_processada ||
+              foto?.imagem_original ||
+              foto?.url ||
+              "";
+
+        return url === urlBannerAnuncio;
+      });
+
+    if (!jaExiste) {
+      fotosAtuais.push({
+        id: `banner-${Date.now()}`,
+        imagem_processada: urlBannerAnuncio,
+        imagem_original: urlBannerAnuncio,
+        tipo: "banner",
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    localStorage.setItem(
+      "fotosSelecionadasAnuncio",
+      JSON.stringify(fotosAtuais)
+    );
+
+    const rascunhoSalvo =
+      localStorage.getItem(
+        "rascunhoNovoAnuncioTemp"
+      );
+
+    if (rascunhoSalvo) {
+      const rascunho = JSON.parse(rascunhoSalvo);
+
+      localStorage.setItem(
+        "rascunhoNovoAnuncioTemp",
+        JSON.stringify({
+          ...rascunho,
+          fotos: fotosAtuais,
+        })
+      );
+    }
+
+    setBannerNoAnuncio(true);
+    setStatus(
+      jaExiste
+        ? "ℹ️ Este banner já está nas fotos do anúncio."
+        : "✅ Banner incluído nas fotos do anúncio."
+    );
+  } catch (erroFotos) {
+    console.error(
+      "Banner Express: falha ao incluir no anúncio.",
+      erroFotos
+    );
+    alert(
+      "Não foi possível incluir o banner no anúncio."
     );
   }
 }
@@ -2050,14 +2082,13 @@ async function aprovarBanner() {
 
     try {
       const dataUrl =
-        await lerArquivoComoDataUrl(
-          arquivo
-        );
+        await reduzirLogo(arquivo);
 
       setMarca((atual) => ({
         ...atual,
         logo: dataUrl,
       }));
+      event.target.value = "";
     } catch (erro) {
       alert(
         erro?.message ||
@@ -2191,7 +2222,7 @@ async function criarBlobMiniaturaBanner(
   }
 }
 
-async function salvarBannerNasMidias(urlBanner) {
+async function salvarBannerNasMidias(urlBanner, parametros) {
   if (!urlBanner) {
     throw new Error(
       "Banner sem imagem para salvar."
@@ -2200,7 +2231,7 @@ async function salvarBannerNasMidias(urlBanner) {
 
   if (!usuario?.id) {
     throw new Error(
-      "Usuário não identificado."
+      "Faça login para salvar o banner."
     );
   }
 
@@ -2211,9 +2242,18 @@ async function salvarBannerNasMidias(urlBanner) {
     await resposta.blob();
 
   const carimbo = Date.now();
+  const base = `${usuario.id}/banners/paiia-banner-${carimbo}`;
+  const nomeArquivo = `${base}.png`;
+  const enviados = [];
 
-  const nomeArquivo =
-    `${usuario.id}/banners/paiia-banner-${carimbo}.png`;
+  const removerEnviados = async () => {
+    if (enviados.length) {
+      await supabase.storage
+        .from("imagens")
+        .remove(enviados)
+        .catch(() => {});
+    }
+  };
 
   const {
     error: erroUpload,
@@ -2224,31 +2264,43 @@ async function salvarBannerNasMidias(urlBanner) {
       blob,
       {
         contentType: "image/png",
-        upsert: true,
+        upsert: false,
       }
     );
 
   if (erroUpload) {
-    throw erroUpload;
+    throw new Error(
+      "Não foi possível enviar o banner: " +
+        (erroUpload.message || "erro no armazenamento")
+    );
   }
+
+  enviados.push(nomeArquivo);
 
   try {
     const miniatura =
       await criarBlobMiniaturaBanner(
         blob
       );
+    const caminhoMiniatura =
+      `${base}-thumb.${miniatura.extensao}`;
 
-    await supabase.storage
-      .from("imagens")
-      .upload(
-        `${usuario.id}/banners/paiia-banner-${carimbo}-thumb.${miniatura.extensao}`,
-        miniatura.blob,
-        {
-          contentType:
-            miniatura.contentType,
-          upsert: true,
-        }
-      );
+    const { error: erroMiniatura } =
+      await supabase.storage
+        .from("imagens")
+        .upload(
+          caminhoMiniatura,
+          miniatura.blob,
+          {
+            contentType:
+              miniatura.contentType,
+            upsert: true,
+          }
+        );
+
+    if (!erroMiniatura) {
+      enviados.push(caminhoMiniatura);
+    }
   } catch {
     // A miniatura é só para o card. O original segue.
   }
@@ -2265,9 +2317,59 @@ async function salvarBannerNasMidias(urlBanner) {
     dadosPublicos?.publicUrl;
 
   if (!urlPublica) {
+    await removerEnviados();
     throw new Error(
       "Não foi possível obter a URL do banner."
     );
+  }
+
+  // imagem_original nunca vai em base64 para o banco: se a foto
+  // escolhida não for URL, sobe para o Storage e salva só a URL.
+  const imagemOriginalUrl =
+    await obterUrlImagemOriginalBanner(
+      imagemSelecionada,
+      usuario.id,
+      carimbo
+    );
+
+  if (
+    imagemOriginalUrl &&
+    imagemOriginalUrl.includes(`/banners/paiia-banner-${carimbo}-original.`)
+  ) {
+    const caminhoOriginal = imagemOriginalUrl
+      .split("/storage/v1/object/public/imagens/")[1]
+      ?.split("?")[0];
+    if (caminhoOriginal) {
+      enviados.push(decodeURIComponent(caminhoOriginal));
+    }
+  }
+
+  // Parâmetros da arte para reabrir/editar pela Galeria.
+  try {
+    const parametrosSalvos = {
+      ...(parametros || {}),
+      imagem: imagemOriginalUrl || "",
+      salvoEm: new Date().toISOString(),
+    };
+    const { error: erroParametros } =
+      await supabase.storage
+        .from("imagens")
+        .upload(
+          `${base}.json`,
+          new Blob([JSON.stringify(parametrosSalvos)], {
+            type: "application/json",
+          }),
+          {
+            contentType: "application/json",
+            upsert: true,
+          }
+        );
+
+    if (!erroParametros) {
+      enviados.push(`${base}.json`);
+    }
+  } catch {
+    // Sem os parâmetros o banner só não poderá ser reaberto para edição.
   }
 
   const { error } = await supabase
@@ -2276,32 +2378,33 @@ async function salvarBannerNasMidias(urlBanner) {
       {
         user_id: usuario.id,
         imagem_original:
-          imagemSelecionada || null,
+          imagemOriginalUrl,
         imagem_processada:
           urlPublica,
         status: "finalizado",
         tipo: "banner",
-        modelo_banner: formato,
+        modelo_banner: parametros?.formato || formato,
       },
     ]);
 
   if (error) {
+    await removerEnviados();
     throw new Error(
-      "Não foi possível salvar o banner em Mídias PAIIA: " +
+      "Não foi possível salvar o banner na Galeria: " +
         error.message
     );
   }
+
+  return urlPublica;
 }
+
+
   async function exportarVersaoDestino(
     chaveDestino
   ) {
-    if (
-      !bannerGerado ||
-      !aprovado ||
-      !fundoIA
-    ) {
+    if (!arteLiberada || !parametrosArte) {
       alert(
-        "Aprove o banner antes de criar versões para outros canais."
+        "Gere o banner (e atualize, se mudou alguma opção) antes de criar versões."
       );
       return;
     }
@@ -2315,170 +2418,31 @@ async function salvarBannerNasMidias(urlBanner) {
 
     try {
       setStatus(
-        `⏳ Formatando para ${destino.nome}...`
+        `⏳ Montando a versão ${destino.nome}...`
       );
 
-      const resposta =
-        await fetch(fundoIA);
+      // Mesma foto e mesmos textos, com o layout refeito na medida do
+      // canal (sem faixas vazias e sem esticar).
+      const png = await montarArteBanner(
+        parametrosArte,
+        destino,
+        PALETAS[parametrosArte.paleta] || cores,
+        { usarIANesta: false }
+      );
 
-      if (!resposta.ok) {
-        throw new Error(
-          "Não foi possível carregar a arte aprovada."
-        );
-      }
-
-      const blob =
-        await resposta.blob();
-
-      const urlImagem =
+      const resposta = await fetch(png);
+      const blob = await resposta.blob();
+      const urlDownload =
         URL.createObjectURL(blob);
 
-      const imagem =
-        new Image();
-
-      await new Promise(
-        (resolve, reject) => {
-          imagem.onload =
-            resolve;
-
-          imagem.onerror =
-            () =>
-              reject(
-                new Error(
-                  "Não foi possível preparar a arte."
-                )
-              );
-
-          imagem.src =
-            urlImagem;
-        }
-      );
-
-      const canvas =
-        document.createElement(
-          "canvas"
-        );
-
-      canvas.width =
-        destino.largura;
-
-      canvas.height =
-        destino.altura;
-
-      const contexto =
-        canvas.getContext(
-          "2d"
-        );
-
-      if (!contexto) {
-        throw new Error(
-          "Não foi possível criar a versão."
-        );
-      }
-
-      contexto.imageSmoothingEnabled =
-        true;
-
-      contexto.imageSmoothingQuality =
-        "high";
-
-      // Mantém a arte inteira, sem esticar e sem cortar textos/produto.
-      // A sobra do canvas vira margem de segurança do canal.
-      contexto.fillStyle =
-        chaveDestino ===
-        "mercadoLivre"
-          ? "#ffffff"
-          : "#0f172a";
-
-      contexto.fillRect(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-      );
-
-      const escala =
-        Math.min(
-          canvas.width /
-            imagem.naturalWidth,
-          canvas.height /
-            imagem.naturalHeight
-        );
-
-      const larguraFinal =
-        Math.round(
-          imagem.naturalWidth *
-            escala
-        );
-
-      const alturaFinal =
-        Math.round(
-          imagem.naturalHeight *
-            escala
-        );
-
-      const x =
-        Math.round(
-          (canvas.width -
-            larguraFinal) /
-            2
-        );
-
-      const y =
-        Math.round(
-          (canvas.height -
-            alturaFinal) /
-            2
-        );
-
-      contexto.drawImage(
-        imagem,
-        x,
-        y,
-        larguraFinal,
-        alturaFinal
-      );
-
-      URL.revokeObjectURL(
-        urlImagem
-      );
-
-      const png =
-        await new Promise(
-          (resolve) =>
-            canvas.toBlob(
-              resolve,
-              "image/png",
-              1
-            )
-        );
-
-      if (!png) {
-        throw new Error(
-          "Não foi possível gerar o PNG."
-        );
-      }
-
-      const urlDownload =
-        URL.createObjectURL(
-          png
-        );
-
       const link =
-        document.createElement(
-          "a"
-        );
+        document.createElement("a");
 
-      link.href =
-        urlDownload;
-
+      link.href = urlDownload;
       link.download =
-        `paiia-${chaveDestino}-${destino.largura}x${destino.altura}-${Date.now()}.png`;
+        `paiia-banner-${chaveDestino}-${destino.largura}x${destino.altura}-${Date.now()}.png`;
 
-      document.body.appendChild(
-        link
-      );
-
+      document.body.appendChild(link);
       link.click();
       link.remove();
 
@@ -2491,11 +2455,11 @@ async function salvarBannerNasMidias(urlBanner) {
       );
 
       setStatus(
-        `✅ Versão ${destino.nome} pronta em ${destino.largura} × ${destino.altura}, sem gerar outra arte com IA.`
+        `✅ Versão ${destino.nome} pronta em ${destino.largura} × ${destino.altura}.`
       );
     } catch (erro) {
       console.error(
-        "Erro ao formatar banner:",
+        "Banner Express: falha ao formatar.",
         erro
       );
 
@@ -2566,7 +2530,7 @@ async function salvarBannerNasMidias(urlBanner) {
         setStatus("");
 
         alert(
-          "Não foi possível baixar o PNG gerado pela IA."
+          "Não foi possível baixar o PNG do banner."
         );
 
         return;
@@ -2857,7 +2821,7 @@ async function salvarBannerNasMidias(urlBanner) {
               lineHeight: 1.15,
             }}
           >
-            ⚡ Banner Express IA
+            ⚡ Banner Express
           </h1>
         </div>
 
@@ -2999,9 +2963,6 @@ async function salvarBannerNasMidias(urlBanner) {
 
                     if (chave === "mercadoLivre") {
                       setObjetivo("produto");
-                      setPaleta("clean");
-                      setPrecoPedido("");
-                      setTipoPecaTecnica(detectarTipoPecaTecnica());
                     }
                   }}
                   style={{
@@ -3056,54 +3017,6 @@ async function salvarBannerNasMidias(urlBanner) {
     modelo.texto
   );
 
- if (
-  modelo.id ===
-  "mercado_livre_tecnico"
-) {
-  setFormato(
-    "mercadoLivre"
-  );
-
-  setObjetivo(
-    "produto"
-  );
-
-  setPaleta(
-    "clean"
-  );
-
-  setPrecoPedido(
-    ""
-  );
-
-  setTipoPecaTecnica(
-    detectarTipoPecaTecnica()
-  );
-
-  setDetalhesTecnicos([
-  "",
-  "",
-  "",
-  "",
-  "",
-]);
-  setMarca(
-    (atual) => ({
-      ...atual,
-      telefone: "",
-      email: "",
-      endereco: "",
-    })
-  );
-
-  setAprovado(
-    false
-  );
-
-  setBannerSalvo(
-    false
-  );
-}
 }}
                     style={{
                       padding: "6px 10px",
@@ -3187,7 +3100,62 @@ async function salvarBannerNasMidias(urlBanner) {
             </label>
           </div>
 
-          {formato !== "mercadoLivre" && (
+          {formato === "mercadoLivre" ? (
+          <div style={secaoCompactaStyle}>
+            <div style={secaoTituloCompacto}>
+              Mercado Livre 1200×1200
+            </div>
+            <div
+              style={{
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid #f59e0b",
+                background: "rgba(245,158,11,.10)",
+                color: "#fde68a",
+                fontSize: "11px",
+                lineHeight: 1.45,
+              }}
+            >
+              🔒 Preço, código, logo, site e WhatsApp são bloqueados
+              automaticamente neste formato, mesmo preenchidos.
+            </div>
+            <div
+              style={{
+                ...secaoTituloCompacto,
+                marginTop: "8px",
+              }}
+            >
+              Chamada curta (opcional)
+            </div>
+            <div className="banner-express-estilos">
+              {CHAMADAS_MERCADO_LIVRE.map((opcao) => (
+                <button
+                  key={opcao.id || "nenhuma"}
+                  type="button"
+                  onClick={() => setChamadaMl(opcao.id)}
+                  style={{
+                    padding: "5px 9px",
+                    borderRadius: "999px",
+                    cursor: "pointer",
+                    color: "#e2e8f0",
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    border:
+                      chamadaMl === opcao.id
+                        ? "2px solid #67e8f9"
+                        : "1px solid #334155",
+                    background:
+                      chamadaMl === opcao.id
+                        ? "rgba(8,145,178,.22)"
+                        : "#020617",
+                  }}
+                >
+                  {opcao.texto}
+                </button>
+              ))}
+            </div>
+          </div>
+          ) : (
           <div style={secaoCompactaStyle}>
             <button
               type="button"
@@ -3210,93 +3178,143 @@ async function salvarBannerNasMidias(urlBanner) {
                 fontSize: "13px",
               }}
             >
-              <span>+ Informações extras</span>
+              <span>Dados comerciais (preço, código, logo, site, WhatsApp)</span>
               <span>
                 {mostrarExtras ? "−" : "+"}
               </span>
             </button>
 
             {mostrarExtras && (
-          <div style={{ marginTop: "14px" }}>
-            <div style={passoTitulo}>
-              Campos opcionais
-            </div>
+              <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
+                {[
+                  {
+                    campo: "preco",
+                    rotulo: "💰 Preço",
+                    valor: precoPedido,
+                    mudar: (valor) => setPrecoPedido(valor),
+                    exemplo: "R$ 149,90",
+                  },
+                  {
+                    campo: "codigo",
+                    rotulo: "🔢 Código",
+                    valor: codigoProduto,
+                    mudar: (valor) => setCodigoProduto(valor),
+                    exemplo: "0258003300",
+                  },
+                  {
+                    campo: "site",
+                    rotulo: "🌐 Site",
+                    valor: marca.site || "",
+                    mudar: (valor) =>
+                      setMarca((atual) => ({ ...atual, site: valor })),
+                    exemplo: "www.sualoja.com.br",
+                  },
+                  {
+                    campo: "whatsapp",
+                    rotulo: "📱 WhatsApp",
+                    valor: marca.telefone || "",
+                    mudar: (valor) =>
+                      setMarca((atual) => ({ ...atual, telefone: valor })),
+                    exemplo: "(11) 98765-4321",
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.campo}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "auto 1fr",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    <label
+                      title="Mostrar no banner"
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        color: "#cbd5e1",
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        minWidth: "92px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={exibirComercial[item.campo] !== false}
+                        onChange={() => alternarExibir(item.campo)}
+                      />
+                      {item.rotulo}
+                    </label>
+                    <input
+                      type="text"
+                      value={item.valor}
+                      onChange={(event) => item.mudar(event.target.value)}
+                      placeholder={`Ex.: ${item.exemplo}`}
+                      style={{ ...inputStyle, padding: "7px 9px", fontSize: "12px" }}
+                    />
+                  </div>
+                ))}
 
-    <>
-      <div
-        style={{
-          display: "grid",
-          gap: "9px",
-        }}
-      >
-        <input
-          type="text"
-          value={precoPedido}
-          onChange={(event) =>
-            setPrecoPedido(
-              event.target.value
-            )
-          }
-          placeholder="💰 Preço — Ex.: R$ 149,90"
-          style={inputStyle}
-        />
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      color: "#cbd5e1",
+                      fontSize: "11px",
+                      fontWeight: 800,
+                      minWidth: "92px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={exibirComercial.logo !== false}
+                      onChange={() => alternarExibir("logo")}
+                    />
+                    🏷️ Logo
+                  </label>
+                  <input
+                    type="text"
+                    value={marca.nome || ""}
+                    onChange={(event) =>
+                      setMarca((atual) => ({
+                        ...atual,
+                        nome: event.target.value,
+                      }))
+                    }
+                    placeholder="Nome da loja (usado se não houver logo)"
+                    style={{ ...inputStyle, padding: "7px 9px", fontSize: "12px" }}
+                  />
+                </div>
+                <div style={{ color: "#94a3b8", fontSize: "11px" }}>
+                  {marca.logo
+                    ? "✅ Logo cadastrado: será aplicado com o arquivo original."
+                    : "Sem logo: use “Adicionar logo” acima."}
+                </div>
 
-        <input
-          type="text"
-          value={marca.telefone || ""}
-          onChange={(event) =>
-            setMarca((atual) => ({
-              ...atual,
-              telefone:
-                event.target.value,
-            }))
-          }
-          placeholder="📱 Telefone / WhatsApp"
-          style={inputStyle}
-        />
-
-        <input
-          type="email"
-          value={marca.email || ""}
-          onChange={(event) =>
-            setMarca((atual) => ({
-              ...atual,
-              email:
-                event.target.value,
-            }))
-          }
-          placeholder="✉️ E-mail"
-          style={inputStyle}
-        />
-
-        <input
-          type="text"
-          value={marca.endereco || ""}
-          onChange={(event) =>
-            setMarca((atual) => ({
-              ...atual,
-              endereco:
-                event.target.value,
-            }))
-          }
-          placeholder="📍 Localização"
-          style={inputStyle}
-        />
-      </div>
-
-      <div
-        style={{
-          color: "#64748b",
-          fontSize: "11px",
-          lineHeight: 1.4,
-          marginTop: "7px",
-        }}
-      >
-        Preencha somente o que quiser mostrar.
-        Campos vazios não entram na arte.
-      </div>
-    </>
-</div>
+                <div
+                  style={{
+                    color: "#64748b",
+                    fontSize: "11px",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  Dados carregados do cadastro da sua empresa no PAIIA:
+                  confira antes de gerar. Só aparece no banner o que estiver
+                  preenchido e marcado — nada é inventado.
+                </div>
+              </div>
             )}
           </div>
           )}
@@ -3406,6 +3424,27 @@ async function salvarBannerNasMidias(urlBanner) {
               🖼️ Buscar foto na Galeria
             </button>
           )}
+
+          <input
+            ref={inputFotoAparelhoRef}
+            type="file"
+            accept="image/*"
+            onChange={selecionarFotoDoAparelho}
+            style={{ display: "none" }}
+          />
+          <button
+            type="button"
+            onClick={() => inputFotoAparelhoRef.current?.click()}
+            style={{
+              ...botaoSecundario,
+              width: "100%",
+              marginTop: "8px",
+              padding: "8px 10px",
+              fontSize: "12px",
+            }}
+          >
+            📤 Enviar foto do aparelho
+          </button>
         </section>
 
         <main
@@ -3501,26 +3540,26 @@ async function salvarBannerNasMidias(urlBanner) {
             <button
               type="button"
               onClick={
-                bannerGerado && aprovado
+                arteLiberada
                   ? exportarPng
                   : undefined
               }
-              disabled={!bannerGerado || !aprovado}
+              disabled={!arteLiberada}
               style={{
                 ...botaoSecundario,
                 padding: "7px 10px",
                 fontSize: "12px",
                 opacity:
-                  bannerGerado && aprovado
+                  arteLiberada
                     ? 1
                     : 0.45,
                 cursor:
-                  bannerGerado && aprovado
+                  arteLiberada
                     ? "pointer"
                     : "not-allowed",
               }}
             >
-              {bannerGerado && aprovado
+              {arteLiberada
                 ? "⬇️ PNG"
                 : "🔒 PNG"}
             </button>
@@ -3673,7 +3712,7 @@ async function salvarBannerNasMidias(urlBanner) {
                 }}
               />
 
-              {bannerGerado && (
+              {bannerGerado && !fundoIA && (
                 <>
 
               <div
@@ -3741,8 +3780,7 @@ async function salvarBannerNasMidias(urlBanner) {
                         ".04em",
                     }}
                   >
-                    {marca.nome ||
-                      "Sua Empresa"}
+                    {marca.nome || ""}
                   </strong>
                 </div>
 
@@ -4166,6 +4204,127 @@ async function salvarBannerNasMidias(urlBanner) {
             </div>
           )}
 
+          <label
+            style={{
+              marginTop: "8px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              color: "#cbd5e1",
+              fontSize: "12px",
+              cursor: "pointer",
+            }}
+            title="Quando ligado, só o fundo branco ligado às bordas fica transparente. Peças brancas/claras são protegidas. Desligue se a sua peça for muito clara."
+          >
+            <input
+              type="checkbox"
+              checked={removerFundoAuto}
+              onChange={(evento) =>
+                alternarRemoverFundoAuto(
+                  evento.target.checked
+                )
+              }
+            />
+            Remover fundo branco automaticamente
+            {!removerFundoAuto ? (
+              <span style={{ color: "#fde68a" }}>
+                (foto usada como está)
+              </span>
+            ) : null}
+          </label>
+
+          <label
+            style={{
+              marginTop: "6px",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              color: "#cbd5e1",
+              fontSize: "12px",
+              cursor: "pointer",
+            }}
+            title="A IA (OpenAI) cria só o cenário ao redor da sua foto. A peça é colada por cima sem alteração e os textos são escritos pelo PAIIA."
+          >
+            <input
+              type="checkbox"
+              checked={usarIA}
+              onChange={(evento) =>
+                alternarUsarIA(evento.target.checked)
+              }
+            />
+            Cenário profissional com IA (OpenAI)
+            <span style={{ color: "#94a3b8" }}>
+              {usarIA ? "≈ US$ 0,05 por geração" : "(cenário PAIIA, sem custo)"}
+            </span>
+          </label>
+
+          {infoIA && (
+            <div
+              style={{
+                marginTop: "6px",
+                padding: "7px 9px",
+                borderRadius: "8px",
+                border: "1px solid #334155",
+                background: "#020617",
+                color: infoIA.startsWith("✅")
+                  ? "#86efac"
+                  : "#fde68a",
+                fontSize: "11px",
+              }}
+            >
+              {infoIA}
+            </div>
+          )}
+
+          {falhaIA && (
+            <div
+              role="alert"
+              style={{
+                marginTop: "8px",
+                padding: "10px 12px",
+                borderRadius: "10px",
+                border: "1px solid #ef4444",
+                background: "rgba(127,29,29,.22)",
+                color: "#fecaca",
+                fontSize: "12px",
+                lineHeight: 1.45,
+              }}
+            >
+              <strong>❌ A IA da OpenAI não gerou o banner.</strong>
+              <div style={{ marginTop: "4px" }}>
+                {falhaIA.mensagem}
+              </div>
+              <div style={{ marginTop: "4px", color: "#fca5a5", fontSize: "11px" }}>
+                Código: {falhaIA.codigo || "FALHA_IA"}
+              </div>
+              <div
+                style={{
+                  marginTop: "8px",
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "6px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => gerarComIA()}
+                  disabled={gerandoFundoIA}
+                  style={{ ...botaoPrincipal, padding: "8px 10px", fontSize: "12px" }}
+                >
+                  🔄 Tentar de novo com IA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => gerarComIA({ semIA: true })}
+                  disabled={gerandoFundoIA}
+                  style={{ ...botaoSecundario, padding: "8px 10px", fontSize: "12px" }}
+                >
+                  Usar cenário PAIIA (sem IA)
+                </button>
+              </div>
+            </div>
+          )}
+
                     <div
             style={{
               marginTop: "8px",
@@ -4177,7 +4336,7 @@ async function salvarBannerNasMidias(urlBanner) {
           >
             <button
               type="button"
-              onClick={gerarComIA}
+              onClick={() => gerarComIA()}
               disabled={gerandoFundoIA}
               style={{
                 ...botaoPrincipal,
@@ -4205,8 +4364,8 @@ async function salvarBannerNasMidias(urlBanner) {
               type="button"
               onClick={aprovarBanner}
               disabled={
-                gerandoFundoIA ||
-                !bannerGerado
+                !arteLiberada ||
+                (aprovado && bannerSalvo)
               }
               style={{
                 ...botaoAprovar,
@@ -4214,29 +4373,74 @@ async function salvarBannerNasMidias(urlBanner) {
                 padding: "11px 12px",
                 fontSize: "13px",
                 opacity:
-                  gerandoFundoIA ||
-                  !bannerGerado
+                  !arteLiberada ||
+                  (aprovado && bannerSalvo)
                     ? 0.5
                     : 1,
                 cursor:
-                  gerandoFundoIA ||
-                  !bannerGerado
+                  !arteLiberada ||
+                  (aprovado && bannerSalvo)
                     ? "not-allowed"
                     : "pointer",
               }}
             >
-              ✅ Aprovar Banner
+              {aprovado && bannerSalvo
+                ? "✅ Salvo na Galeria"
+                : "✅ Aprovar e salvar"}
             </button>
           </div>
+
+          {arteDesatualizada && (
+            <div
+              style={{
+                marginTop: "8px",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                border: "1px solid #f59e0b",
+                background: "rgba(245,158,11,.10)",
+                color: "#fde68a",
+                fontSize: "12px",
+                textAlign: "center",
+              }}
+            >
+              🔄 Você mudou opções depois de gerar. Clique em “Gerar novamente” para atualizar a arte.
+            </div>
+          )}
+
+          {aprovado &&
+            bannerSalvo &&
+            temAnuncioEmAndamento() && (
+              <button
+                type="button"
+                onClick={usarBannerNoAnuncio}
+                disabled={bannerNoAnuncio}
+                style={{
+                  ...botaoSecundario,
+                  width: "100%",
+                  marginTop: "6px",
+                  padding: "9px 10px",
+                  fontSize: "12px",
+                  opacity: bannerNoAnuncio ? 0.6 : 1,
+                }}
+              >
+                {bannerNoAnuncio
+                  ? "✅ Banner está no anúncio"
+                  : "➕ Usar no anúncio em andamento"}
+              </button>
+            )}
 
           <button
             type="button"
             onClick={() => {
-              localStorage.setItem(
-                "abaMidiasAppia",
-                "banners"
-              );
-              setScreen?.("midiasAppia");
+              try {
+                localStorage.setItem(
+                  "filtroGaleria",
+                  "banner"
+                );
+              } catch {
+                // filtro é só conveniência
+              }
+              setScreen?.("galeria");
             }}
             style={{
               ...botaoSecundario,
@@ -4249,8 +4453,7 @@ async function salvarBannerNasMidias(urlBanner) {
             Meus Banners
           </button>
 
-          {bannerGerado &&
-            aprovado && (
+          {arteLiberada && (
               <div
                 style={{
                   marginTop: "16px",
@@ -4297,7 +4500,7 @@ async function salvarBannerNasMidias(urlBanner) {
                           "3px",
                       }}
                     >
-                      Use a mesma arte aprovada em outros canais, sem gerar outro banner com IA.
+                      Mesma foto e mesmos textos, com o layout refeito na medida de cada canal.
                     </div>
                   </div>
 
@@ -4425,8 +4628,8 @@ async function salvarBannerNasMidias(urlBanner) {
               textAlign: "center",
             }}
           >
-            Gere a arte uma vez. Depois de aprovada, o PAIIA cria as versões
-            nas medidas dos canais sem consumir uma nova geração de IA.
+            O banner é montado com a sua foto real: a peça não é redesenhada.
+            Depois de gerar, baixe o PNG ou crie as versões para outros canais.
           </div>
         </main>
       </div>
@@ -4507,8 +4710,8 @@ async function salvarBannerNasMidias(urlBanner) {
                       "13px",
                   }}
                 >
-                  Escolha a foto que
-                  será usada pela IA.
+                  Escolha a foto do produto
+                  (ou envie do seu aparelho).
                 </p>
               </div>
 
@@ -4545,9 +4748,9 @@ async function salvarBannerNasMidias(urlBanner) {
                     "#020617",
                 }}
               >
-                Nenhuma imagem
-                disponível na Galeria
-                PAIIA.
+                Nenhuma foto de produto
+                na Galeria PAIIA ainda.
+                Envie uma foto do seu aparelho.
               </div>
             ) : (
               <div
@@ -4615,6 +4818,34 @@ async function salvarBannerNasMidias(urlBanner) {
                 )}
               </div>
             )}
+
+            <div
+              style={{
+                display: "flex",
+                gap: "10px",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                marginTop: "16px",
+              }}
+            >
+              {galeriaTemMais &&
+                typeof carregarMaisGaleria === "function" && (
+                  <button
+                    type="button"
+                    onClick={() => carregarMaisGaleria()}
+                    style={botaoSecundario}
+                  >
+                    ⬇️ Carregar mais fotos
+                  </button>
+                )}
+              <button
+                type="button"
+                onClick={() => inputFotoAparelhoRef.current?.click()}
+                style={botaoSecundario}
+              >
+                📤 Enviar foto do aparelho
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -4702,12 +4933,6 @@ const previewPainel = {
   boxShadow: "0 18px 50px rgba(0,0,0,.22)",
 };
 
-const passoTitulo = {
-  color: "#67e8f9",
-  fontWeight: "900",
-  fontSize: "14px",
-  marginBottom: "10px",
-};
 
 const gradeDois = {
   display: "grid",
