@@ -49,6 +49,15 @@ Deno.serve(async (req) => {
     return json({ sucesso: false, erro: "Serviço de banner indisponível.", codigo: "CONFIG" }, 500);
   }
 
+  // Lê o corpo ANTES de responder (inclusive o 401): responder sem consumir
+  // um corpo grande (a foto) deixava o pedido pendurado no navegador.
+  let corpo: Record<string, unknown> = {};
+  try {
+    corpo = await req.json();
+  } catch {
+    return json({ sucesso: false, erro: "Pedido inválido.", codigo: "PEDIDO_INVALIDO" }, 400);
+  }
+
   const cliente = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authorization } },
     auth: { persistSession: false, autoRefreshToken: false },
@@ -63,13 +72,6 @@ Deno.serve(async (req) => {
   const apiKey = Deno.env.get("OPENAI_API_KEY") || "";
   if (!apiKey) {
     return json({ sucesso: false, erro: "IA de imagem não configurada.", codigo: "SEM_CHAVE" }, 503);
-  }
-
-  let corpo: Record<string, unknown> = {};
-  try {
-    corpo = await req.json();
-  } catch {
-    return json({ sucesso: false, erro: "Pedido inválido.", codigo: "PEDIDO_INVALIDO" }, 400);
   }
 
   const referencia = dataUrlParaBytes(String(corpo.referencia || ""));
