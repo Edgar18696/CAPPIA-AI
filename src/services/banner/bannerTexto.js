@@ -72,5 +72,6 @@ export function assinaturaArteBanner(parametros = {}) {
     parametros.codigo || "",
     JSON.stringify(parametros.exibir || {}),
     parametros.chamadaMl || "",
+    JSON.stringify(parametros.diferenciais || []),
   ]);
 }

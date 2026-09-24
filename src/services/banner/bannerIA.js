@@ -130,6 +130,10 @@ export async function gerarCenarioComIA({
   variacao = 0,
   modo = "",
   zonaProduto = "",
+  direcao = "",
+  objetivoDiretor = "",
+  luz = "",
+  baseProduto = "",
   tempoLimite = TEMPO_LIMITE_IA_MS,
   modoLocal = Boolean(import.meta.env?.DEV),
   fetchImpl = (...args) => fetch(...args),
@@ -147,6 +151,10 @@ export async function gerarCenarioComIA({
     variacao,
     modo,
     zonaProduto,
+    direcao,
+    objetivoDiretor,
+    luz,
+    baseProduto,
   };
 
   let dados;

@@ -5,6 +5,8 @@
 // A IA recebe SOMENTE a foto real posicionada + a máscara; nenhum dado
 // comercial (preço, código, site, WhatsApp, logo) é enviado.
 
+import { montarPromptDiretorArte } from "./promptDiretorArte.js";
+
 export const MODELOS_OPENAI_BANNER = ["gpt-image-2", "gpt-image-1.5", "gpt-image-1"];
 export const TAMANHOS_OPENAI = ["1024x1024", "1024x1536", "1536x1024"];
 export const QUALIDADES_OPENAI = ["low", "medium", "high"];
@@ -61,9 +63,26 @@ export function montarPromptCenarioVazio({ paleta, estilo, cenario, zonasLivres 
 }
 
 /**
- * @param {{ paleta?: string, estilo?: string, cenario?: string, zonasLivres?: string[], pedestal?: boolean, modo?: string, zonaProduto?: string }} dados
+ * @param {{ paleta?: string, estilo?: string, cenario?: string, zonasLivres?: string[], pedestal?: boolean, modo?: string, zonaProduto?: string,
+ *   direcao?: string, objetivoDiretor?: string, luz?: string, baseProduto?: string, semente?: number }} dados
  */
-export function montarPromptBanner({ paleta, estilo, cenario, zonasLivres = [], pedestal = false, modo = "", zonaProduto = "" }) {
+export function montarPromptBanner({
+  paleta, estilo, cenario, zonasLivres = [], pedestal = false, modo = "", zonaProduto = "",
+  direcao = "", objetivoDiretor = "", luz = "", baseProduto = "", semente = 0,
+}) {
+  // Diretor de arte (padrão do Banner Express, exceto Mercado Livre)
+  if (modo === "diretor-arte") {
+    return montarPromptDiretorArte({
+      paleta,
+      direcaoId: direcao,
+      objetivo: objetivoDiretor,
+      zonaProduto,
+      zonasTexto: zonasLivres,
+      luz,
+      semente,
+      baseProduto,
+    });
+  }
   if (modo === "cenario-vazio") {
     return montarPromptCenarioVazio({ paleta, estilo, cenario, zonasLivres, zonaProduto });
   }

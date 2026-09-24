@@ -31,6 +31,13 @@ import {
   montarBaseCenarioParaIA,
 } from "../services/banner/desenhoBanner.js";
 import { gerarCenarioComIA } from "../services/banner/bannerIA.js";
+import { montarBannerDiretorArte } from "../services/banner/desenhoDiretorArte.js";
+import {
+  DIFERENCIAIS,
+  decidirDirecaoDeArte,
+  objetivoDoDiretor,
+  planejarDiretor,
+} from "../services/banner/diretorArte.js";
 import { buscarMascoteOficial } from "../services/mascoteMarcaService";
 
 const EXIBIR_PADRAO = {
@@ -930,6 +937,30 @@ useEffect(() => {
     Math.floor(Math.random() * 997)
   );
 
+  // Diferenciais que o usuário marca (selos). Nunca inventados pela IA.
+  const [diferenciais, setDiferenciais] = useState(() => {
+    try {
+      const salvos = JSON.parse(localStorage.getItem("paiiaBannerDiferenciais") || "[]");
+      return Array.isArray(salvos) ? salvos.filter((id) => DIFERENCIAIS[id]) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  function alternarDiferencial(id) {
+    setDiferenciais((atual) => {
+      const novo = atual.includes(id)
+        ? atual.filter((item) => item !== id)
+        : [...atual, id].slice(-3);
+      try {
+        localStorage.setItem("paiiaBannerDiferenciais", JSON.stringify(novo));
+      } catch {
+        // opcional
+      }
+      return novo;
+    });
+  }
+
   function alternarExibir(campo) {
     setExibirComercial((atual) => {
       const novo = { ...atual, [campo]: !atual[campo] };
@@ -1121,8 +1152,10 @@ useEffect(() => {
         codigo: formato === "mercadoLivre" ? "" : codigoProduto,
         exibir: exibirComercial,
         chamadaMl: formato === "mercadoLivre" ? chamadaMl : "",
+        diferenciais: formato === "mercadoLivre" ? [] : diferenciais,
       }),
     [
+      diferenciais,
       formato,
       paleta,
       objetivo,
@@ -1536,6 +1569,126 @@ useEffect(() => {
   // colada por cima + textos e dados comerciais desenhados pelo PAIIA.
   // No Mercado Livre, preço, código, logo, site e WhatsApp são
   // bloqueados automaticamente, mesmo preenchidos.
+  // Diretor de arte: o usuário escolhe formato, estilo e cor; o PAIIA
+  // decide cenário, composição, luz e hierarquia. A IA cria só a arte de
+  // fundo; a foto real, o logo e os dados comerciais entram por cima,
+  // exatamente como foram informados.
+  async function montarArteComDiretor({
+    parametros,
+    largura,
+    altura,
+    produto,
+    proporcaoProduto,
+    comerciais,
+    variacao,
+    opcoes = {},
+  }) {
+    const objetivoDiretor = objetivoDoDiretor(parametros.estilo, parametros.objetivo);
+    const copyUsuario = parametros.copyPersonalizada ? parametros.copy || {} : {};
+    const decisao = decidirDirecaoDeArte({
+      objetivo: objetivoDiretor,
+      variacao,
+      titulo: copyUsuario.titulo,
+      apoio: copyUsuario.apoio,
+      cta: copyUsuario.cta,
+    });
+    const quadro = tamanhoQuadroIA(largura, altura);
+    const plano = planejarDiretor({
+      largura,
+      altura,
+      proporcaoProduto,
+      decisao,
+      diferenciais: parametros.diferenciais,
+      quadro,
+    });
+
+    let cenarioIA = null;
+    let resultadoIA = null;
+    if (opcoes.usarIANesta) {
+      try {
+        const retanguloNoQuadro = mapearParaQuadroIA(plano.peca, { largura, altura }, quadro);
+        const referencia = montarBaseCenarioParaIA({
+          retanguloNoQuadro,
+          quadro,
+          paletaId: parametros.paleta,
+        });
+        const resposta = await gerarCenarioComIA({
+          supabase,
+          referencia,
+          mascara: "",
+          tamanho: quadro.texto,
+          formato: parametros.formato,
+          paleta: parametros.paleta,
+          estilo: parametros.estilo || parametros.objetivo,
+          cenario: decisao.direcaoId,
+          zonasLivres: plano.zonasTextoIA,
+          pedestal: false,
+          modo: "diretor-arte",
+          zonaProduto: plano.zonaProdutoIA,
+          direcao: decisao.direcaoId,
+          objetivoDiretor,
+          luz: decisao.luz,
+          baseProduto: plano.baseProdutoIA,
+          variacao,
+        });
+        cenarioIA = await carregarImagemParaCanvas(resposta.imagem);
+        // Guarda o cenário para as versões em outros formatos (sem nova IA).
+        parametros.cenarioIA = resposta.imagem;
+        resultadoIA = { ok: true, ...resposta, imagem: undefined };
+        console.info(
+          `[PAIIA Banner IA] diretor de arte: estilo=${objetivoDiretor} direcao=${decisao.direcaoId} layout=${decisao.layout} modelo=${resposta.modelo} tempo=${(resposta.duracaoMs / 1000).toFixed(1)}s`
+        );
+      } catch (erro) {
+        console.error("[PAIIA Banner IA] falha:", erro?.codigo, erro?.message, erro?.detalhe || "");
+        resultadoIA = {
+          ok: false,
+          erro: erro?.message || "IA indisponível.",
+          codigo: erro?.codigo || "",
+          detalhe: erro?.detalhe || "",
+        };
+        if (opcoes.exigirIA) {
+          const falha = new Error(resultadoIA.erro);
+          falha.codigo = resultadoIA.codigo || "FALHA_IA";
+          falha.falhaIA = true;
+          falha.detalhe = resultadoIA.detalhe;
+          throw falha;
+        }
+      }
+    } else if (parametros.cenarioIA) {
+      try {
+        cenarioIA = await carregarImagemParaCanvas(parametros.cenarioIA);
+      } catch {
+        cenarioIA = null;
+      }
+    }
+
+    let logoImagem = null;
+    if (comerciais.logo) {
+      try {
+        logoImagem = await carregarImagemParaCanvas(comerciais.logo);
+      } catch {
+        logoImagem = null;
+      }
+    }
+
+    const { dataUrl, registro } = await montarBannerDiretorArte({
+      largura,
+      altura,
+      paletaId: PALETAS[parametros.paleta] ? parametros.paleta : "azul",
+      produto,
+      cenarioIA,
+      decisao,
+      comerciais,
+      diferenciais: parametros.diferenciais || [],
+      logoImagem,
+    });
+    registro.bloqueados = comerciais.bloqueados;
+    registro.ia = resultadoIA;
+    registro.decisao = { estilo: objetivoDiretor, direcao: decisao.direcaoId, layout: decisao.layout };
+    ultimoRegistroRef.current = registro;
+    return dataUrl;
+  }
+
   async function montarArteBanner(
     parametros,
     formatoDestino,
@@ -1579,6 +1732,20 @@ useEffect(() => {
       ? textoChamadaMercadoLivre(parametros.chamadaMl)
       : "";
     const variacao = Number(parametros.variacao) || 0;
+
+    // Todos os formatos, exceto Mercado Livre: DIRETOR DE ARTE.
+    if (!ehMl) {
+      return montarArteComDiretor({
+        parametros,
+        largura,
+        altura,
+        produto,
+        proporcaoProduto: larguraPeca / Math.max(1, alturaPeca),
+        comerciais,
+        variacao,
+        opcoes,
+      });
+    }
     const plano = planejarLayout({
       largura,
       altura,
@@ -1825,6 +1992,17 @@ useEffect(() => {
             ? chamadaMl
             : "",
         estilo: modeloSelecionado || interpretado.objetivo,
+        // Texto próprio do usuário (não o texto padrão do estilo): a
+        // chamada dele é respeitada; senão o diretor de arte escolhe.
+        copyPersonalizada: Boolean(
+          pedidoAppia.trim() &&
+            pedidoAppia.trim() !==
+              String(
+                MODELOS_DESCRICAO.find((modelo) => modelo.id === modeloSelecionado)?.texto || ""
+              ).trim()
+        ),
+        diferenciais:
+          interpretado.formato === "mercadoLivre" ? [] : [...diferenciais],
         variacao:
           sementeVariacao + proximaVersao,
         usarIA: usarIANesta,
@@ -2348,6 +2526,9 @@ async function salvarBannerNasMidias(urlBanner, parametros) {
   try {
     const parametrosSalvos = {
       ...(parametros || {}),
+      cenarioIA: /^https?:\/\//i.test(String(parametros?.cenarioIA || ""))
+        ? parametros.cenarioIA
+        : "",
       imagem: imagemOriginalUrl || "",
       salvoEm: new Date().toISOString(),
     };
@@ -3297,6 +3478,42 @@ async function salvarBannerNasMidias(urlBanner, parametros) {
                     style={{ ...inputStyle, padding: "7px 9px", fontSize: "12px" }}
                   />
                 </div>
+                <div style={{ display: "grid", gap: "6px", marginTop: "4px" }}>
+                  <div style={{ color: "#cbd5e1", fontSize: "11px", fontWeight: 800 }}>
+                    ⭐ Selos no banner (opcional — marque só o que for verdade)
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {Object.entries(DIFERENCIAIS).map(([id, item]) => (
+                      <label
+                        key={id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "4px 8px",
+                          borderRadius: "8px",
+                          border: diferenciais.includes(id)
+                            ? "1px solid #67e8f9"
+                            : "1px solid #334155",
+                          color: "#e2e8f0",
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          cursor: formato === "mercadoLivre" ? "not-allowed" : "pointer",
+                          opacity: formato === "mercadoLivre" ? 0.5 : 1,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={formato === "mercadoLivre"}
+                          checked={diferenciais.includes(id)}
+                          onChange={() => alternarDiferencial(id)}
+                        />
+                        {item.nome}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
                 <div style={{ color: "#94a3b8", fontSize: "11px" }}>
                   {marca.logo
                     ? "✅ Logo cadastrado: será aplicado com o arquivo original."

@@ -187,6 +187,11 @@ export function criarMiddlewareBannerOpenAI(raiz, opcoes = {}) {
       pedestal: Boolean(corpo.pedestal),
       modo: String(corpo.modo || ""),
       zonaProduto: String(corpo.zonaProduto || ""),
+      direcao: String(corpo.direcao || ""),
+      objetivoDiretor: String(corpo.objetivoDiretor || ""),
+      luz: String(corpo.luz || ""),
+      baseProduto: String(corpo.baseProduto || ""),
+      semente: Number(corpo.variacao) || 0,
     });
 
     registrarLog(raiz, `pedido: tamanho=${corpo.tamanho} formato=${corpo.formato} cenario=${corpo.cenario} modelo=${config.modelo} qualidade=${config.qualidade} mascara=${mascara ? "sim" : "não"} modo=${corpo.modo || "padrao"}`);
