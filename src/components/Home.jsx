@@ -148,6 +148,18 @@ export default function Home({
       );
     }
 
+    // Galeria aberta pela Home = Galeria normal (Fotos | Mascotes | Banners | Vídeos).
+    // Limpa um modo de seleção que tenha ficado salvo de um fluxo interrompido
+    // (ex.: escolher foto para Clip/Banner/Anúncio), que escondia as categorias.
+    if (card.tela === "galeria") {
+      [
+        "modoGaleria",
+        "galeriaAbaFixa",
+        "abrirGaleriaNaAba",
+        "abrirGaleriaClip",
+      ].forEach((chave) => localStorage.removeItem(chave));
+    }
+
     setScreen(card.tela);
   }
 

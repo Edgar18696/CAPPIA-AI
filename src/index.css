@@ -416,6 +416,9 @@ table {
 
   .paiia-galeria-filtros button {
     width: 100%;
+    min-height: 48px;
+    font-size: 15px;
+    touch-action: manipulation;
   }
 
   .paiia-galeria-busca {
