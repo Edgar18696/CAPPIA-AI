@@ -92,6 +92,11 @@ export default function Galeria({
 
   const [abaMidiaAnuncio, setAbaMidiaAnuncio] =
     useState("foto");
+
+  // Mascotes: ficam na tabela "mascotes_marca" (não em "processamentos"),
+  // por isso a aba Mascotes lê de lá. Só leitura.
+  const [mascotesGaleria, setMascotesGaleria] =
+    useState([]);
 useEffect(() => {
   const modoAtual =
     localStorage.getItem(
@@ -433,6 +438,71 @@ useEffect(() => {
 ]);
 
 // =====================================================
+// MASCOTES (tabela mascotes_marca) — só na aba Mascotes
+// =====================================================
+
+useEffect(() => {
+  let ativo = true;
+
+  if (filtroGaleria !== "mascote") {
+    return () => {
+      ativo = false;
+    };
+  }
+
+  (async () => {
+    try {
+      const { data: dadosSessao } =
+        await supabase.auth.getSession();
+      const usuarioId =
+        dadosSessao?.session?.user?.id;
+
+      if (!usuarioId) {
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("mascotes_marca")
+        .select("id, nome, imagem_base, created_at")
+        .eq("user_id", usuarioId)
+        .eq("ativo", true)
+        .not("imagem_base", "is", null)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      if (!ativo) {
+        return;
+      }
+
+      setMascotesGaleria(
+        (Array.isArray(data) ? data : []).map((m) => ({
+          id: `mascote-marca-${m.id}`,
+          user_id: usuarioId,
+          tipo: "mascote",
+          status: "finalizado",
+          created_at: m.created_at,
+          imagem_processada: m.imagem_base,
+          imagem_original: "",
+          nome: m.nome || "",
+        }))
+      );
+    } catch (erro) {
+      console.error(
+        "Erro ao carregar mascotes na Galeria:",
+        erro
+      );
+    }
+  })();
+
+  return () => {
+    ativo = false;
+  };
+}, [filtroGaleria]);
+
+// =====================================================
 // GALERIA FILTRADA
 // JUNTA FOTOS + BANNERS
 // =====================================================
@@ -454,9 +524,16 @@ const galeriaFiltrada =
     const mapa =
       new Map();
 
+    const mascotes =
+      filtroGaleria === "mascote" &&
+      Array.isArray(mascotesGaleria)
+        ? mascotesGaleria
+        : [];
+
     [
       ...fotos,
       ...banners,
+      ...mascotes,
     ].forEach((item) => {
       const chave =
         chaveVisualGaleria(
@@ -614,6 +691,7 @@ const galeriaFiltrada =
   }, [
     galeria,
     bannersGaleria,
+    mascotesGaleria,
     filtroGaleria,
     buscaGaleria,
     selecionandoParaAnuncio,

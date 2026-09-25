@@ -2766,6 +2766,8 @@ return (
 
     {!usuario ? (
       <>
+        {/* Centro de Criação (home): o acesso ao Paizinho é só o cartão "Central do Paizinho". */}
+        {screen !== "home" && (
         <button
           type="button"
           className="paiia-topo-paizinho"
@@ -2776,6 +2778,7 @@ return (
         >
           Paizinho IA
         </button>
+        )}
         <button
           type="button"
           style={botaoTopoPlanos}
@@ -2834,6 +2837,8 @@ return (
           </span>
         )}
 
+        {/* Centro de Criação (home): o acesso ao Paizinho é só o cartão "Central do Paizinho". */}
+        {screen !== "home" && (
         <button
           type="button"
           className="paiia-topo-paizinho"
@@ -2844,6 +2849,7 @@ return (
         >
           Paizinho IA
         </button>
+        )}
 
         <button
           type="button"
