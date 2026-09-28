@@ -19,6 +19,7 @@ export default function DadosPeca({
   processando,
   etapaProcessamento,
   progressoProcessamento,
+  avisoNaoEncontrado = "",
 }) {
   return (
     <section style={secaoStyle}>
@@ -47,6 +48,16 @@ export default function DadosPeca({
         progresso={progressoProcessamento}
       />
 
+      {avisoNaoEncontrado && !processando && (
+        <div
+          role="alert"
+          data-testid="aviso-codigo-nao-encontrado"
+          style={avisoStyle}
+        >
+          ⚠️ {avisoNaoEncontrado}
+        </div>
+      )}
+
       <DadosPrincipaisAnuncio
         codigo={codigo}
         setCodigo={setCodigo}
@@ -67,6 +78,17 @@ export default function DadosPeca({
     </section>
   );
 }
+
+const avisoStyle = {
+  marginBottom: "14px",
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1px solid #f59e0b",
+  background: "rgba(245,158,11,.12)",
+  color: "#fde68a",
+  fontSize: "14px",
+  lineHeight: 1.5,
+};
 
 const secaoStyle = {
   marginTop: "8px",

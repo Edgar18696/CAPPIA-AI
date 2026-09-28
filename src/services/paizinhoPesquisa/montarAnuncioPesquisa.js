@@ -134,7 +134,14 @@ export function listarNaoConfirmados(validado) {
   const c = validado?.confirmado || {};
   const lista = [];
   if (!c.descricao) lista.push("Nome/tipo da peça");
-  if (!c.fabricante) lista.push("Fabricante");
+  if (!c.fabricante) {
+    const ref = (c.referenciasCruzadas || []).find((r) => r.marca);
+    lista.push(
+      ref
+        ? `Fabricante — o código aparece só como referência cruzada no catálogo ${ref.marca}${ref.codigo ? ` (produto ${ref.codigo})` : ""}; essa marca não é o fabricante desta peça`
+        : "Fabricante"
+    );
+  }
   if (!c.codigosOem?.length) lista.push("Código OEM da montadora");
   if (!c.codigosSubstitutos?.length && !c.codigosEquivalentes?.length) {
     lista.push("Códigos substitutos/equivalentes");
@@ -149,6 +156,11 @@ export function listarNaoConfirmados(validado) {
     if (semMotor) lista.push(`Motor de ${semMotor} aplicação(ões) — a fonte não informa`);
     const semComb = apps.filter((a) => !a.combustivel).length;
     if (semComb) lista.push(`Combustível de ${semComb} aplicação(ões) — a fonte não informa`);
+  }
+  for (const a of validado?.aplicacoesNaoConfirmadas || []) {
+    const veiculo = [a.montadora, a.modelo, a.versao, a.motor].filter(Boolean).join(" ");
+    const anos = [a.ano_inicio, a.ano_fim].filter(Boolean).join("–");
+    lista.push(`Aplicação ${veiculo}${anos ? ` (${anos})` : ""} — ${a.vereditoRotulo || "Não confirmado"}`);
   }
   if (!c.especificacoes?.length) lista.push("Especificações técnicas");
   for (const cf of validado?.conflitos || []) lista.push(`${cf.campo} — fontes divergentes`);
@@ -196,7 +208,12 @@ export function montarCamposCriarAnuncio(validado) {
     combustivel: a.combustivel || "",
     ano_inicio: a.ano_inicio,
     ano_fim: a.ano_fim,
-    observacao: [a.combustivel ? `Combustível: ${a.combustivel}` : "", `Fonte: ${(a.fontes || []).join(" | ")}`]
+    observacao: [
+      a.combustivel ? `Combustível: ${a.combustivel}` : "",
+      a.vereditoRotulo ? `Validação: ${a.vereditoRotulo}` : "",
+      a.referenciaBase?.origem ? `Catálogo interno: ${a.referenciaBase.origem}` : "",
+      `Fonte: ${(a.fontes || []).join(" | ")}`,
+    ]
       .filter(Boolean)
       .join(" | "),
     codigo_oem: codigoPesquisado,
@@ -204,6 +221,8 @@ export function montarCamposCriarAnuncio(validado) {
     origem_catalogo: ORIGEM_PESQUISA,
     tipo_referencia: "aplicacao_veiculo",
     fontes: a.fontes,
+    validacao: a.vereditoRotulo || "",
+    referenciaBase: a.referenciaBase || null,
   }));
 
   const unicaAplicacao = aplicacoes.length === 1 ? aplicacoes[0] : null;

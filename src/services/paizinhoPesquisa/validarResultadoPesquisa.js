@@ -89,21 +89,35 @@ export function chaveFabricante(nome) {
 
 // Família da peça — só para comparar se duas fontes falam da MESMA peça
 const FAMILIAS_PECA = [
-  ["sonda lambda", /sonda|lambda|sensor de oxigenio|oxygen sensor|o2 sensor/],
+  ["sonda lambda", /sonda|lambda|sensor de oxigenio|sensor de oxigeno|oxygen sensor|o2 sensor/],
   ["bico injetor", /bico|injetor|injector|valvula injetora/],
   ["bobina de ignicao", /bobina|ignition coil/],
   ["vela de ignicao", /vela de ignicao|spark plug|\bvela\b/],
   ["vela aquecedora", /vela aquecedora|glow plug/],
   ["cabo de vela", /cabo de vela|cabos de ignicao|ignition cable|ignition lead/],
+  ["sensor de nivel", /sensor de nivel|medidor de nivel|boia|fuel level|level sensor/],
+  ["modulo de combustivel", /modulo de combustivel|modulo da bomba|fuel pump module|fuel module/],
   ["bomba de combustivel", /bomba de combustivel|fuel pump|bomba eletrica/],
-  ["sensor de rotacao", /sensor de rotacao|crankshaft|sensor de posicao do virabrequim/],
-  ["sensor de fase", /sensor de fase|camshaft|posicao do comando/],
+  ["sensor de rotacao", /sensor de rotacao|crankshaft|sensor de posicao do virabrequim|ciguenal|\bckp\b/],
+  ["sensor de fase", /sensor de fase|camshaft|posicao do comando|arbol de levas|arvore de comando|comando de valvulas|\bcmp\b/],
   ["sensor map", /\bmap\b|pressao absoluta/],
   ["sensor de temperatura", /sensor de temperatura|temperature sensor/],
   ["sensor de detonacao", /detonacao|knock/],
   ["corpo de borboleta", /corpo de borboleta|throttle body|tbi/],
   ["valvula solenoide", /solenoide|solenoid/],
 ];
+
+const ROTULO_FAMILIA = {
+  "modulo de combustivel": "Módulo de combustível",
+  "bomba de combustivel": "Bomba de combustível",
+  "bobina de ignicao": "Bobina de ignição",
+  "vela de ignicao": "Vela de ignição",
+  "sensor de rotacao": "Sensor de rotação",
+  "sensor de detonacao": "Sensor de detonação",
+  "sensor de temperatura": "Sensor de temperatura",
+  "valvula solenoide": "Válvula solenoide",
+  "sensor map": "Sensor MAP",
+};
 
 export function familiaPeca(descricao) {
   const t = normalizarTexto(descricao);
@@ -143,6 +157,13 @@ function mencionaCodigo(fonte, codigoNorm) {
   return [fonte?.evidencia, fonte?.trecho, fonte?.titulo].some((t) =>
     textoContemCodigo(t, codigoNorm)
   );
+}
+
+// "FIAT:51812133" / "Bosch: 0580314370" → { marca, codigo }
+function separarMarcaCodigo(valor) {
+  const t = texto(valor);
+  const m = t.match(/^([A-Za-zÀ-ÿ][^:]{0,40}):\s*(\S.*)$/);
+  return m ? { marca: m[1].trim(), codigo: m[2].trim() } : { marca: "", codigo: t };
 }
 
 // ---------- Validação principal ----------
@@ -196,16 +217,56 @@ export function validarResultadoPesquisa({ codigoPesquisado, fontes = [] }) {
       continue;
     }
 
-    oficiaisValidas.push({ ...registro, dados: fonte?.dados || {} });
+    // Papel do código na página: produto PRÓPRIO do fabricante da página,
+    // ou só REFERÊNCIA cruzada (OEM/equivalente de um produto com outro
+    // código). Na referência, a marca da página NÃO é o fabricante da peça.
+    const dados = fonte?.dados || {};
+    const proprioCodigo = normalizarCodigo(dados.codigo_fabricante);
+    const citadoComoReferencia = listaContemCodigo(
+      [...(dados.codigos_oem || []), ...(dados.codigos_equivalentes || []), ...(dados.codigos_substitutos || [])].map(
+        (x) => separarMarcaCodigo(x).codigo
+      ),
+      codigoNorm
+    );
+    let papelCodigo = "";
+    if (proprioCodigo && proprioCodigo === codigoNorm) papelCodigo = "proprio";
+    else if (proprioCodigo || citadoComoReferencia) papelCodigo = "referencia";
+    registro.papelCodigo = papelCodigo;
+    oficiaisValidas.push({ ...registro, dados });
   }
 
+  // Referências cruzadas: a marca e o código do produto da página viram
+  // equivalência (com fonte); nunca "fabricante" do código pesquisado.
+  const referenciasCruzadas = oficiaisValidas
+    .filter((f) => f.papelCodigo === "referencia")
+    .map((f) => ({
+      marca: texto(f.dados?.fabricante),
+      codigo: texto(f.dados?.codigo_fabricante),
+      url: f.url,
+    }));
+
   const conflitos = [];
+
+  // Descrição original da página quando o código é só referência cruzada
+  // (usada apenas para conferir o tipo de peça contra a base).
+  let descricaoReferencia = "";
 
   // --- Campos únicos: fabricante e descrição ---
   function consolidarUnico(campo, chaveFn, rotulo) {
     const porChave = new Map();
     for (const f of oficiaisValidas) {
-      const valor = texto(f.dados?.[campo]);
+      let valor = texto(f.dados?.[campo]);
+      if (f.papelCodigo === "referencia") {
+        // Fabricante da página não vale para o código pesquisado;
+        // descrição fica só como tipo de peça genérico (se reconhecido).
+        if (campo === "fabricante") continue;
+        if (campo === "descricao") {
+          if (valor && !descricaoReferencia) descricaoReferencia = valor;
+          const fam = FAMILIAS_PECA.find(([, re]) => re.test(normalizarTexto(valor)));
+          if (!fam) continue;
+          valor = ROTULO_FAMILIA[fam[0]] || fam[0].charAt(0).toUpperCase() + fam[0].slice(1);
+        }
+      }
       if (!valor) continue;
       const k = chaveFn(valor);
       if (!porChave.has(k)) porChave.set(k, { valores: [], fontes: [] });
@@ -237,10 +298,10 @@ export function validarResultadoPesquisa({ codigoPesquisado, fontes = [] }) {
     const mapa = new Map();
     for (const f of oficiaisValidas) {
       for (const bruto of f.dados?.[campo] || []) {
-        const valor = texto(bruto);
+        const { marca, codigo: valor } = separarMarcaCodigo(bruto);
         const k = normalizarCodigo(valor);
         if (!k || k === codigoNorm) continue;
-        if (!mapa.has(k)) mapa.set(k, { codigo: valor, fontes: [] });
+        if (!mapa.has(k)) mapa.set(k, { codigo: valor, ...(marca ? { marca } : {}), fontes: [] });
         mapa.get(k).fontes.push(f.url);
       }
     }
@@ -249,13 +310,28 @@ export function validarResultadoPesquisa({ codigoPesquisado, fontes = [] }) {
 
   const codigosOem = consolidarLista("codigos_oem");
   const codigosEquivalentes = consolidarLista("codigos_equivalentes");
+  for (const r of referenciasCruzadas) {
+    const k = normalizarCodigo(r.codigo);
+    if (!k || k === codigoNorm) continue;
+    const existente = codigosEquivalentes.find((x) => normalizarCodigo(x.codigo) === k);
+    if (existente) existente.fontes = [...new Set([...existente.fontes, r.url])];
+    else codigosEquivalentes.push({ codigo: r.codigo, marca: r.marca, fontes: [r.url] });
+  }
   const codigosSubstitutos = consolidarLista("codigos_substitutos");
 
   // --- Aplicações ---
   const aplicacoesPorChave = new Map();
   const aplicacoesDescartadas = [];
   for (const f of oficiaisValidas) {
-    for (const bruta of f.dados?.aplicacoes || []) {
+    // "C2; C3; Ducato" em um só campo modelo = vários veículos: separa,
+    // para cada um ser validado sozinho (nada entra "de carona").
+    const brutas = [];
+    for (const b of f.dados?.aplicacoes || []) {
+      const modelos = texto(b?.modelo).split(/\s*[;,]\s*/).filter(Boolean);
+      if (modelos.length > 1) modelos.forEach((m) => brutas.push({ ...b, modelo: m }));
+      else brutas.push(b);
+    }
+    for (const bruta of brutas) {
       const a = {
         montadora: texto(bruta?.montadora),
         modelo: texto(bruta?.modelo),
@@ -390,6 +466,8 @@ export function validarResultadoPesquisa({ codigoPesquisado, fontes = [] }) {
           codigosSubstitutos: codigosSubstitutos,
           aplicacoes: aplicacoesConfirmadas,
           especificacoes,
+          referenciasCruzadas,
+          descricaoReferencia,
         }
       : {
           fabricante: "",

@@ -1,8 +1,16 @@
 import {
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { supabase } from "../supabase";
+import {
+  buscarDimensoesProduto,
+  salvarDimensoesProduto,
+  STATUS_DIMENSOES,
+  ORIGEM_DIMENSOES,
+  ROTULO_ORIGEM,
+} from "../services/precificacao/dimensoesProduto";
 import PainelCatalogo from "./PainelCatalogo";
 import ChecklistAnuncio from "./ChecklistAnuncio";
 import PainelFotosAnuncio from "./PainelFotosAnuncio";
@@ -35,15 +43,37 @@ import {
   STATUS_PESQUISA as STATUS_PAIZINHO,
 } from "../services/paizinhoPesquisa/validarResultadoPesquisa";
 import {
-  gravarPesquisaConfirmadaNaBase,
-} from "../services/paizinhoPesquisa/gravarPesquisaNaBase";
-import {
-  compararComBase,
   complementoUtil,
 } from "../services/paizinhoPesquisa/complementarBase";
+// Fonte própria PAIIA (conhecimento validado) — 1ª etapa da busca
+import {
+  buscarConhecimentoValidado,
+  resultadoDoConhecimento,
+} from "../services/paizinhoPesquisa/conhecimentoValidado";
+import {
+  montarCamposCriarAnuncio,
+} from "../services/paizinhoPesquisa/montarAnuncioPesquisa";
 
 const MENSAGEM_BASE_NAO_ENCONTROU =
   "Produto ainda não encontrado na Base PAIIA.";
+
+// Criar Anúncio trabalha SOMENTE com a base interna PAIIA (catálogos/PDFs
+// importados e auditados). A pesquisa externa (Claude/internet) fica
+// DESACOPLADA deste fluxo — os módulos continuam no projeto para uso futuro
+// (manutenção/descoberta de catálogos), mas não são chamados aqui.
+const PESQUISA_EXTERNA_CRIAR_ANUNCIO_ATIVA = false;
+const MENSAGEM_NAO_ENCONTRADO_CATALOGOS =
+  "Código não encontrado em nossos catálogos. Verifique o código informado ou consulte os catálogos disponíveis.";
+
+// Mensagens do serviço que significam "a Base PAIIA não tem esse código"
+// (não são erros técnicos): mostram o aviso na tela, sem alerta.
+function ehNaoEncontradoNosCatalogos(mensagem) {
+  const texto = String(mensagem || "").trim();
+  return (
+    texto === MENSAGEM_BASE_NAO_ENCONTROU ||
+    texto.startsWith("Nenhum resultado foi encontrado para")
+  );
+}
 
 import {
   marcarAnuncioPronto,
@@ -1214,6 +1244,16 @@ async function calcularCustosMercadoLivre() {
       false
     );
 
+    // Frete automático: registra o resultado e grava na base PAIIA
+    // o peso/medidas confirmados pelo usuário (MANUAL/ESTIMADO).
+    registrarFreteManual(
+      freteCalculado,
+      peso,
+      altura,
+      largura,
+      comprimento
+    );
+
     console.log(
       "✅ FRETE MERCADO LIVRE:",
       data
@@ -1483,6 +1523,386 @@ function formatarPrecoAppia(
   const [pecaEncontrada, setPecaEncontrada] = useState(null);
   const [diagnostico, setDiagnostico] = useState(null);
   const [auditoria, setAuditoria] = useState(null);
+
+  /*
+   * ============================================
+   * FRETE AUTOMÁTICO MERCADO LIVRE
+   * (Calcule o preço ideal)
+   * Busca peso/medidas em fontes confiáveis (base PAIIA → catálogo →
+   * anúncio próprio no ML). Sem dado confiável, NÃO calcula: pede os dados.
+   * Estimativa por categoria é só sugestão e nunca calcula sozinha.
+   * ============================================
+   */
+  const [dimensoesFrete, setDimensoesFrete] = useState(null);
+  const [statusFreteAuto, setStatusFreteAuto] = useState("idle");
+  const [freteAutoInfo, setFreteAutoInfo] = useState(null);
+  const [erroFreteAuto, setErroFreteAuto] = useState("");
+  const [estimativaFrete, setEstimativaFrete] = useState(null);
+  const [dimensoesManuaisDeEstimativa, setDimensoesManuaisDeEstimativa] =
+    useState(null);
+  const ultimoFreteAutoRef = useRef("");
+  const [avisoGravacaoFrete, setAvisoGravacaoFrete] = useState("");
+
+  function conferirGravacaoFrete(resultadoGravacao) {
+    setAvisoGravacaoFrete(
+      resultadoGravacao?.ok
+        ? ""
+        : "⚠️ Peso e medidas NÃO foram gravados na base PAIIA (a próxima pesquisa não vai reaproveitar)."
+    );
+  }
+
+  const chavePecaFrete = pecaEncontrada
+    ? [
+        pecaEncontrada.codigo_oem,
+        pecaEncontrada.codigo_equivalente,
+        pecaEncontrada.peca,
+      ]
+        .map((v) => String(v || ""))
+        .join("|")
+    : "";
+
+  function codigosParaFrete() {
+    const extras = String(
+      pecaEncontrada?.codigo_equivalente || ""
+    )
+      .split(/[,;/|]/)
+      .map((c) => c.trim());
+    return [
+      codigo,
+      pecaEncontrada?.codigo_oem,
+      ...extras,
+    ].filter(Boolean);
+  }
+
+  function formatarNumeroFrete(valor, casas = 2) {
+    return Number(valor || 0)
+      .toFixed(casas)
+      .replace(".", ",");
+  }
+
+  function textoEmbalagemFrete(d) {
+    if (!d) return "";
+    const n = (v) =>
+      String(Math.round(Number(v) * 10) / 10).replace(".", ",");
+    return `${n(d.comprimento_cm)} × ${n(d.largura_cm)} × ${n(d.altura_cm)} cm`;
+  }
+
+  function limparFreteAutomaticoAnterior() {
+    const anterior = ultimoFreteAutoRef.current;
+    if (anterior) {
+      setFretePrecificacao((atual) =>
+        atual === anterior ? "" : atual
+      );
+      setFreteCompraDetalhado((atual) =>
+        atual === anterior ? "" : atual
+      );
+    }
+    ultimoFreteAutoRef.current = "";
+  }
+
+  /* 1) Peça identificada → procurar peso e medidas confiáveis. */
+  useEffect(() => {
+    let ativo = true;
+
+    limparFreteAutomaticoAnterior();
+    setDimensoesFrete(null);
+    setFreteAutoInfo(null);
+    setEstimativaFrete(null);
+    setErroFreteAuto("");
+    setDimensoesManuaisDeEstimativa(null);
+    setAvisoGravacaoFrete("");
+
+    if (!chavePecaFrete) {
+      setStatusFreteAuto("idle");
+      return () => {
+        ativo = false;
+      };
+    }
+
+    setStatusFreteAuto("buscando");
+
+    (async () => {
+      try {
+        const resultado = await buscarDimensoesProduto({
+          codigos: codigosParaFrete(),
+          peca: pecaEncontrada,
+          usuarioId: usuario?.id,
+        });
+
+        if (!ativo) return;
+
+        if (resultado?.confiavel) {
+          setDimensoesFrete(resultado);
+          setStatusFreteAuto("dimensoes_ok");
+
+          // Deixa os dados à vista no cálculo manual, para correção.
+          setPesoFreteML(
+            formatarNumeroFrete(resultado.peso_g / 1000, 3)
+          );
+          setComprimentoFreteML(
+            String(resultado.comprimento_cm).replace(".", ",")
+          );
+          setLarguraFreteML(
+            String(resultado.largura_cm).replace(".", ",")
+          );
+          setAlturaFreteML(
+            String(resultado.altura_cm).replace(".", ",")
+          );
+
+          // Fonte confiável fora da base → grava na base PAIIA
+          // para reutilizar na próxima pesquisa deste código.
+          if (resultado.origem !== ORIGEM_DIMENSOES.BASE_PAIIA) {
+            salvarDimensoesProduto({
+              codigos: codigosParaFrete(),
+              peca: pecaEncontrada,
+              peso_g: resultado.peso_g,
+              comprimento_cm: resultado.comprimento_cm,
+              largura_cm: resultado.largura_cm,
+              altura_cm: resultado.altura_cm,
+              embalagem: resultado.embalagem,
+              status: STATUS_DIMENSOES.CONFIRMADO,
+              origem: resultado.origem,
+              detalheOrigem: resultado.detalheOrigem,
+            }).then(conferirGravacaoFrete);
+          }
+        } else {
+          setEstimativaFrete(resultado?.estimativa || null);
+          setStatusFreteAuto("sem_dados");
+        }
+      } catch (erro) {
+        console.error("Erro ao buscar peso/medidas:", erro);
+        if (ativo) setStatusFreteAuto("sem_dados");
+      }
+    })();
+
+    return () => {
+      ativo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chavePecaFrete]);
+
+  async function calcularFreteAutomatico(d) {
+    if (!usuario?.id || !d?.confiavel) return;
+
+    const precoInformado = numeroPrecificacao(preco);
+    const precoReferencia =
+      precoInformado > 0 ? precoInformado : precoMargem15;
+
+    if (precoReferencia <= 0) {
+      setStatusFreteAuto("aguardando_custo");
+      return;
+    }
+
+    setStatusFreteAuto("calculando");
+    setErroFreteAuto("");
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "calcular-custos-mercado-livre",
+        {
+          body: {
+            usuarioId: usuario.id,
+            precoVenda: precoReferencia,
+            custoProduto: numeroPrecificacao(
+              custoCompraDetalhado || custo
+            ),
+            categoriaId:
+              pecaEncontrada?.categoria_id ||
+              diagnostico?.categoria_id ||
+              "",
+            listingTypeId:
+              tipoAnuncio === "premium"
+                ? "gold_pro"
+                : "gold_special",
+            shippingMode: "me2",
+            logisticType: "drop_off",
+            peso: d.peso_g / 1000,
+            altura: d.altura_cm,
+            largura: d.largura_cm,
+            comprimento: d.comprimento_cm,
+            freteGratis: true,
+          },
+        }
+      );
+
+      if (error) {
+        throw new Error(
+          error.message || "A função de custos não respondeu."
+        );
+      }
+      if (!data?.ok) {
+        // Sem conta ML conectada/token: frete fica PENDENTE (nada é estimado).
+        const semConexao =
+          data?.etapa === "conta_marketplace" ||
+          /conta mercado livre|access_token|token/i.test(String(data?.erro || ""));
+        throw new Error(
+          semConexao
+            ? "a conta Mercado Livre ainda não está conectada ao PAIIA (Contas Marketplace)."
+            : data?.erro ||
+              "Não foi possível calcular os custos do Mercado Livre."
+        );
+      }
+
+      const valor = Number(data?.freteVendedor);
+      if (!Number.isFinite(valor) || valor <= 0) {
+        throw new Error(
+          "O Mercado Livre não retornou um valor válido de frete."
+        );
+      }
+
+      const formatado = formatarNumeroFrete(valor);
+      const anterior = ultimoFreteAutoRef.current;
+
+      // Não sobrescreve um frete que o usuário digitou por conta própria.
+      setFretePrecificacao((atual) =>
+        !atual || atual === anterior ? formatado : atual
+      );
+      setFreteCompraDetalhado((atual) =>
+        !atual || atual === anterior ? formatado : atual
+      );
+      ultimoFreteAutoRef.current = formatado;
+
+      setResultadoCustosML(data);
+      setFreteAutoInfo({
+        valor,
+        manual: d.status === STATUS_DIMENSOES.MANUAL,
+        peso_g: d.peso_g,
+        comprimento_cm: d.comprimento_cm,
+        largura_cm: d.largura_cm,
+        altura_cm: d.altura_cm,
+        status: d.status,
+        origem: d.origem,
+      });
+      setStatusFreteAuto("ok");
+    } catch (erro) {
+      console.error("❌ FRETE AUTOMÁTICO ML:", erro);
+      // Não deixa um frete automático antigo no cálculo quando falhar.
+      limparFreteAutomaticoAnterior();
+      setResultadoCustosML(null);
+      setErroFreteAuto(
+        erro?.message ||
+          "Não foi possível calcular o frete do Mercado Livre."
+      );
+      setStatusFreteAuto("erro");
+    }
+  }
+
+  /* 2) Dados confiáveis + custo informado → calcula o frete sozinho. */
+  useEffect(() => {
+    if (!dimensoesFrete?.confiavel) return undefined;
+    if (canalVenda !== "mercado_livre") return undefined;
+
+    if (numeroPrecificacao(custo) <= 0 && numeroPrecificacao(preco) <= 0) {
+      setStatusFreteAuto("aguardando_custo");
+      return undefined;
+    }
+
+    const temporizador = setTimeout(() => {
+      calcularFreteAutomatico(dimensoesFrete);
+    }, 900);
+
+    return () => clearTimeout(temporizador);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimensoesFrete, custo, tipoAnuncio, canalVenda]);
+
+  function usarEstimativaParaRevisar() {
+    if (!estimativaFrete) return;
+    const valores = {
+      peso: formatarNumeroFrete(estimativaFrete.peso_g / 1000, 3),
+      comprimento: String(estimativaFrete.comprimento_cm),
+      largura: String(estimativaFrete.largura_cm),
+      altura: String(estimativaFrete.altura_cm),
+    };
+    setPesoFreteML(valores.peso);
+    setComprimentoFreteML(valores.comprimento);
+    setLarguraFreteML(valores.largura);
+    setAlturaFreteML(valores.altura);
+    setDimensoesManuaisDeEstimativa(valores);
+    setMostrarCalculoFreteML(true);
+  }
+
+  /*
+   * Chamado pelo cálculo MANUAL depois que o ML devolve o frete:
+   * grava na base PAIIA os dados que o usuário confirmou.
+   */
+  function registrarFreteManual(valor, peso, altura, largura, comprimento) {
+    const pesoG = Math.round(peso * 1000);
+    const iguaisConfiaveis =
+      dimensoesFrete?.confiavel &&
+      Math.round(dimensoesFrete.peso_g) === pesoG &&
+      Number(dimensoesFrete.comprimento_cm) === comprimento &&
+      Number(dimensoesFrete.largura_cm) === largura &&
+      Number(dimensoesFrete.altura_cm) === altura;
+
+    const est = dimensoesManuaisDeEstimativa;
+    const iguaisEstimativa =
+      est &&
+      numeroPrecificacao(est.peso) === peso &&
+      numeroPrecificacao(est.comprimento) === comprimento &&
+      numeroPrecificacao(est.largura) === largura &&
+      numeroPrecificacao(est.altura) === altura;
+
+    const status = iguaisConfiaveis
+      ? dimensoesFrete.status
+      : iguaisEstimativa
+        ? STATUS_DIMENSOES.ESTIMADO
+        : STATUS_DIMENSOES.MANUAL;
+
+    const origem = iguaisConfiaveis
+      ? dimensoesFrete.origem
+      : iguaisEstimativa
+        ? ORIGEM_DIMENSOES.ESTIMATIVA
+        : ORIGEM_DIMENSOES.MANUAL;
+
+    if (!iguaisConfiaveis && pecaEncontrada) {
+      salvarDimensoesProduto({
+        codigos: codigosParaFrete(),
+        peca: pecaEncontrada,
+        peso_g: pesoG,
+        comprimento_cm: comprimento,
+        largura_cm: largura,
+        altura_cm: altura,
+        status,
+        origem,
+        detalheOrigem: iguaisEstimativa
+          ? "Sugestão por categoria usada sem alteração"
+          : "",
+      }).then(conferirGravacaoFrete);
+    }
+
+    ultimoFreteAutoRef.current = formatarNumeroFrete(valor);
+
+    // Novos dados confirmados pelo usuário passam a valer para os
+    // recálculos (ex.: mudança de custo). Estimativa nunca recalcula sozinha.
+    if (!iguaisConfiaveis) {
+      setDimensoesFrete(
+        status === STATUS_DIMENSOES.MANUAL
+          ? {
+              confiavel: true,
+              peso_g: pesoG,
+              comprimento_cm: comprimento,
+              largura_cm: largura,
+              altura_cm: altura,
+              status,
+              origem,
+            }
+          : null
+      );
+    }
+
+    setFreteAutoInfo({
+      valor,
+      manual: true,
+      peso_g: pesoG,
+      comprimento_cm: comprimento,
+      largura_cm: largura,
+      altura_cm: altura,
+      status,
+      origem,
+    });
+    setStatusFreteAuto("ok");
+    setErroFreteAuto("");
+  }
 
   const [mostrarRecursosIA, setMostrarRecursosIA] = useState(false);
   const [mostrarAplicacoes, setMostrarAplicacoes] = useState(false);
@@ -2175,6 +2595,9 @@ async function buscarEMontarAnuncio() {
   const codigoFinal = String(
     codigo || oem || ""
   ).trim();
+  // Campo onde o usuário digitou: o valor volta para ele se o código
+  // não for encontrado, para conferir/corrigir sem digitar de novo.
+  const digitadoNoOem = !String(codigo || "").trim() && Boolean(String(oem || "").trim());
 
   if (!codigoFinal) {
     alert(
@@ -2209,6 +2632,26 @@ async function buscarEMontarAnuncio() {
   );
 
   try {
+    // 1ª etapa: BASE VALIDADA PAIIA (fonte própria). Se o código já foi
+    // pesquisado e validado antes, usa esse conhecimento e não repete a
+    // pesquisa externa. Só registros com status "validado" entram aqui.
+    setEtapaProcessamento(
+      "🔎 Consultando a Base validada PAIIA..."
+    );
+    const linhasBaseValidada =
+      await buscarConhecimentoValidado(
+        codigoFinal
+      );
+
+    if (linhasBaseValidada.length > 0) {
+      aplicarBaseValidadaPaizinho(
+        codigoFinal,
+        linhasBaseValidada
+      );
+      return;
+    }
+
+    // 2ª etapa: CATÁLOGOS INTERNOS (3ª: pesquisa externa, mais abaixo)
     const resultado =
       await preencherAnuncioAutomaticamente({
         codigo: codigoFinal,
@@ -2791,21 +3234,28 @@ const descricaoResultado =
       })
     );
 
-    // Base PAIIA achou o código mas sem aplicação de veículo → o Paizinho
-    // tenta completar em fontes originais (sem apagar o que veio da base).
+    // Base PAIIA achou o código mas sem aplicação de veículo.
+    // Regra: catálogo interno primeiro; pesquisa externa (paga) SÓ quando
+    // o código não existe internamente. Aqui o código existe num catálogo
+    // interno, então NÃO há consulta externa automática: o painel do
+    // Paizinho avisa e deixa a pesquisa externa como opção manual.
     if (
       aplicacoesValidas.length === 0 &&
       !resultado?.fallbackExterno
     ) {
-      await complementarComPesquisaPaizinho(
-        codigoFinal,
-        {
+      setPesquisaPaizinho({
+        status: "interno_sem_aplicacao",
+        codigoPesquisado: codigoFinal,
+        origemFallback: "interno_sem_aplicacao",
+        catalogosInternos:
+          resultado?.baseMestre?.fontes || [],
+        contextoComplemento: {
           pecaBase: pecaResultado,
           oemBase: oemResultado,
           diagnosticoBase: diagnosticoResultado,
           auditoriaBase: auditoriaResultado,
-        }
-      );
+        },
+      });
     }
 
     setProgressoProcessamento(
@@ -2825,9 +3275,26 @@ const descricaoResultado =
     // Base PAIIA não tem o código → Paizinho pesquisa em fontes originais.
     // Erros técnicos continuam no fluxo antigo (alerta).
     if (
-      String(erro?.message || "").trim() ===
-      MENSAGEM_BASE_NAO_ENCONTROU
+      ehNaoEncontradoNosCatalogos(erro?.message)
     ) {
+      if (!PESQUISA_EXTERNA_CRIAR_ANUNCIO_ATIVA) {
+        // Sem pesquisa externa: só o aviso. Nada de aplicação, veículo,
+        // motor, OEM ou descrição — o código digitado fica no campo.
+        if (digitadoNoOem) {
+          setOem(codigoFinal);
+        } else {
+          setCodigo(codigoFinal);
+        }
+        setPesquisaPaizinho({
+          status: "nao_encontrado_catalogos",
+          codigoPesquisado: codigoFinal,
+          mensagem: MENSAGEM_NAO_ENCONTRADO_CATALOGOS,
+        });
+        setProcessando(false);
+        setEtapaProcessamento("");
+        setProgressoProcessamento(0);
+        return;
+      }
       await executarPesquisaPaizinho(
         codigoFinal
       );
@@ -2849,10 +3316,94 @@ const descricaoResultado =
     );
   }
 }
+// Preenche o anúncio com o conhecimento VALIDADO da fonte própria PAIIA
+// (sem catálogo e sem pesquisa externa). O código digitado é preservado.
+function aplicarBaseValidadaPaizinho(
+  codigoFinal,
+  linhas
+) {
+  const validado =
+    resultadoDoConhecimento(
+      linhas,
+      codigoFinal
+    );
+  const campos =
+    montarCamposCriarAnuncio(validado);
+
+  setCodigo(codigoFinal);
+  if (campos.oem) setOem(campos.oem);
+  if (campos.titulo) setTitulo(campos.titulo);
+  if (campos.descricao) setDescricao(campos.descricao);
+
+  if (campos.pecaEncontrada) {
+    const fontesBase =
+      validado?.baseValidada?.fontes || [];
+    const diagnosticoBase = {
+      codigoPrincipal: codigoFinal,
+      fabricante:
+        campos.pecaEncontrada.fabricante || "",
+      totalAplicacoes:
+        campos.pecaEncontrada.aplicacoes
+          ?.length || 0,
+      arquivoCatalogo: "Base validada PAIIA",
+      paginaCatalogo: "",
+      fontes: fontesBase,
+      confianca: validado?.confianca || "",
+      avisoAplicacao:
+        "Dados da Base validada PAIIA (confirmados antes em catálogo interno ou em 2+ fontes oficiais). Nenhuma pesquisa externa foi feita.",
+      origemBaseValidada: true,
+    };
+    const auditoriaBase = {
+      aprovado: true,
+      origemBaseValidada: true,
+      problemas: [],
+    };
+    setPecaEncontrada({
+      ...campos.pecaEncontrada,
+      origem_catalogo: "Base validada PAIIA",
+      origem: "paiia_conhecimento_validado",
+    });
+    setDiagnostico(diagnosticoBase);
+    setAuditoria(auditoriaBase);
+    setMostrarAplicacoes(true);
+  }
+
+  setPesquisaPaizinho({
+    status: validado.status,
+    mensagem: validado.mensagem,
+    validado,
+    campos,
+    codigoPesquisado: codigoFinal,
+    origemFallback: "base_validada",
+  });
+
+  setProgressoProcessamento(100);
+  setEtapaProcessamento(
+    "✅ Encontrado na Base validada PAIIA."
+  );
+  setTimeout(() => {
+    setProcessando(false);
+    setEtapaProcessamento("");
+    setProgressoProcessamento(0);
+  }, 800);
+}
+
 async function executarPesquisaPaizinho(
   codigoFinal,
   { forcar = false } = {}
 ) {
+  // Pesquisa externa desacoplada do Criar Anúncio (não chama Claude/internet).
+  if (!PESQUISA_EXTERNA_CRIAR_ANUNCIO_ATIVA) {
+    setPesquisaPaizinho({
+      status: "nao_encontrado_catalogos",
+      codigoPesquisado: codigoFinal,
+      mensagem: MENSAGEM_NAO_ENCONTRADO_CATALOGOS,
+    });
+    setProcessando(false);
+    setEtapaProcessamento("");
+    setProgressoProcessamento(0);
+    return;
+  }
   // O código digitado é preservado como "Código pesquisado".
   setProcessando(true);
   setCodigo(codigoFinal);
@@ -3024,6 +3575,10 @@ async function complementarComPesquisaPaizinho(
     auditoriaBase,
   } = {}
 ) {
+  // Pesquisa externa desacoplada do Criar Anúncio (não chama Claude/internet).
+  if (!PESQUISA_EXTERNA_CRIAR_ANUNCIO_ATIVA) {
+    return;
+  }
   try {
     setEtapaProcessamento(
       "Base PAIIA sem aplicação de veículo para este código. O Paizinho está pesquisando fontes originais…"
@@ -3034,14 +3589,15 @@ async function complementarComPesquisaPaizinho(
       data: sessao,
     } = await supabase.auth.getUser();
 
-    // Aqui a gravação é decidida depois de conferir se é a mesma peça.
+    // A pesquisa externa é comparada com a peça da base e com os
+    // catálogos importados; nada é gravado (só proposta de incorporação).
     const resultado =
       await pesquisarFontesOriginais(
         codigoFinal,
         {
           userId:
             sessao?.user?.id || null,
-          gravarNaBase: false,
+          pecaBase,
           onProgresso: (
             etapa
           ) => {
@@ -3050,24 +3606,16 @@ async function complementarComPesquisaPaizinho(
         }
       );
 
-    const comparacao =
-      compararComBase(
-        resultado?.validado,
-        pecaBase
-      );
-
-    let gravacaoBase = null;
+    const divergenciasBase =
+      resultado?.validado?.validacaoBase?.divergencias || [];
     const util =
       complementoUtil(
         resultado?.validado
-      );
+      ) &&
+      resultado?.validado?.status ===
+        STATUS_PAIZINHO.ENCONTRADO;
 
-    if (util && comparacao.compativel) {
-      gravacaoBase =
-        await gravarPesquisaConfirmadaNaBase(
-          resultado.validado
-        );
-
+    if (util) {
       const campos =
         resultado?.campos || {};
 
@@ -3105,7 +3653,7 @@ async function complementarComPesquisaPaizinho(
           aplicacoesExternas.length,
         aplicacaoConfirmada: true,
         avisoAplicacao:
-          "Aplicações completadas pelo Paizinho em fonte original (Pesquisa externa PAIIA). Confira a fonte antes de publicar.",
+          "Aplicações completadas pelo Paizinho em fonte original e conferidas com o catálogo interno. Confira a fonte antes de publicar.",
       });
 
       setAuditoria({
@@ -3113,7 +3661,7 @@ async function complementarComPesquisaPaizinho(
         aprovado: false,
         problemas: [
           ...((auditoriaBase?.problemas) || []),
-          "Aplicações vindas de pesquisa externa em fonte original — confira a fonte.",
+          "Aplicações vindas de pesquisa externa validada — confira a fonte.",
         ],
       });
 
@@ -3124,19 +3672,8 @@ async function complementarComPesquisaPaizinho(
       ...resultado,
       codigoPesquisado: codigoFinal,
       origemFallback: "base_incompleta",
-      divergenciasBase:
-        util && !comparacao.compativel
-          ? comparacao.divergencias
-          : [],
-      gravacaoBase:
-        gravacaoBase ||
-        (util && !comparacao.compativel
-          ? {
-              gravado: false,
-              motivo:
-                "A fonte original diverge da Base PAIIA — nada foi misturado nem gravado (revisão necessária).",
-            }
-          : resultado?.gravacaoBase || null),
+      divergenciasBase,
+      gravacaoBase: null,
     });
   } catch (erroComplemento) {
     // O complemento nunca quebra o anúncio já montado pela base.
@@ -4105,6 +4642,11 @@ marcarAnuncioPronto({
   processando={processando}
   etapaProcessamento={etapaProcessamento}
   progressoProcessamento={progressoProcessamento}
+  avisoNaoEncontrado={
+    pesquisaPaizinho?.status === "nao_encontrado_catalogos"
+      ? pesquisaPaizinho?.mensagem || MENSAGEM_NAO_ENCONTRADO_CATALOGOS
+      : ""
+  }
 />
 
 <section
@@ -4716,6 +5258,109 @@ marcarAnuncioPronto({
 </label>
 
   </div>
+
+  {canalVenda === "mercado_livre" &&
+    statusFreteAuto !== "idle" && (
+    <div
+      data-paiia-frete-auto={statusFreteAuto}
+      style={{
+        width: "100%",
+        marginTop: "10px",
+        padding: "10px 12px",
+        borderRadius: "10px",
+        border:
+          statusFreteAuto === "sem_dados" ||
+          statusFreteAuto === "erro"
+            ? "1px solid #f59e0b"
+            : "1px solid #1e3a5f",
+        background: "#020617",
+        color: "#cbd5e1",
+        fontSize: "12px",
+        lineHeight: 1.6,
+      }}
+    >
+      {statusFreteAuto === "buscando" && (
+        <div>🔎 O Paizinho está procurando o peso e as medidas da peça…</div>
+      )}
+
+      {statusFreteAuto === "sem_dados" && (
+        <>
+          <div style={{ color: "#fbbf24", fontWeight: 700 }}>
+            ⏳ Frete pendente: peso e medidas não confirmados. O frete NÃO foi calculado — informe os dados para calcular.
+          </div>
+          {estimativaFrete && (
+            <div style={{ marginTop: "6px", color: "#94a3b8" }}>
+              💡 Sugestão por categoria ({estimativaFrete.detalheOrigem}) — ESTIMADO, não confirmado:
+              {" "}peso ~{Math.round(estimativaFrete.peso_g)} g | embalagem ~{textoEmbalagemFrete(estimativaFrete)}.
+              {" "}
+              <button
+                type="button"
+                onClick={usarEstimativaParaRevisar}
+                style={{
+                  marginLeft: "4px",
+                  padding: "3px 8px",
+                  borderRadius: "8px",
+                  border: "1px solid #334155",
+                  background: "#0f172a",
+                  color: "#bae6fd",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                }}
+              >
+                Usar sugestão para revisar
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {(statusFreteAuto === "dimensoes_ok" ||
+        statusFreteAuto === "aguardando_custo") &&
+        dimensoesFrete && (
+        <div>
+          📦 Peso e medidas encontrados ({ROTULO_ORIGEM[dimensoesFrete.origem] || dimensoesFrete.origem} · {dimensoesFrete.status}).
+          {" "}Informe o custo da mercadoria para o Paizinho calcular o frete.
+        </div>
+      )}
+
+      {statusFreteAuto === "calculando" && (
+        <div>⏳ Calculando o frete no Mercado Livre…</div>
+      )}
+
+      {statusFreteAuto === "erro" && (
+        <div style={{ color: "#fbbf24" }}>
+          ⏳ Frete pendente — cálculo/validação no Mercado Livre não concluído: {erroFreteAuto}
+          {" "}Nenhum valor de frete foi estimado ou preenchido automaticamente.
+        </div>
+      )}
+
+      {statusFreteAuto === "ok" && freteAutoInfo && (
+        <>
+          <div style={{ color: "#67e8f9", fontWeight: 700 }}>
+            🚚 Frete Mercado Livre: R$ {formatarNumeroFrete(freteAutoInfo.valor)}
+            {freteAutoInfo.manual
+              ? " — calculado com os dados informados por você"
+              : " — calculado automaticamente pelo Paizinho"}
+          </div>
+          <div>
+            Peso: {Math.round(freteAutoInfo.peso_g)} g | Embalagem: {textoEmbalagemFrete(freteAutoInfo)}
+          </div>
+          <div style={{ color: "#64748b" }}>
+            Origem dos dados: {ROTULO_ORIGEM[freteAutoInfo.origem] || freteAutoInfo.origem} · {freteAutoInfo.status}
+          </div>
+          {avisoGravacaoFrete && (
+            <div style={{ color: "#fbbf24" }}>{avisoGravacaoFrete}</div>
+          )}
+          {ultimoFreteAutoRef.current &&
+            fretePrecificacao !== ultimoFreteAutoRef.current && (
+            <div style={{ color: "#fbbf24" }}>
+              Frete alterado por você — o valor digitado no campo é o que entra no preço ideal.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )}
 
   <div
     style={{
@@ -6065,7 +6710,29 @@ const custoTotalVenda =
   <PainelPesquisaPaizinho
     pesquisa={pesquisaPaizinho}
     onPesquisarNovamente={
-      processando ||
+      !PESQUISA_EXTERNA_CRIAR_ANUNCIO_ATIVA
+        ? undefined
+        : pesquisaPaizinho?.status ===
+        "interno_sem_aplicacao"
+        ? processando
+          ? undefined
+          : async () => {
+              // Pesquisa externa pedida pelo usuário (consulta paga).
+              setProcessando(true);
+              try {
+                await complementarComPesquisaPaizinho(
+                  pesquisaPaizinho.codigoPesquisado ||
+                    codigo,
+                  pesquisaPaizinho.contextoComplemento ||
+                    {}
+                );
+              } finally {
+                setProcessando(false);
+                setEtapaProcessamento("");
+                setProgressoProcessamento(0);
+              }
+            }
+        : processando ||
       pesquisaPaizinho?.origemFallback ===
         "base_incompleta"
         ? undefined

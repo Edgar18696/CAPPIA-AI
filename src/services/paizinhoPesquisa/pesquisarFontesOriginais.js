@@ -9,7 +9,11 @@
 //   3. Valida TUDO no cliente (validarResultadoPesquisa): só fonte
 //      oficial que cita o código confirma; o resto é descartado.
 //   4. Monta os campos do Criar Anúncio só com dado confirmado.
-//   5. Registra auditoria e deixa como "pendente de validação".
+//   5. Compara com a Base PAIIA (validarContraBase): só aplicação
+//      confirmada pela base ou por fonte oficial forte preenche o anúncio;
+//      o resto fica "Não confirmado".
+//   6. NÃO grava na base: prepara a proposta de incorporação (aguardando
+//      aprovação) e registra tudo na auditoria.
 //
 // A internet ajuda a localizar, mas a fonte original confirma.
 // Zero é melhor do que aplicação errada.
@@ -23,11 +27,16 @@ import {
 } from "./validarResultadoPesquisa.js";
 import { montarCamposCriarAnuncio } from "./montarAnuncioPesquisa.js";
 import { gravarPesquisaConfirmadaNaBase } from "./gravarPesquisaNaBase.js";
+import { validarPesquisaContraBase } from "./validarContraBase.js";
 import {
   montarRegistroAuditoria,
   registrarAuditoriaPesquisa,
   buscarPesquisaRecente,
 } from "./auditoriaPesquisaExterna.js";
+import {
+  montarRegistrosConhecimento,
+  gravarConhecimento,
+} from "./conhecimentoValidado.js";
 
 export const FUNCAO_PESQUISA = "paizinho-fontes-originais";
 const TEMPO_LIMITE_MS = 90000;
@@ -166,9 +175,34 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     armazenamento,
     userId = null,
     usarCache = true,
-    gravarNaBase = true,
+    // Gravação automática DESLIGADA: resultado validado vira proposta
+    // de incorporação (aguardando aprovação), nunca entra direto na base.
+    gravarNaBase = false,
+    // Fonte própria (tabela separada paiia_conhecimento_validado): grava
+    // o resultado JÁ comparado com a base, com status validado/pendente/
+    // conflito. Os catálogos originais não são tocados.
+    gravarConhecimentoValidado = true,
+    validarBase = true,
+    pecaBase = null,
     onProgresso,
   } = opcoes;
+
+  async function validarComBase(validado) {
+    if (!validarBase || !validado) return validado;
+    progresso("Comparando com os catálogos da Base PAIIA…", 85);
+    try {
+      return await validarPesquisaContraBase(validado, { cliente, pecaBase });
+    } catch (e) {
+      console.warn("[PAIZINHO_PESQUISA] validação contra a base falhou:", e);
+      // Sem conseguir comparar, nenhuma aplicação externa é usada.
+      return {
+        ...validado,
+        confirmado: { ...(validado.confirmado || {}), aplicacoes: [] },
+        aplicacoesNaoConfirmadas: validado.confirmado?.aplicacoes || [],
+        validacaoBase: { situacao: "falha_na_comparacao", divergencias: [], aplicacoes: [] },
+      };
+    }
+  }
 
   async function gravar(validado) {
     if (!gravarNaBase) return null;
@@ -178,6 +212,19 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     } catch (e) {
       console.warn("[PAIZINHO_PESQUISA] falha ao gravar na base:", e);
       return { gravado: false, inseridos: 0, reaproveitados: 0, atualizados: 0, motivo: "Falha ao gravar na base.", erro: String(e?.message || e) };
+    }
+  }
+
+  async function guardarConhecimento(validado, pesquisaId) {
+    if (!gravarConhecimentoValidado || !validado) return null;
+    try {
+      const linhas = montarRegistrosConhecimento(validado, { pesquisaId, userId });
+      if (!linhas.length) return null;
+      progresso("Guardando na Base validada PAIIA…", 95);
+      return await gravarConhecimento(linhas, { cliente });
+    } catch (e) {
+      console.warn("[PAIZINHO_PESQUISA] falha ao guardar conhecimento:", e);
+      return { gravado: false, motivo: "Falha ao gravar na Base validada PAIIA.", erro: String(e?.message || e) };
     }
   }
 
@@ -207,13 +254,15 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
   if (usarCache) {
     const recente = await buscarPesquisaRecente(codigoPesquisado, { cliente, armazenamento });
     if (recente) {
-      const validado = resultadoDoCache(recente);
+      let validado = resultadoDoCache(recente);
       validado.codigoPesquisado = codigoPesquisado;
+      validado = await validarComBase(validado);
       // Se da outra vez a gravação não aconteceu, tenta de novo (sem duplicar).
       const gravacaoBase =
         validado.status === STATUS_PESQUISA.ENCONTRADO || validado.status === STATUS_PESQUISA.CONFLITO
           ? await gravar(validado)
           : null;
+      const conhecimento = await guardarConhecimento(validado, recente.id);
       progresso("Pesquisa anterior reaproveitada (sem nova consulta paga).", 100);
       return {
         status: validado.status,
@@ -222,6 +271,7 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
         campos: montarCamposCriarAnuncio(validado),
         auditoria: { id: recente.id, salvoEm: recente.origemCache, registro: recente },
         gravacaoBase,
+        conhecimento,
         deCache: true,
       };
     }
@@ -241,7 +291,7 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
 
   // 3. Validação (sempre no cliente, mesmo que o servidor já filtre)
   progresso("Conferindo fontes oficiais…", 75);
-  const validado = validarResultadoPesquisa({
+  let validado = validarResultadoPesquisa({
     codigoPesquisado,
     fontes: bruto?.fontes || [],
   });
@@ -266,6 +316,10 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     validado.mensagem = erro?.mensagemUsuario || MENSAGEM_INDISPONIVEL;
   }
 
+  // 3b. Validação contra a Base PAIIA (resultado externo nunca é aceito sozinho)
+  const validadoExterno = validado;
+  if (!erro) validado = await validarComBase(validado);
+
   // 4. Campos do anúncio (vazios quando não confirmado)
   const campos = montarCamposCriarAnuncio(
     erro ? { ...validado, status: STATUS_PESQUISA.NAO_IDENTIFICADO } : validado
@@ -277,7 +331,7 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
   // 6. Auditoria (sempre, inclusive quando nada foi encontrado)
   const registro = montarRegistroAuditoria({
     codigoPesquisado,
-    validado,
+    validado: validadoExterno,
     bruto,
     inicio,
     fim: new Date().toISOString(),
@@ -285,7 +339,18 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     userId,
     erro,
   });
-  registro.gravacao_base = gravacaoBase
+  // Resultado final (depois da comparação com a base) e proposta de
+  // incorporação ficam na auditoria — nunca em catalogo_pecas.
+  registro.status = erro ? STATUS_PESQUISA.INDISPONIVEL : validado.status;
+  registro.conflitos = validado.conflitos || [];
+  registro.dados_descartados = {
+    ...(registro.dados_descartados || {}),
+    aplicacoes_nao_confirmadas_pela_base: validado.aplicacoesNaoConfirmadas || [],
+    validacao_base: validado.validacaoBase || null,
+    origens: validado.origens || null,
+    proposta_incorporacao: validado.propostaIncorporacao || null,
+  };
+  if (gravacaoBase) registro.gravacao_base = gravacaoBase
     ? {
         gravado: gravacaoBase.gravado,
         inseridos: gravacaoBase.inseridos,
@@ -304,6 +369,9 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     auditoria = { salvoEm: "nenhum", id: null, registro };
   }
 
+  // 7. Fonte própria: só depois da comparação com a base (validado/pendente/conflito)
+  const conhecimento = erro ? null : await guardarConhecimento(validado, auditoria?.id || null);
+
   progresso("Pesquisa concluída.", 100);
   return {
     status: validado.status,
@@ -312,6 +380,7 @@ export async function pesquisarFontesOriginais(codigoDigitado, opcoes = {}) {
     campos,
     auditoria,
     gravacaoBase,
+    conhecimento,
     deCache: false,
   };
 }

@@ -54,6 +54,16 @@ function variantesCodigoPesquisa(valor) {
   const compacto = normalizarCodigo(valor);
   const variantes = new Set([original, compacto].filter(Boolean));
 
+  /*
+   * Códigos de tipo em que o "+" faz parte do código (ex.: vela
+   * "FR 7 DCX+" gravada como "FR7DCX+"): forma sem espaços/pontos/hífens
+   * mantendo o "+". "WR 7 DC" e "WR 7 DC+" continuam sendo códigos diferentes.
+   */
+  if (original.includes("+")) {
+    const semSeparadores = original.replace(/[\s.\-/]+/g, "");
+    if (semSeparadores) variantes.add(semSeparadores);
+  }
+
   if (
     /^\d{10}$/.test(compacto) ||
     /^(0580|0280)\d{6}$/.test(compacto) ||
@@ -94,6 +104,9 @@ function variantesCodigoPesquisa(valor) {
     if (fronteiras.length <= 3) {
       for (const i of fronteiras) {
         variantes.add(`${compacto.slice(0, i)} ${compacto.slice(i)}`);
+        // Mesmo código gravado com hífen (ex.: sensor NTK "VSN3-A008"
+        // digitado "VSN3A008").
+        variantes.add(`${compacto.slice(0, i)}-${compacto.slice(i)}`);
       }
     }
   }
@@ -110,6 +123,56 @@ function variantesCodigoPesquisa(valor) {
   }
 
   return [...variantes];
+}
+
+/*
+ * Códigos em que o "+" faz parte do código (vela "FR 7 DCX+" x "FR 7 DCX"):
+ * a busca normalizada acha as duas formas; quando existe registro com a
+ * forma EXATA digitada (com ou sem "+"), só ele é usado — as duas formas
+ * nunca são misturadas no mesmo anúncio. Sem "+" em jogo, nada muda.
+ */
+function codigosDoRegistroComMais(registro) {
+  return [
+    registro?.codigo_oem,
+    registro?.codigo_principal,
+    ...String(registro?.codigo_equivalente ?? "").split(/[,;|\n]+/),
+  ]
+    .map((valor) =>
+      String(valor ?? "")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s.\-/]+/g, "")
+    )
+    .filter(Boolean);
+}
+
+function preferirFormaExataComMais(termo, registros) {
+  if (!Array.isArray(registros) || registros.length < 2) {
+    return registros;
+  }
+
+  const alvo = String(termo ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s.\-/]+/g, "");
+
+  const maisEmJogo =
+    alvo.includes("+") ||
+    registros.some((registro) =>
+      codigosDoRegistroComMais(registro).some((codigo) =>
+        codigo.includes("+")
+      )
+    );
+
+  if (!alvo || !maisEmJogo) {
+    return registros;
+  }
+
+  const exatos = registros.filter((registro) =>
+    codigosDoRegistroComMais(registro).includes(alvo)
+  );
+
+  return exatos.length > 0 ? exatos : registros;
 }
 
 function ehErroTecnicoPesquisa(erro) {
@@ -238,8 +301,16 @@ function pareceCodigoPesquisa(
       original
     );
 
+  // Códigos curtos em que o "+" faz parte do código (velas "W 9 D+",
+  // "H 4 B+") também são tratados como código.
+  const minimo =
+    original.includes("+") &&
+    /[A-Z]/i.test(normalizado)
+      ? 3
+      : 4;
+
   if (
-    normalizado.length < 4 ||
+    normalizado.length < minimo ||
     normalizado.length > 40
   ) {
     return false;
@@ -1225,8 +1296,11 @@ async function pesquisarBaseAppiaTermo(
       }
     }
 
-    const registros = pecas.filter((registro) =>
-      registroTemCodigoNormalizado(registro, compacto)
+    const registros = preferirFormaExataComMais(
+      termo,
+      pecas.filter((registro) =>
+        registroTemCodigoNormalizado(registro, compacto)
+      )
     );
 
     if (registros.length > 0) {

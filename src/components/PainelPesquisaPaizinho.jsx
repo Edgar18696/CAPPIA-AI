@@ -77,8 +77,112 @@ function faixaStatus(status) {
 export default function PainelPesquisaPaizinho({ pesquisa, onPesquisarNovamente }) {
   if (!pesquisa) return null;
 
+  // Código fora dos catálogos PAIIA: retorno rápido, sem pesquisa externa.
+  if (pesquisa.status === "nao_encontrado_catalogos") {
+    return (
+      <section style={caixa} data-testid="painel-pesquisa-paizinho">
+        <h3 style={{ color: COR.info, marginTop: 0, marginBottom: "12px" }}>
+          🔎 Paizinho — catálogos PAIIA
+        </h3>
+        <Linha nome="Código pesquisado">
+          <strong data-testid="paizinho-codigo">{pesquisa.codigoPesquisado}</strong>
+        </Linha>
+        <p style={{ color: COR.alerta, margin: "12px 0 0" }} data-testid="paizinho-mensagem">
+          {pesquisa.mensagem ||
+            "Código não encontrado em nossos catálogos. Verifique o código informado ou consulte os catálogos disponíveis."}
+        </p>
+      </section>
+    );
+  }
+
+  // Código existe no catálogo interno, mas sem aplicação de veículo:
+  // nenhuma pesquisa externa é feita automaticamente (regra: catálogo
+  // interno primeiro). A consulta externa fica como opção manual.
+  if (pesquisa.status === "interno_sem_aplicacao") {
+    const catalogos = pesquisa.catalogosInternos || [];
+    return (
+      <section style={caixa} data-testid="painel-pesquisa-paizinho">
+        <h3 style={{ color: COR.info, marginTop: 0, marginBottom: "12px" }}>
+          🔎 Paizinho — catálogo interno
+        </h3>
+        <Linha nome="Fonte interna (Base PAIIA)">
+          <strong style={{ color: COR.ok }} data-testid="paizinho-status">
+            encontrado no catálogo interno
+          </strong>
+        </Linha>
+        {catalogos.length > 0 && (
+          <Linha nome="Catálogo(s)">{catalogos.join(" | ")}</Linha>
+        )}
+        <Linha nome="Código pesquisado">
+          <strong data-testid="paizinho-codigo">{pesquisa.codigoPesquisado}</strong>
+        </Linha>
+        <p style={{ color: COR.alerta, margin: "12px 0 0" }} data-testid="paizinho-mensagem">
+          O catálogo não informa aplicação de veículo para este código. Não foi possível
+          confirmar aplicação, motor ou ano — nada foi inventado.
+          <br />
+          <span style={{ color: COR.suave }}>
+            Nenhuma pesquisa externa foi feita — o Criar Anúncio usa somente os catálogos PAIIA.
+          </span>
+        </p>
+        {onPesquisarNovamente && (
+          <button
+            type="button"
+            onClick={onPesquisarNovamente}
+            style={{
+              marginTop: "12px",
+              padding: "8px 14px",
+              borderRadius: "10px",
+              border: `1px solid ${COR.info}`,
+              background: "transparent",
+              color: COR.info,
+              cursor: "pointer",
+            }}
+            data-testid="paizinho-pesquisar-externo"
+          >
+            🌐 Pesquisar aplicações em fontes externas (consulta paga)
+          </button>
+        )}
+      </section>
+    );
+  }
+
   const { status, codigoPesquisado, mensagem, validado, auditoria, deCache, campos, gravacaoBase } = pesquisa;
+  const proposta = validado?.propostaIncorporacao || null;
+  const situacaoBase = validado?.validacaoBase?.situacao || "";
+  const ROTULO_SITUACAO = {
+    corroborada: "Conferida com o catálogo interno PAIIA (veículos coincidem)",
+    base_sem_mesmo_veiculo: "Catálogo interno tem o código/equivalente, mas não os mesmos veículos",
+    sem_registro_na_base: "Sem registro no catálogo interno para comparar",
+    divergente: "DIVERGE do catálogo interno — nada usado",
+    falha_na_comparacao: "Não foi possível comparar com a base — aplicações não usadas",
+  };
+  const naoConfirmadasBase = validado?.aplicacoesNaoConfirmadas || [];
+  const origens = validado?.origens || null;
+  function baixarProposta() {
+    try {
+      const blob = new Blob([JSON.stringify(proposta, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `proposta-base-paiia-${String(codigoPesquisado || "codigo").replace(/[^\w-]/g, "")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch {
+      // download opcional
+    }
+  }
   const textoGravacao = (() => {
+    if (proposta?.pronta) {
+      return {
+        cor: COR.ok,
+        t: `Validado — pronto para incorporar à Base PAIIA (${proposta.linhas.length} registro(s)), aguardando aprovação. Nada foi gravado automaticamente.`,
+      };
+    }
+    if (proposta && !proposta.pronta) {
+      return { cor: COR.suave, t: `Não será incorporado: ${proposta.motivo}` };
+    }
     if (!gravacaoBase) return null;
     if (gravacaoBase.erro) return { cor: COR.erro, t: `Não gravado: ${gravacaoBase.motivo || "falha"} (${gravacaoBase.erro})` };
     if (!gravacaoBase.gravado) return { cor: COR.suave, t: `Não gravado: ${gravacaoBase.motivo}` };
@@ -93,6 +197,20 @@ export default function PainelPesquisaPaizinho({ pesquisa, onPesquisarNovamente 
   })();
   const naoConfirmados = campos?.naoConfirmados || [];
   const baseIncompleta = pesquisa.origemFallback === "base_incompleta";
+  const baseValidada = pesquisa.origemFallback === "base_validada";
+  // O que a pesquisa guardou na fonte própria (tabela separada)
+  const textoConhecimento = (() => {
+    const k = pesquisa.conhecimento;
+    if (!k) return null;
+    if (!k.gravado) {
+      return { cor: k.erro ? COR.erro : COR.suave, t: `${k.motivo || "Nada gravado."}${k.erro ? ` (${k.erro})` : ""}` };
+    }
+    const partes = [];
+    if (k.validados) partes.push(`${k.validados} validado(s) — usados nas próximas buscas sem nova pesquisa paga`);
+    if (k.pendentes) partes.push(`${k.pendentes} pendente(s) de validação`);
+    if (k.conflitos) partes.push(`${k.conflitos} em conflito (revisão manual)`);
+    return { cor: k.validados ? COR.ok : COR.alerta, t: `Guardado: ${partes.join("; ") || "nada novo"}.` };
+  })();
   const divergenciasBase = pesquisa.divergenciasBase || [];
   const infoFonte = (url) =>
     (validado?.fontesConsultadas || []).find((f) => f.url === url) || {};
@@ -104,26 +222,54 @@ export default function PainelPesquisaPaizinho({ pesquisa, onPesquisarNovamente 
   return (
     <section style={caixa} data-testid="painel-pesquisa-paizinho">
       <h3 style={{ color: COR.info, marginTop: 0, marginBottom: "12px" }}>
-        🔎 Paizinho — pesquisa em fontes originais
+        {baseValidada ? "🔎 Paizinho — Base validada PAIIA" : "🔎 Paizinho — pesquisa em fontes originais"}
       </h3>
 
-      <Linha nome="Fonte interna (Base PAIIA)">
-        {baseIncompleta ? (
-          <strong style={{ color: COR.alerta }}>
-            encontrado, mas sem aplicação de veículo (dados insuficientes)
-          </strong>
-        ) : (
-          <strong style={{ color: COR.erro }}>não encontrado</strong>
-        )}
-      </Linha>
-      <Linha nome="Pesquisa em fontes originais">
-        <strong style={{ color: faixa.cor }} data-testid="paizinho-status">
-          {faixa.texto}
-        </strong>
-      </Linha>
+      {baseValidada ? (
+        <>
+          <Linha nome="Fonte">
+            <strong style={{ color: COR.ok }} data-testid="paizinho-status">
+              Base validada PAIIA (fonte própria)
+            </strong>
+          </Linha>
+          <Linha nome="Validado em">
+            {validado?.baseValidada?.validadoEm
+              ? new Date(validado.baseValidada.validadoEm).toLocaleString("pt-BR")
+              : "—"}
+            {` · ${validado?.baseValidada?.registros || 0} registro(s) validado(s)`}
+          </Linha>
+          <Linha nome="Pesquisa externa">
+            <span style={{ color: COR.suave }}>não foi necessária (nenhuma consulta paga)</span>
+          </Linha>
+        </>
+      ) : (
+        <>
+          <Linha nome="Fonte interna (Base PAIIA)">
+            {baseIncompleta ? (
+              <strong style={{ color: COR.alerta }}>
+                encontrado, mas sem aplicação de veículo (dados insuficientes)
+              </strong>
+            ) : (
+              <strong style={{ color: COR.erro }}>não encontrado</strong>
+            )}
+          </Linha>
+          <Linha nome="Pesquisa em fontes originais">
+            <strong style={{ color: faixa.cor }} data-testid="paizinho-status">
+              {faixa.texto}
+            </strong>
+          </Linha>
+        </>
+      )}
       <Linha nome="Código pesquisado">
         <strong data-testid="paizinho-codigo">{codigoPesquisado}</strong>
       </Linha>
+      {textoConhecimento && (
+        <Linha nome="Base validada PAIIA">
+          <strong style={{ color: textoConhecimento.cor }} data-testid="paizinho-conhecimento">
+            {textoConhecimento.t}
+          </strong>
+        </Linha>
+      )}
 
       {status === "pesquisando" && (
         <p style={{ color: COR.info, margin: "12px 0 0" }}>{MENSAGENS.PESQUISANDO}</p>
@@ -157,6 +303,16 @@ export default function PainelPesquisaPaizinho({ pesquisa, onPesquisarNovamente 
           <Linha nome="Equivalentes">{listaCodigos(c.codigosEquivalentes)}</Linha>
           <Linha nome="Aplicações confirmadas">{c.aplicacoes?.length || 0}</Linha>
           <Linha nome="Nível de confiança">{validado?.confianca || "—"}</Linha>
+          {situacaoBase && (
+            <Linha nome="Comparação com a base">
+              <strong
+                style={{ color: situacaoBase === "divergente" || situacaoBase === "falha_na_comparacao" ? COR.erro : situacaoBase === "corroborada" ? COR.ok : COR.alerta }}
+                data-testid="paizinho-validacao-base"
+              >
+                {ROTULO_SITUACAO[situacaoBase] || situacaoBase}
+              </strong>
+            </Linha>
+          )}
           <Linha nome="Base PAIIA">
             {textoGravacao ? (
               <strong style={{ color: textoGravacao.cor }} data-testid="paizinho-gravacao">
@@ -189,12 +345,62 @@ export default function PainelPesquisaPaizinho({ pesquisa, onPesquisarNovamente 
                     {periodo(a)}
                     <span style={{ color: COR.suave }}>
                       {" "}
-                      ({a.fontes?.length || 0} fonte{a.fontes?.length === 1 ? "" : "s"})
+                      ({a.fontes?.length || 0} fonte{a.fontes?.length === 1 ? "" : "s"}
+                      {a.vereditoRotulo ? ` · ${a.vereditoRotulo}` : ""}
+                      {a.referenciaBase?.origem ? ` · catálogo: ${a.referenciaBase.origem}` : ""})
                     </span>
                   </li>
                 ))}
               </ul>
             </>
+          )}
+
+          {naoConfirmadasBase.length > 0 && (
+            <>
+              <h4 style={{ ...subtitulo, color: COR.alerta }}>Não confirmado — não preenchido (revisão)</h4>
+              <ul style={{ margin: 0, paddingLeft: "18px" }} data-testid="paizinho-nao-confirmadas">
+                {naoConfirmadasBase.map((a, i) => (
+                  <li key={i} style={{ color: COR.suave }}>
+                    {[a.montadora, a.modelo, a.versao, a.motor].filter(Boolean).join(" ")} — {periodo(a)} ·{" "}
+                    <strong style={{ color: COR.alerta }}>{a.vereditoRotulo || "Não confirmado"}</strong>
+                    {a.referenciaBase ? ` (catálogo interno: ${a.referenciaBase.veiculo} ${a.referenciaBase.anos})` : ""}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {origens && (
+            <details style={{ marginTop: "10px" }}>
+              <summary style={{ cursor: "pointer", color: COR.info }}>Origem de cada informação</summary>
+              <ul style={{ margin: "6px 0 0", paddingLeft: "18px", color: COR.suave, fontSize: "12px" }} data-testid="paizinho-origens">
+                {["fabricante", "descricao", "codigosOem", "codigosEquivalentes"]
+                  .filter((k) => origens[k])
+                  .map((k) => (
+                    <li key={k}>
+                      {{ fabricante: "Fabricante", descricao: "Descrição", codigosOem: "Códigos OEM", codigosEquivalentes: "Equivalentes" }[k]}:{" "}
+                      {origens[k].origem} — {(origens[k].fontes || []).join(" | ") || "—"}
+                    </li>
+                  ))}
+                {(origens.aplicacoes || []).map((a, i) => (
+                  <li key={`a${i}`}>
+                    Aplicação {a.veiculo} {a.anos}: {a.origem}
+                    {a.catalogoInterno ? ` (${a.catalogoInterno})` : ""} — {(a.fontes || []).join(" | ")}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {proposta?.pronta && (
+            <button
+              type="button"
+              onClick={baixarProposta}
+              style={{ marginTop: "10px", padding: "6px 12px", borderRadius: "8px", border: `1px solid ${COR.ok}`, background: "transparent", color: COR.ok, cursor: "pointer" }}
+              data-testid="paizinho-baixar-proposta"
+            >
+              ⬇️ Baixar proposta de incorporação (para aprovação)
+            </button>
           )}
         </>
       )}
