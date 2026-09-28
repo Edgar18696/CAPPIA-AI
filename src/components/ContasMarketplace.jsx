@@ -1,122 +1,268 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../supabase.js";
+
+/*
+ * Contas Marketplace / Integrações
+ * - O usuário PAIIA vem SEMPRE do login Supabase (prop `usuario` ou sessão
+ *   atual). Nada de usuário digitado ou vindo da URL.
+ * - As URLs oficiais de autorização (Mercado Livre e Bling) são montadas
+ *   no servidor (funções), com as credenciais guardadas lá.
+ * - O "state" enviado ao provedor é um código aleatório guardado neste
+ *   navegador, conferido na volta (proteção contra retorno forjado).
+ */
+const CHAVE_STATE_ML = "paiia_oauth_state_ml";
+const CHAVE_STATE_BLING = "paiia_oauth_state_bling";
+
+function gerarState(prefixo) {
+  const aleatorio =
+    (window.crypto?.randomUUID && window.crypto.randomUUID()) ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefixo}.${aleatorio}`;
+}
+
+const CHAVE_PKCE_ML = "paiia_oauth_pkce_ml";
+
+function base64Url(bytes) {
+  let texto = "";
+  bytes.forEach((b) => {
+    texto += String.fromCharCode(b);
+  });
+  return btoa(texto).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// PKCE (S256): verificador aleatório guardado só neste navegador.
+async function gerarPkce() {
+  const aleatorio = new Uint8Array(48);
+  window.crypto.getRandomValues(aleatorio);
+  const verificador = base64Url(aleatorio);
+  const hash = await window.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verificador)
+  );
+  return { verificador, desafio: base64Url(new Uint8Array(hash)) };
+}
+
+function lerLocal(chave) {
+  try {
+    return window.localStorage.getItem(chave) || "";
+  } catch {
+    return "";
+  }
+}
+
+function gravarLocal(chave, valor) {
+  try {
+    if (valor) window.localStorage.setItem(chave, valor);
+    else window.localStorage.removeItem(chave);
+  } catch {
+    /* navegador sem armazenamento: o retorno será recusado com aviso */
+  }
+}
+
+async function obterUsuarioLogado(usuarioProp) {
+  if (usuarioProp?.id) return usuarioProp;
+  const { data } = await supabase.auth.getSession();
+  return data?.session?.user || null;
+}
 
 export default function ContasMarketplace({
   usuario,
   cardStyle,
   setScreen,
 }) {
-    useEffect(() => {
-    async function concluirOAuthMercadoLivre() {
-      const params =
-        new URLSearchParams(
-          window.location.search
-        );
+  const [statusML, setStatusML] = useState(null);
+  const [statusBling, setStatusBling] = useState(null);
+  const [mensagem, setMensagem] = useState("");
+  const [ocupado, setOcupado] = useState("");
+  const [testeBling, setTesteBling] = useState(null);
+  const [codigoTesteBling, setCodigoTesteBling] = useState("");
 
-      const code =
-        params.get("code");
+  async function carregarStatus() {
+    const logado = await obterUsuarioLogado(usuario);
+    if (!logado?.id) return;
+    try {
+      const { data } = await supabase.functions.invoke("mercadolivre-oauth", {
+        body: { acao: "status" },
+      });
+      setStatusML(data || null);
+    } catch {
+      setStatusML(null);
+    }
+    try {
+      const { data } = await supabase.functions.invoke("bling-integracao", {
+        body: { acao: "status" },
+      });
+      setStatusBling(data || null);
+    } catch {
+      setStatusBling(null);
+    }
+  }
 
-      const state =
-        params.get("state");
+  useEffect(() => {
+    let ativo = true;
 
-      if (!code) {
+    async function concluirRetornoOAuth() {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const state = params.get("state") || "";
+      if (!code) return;
+
+      // Processa cada retorno UMA vez (o efeito pode rodar de novo quando
+      // o login termina de carregar).
+      if (window.__paiiaRetornoOAuth === state) return;
+      window.__paiiaRetornoOAuth = state;
+
+      const provedor = state.startsWith("ml.")
+        ? "ml"
+        : state.startsWith("bling.")
+          ? "bling"
+          : "";
+      if (!provedor) return;
+
+      const limparUrl = () =>
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+      const chave = provedor === "ml" ? CHAVE_STATE_ML : CHAVE_STATE_BLING;
+      const esperado = lerLocal(chave);
+      if (!esperado || esperado !== state) {
+        limparUrl();
+        if (ativo) {
+          setMensagem(
+            "⚠️ Retorno de autorização não reconhecido neste navegador. Clique em Conectar novamente."
+          );
+        }
+        return;
+      }
+      gravarLocal(chave, "");
+
+      const logado = await obterUsuarioLogado(usuario);
+      if (!logado?.id) {
+        limparUrl();
+        if (ativo) setMensagem("Usuário não identificado. Entre novamente no PAIIA.");
         return;
       }
 
+      setOcupado(provedor);
       try {
-        const { data, error } =
-          await supabase.functions.invoke(
-            "mercadolivre-oauth",
-            {
-              body: {
-                code,
-                user_id:
-                  state ||
-                  usuario?.id ||
-                  "",
-              },
-            }
+        const nomeFuncao =
+          provedor === "ml" ? "mercadolivre-oauth" : "bling-integracao";
+        const verificadorPkce =
+          provedor === "ml" ? lerLocal(CHAVE_PKCE_ML) : "";
+        gravarLocal(CHAVE_PKCE_ML, "");
+        const corpo =
+          provedor === "ml"
+            ? { code, ...(verificadorPkce ? { code_verifier: verificadorPkce } : {}) }
+            : { acao: "trocar_codigo", code };
+        const { data, error } = await supabase.functions.invoke(nomeFuncao, {
+          body: corpo,
+        });
+        if (error) throw error;
+        if (!data?.ok) throw new Error(data?.erro || "Falha na conexão.");
+        {
+          setMensagem(
+            provedor === "ml"
+              ? `✅ Mercado Livre conectado${data?.nickname ? `: ${data.nickname}` : ""}.`
+              : "✅ Bling conectado."
           );
-
-        if (error) {
-          throw error;
         }
-
-        console.log(
-          "✅ MERCADO LIVRE OAUTH:",
-          data
-        );
-
-        alert(
-          "Mercado Livre conectado com sucesso."
-        );
-
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname
-        );
       } catch (erro) {
-        console.error(
-          "❌ Erro OAuth Mercado Livre:",
-          erro
-        );
-
-        alert(
-          "Não foi possível concluir a conexão com o Mercado Livre."
-        );
+        console.error("❌ Erro ao concluir autorização:", erro);
+        {
+          setMensagem(
+            `❌ Não foi possível concluir a conexão: ${erro?.message || "erro desconhecido"}`
+          );
+        }
+      } finally {
+        limparUrl();
+        setOcupado("");
+        carregarStatus();
       }
     }
 
-    concluirOAuthMercadoLivre();
+    concluirRetornoOAuth().then(() => {
+      if (ativo) carregarStatus();
+    });
+
+    return () => {
+      ativo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuario?.id]);
+
+  async function iniciarAutorizacao(provedor) {
+    setMensagem("");
+    const logado = await obterUsuarioLogado(usuario);
+    if (!logado?.id) {
+      alert("Usuário não identificado. Entre novamente no PAIIA.");
+      return;
+    }
+
+    const chave = provedor === "ml" ? CHAVE_STATE_ML : CHAVE_STATE_BLING;
+    const state = gerarState(provedor);
+    gravarLocal(chave, state);
+
+    setOcupado(provedor);
+    try {
+      let desafioPkce = "";
+      if (provedor === "ml") {
+        const pkce = await gerarPkce();
+        gravarLocal(CHAVE_PKCE_ML, pkce.verificador);
+        desafioPkce = pkce.desafio;
+      }
+      const { data, error } = await supabase.functions.invoke(
+        provedor === "ml" ? "mercadolivre-oauth" : "bling-integracao",
+        {
+          body: {
+            acao: "url_autorizacao",
+            state,
+            ...(desafioPkce ? { code_challenge: desafioPkce } : {}),
+          },
+        }
+      );
+      if (error) throw error;
+      if (!data?.ok || !data?.url) {
+        throw new Error(data?.erro || "O servidor não devolveu a URL de autorização.");
+      }
+      // Conferência final antes de abrir: nunca enviar placeholder.
+      if (provedor === "ml") {
+        const conferir = new URL(data.url);
+        if (!/^\d{6,}$/.test(conferir.searchParams.get("client_id") || "")) {
+          throw new Error("Client ID do Mercado Livre inválido (placeholder). A autorização não foi aberta.");
+        }
+      }
+      window.location.href = data.url;
+    } catch (erro) {
+      gravarLocal(chave, "");
+      setOcupado("");
+      setMensagem(`❌ ${erro?.message || "Não foi possível iniciar a autorização."}`);
+    }
+  }
+
   function conectarMercadoLivre() {
-    const clientId =
-      import.meta.env.VITE_ML_CLIENT_ID;
+    iniciarAutorizacao("ml");
+  }
 
-    const redirectUri =
-      import.meta.env.VITE_ML_REDIRECT_URI;
+  function conectarBling() {
+    iniciarAutorizacao("bling");
+  }
 
-    if (
-      !clientId ||
-      clientId ===
-        "COLE_SEU_CLIENT_ID_AQUI"
-    ) {
-      alert(
-        "Configure o VITE_ML_CLIENT_ID no arquivo .env"
-      );
-      return;
+  async function testarBling() {
+    setOcupado("bling-teste");
+    setTesteBling(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("bling-integracao", {
+        body: {
+          acao: "testar",
+          codigo: codigoTesteBling.trim() || undefined,
+        },
+      });
+      if (error) throw error;
+      setTesteBling(data);
+    } catch (erro) {
+      setTesteBling({ ok: false, erro: erro?.message || "Falha no teste." });
+    } finally {
+      setOcupado("");
     }
-
-    if (!redirectUri) {
-      alert(
-        "Configure o VITE_ML_REDIRECT_URI no arquivo .env"
-      );
-      return;
-    }
-
-    const userId =
-  usuario?.id || "";
-
-if (!userId) {
-  alert(
-    "Usuário não identificado. Entre novamente no PAIIA."
-  );
-  return;
-}
-
-const url =
-  `https://auth.mercadolivre.com.br/authorization` +
-  `?response_type=code` +
-  `&client_id=${clientId}` +
-  `&redirect_uri=${encodeURIComponent(
-    redirectUri
-  )}` +
-  `&state=${encodeURIComponent(
-    userId
-  )}`;
-
-    window.location.href = url;
   }
 
   function voltar() {
@@ -185,9 +331,20 @@ const url =
         <MarketplaceCard
           icone="🟡"
           nome="Mercado Livre"
-          status="Pronto para conectar"
+          status={
+            statusML?.conectado
+              ? `Conectado${statusML?.nickname ? `: ${statusML.nickname}` : ""}`
+              : "Pronto para conectar"
+          }
           corStatus="#22c55e"
           descricao="Autorize sua conta para preparar a publicação automática dos anúncios."
+          textoBotao={
+            ocupado === "ml"
+              ? "⏳ Abrindo Mercado Livre..."
+              : statusML?.conectado
+                ? "🔄 Reconectar"
+                : undefined
+          }
           onClick={
             conectarMercadoLivre
           }
@@ -217,6 +374,138 @@ const url =
           descricao="Publicação para loja própria ficará disponível em uma próxima versão."
         />
       </div>
+
+      {mensagem && (
+        <div
+          data-paiia-integracao-msg
+          style={{
+            marginTop: "16px",
+            padding: "12px 14px",
+            borderRadius: "12px",
+            border: "1px solid #334155",
+            background: "#020617",
+            color: "#e2e8f0",
+          }}
+        >
+          {mensagem}
+        </div>
+      )}
+
+      <section
+        style={{
+          ...cardMarketplace,
+          marginTop: "22px",
+          minHeight: 0,
+          alignItems: "stretch",
+          textAlign: "left",
+        }}
+      >
+        <h3 style={{ color: "#67e8f9", margin: "0 0 6px 0" }}>
+          🧾 Integrações — Estoque e Nota Fiscal
+        </h3>
+        <p style={{ color: "#94a3b8", fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
+          O PAIIA continua criando e publicando os anúncios nos marketplaces.
+          O Bling fica com cadastro de produto (SKU, descrição, preço quando
+          necessário), estoque e dados para a nota fiscal. Fotos, banners, clips,
+          vídeos e arquivos da Galeria não são enviados ao Bling.
+        </p>
+
+        <div
+          data-paiia-bling
+          style={{
+            marginTop: "14px",
+            padding: "16px",
+            borderRadius: "12px",
+            border: "1px solid #334155",
+            background: "#0f172a",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "28px" }}>📦</span>
+            <strong style={{ color: "#e2e8f0", fontSize: "18px" }}>Bling</strong>
+            <span
+              style={{
+                color: statusBling?.conectado ? "#22c55e" : statusBling?.configurado === false ? "#facc15" : "#94a3b8",
+                fontWeight: "bold",
+                fontSize: "13px",
+              }}
+            >
+              ●{" "}
+              {statusBling?.conectado
+                ? `Conectado${statusBling?.conta ? `: ${statusBling.conta}` : ""}`
+                : statusBling?.configurado === false
+                  ? "Aguardando o aplicativo Bling ser configurado no servidor"
+                  : "Pronto para conectar"}
+            </span>
+            {statusBling && (
+              <span style={{ color: "#fbbf24", fontSize: "12px" }}>
+                {statusBling?.escritaHabilitada
+                  ? "Modo real (grava no Bling)"
+                  : "Modo teste — nada é gravado no Bling"}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "12px" }}>
+            <button
+              type="button"
+              style={{ ...botaoConectar, marginTop: 0, cursor: "pointer" }}
+              onClick={conectarBling}
+              disabled={ocupado === "bling"}
+            >
+              {ocupado === "bling"
+                ? "⏳ Abrindo Bling..."
+                : statusBling?.conectado
+                  ? "🔄 Reconectar Bling"
+                  : "🔗 Conectar Bling"}
+            </button>
+
+            <input
+              value={codigoTesteBling}
+              onChange={(e) => setCodigoTesteBling(e.target.value)}
+              placeholder="SKU/código para consultar (opcional)"
+              style={{
+                padding: "10px 12px",
+                borderRadius: "10px",
+                border: "1px solid #334155",
+                background: "#020617",
+                color: "#e2e8f0",
+                minWidth: "240px",
+              }}
+            />
+
+            <button
+              type="button"
+              style={{ ...botaoConectar, marginTop: 0, cursor: "pointer" }}
+              onClick={testarBling}
+              disabled={ocupado === "bling-teste"}
+            >
+              {ocupado === "bling-teste" ? "⏳ Testando..." : "🧪 Testar (somente leitura)"}
+            </button>
+          </div>
+
+          {testeBling && (
+            <pre
+              data-paiia-bling-teste
+              style={{
+                marginTop: "12px",
+                padding: "12px",
+                borderRadius: "10px",
+                background: "#020617",
+                color: testeBling.ok ? "#bbf7d0" : "#fecaca",
+                fontSize: "12px",
+                whiteSpace: "pre-wrap",
+                maxHeight: "260px",
+                overflow: "auto",
+              }}
+            >
+              {testeBling.ok
+                ? JSON.stringify(testeBling.resultado ?? testeBling, null, 2)
+                : `❌ ${testeBling.erro || "Falha no teste."}`}
+            </pre>
+          )}
+        </div>
+      </section>
 
       <section style={paizinhoStyle}>
         <div
@@ -261,6 +550,7 @@ function MarketplaceCard({
   corStatus,
   descricao,
   onClick,
+  textoBotao,
 }) {
   const disponivel =
     typeof onClick === "function";
@@ -324,9 +614,10 @@ function MarketplaceCard({
         disabled={!disponivel}
         onClick={onClick}
       >
-        {disponivel
-          ? "🔗 Conectar"
-          : "⏳ Em breve"}
+        {textoBotao ||
+          (disponivel
+            ? "🔗 Conectar"
+            : "⏳ Em breve")}
       </button>
     </div>
   );

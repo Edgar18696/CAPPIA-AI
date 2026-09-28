@@ -4,6 +4,7 @@ import Catalogos from "./components/Catalogos";
 import BuscaCatalogo from "./components/BuscaCatalogo";
 import MeusRascunhos from "./components/MeusRascunhos";
 import ContasMarketplace from "./components/ContasMarketplace";
+import { retornoOAuthPendente } from "./services/retornoOAuth";
 import InteligenciaCatalogo from "./components/InteligenciaCatalogo";
 import LeitorCatalogoIA from "./components/LeitorCatalogoIA";
 import ImportadorBoschV2 from "./components/ImportadorBoschV2";
@@ -114,7 +115,11 @@ export default function App() {
   useState("🟢 IA Online");
 
 const [screen, setScreen] =
-  useState("home");
+  useState(() =>
+    // Volta da autorização oficial (Mercado Livre / Bling): abre direto
+    // Contas Marketplace para concluir a conexão.
+    retornoOAuthPendente() ? "contasMarketplace" : "home"
+  );
 
 const [
   mostrarPaizinho,
@@ -2931,6 +2936,7 @@ return (
 
 {screen === "contasMarketplace" && (
   <ContasMarketplace
+    usuario={usuario}
     cardStyle={cardStyle}
     setScreen={setScreen}
   />
