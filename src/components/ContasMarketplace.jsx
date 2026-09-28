@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabase.js";
+import qrcode from "../lib/qrcode-generator.mjs";
 
 /*
  * Contas Marketplace / Integrações
@@ -21,6 +22,44 @@ function gerarState(prefixo) {
 }
 
 const CHAVE_PKCE_ML = "paiia_oauth_pkce_ml";
+
+// Endereço aberto pelo QR Code "Conectar pelo celular". Sempre o site
+// público (o celular não enxerga o localhost do computador).
+const URL_CONECTAR_CELULAR = "https://www.paiia.com.br/?conectar=mercadolivre";
+
+function gerarQrSvg(texto) {
+  const qr = qrcode(0, "M");
+  qr.addData(texto);
+  qr.make();
+  return qr.createSvgTag({ cellSize: 6, margin: 4, scalable: true });
+}
+
+// Mensagens claras para os erros que o Mercado Livre devolve na volta
+// da autorização (padrão OAuth: ?error=...&error_description=...).
+function mensagemErroOAuth(provedor, codigo, descricao) {
+  const nome = provedor === "bling" ? "Bling" : "Mercado Livre";
+  const conhecidos = {
+    access_denied: `A autorização foi cancelada ou negada no ${nome}.`,
+    invalid_request: `O ${nome} recusou o pedido de autorização (invalid_request).`,
+    unauthorized_client: `O aplicativo não está autorizado no ${nome} (unauthorized_client).`,
+    invalid_scope: `Permissões inválidas no pedido ao ${nome} (invalid_scope).`,
+    server_error: `O ${nome} teve um erro interno. Tente novamente em alguns minutos.`,
+    temporarily_unavailable: `O ${nome} está temporariamente indisponível. Tente mais tarde.`,
+  };
+  const base = conhecidos[codigo] || `O ${nome} devolveu o erro "${codigo}".`;
+  return `❌ ${base}${descricao ? ` Detalhe do ${nome}: ${descricao}` : ""}`;
+}
+
+// Registro de diagnóstico do retorno (nunca envia code, tokens ou senhas).
+async function registrarRetorno(dados) {
+  try {
+    await supabase.functions.invoke("mercadolivre-oauth", {
+      body: { acao: "registrar_retorno", ...dados },
+    });
+  } catch {
+    /* diagnóstico é opcional: nunca bloqueia a tela */
+  }
+}
 
 function base64Url(bytes) {
   let texto = "";
@@ -76,6 +115,8 @@ export default function ContasMarketplace({
   const [ocupado, setOcupado] = useState("");
   const [testeBling, setTesteBling] = useState(null);
   const [codigoTesteBling, setCodigoTesteBling] = useState("");
+  const [mostrarQrCelular, setMostrarQrCelular] = useState(false);
+  const [abertoPeloCelular, setAbertoPeloCelular] = useState(false);
 
   async function carregarStatus() {
     const logado = await obterUsuarioLogado(usuario);
@@ -105,6 +146,37 @@ export default function ContasMarketplace({
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code");
       const state = params.get("state") || "";
+      const erroOAuth = params.get("error") || "";
+      const descricaoErro = (params.get("error_description") || "").slice(0, 300);
+
+      // Aberto pelo QR Code "Conectar pelo celular".
+      if (params.get("conectar") === "mercadolivre") {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        if (ativo) setAbertoPeloCelular(true);
+        return;
+      }
+
+      // Volta com erro/cancelamento: mostra o motivo em vez de voltar calado.
+      if (!code && erroOAuth && /^(ml|bling)\./.test(state)) {
+        if (window.__paiiaRetornoOAuth === state) return;
+        window.__paiiaRetornoOAuth = state;
+        const provedorErro = state.startsWith("ml.") ? "ml" : "bling";
+        const chaveErro = provedorErro === "ml" ? CHAVE_STATE_ML : CHAVE_STATE_BLING;
+        const reconhecido = lerLocal(chaveErro) === state;
+        gravarLocal(chaveErro, "");
+        if (provedorErro === "ml") gravarLocal(CHAVE_PKCE_ML, "");
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setMensagem(mensagemErroOAuth(provedorErro, erroOAuth, descricaoErro));
+        registrarRetorno({
+          provedor: provedorErro === "ml" ? "mercado_livre" : "bling",
+          etapa: "retorno_com_erro",
+          erro_codigo: erroOAuth.slice(0, 80),
+          erro_descricao: descricaoErro,
+          state_reconhecido: reconhecido,
+        });
+        return;
+      }
+
       if (!code) return;
 
       // Processa cada retorno UMA vez (o efeito pode rodar de novo quando
@@ -126,6 +198,13 @@ export default function ContasMarketplace({
       const esperado = lerLocal(chave);
       if (!esperado || esperado !== state) {
         limparUrl();
+        if (provedor === "ml") {
+          registrarRetorno({
+            provedor: "mercado_livre",
+            etapa: "retorno_state_nao_reconhecido",
+            state_reconhecido: false,
+          });
+        }
         if (ativo) {
           setMensagem(
             "⚠️ Retorno de autorização não reconhecido neste navegador. Clique em Conectar novamente."
@@ -161,7 +240,7 @@ export default function ContasMarketplace({
         {
           setMensagem(
             provedor === "ml"
-              ? `✅ Mercado Livre conectado${data?.nickname ? `: ${data.nickname}` : ""}.`
+              ? `✅ Mercado Livre CONECTADO${data?.nickname ? `: ${data.nickname}` : ""}${data?.ml_user_id ? ` (ID ${data.ml_user_id})` : ""}.`
               : "✅ Bling conectado."
           );
         }
@@ -333,7 +412,7 @@ export default function ContasMarketplace({
           nome="Mercado Livre"
           status={
             statusML?.conectado
-              ? `Conectado${statusML?.nickname ? `: ${statusML.nickname}` : ""}`
+              ? `CONECTADA${statusML?.nickname ? ` — ${statusML.nickname}` : ""}`
               : "Pronto para conectar"
           }
           corStatus="#22c55e"
@@ -373,6 +452,83 @@ export default function ContasMarketplace({
           corStatus="#facc15"
           descricao="Publicação para loja própria ficará disponível em uma próxima versão."
         />
+      </div>
+
+      {abertoPeloCelular && (
+        <div
+          data-paiia-aberto-celular
+          style={{
+            marginTop: "16px",
+            padding: "12px 14px",
+            borderRadius: "12px",
+            border: "1px solid #22c55e",
+            background: "#052e16",
+            color: "#dcfce7",
+            lineHeight: 1.6,
+          }}
+        >
+          📱 Você abriu pelo celular. {usuario?.id
+            ? "Toque em 🔗 Conectar no cartão do Mercado Livre e siga a verificação do próprio Mercado Livre neste celular."
+            : "Primeiro toque em Login (no topo) e entre no PAIIA. Depois abra Contas Marketplace e toque em 🔗 Conectar no Mercado Livre."}
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: "16px",
+          padding: "14px",
+          borderRadius: "12px",
+          border: "1px solid #334155",
+          background: "#020617",
+          color: "#cbd5e1",
+          fontSize: "13px",
+          lineHeight: 1.6,
+        }}
+      >
+        <button
+          type="button"
+          data-paiia-conectar-celular
+          onClick={() => setMostrarQrCelular((v) => !v)}
+          style={{ ...botaoConectar, marginTop: 0, cursor: "pointer" }}
+        >
+          📱 {mostrarQrCelular ? "Fechar QR Code" : "Conectar pelo celular"}
+        </button>
+        <span style={{ marginLeft: "10px", color: "#94a3b8" }}>
+          Use se o Mercado Livre pedir câmera e este computador não tiver.
+        </span>
+
+        {mostrarQrCelular && (
+          <div
+            style={{
+              display: "flex",
+              gap: "18px",
+              alignItems: "center",
+              flexWrap: "wrap",
+              marginTop: "14px",
+            }}
+          >
+            <div
+              data-paiia-qr-celular
+              style={{
+                width: "190px",
+                height: "190px",
+                background: "#ffffff",
+                borderRadius: "10px",
+                padding: "6px",
+              }}
+              dangerouslySetInnerHTML={{ __html: gerarQrSvg(URL_CONECTAR_CELULAR) }}
+            />
+            <ol style={{ margin: 0, paddingLeft: "18px", maxWidth: "460px", textAlign: "left" }}>
+              <li>Aponte a câmera do celular para o QR Code.</li>
+              <li>Abra o endereço no navegador do celular e entre no PAIIA.</li>
+              <li>Em Contas Marketplace, toque em 🔗 Conectar no Mercado Livre.</li>
+              <li>
+                Faça a verificação que o Mercado Livre pedir no próprio celular.
+                Comece e termine no mesmo celular.
+              </li>
+            </ol>
+          </div>
+        )}
       </div>
 
       {mensagem && (
