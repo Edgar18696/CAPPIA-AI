@@ -49,6 +49,14 @@ function urlMiniaturaCardBanner(urlOriginal) {
   );
 }
 
+// Mídia que falhou ao carregar: tenta de novo uma vez sem cache (falha
+// temporária do Storage) antes de mostrar o aviso no card.
+function urlSemCache(url) {
+  const texto = String(url || "");
+  if (!/^https?:\/\//i.test(texto)) return texto;
+  return `${texto}${texto.includes("?") ? "&" : "?"}r=${Date.now()}`;
+}
+
 export default function Galeria({
   galeria,
   filtroGaleria,
@@ -73,6 +81,22 @@ export default function Galeria({
 }) {
 
   const [imagemAberta, setImagemAberta] = useState(null);
+
+  // Cards cuja mídia não carregou mesmo depois de tentar de novo.
+  const [midiasComFalha, setMidiasComFalha] = useState({});
+  const [versaoMidia, setVersaoMidia] = useState({});
+
+  function tentarMidiaDeNovo(chave) {
+    setMidiasComFalha((atual) => {
+      const novo = { ...atual };
+      delete novo[chave];
+      return novo;
+    });
+    setVersaoMidia((atual) => ({
+      ...atual,
+      [chave]: Date.now(),
+    }));
+  }
 
   const [
     bannersGaleria,
@@ -1616,10 +1640,59 @@ function confirmarImagemParaBanner() {
               />
               )}
 
-{item.tipo === "video" ||
+{midiasComFalha[chaveCard] ? (
+  <div
+    data-paiia-midia-falhou
+    style={{
+      width: "100%",
+      minHeight: "160px",
+      borderRadius: "12px",
+      background: "#0f172a",
+      border: "1px dashed #f59e0b",
+      color: "#fde68a",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "8px",
+      padding: "12px",
+      textAlign: "center",
+      fontSize: "13px",
+    }}
+  >
+    ⚠️ Não foi possível carregar este arquivo agora.
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        tentarMidiaDeNovo(chaveCard);
+      }}
+      style={{
+        padding: "6px 12px",
+        borderRadius: "8px",
+        border: "1px solid #334155",
+        background: "#1e293b",
+        color: "#e2e8f0",
+        cursor: "pointer",
+      }}
+    >
+      🔄 Tentar de novo
+    </button>
+  </div>
+) : item.tipo === "video" ||
 item.tipo === "clip" ? (
   <video
-    src={url}
+    key={`${chaveCard}-${versaoMidia[chaveCard] || 0}`}
+    src={versaoMidia[chaveCard] ? urlSemCache(url) : url}
+    onError={(e) => {
+      const destino = e.currentTarget;
+      if (!destino.dataset.retentou && /^https?:/i.test(url || "")) {
+        destino.dataset.retentou = "1";
+        destino.src = urlSemCache(url);
+        return;
+      }
+      setMidiasComFalha((atual) => ({ ...atual, [chaveCard]: true }));
+    }}
     controls
     preload="metadata"
     playsInline
@@ -1632,7 +1705,8 @@ item.tipo === "clip" ? (
   />
 ) : (
   <img
-    src={urlCard}
+    key={`${chaveCard}-${versaoMidia[chaveCard] || 0}`}
+    src={versaoMidia[chaveCard] ? urlSemCache(urlCard) : urlCard}
     alt="Imagem"
     loading="lazy"
     decoding="async"
@@ -1669,8 +1743,19 @@ item.tipo === "clip" ? (
         }
       }
 
-      destino.style.display =
-        "none";
+      if (
+        !destino.dataset.retentou &&
+        /^https?:/i.test(url || "")
+      ) {
+        destino.dataset.retentou = "1";
+        destino.src = urlSemCache(url);
+        return;
+      }
+
+      setMidiasComFalha((atual) => ({
+        ...atual,
+        [chaveCard]: true,
+      }));
     }}
     style={{
       width: "100%",

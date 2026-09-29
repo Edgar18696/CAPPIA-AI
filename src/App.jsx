@@ -994,10 +994,32 @@ function consultaGaleriaLeve() {
     .order("created_at", { ascending: false });
 }
 
+// Falhas temporárias do Supabase (500/503/timeout/rede) não podem deixar a
+// Galeria vazia: tenta de novo algumas vezes antes de mostrar o erro.
+async function consultarGaleriaComRetentativa(inicio, fim) {
+  let resposta = null;
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    try {
+      resposta = await consultaGaleriaLeve().range(inicio, fim);
+    } catch (erro) {
+      resposta = { data: null, error: erro };
+    }
+    if (!resposta?.error) return resposta;
+    console.warn(
+      `Galeria: tentativa ${tentativa} falhou`,
+      resposta.error?.message || resposta.error
+    );
+    if (tentativa < 3) {
+      await new Promise((ok) => setTimeout(ok, 800 * tentativa));
+    }
+  }
+  return resposta;
+}
+
 async function carregarGaleria() {
   if (!usuario) return;
 
-  const { data, error } = await consultaGaleriaLeve().range(
+  const { data, error } = await consultarGaleriaComRetentativa(
     0,
     TAMANHO_PAGINA_GALERIA - 1
   );
@@ -1029,7 +1051,7 @@ async function carregarMaisGaleria() {
 
   try {
     const inicio = galeria.length;
-    const { data, error } = await consultaGaleriaLeve().range(
+    const { data, error } = await consultarGaleriaComRetentativa(
       inicio,
       inicio + TAMANHO_PAGINA_GALERIA - 1
     );
