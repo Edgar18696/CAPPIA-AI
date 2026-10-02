@@ -4,6 +4,7 @@ import {
   useState,
 } from "react";
 import { supabase } from "../supabase";
+import { idContaMLAtivaOpcional } from "../services/contaMLAtiva";
 import {
   buscarDimensoesProduto,
   salvarDimensoesProduto,
@@ -1152,6 +1153,9 @@ async function calcularCustosMercadoLivre() {
             usuarioId:
               usuario.id,
 
+            conta_ml:
+              await idContaMLAtivaOpcional(),
+
             precoVenda:
               precoReferencia,
 
@@ -1702,6 +1706,7 @@ function formatarPrecoAppia(
         {
           body: {
             usuarioId: usuario.id,
+            conta_ml: await idContaMLAtivaOpcional(),
             precoVenda: precoReferencia,
             custoProduto: numeroPrecificacao(
               custoCompraDetalhado || custo

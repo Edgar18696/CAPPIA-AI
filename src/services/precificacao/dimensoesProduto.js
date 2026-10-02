@@ -13,6 +13,7 @@
  * Nada aqui inventa peso ou medidas: sem fonte confiável → confiavel=false.
  */
 import { supabase } from "../../supabase";
+import { idContaMLAtivaOpcional } from "../contaMLAtiva";
 
 export const TABELA_DIMENSOES = "produto_dimensoes";
 
@@ -143,7 +144,7 @@ async function buscarNoAnuncioMercadoLivre(codigos) {
   try {
     const { data, error } = await supabase.functions.invoke(
       "buscar-dimensoes-mercado-livre",
-      { body: { codigos: codigos.map((c) => c.original) } }
+      { body: { codigos: codigos.map((c) => c.original), conta_ml: await idContaMLAtivaOpcional() } }
     );
     if (error || !data?.ok || !data?.encontrado) return null;
     const d = data.dimensoes || {};

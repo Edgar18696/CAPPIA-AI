@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabase.js";
 import qrcode from "../lib/qrcode-generator.mjs";
+import {
+  carregarContasML,
+  definirContaMLAtiva,
+  desconectarContaML,
+} from "../services/contaMLAtiva";
 
 /*
  * Contas Marketplace / Integrações
@@ -22,6 +27,9 @@ function gerarState(prefixo) {
 }
 
 const CHAVE_PKCE_ML = "paiia_oauth_pkce_ml";
+// Modo da autorização ML em andamento: "adicionar" (conta nova) ou
+// "reconectar" (+ ID esperado). O servidor NUNCA grava por cima de outra conta.
+const CHAVE_MODO_ML = "paiia_oauth_modo_ml";
 
 // Endereço aberto pelo QR Code "Conectar pelo celular". Sempre o site
 // público (o celular não enxerga o localhost do computador).
@@ -129,6 +137,7 @@ export default function ContasMarketplace({
     } catch {
       setStatusML(null);
     }
+    carregarContasML(true);
     try {
       const { data } = await supabase.functions.invoke("bling-integracao", {
         body: { acao: "status" },
@@ -228,9 +237,19 @@ export default function ContasMarketplace({
         const verificadorPkce =
           provedor === "ml" ? lerLocal(CHAVE_PKCE_ML) : "";
         gravarLocal(CHAVE_PKCE_ML, "");
+        let modoML = { modo: "adicionar", esperado: "" };
+        if (provedor === "ml") {
+          try { modoML = { ...modoML, ...JSON.parse(lerLocal(CHAVE_MODO_ML) || "{}") }; } catch { /* usa "adicionar" */ }
+          gravarLocal(CHAVE_MODO_ML, "");
+        }
         const corpo =
           provedor === "ml"
-            ? { code, ...(verificadorPkce ? { code_verifier: verificadorPkce } : {}) }
+            ? {
+                code,
+                ...(verificadorPkce ? { code_verifier: verificadorPkce } : {}),
+                modo: modoML.modo === "reconectar" ? "reconectar" : "adicionar",
+                ...(modoML.modo === "reconectar" ? { ml_user_id_esperado: String(modoML.esperado || "") } : {}),
+              }
             : { acao: "trocar_codigo", code };
         const { data, error } = await supabase.functions.invoke(nomeFuncao, {
           body: corpo,
@@ -238,10 +257,15 @@ export default function ContasMarketplace({
         if (error) throw error;
         if (!data?.ok) throw new Error(data?.erro || "Falha na conexão.");
         {
+          const contaTexto = `${data?.nickname ? `${data.nickname}` : ""}${data?.ml_user_id ? ` (ID ${data.ml_user_id})` : ""}`;
           setMensagem(
-            provedor === "ml"
-              ? `✅ Mercado Livre CONECTADO${data?.nickname ? `: ${data.nickname}` : ""}${data?.ml_user_id ? ` (ID ${data.ml_user_id})` : ""}.`
-              : "✅ Bling conectado."
+            provedor !== "ml"
+              ? "✅ Bling conectado."
+              : data?.ja_conectada
+                ? `ℹ️ A conta ${contaTexto} já estava conectada. Nenhuma conta nova foi criada e nada foi alterado. ${data?.aviso || ""}`
+                : data?.conta_nova
+                  ? `✅ Nova conta Mercado Livre adicionada: ${contaTexto}. As outras contas não foram alteradas.`
+                  : `✅ Conta Mercado Livre reconectada: ${contaTexto}. As outras contas não foram alteradas.`
           );
         }
       } catch (erro) {
@@ -268,7 +292,7 @@ export default function ContasMarketplace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuario?.id]);
 
-  async function iniciarAutorizacao(provedor) {
+  async function iniciarAutorizacao(provedor, opcoesML = { modo: "adicionar", esperado: "" }) {
     setMensagem("");
     const logado = await obterUsuarioLogado(usuario);
     if (!logado?.id) {
@@ -284,6 +308,10 @@ export default function ContasMarketplace({
     try {
       let desafioPkce = "";
       if (provedor === "ml") {
+        gravarLocal(CHAVE_MODO_ML, JSON.stringify({
+          modo: opcoesML.modo === "reconectar" ? "reconectar" : "adicionar",
+          esperado: String(opcoesML.esperado || ""),
+        }));
         const pkce = await gerarPkce();
         gravarLocal(CHAVE_PKCE_ML, pkce.verificador);
         desafioPkce = pkce.desafio;
@@ -317,8 +345,40 @@ export default function ContasMarketplace({
     }
   }
 
-  function conectarMercadoLivre() {
-    iniciarAutorizacao("ml");
+  function adicionarContaMercadoLivre() {
+    iniciarAutorizacao("ml", { modo: "adicionar", esperado: "" });
+  }
+
+  function reconectarContaMercadoLivre(mlUserId) {
+    iniciarAutorizacao("ml", { modo: "reconectar", esperado: String(mlUserId) });
+  }
+
+  async function ativarContaML(mlUserId) {
+    setOcupado(`ativar-${mlUserId}`);
+    setMensagem("");
+    try {
+      const c = await definirContaMLAtiva(mlUserId);
+      setMensagem(`✅ CONTA MERCADO LIVRE ATIVA: ${c?.nickname || mlUserId}.`);
+    } catch (e) {
+      setMensagem(`❌ ${e?.message || "Não foi possível trocar a conta ativa."}`);
+    } finally {
+      setOcupado("");
+      carregarStatus();
+    }
+  }
+
+  async function desconectarML(mlUserId) {
+    setOcupado(`desconectar-${mlUserId}`);
+    setMensagem("");
+    try {
+      await desconectarContaML(mlUserId);
+      setMensagem(`✅ Conta Mercado Livre ID ${mlUserId} desconectada. As outras contas não foram alteradas.`);
+    } catch (e) {
+      setMensagem(`❌ ${e?.message || "Não foi possível desconectar."}`);
+    } finally {
+      setOcupado("");
+      carregarStatus();
+    }
   }
 
   function conectarBling() {
@@ -406,29 +466,16 @@ export default function ContasMarketplace({
         ⬅ Voltar à Central de Publicação
       </button>
 
-      <div style={gridStyle}>
-        <MarketplaceCard
-          icone="🟡"
-          nome="Mercado Livre"
-          status={
-            statusML?.conectado
-              ? `CONECTADA${statusML?.nickname ? ` — ${statusML.nickname}` : ""}`
-              : "Pronto para conectar"
-          }
-          corStatus="#22c55e"
-          descricao="Autorize sua conta para preparar a publicação automática dos anúncios."
-          textoBotao={
-            ocupado === "ml"
-              ? "⏳ Abrindo Mercado Livre..."
-              : statusML?.conectado
-                ? "🔄 Reconectar"
-                : undefined
-          }
-          onClick={
-            conectarMercadoLivre
-          }
-        />
+      <PainelContasML
+        statusML={statusML}
+        ocupado={ocupado}
+        onAdicionar={adicionarContaMercadoLivre}
+        onReconectar={reconectarContaMercadoLivre}
+        onAtivar={ativarContaML}
+        onDesconectar={desconectarML}
+      />
 
+      <div style={gridStyle}>
         <MarketplaceCard
           icone="🟠"
           nome="Shopee"
@@ -829,4 +876,77 @@ const paizinhoStyle = {
   background:
     "linear-gradient(135deg,#172554,#0f172a)",
   textAlign: "center",
+};
+
+/*
+ * MERCADO LIVRE — N contas por usuário. Cada conta: nome (vindo do próprio
+ * Mercado Livre), ID, status, [Definir como ativa] [Reconectar] [Desconectar].
+ * Nenhum nome fixo no código. "+ Adicionar conta" nunca substitui outra conta.
+ */
+function PainelContasML({ statusML, ocupado, onAdicionar, onReconectar, onAtivar, onDesconectar }) {
+  const [confirmarDesconectar, setConfirmarDesconectar] = useState("");
+  const contas = Array.isArray(statusML?.contas) ? statusML.contas : [];
+  const ativa = contas.find((c) => c.ativa && c.status !== "desconectada");
+  const corStatus = (st) => (st === "conectada" ? "#22c55e" : st === "desconectada" ? "#94a3b8" : "#f87171");
+  const rotuloStatus = (st) =>
+    st === "conectada" ? "Conectada ✅" : st === "desconectada" ? "Desconectada" : st === "expirada" ? "Expirada — reconectar" : st === "revogada" ? "Revogada — reconectar" : st || "—";
+  return (
+    <section data-paiia-contas-ml style={{ marginTop: "18px", padding: "20px", borderRadius: "16px", border: "1px solid #ca8a04", background: "#0f172a" }}>
+      <h3 style={{ color: "#fde047", margin: "0 0 6px" }}>🟡 MERCADO LIVRE</h3>
+      <p data-paiia-conta-ml-ativa-painel style={{ color: ativa ? "#fef08a" : "#fca5a5", margin: "0 0 14px", fontWeight: 700 }}>
+        CONTA MERCADO LIVRE ATIVA: {ativa ? `${ativa.nickname || "—"} (ID ${ativa.ml_user_id})` : contas.length ? "nenhuma — defina uma conta ativa" : "nenhuma conta conectada"}
+      </p>
+      {statusML === null && <p style={{ color: "#94a3b8" }}>⏳ Carregando contas...</p>}
+      <div style={{ display: "grid", gap: "12px" }}>
+        {contas.map((c, i) => (
+          <div key={c.ml_user_id} data-paiia-conta-ml={c.ml_user_id} style={{ padding: "14px", borderRadius: "12px", border: `1px solid ${c.ativa ? "#facc15" : "#1e293b"}`, background: "#020617", color: "#e2e8f0", lineHeight: 1.7 }}>
+            <div style={{ color: "#94a3b8", fontSize: 12 }}>Conta {i + 1}{c.ativa ? " · ATIVA" : ""}</div>
+            <div>Nome: <b>{c.nickname || "—"}</b></div>
+            <div>ID: <b>{c.ml_user_id}</b></div>
+            <div>Status: <b style={{ color: corStatus(c.status) }}>{rotuloStatus(c.status)}</b></div>
+            {c.ultima_renovacao_em && <div style={{ color: "#94a3b8", fontSize: 12 }}>Última renovação: {new Date(c.ultima_renovacao_em).toLocaleString("pt-BR")}</div>}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              {c.status !== "desconectada" && !c.ativa && (
+                <button type="button" style={botaoPequeno} disabled={Boolean(ocupado)} onClick={() => onAtivar(c.ml_user_id)}>
+                  {ocupado === `ativar-${c.ml_user_id}` ? "⏳" : "⭐"} Definir como ativa
+                </button>
+              )}
+              <button type="button" style={botaoPequeno} disabled={Boolean(ocupado)} onClick={() => onReconectar(c.ml_user_id)}>
+                🔄 Reconectar
+              </button>
+              {c.status !== "desconectada" && (confirmarDesconectar === c.ml_user_id ? (
+                <>
+                  <button type="button" style={{ ...botaoPequeno, borderColor: "#f87171", color: "#fecaca" }} disabled={Boolean(ocupado)} onClick={() => { setConfirmarDesconectar(""); onDesconectar(c.ml_user_id); }}>
+                    Confirmar: desconectar {c.nickname || c.ml_user_id}
+                  </button>
+                  <button type="button" style={botaoPequeno} onClick={() => setConfirmarDesconectar("")}>Cancelar</button>
+                </>
+              ) : (
+                <button type="button" style={botaoPequeno} disabled={Boolean(ocupado)} onClick={() => setConfirmarDesconectar(c.ml_user_id)}>
+                  ⛔ Desconectar
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <button type="button" data-paiia-adicionar-conta-ml style={{ ...botaoPequeno, marginTop: 14, padding: "12px 16px", borderColor: "#22c55e", color: "#bbf7d0", fontWeight: 800 }} disabled={Boolean(ocupado)} onClick={onAdicionar}>
+        {ocupado === "ml" ? "⏳ Abrindo Mercado Livre..." : "＋ Adicionar conta Mercado Livre"}
+      </button>
+      <p style={{ color: "#94a3b8", fontSize: 12, marginTop: 10, lineHeight: 1.6 }}>
+        Para adicionar OUTRA conta: antes de clicar, saia da conta atual no site do Mercado Livre (ou use uma janela anônima) e entre na conta que deseja adicionar.
+        O PAIIA identifica a conta pelo próprio Mercado Livre e nunca substitui uma conta já conectada.
+      </p>
+    </section>
+  );
+}
+
+const botaoPequeno = {
+  padding: "8px 12px",
+  borderRadius: "10px",
+  border: "1px solid #334155",
+  background: "#0b1220",
+  color: "#e2e8f0",
+  cursor: "pointer",
+  fontSize: "13px",
 };

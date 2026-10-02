@@ -4,6 +4,7 @@ import Catalogos from "./components/Catalogos";
 import BuscaCatalogo from "./components/BuscaCatalogo";
 import MeusRascunhos from "./components/MeusRascunhos";
 import ContasMarketplace from "./components/ContasMarketplace";
+import ContaMLAtivaBadge from "./components/ContaMLAtivaBadge";
 import { retornoOAuthPendente } from "./services/retornoOAuth";
 import InteligenciaCatalogo from "./components/InteligenciaCatalogo";
 import LeitorCatalogoIA from "./components/LeitorCatalogoIA";
@@ -2863,6 +2864,8 @@ return (
             {ROTULO_CONTA_INTERNA_TESTE}
           </span>
         )}
+
+        <ContaMLAtivaBadge onClick={() => setScreen("contasMarketplace")} />
 
         {/* Centro de Criação (home): o acesso ao Paizinho é só o cartão "Central do Paizinho". */}
         {screen !== "home" && (
