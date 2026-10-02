@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Button from "./ui/Button";
 import { supabase } from "../supabase";
 
@@ -330,6 +330,53 @@ export default function CentralPublicacao({
 
   const [publicandoWoo, setPublicandoWoo] =
     useState(false);
+
+  /*
+   * Conexão Mercado Livre: MESMA consulta da tela Contas Marketplace
+   * (função mercadolivre-oauth, ação "status", do usuário logado).
+   * null = verificando; { conectado: false } = sem conta → simulador.
+   */
+  const [statusML, setStatusML] =
+    useState(null);
+
+  useEffect(() => {
+    let ativo = true;
+
+    (async () => {
+      try {
+        const { data: sessao } =
+          await supabase.auth.getSession();
+
+        if (!sessao?.session?.user?.id) {
+          if (ativo) setStatusML({ conectado: false });
+          return;
+        }
+
+        const { data } =
+          await supabase.functions.invoke(
+            "mercadolivre-oauth",
+            { body: { acao: "status" } }
+          );
+
+        if (ativo) {
+          setStatusML(
+            data?.ok
+              ? data
+              : { conectado: false, erro: data?.erro || "" }
+          );
+        }
+      } catch {
+        if (ativo) setStatusML({ conectado: false });
+      }
+    })();
+
+    return () => {
+      ativo = false;
+    };
+  }, []);
+
+  const mlConectado =
+    statusML?.conectado === true;
 
   function atualizarTitulo(valor) {
     const novoTitulo =
@@ -1013,6 +1060,29 @@ export default function CentralPublicacao({
         </p>
       </section>
 
+      {/* Próximo passo obrigatório para o Mercado Livre: Conferência PAIIA.
+          Vale com ou sem conta conectada; a publicação real só vem depois. */}
+      <section
+        data-paiia-proximo-passo-conferencia
+        style={{
+          ...blocoStyle,
+          border: "1px solid #facc15",
+          background: "linear-gradient(135deg,#422006,#0f172a)",
+          textAlign: "center",
+        }}
+      >
+        <h3 style={{ ...tituloBloco, color: "#fde047", marginBottom: "6px" }}>
+          🟡 Mercado Livre — próximo passo: Conferência PAIIA
+        </h3>
+        <p style={{ color: "#fef3c7", margin: "0 0 14px 0", fontSize: "13px" }}>
+          Fotos, dados, compatibilidade, categoria, peso e medidas. Só depois
+          da conferência aprovada você escolhe a conta e confirma a publicação.
+        </p>
+        <Button type="button" onClick={abrirSimuladorMercadoLivre}>
+          📋 Abrir Conferência PAIIA
+        </Button>
+      </section>
+
       <section style={blocoStyle}>
         <div
           style={{
@@ -1052,15 +1122,42 @@ export default function CentralPublicacao({
         </div>
 
         <div style={gradeMarketplaces}>
-          <MarketplaceCard
-            icone="🟡"
-            titulo="Mercado Livre"
-            descricao="Teste todo o processo antes de conectar sua conta real."
-            onClick={
-              abrirSimuladorMercadoLivre
-            }
-            textoBotao="🧪 Testar Publicação"
-          />
+          {statusML === null ? (
+            <MarketplaceCard
+              icone="🟡"
+              titulo="Mercado Livre"
+              descricao="Verificando sua conta Mercado Livre..."
+              selo="⏳ Verificando"
+              corSelo="#94a3b8"
+              textoBotao="⏳ Aguarde"
+              desabilitado
+            />
+          ) : mlConectado ? (
+            <MarketplaceCard
+              icone="🟡"
+              titulo="Mercado Livre"
+              descricao={statusML?.ml_user_id ? `CONTA MERCADO LIVRE ATIVA: ${statusML?.nickname || "—"} (ID ${statusML.ml_user_id})${Number(statusML?.total_conectadas) > 1 ? ` · ${statusML.total_conectadas} contas conectadas` : ""}` : "Nenhuma CONTA MERCADO LIVRE ATIVA — defina em Contas Marketplace"}
+              selo="✅ CONECTADO — conta real"
+              corSelo="#22c55e"
+              onClick={
+                // Fluxo oficial: a Conferência PAIIA vem SEMPRE primeiro.
+                // A conta conectada não pula a conferência; a escolha da
+                // conta e a publicação real ficam no fim da conferência.
+                abrirSimuladorMercadoLivre
+              }
+              textoBotao="📋 Conferência PAIIA"
+            />
+          ) : (
+            <MarketplaceCard
+              icone="🟡"
+              titulo="Mercado Livre"
+              descricao="Teste todo o processo antes de conectar sua conta real."
+              onClick={
+                abrirSimuladorMercadoLivre
+              }
+              textoBotao="🧪 Testar Publicação"
+            />
+          )}
 
           <MarketplaceCard
             icone="🟠"
@@ -1150,10 +1247,9 @@ export default function CentralPublicacao({
                 1.6,
             }}
           >
-            O anúncio está pronto. Antes da
-            conexão real com os marketplaces,
-            você pode validar o fluxo completo
-            usando o simulador.
+            {mlConectado
+              ? "O anúncio está pronto. Primeiro vem a Conferência PAIIA (fotos, dados, compatibilidade, categoria, peso e medidas). Só depois de aprovada você escolhe a conta Mercado Livre, valida e confirma. Nada é publicado sem a sua confirmação."
+              : "O anúncio está pronto. Antes da conexão real com os marketplaces, você pode validar o fluxo completo usando o simulador."}
           </p>
         </div>
       </section>
@@ -1215,6 +1311,8 @@ function MarketplaceCard({
   textoBotao =
     "🔗 Conectar conta",
   desabilitado = false,
+  selo = "🧪 Modo seguro",
+  corSelo = "#facc15",
 }) {
   return (
     <div style={marketplaceCard}>
@@ -1258,9 +1356,10 @@ function MarketplaceCard({
       </span>
 
       <span
+        data-paiia-selo-canal
         style={{
           color:
-            "#facc15",
+            corSelo,
 
           fontSize:
             "11px",
@@ -1269,7 +1368,7 @@ function MarketplaceCard({
             "bold",
         }}
       >
-        🧪 Modo seguro
+        {selo}
       </span>
 
       <button

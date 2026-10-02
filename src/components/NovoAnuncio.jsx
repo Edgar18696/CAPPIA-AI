@@ -20,7 +20,11 @@ import AnaliseIA from "./AnaliseIA";
 import AssistenteAnuncio from "./AssistenteAnuncio";
 
 import DadosPeca from "./DadosPeca";
-import useNovoAnuncio from "../hooks/useNovoAnuncio";
+import useNovoAnuncio, {
+  gravarRascunhoAnuncio,
+  lerRascunhoAnuncio,
+  rascunhoTemTexto,
+} from "../hooks/useNovoAnuncio";
 import { deveIniciarNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 import {
   gerarAnuncioV2,
@@ -503,18 +507,27 @@ useEffect(() => {
     return;
   }
 
-  const dadosTemporarios =
-    localStorage.getItem(
-      "novoAnuncioTemporario"
-    );
+  // Cópia principal; se não existir ou vier sem texto, usa o
+  // rascunho de reserva (que não é mais zerado ao voltar da Galeria).
+  const principal = lerRascunhoAnuncio(
+    "novoAnuncioTemporario"
+  );
+  const reserva = lerRascunhoAnuncio(
+    "rascunhoNovoAnuncioTemp"
+  );
+  const dadosRestaurar =
+    rascunhoTemTexto(principal)
+      ? principal
+      : rascunhoTemTexto(reserva)
+        ? reserva
+        : principal;
 
-  if (!dadosTemporarios) {
+  if (!dadosRestaurar) {
     return;
   }
 
   try {
-    const dados =
-      JSON.parse(dadosTemporarios);
+    const dados = dadosRestaurar;
 
     setCodigo(
       dados.codigo || ""
@@ -555,6 +568,8 @@ useEffect(() => {
       dados.auditoria ||
         null
     );
+
+    aplicarExtrasRascunho(dados);
   } catch (erro) {
     console.error(
       "Erro ao recuperar anúncio temporário:",
@@ -730,9 +745,14 @@ useEffect(() => {
             ? fotosAtuais
             : [];
 
+        // As fotos em memória mandam (ordem, capa e versão completa).
+        // O rascunho (só URLs) só repõe quando a memória está vazia.
+        if (atuais.length) {
+          return atuais;
+        }
+
         const todas = [
           ...rascunho.fotos,
-          ...atuais,
         ];
 
         return todas.filter(
@@ -1353,9 +1373,11 @@ function formatarPrecoAppia(
       const dados =
         JSON.parse(salvo);
 
-      localStorage.setItem(
-        "novoAnuncioTemporario",
-        JSON.stringify({
+      gravarRascunhoAnuncio(
+      "novoAnuncioTemporario",
+      {
+        ...extrasRascunho,
+        ...({
           ...dados,
           preco:
             precoSugerido,
@@ -1363,8 +1385,9 @@ function formatarPrecoAppia(
             dadosPrecificacao?.custo ||
             dados?.custo ||
             "",
-        })
-      );
+        }),
+      }
+    );
     } catch (erro) {
       console.error(
         "Erro ao atualizar preço retornado:",
@@ -2016,6 +2039,72 @@ setVeioDaCentralTecnica(true);
     }
   }, []);
 
+  // Dados extras do anúncio que também precisam voltar da Galeria.
+  const extrasRascunho = {
+    clip: clipAnuncio || "",
+    canalVenda,
+    categoriaConcorrencia,
+    custo,
+    fretePrecificacao,
+    despesasPrecificacao,
+    comissaoPrecificacao,
+    impostoPrecificacao,
+    mostrarCustoDetalhado,
+    custoCompraDetalhado,
+    freteCompraDetalhado,
+    embalagemDetalhada,
+    despesasFixasMensais,
+    vendasMediasMes,
+    outrosCustosDetalhados,
+    pesoFreteML,
+    alturaFreteML,
+    larguraFreteML,
+    comprimentoFreteML,
+    mostrarAplicacoes,
+  };
+
+  function aplicarExtrasRascunho(dados) {
+    if (!dados || typeof dados !== "object") return;
+
+    const texto = (chave, setter) => {
+      if (
+        typeof dados[chave] === "string" &&
+        dados[chave] !== ""
+      ) {
+        setter(dados[chave]);
+      }
+    };
+
+    texto("categoriaConcorrencia", setCategoriaConcorrencia);
+    texto("custo", setCusto);
+    texto("fretePrecificacao", setFretePrecificacao);
+    texto("despesasPrecificacao", setDespesasPrecificacao);
+    texto("comissaoPrecificacao", setComissaoPrecificacao);
+    texto("impostoPrecificacao", setImpostoPrecificacao);
+    texto("custoCompraDetalhado", setCustoCompraDetalhado);
+    texto("freteCompraDetalhado", setFreteCompraDetalhado);
+    texto("embalagemDetalhada", setEmbalagemDetalhada);
+    texto("despesasFixasMensais", setDespesasFixasMensais);
+    texto("vendasMediasMes", setVendasMediasMes);
+    texto("outrosCustosDetalhados", setOutrosCustosDetalhados);
+    texto("pesoFreteML", setPesoFreteML);
+    texto("alturaFreteML", setAlturaFreteML);
+    texto("larguraFreteML", setLarguraFreteML);
+    texto("comprimentoFreteML", setComprimentoFreteML);
+
+    if (dados.mostrarCustoDetalhado === true) {
+      setMostrarCustoDetalhado(true);
+    }
+
+    if (
+      dados.mostrarAplicacoes === true ||
+      (Array.isArray(dados.pecaEncontrada?.aplicacoes) &&
+        dados.pecaEncontrada.aplicacoes.length)
+    ) {
+      setMostrarAplicacoes(true);
+    }
+  }
+
   // As funções do componente continuam aqui embaixo.
 
   useNovoAnuncio({
@@ -2049,6 +2138,8 @@ setVeioDaCentralTecnica(true);
 
     auditoria,
     setAuditoria,
+
+    extrasRascunho,
   });
 
 function montarUrlPesquisaMercadoLivre(termo = "") {
@@ -3191,9 +3282,11 @@ const descricaoResultado =
     setMostrarAplicacoes(true);
     setMostrarRecursosIA(false);
 
-    localStorage.setItem(
+    gravarRascunhoAnuncio(
       "rascunhoNovoAnuncioTemp",
-      JSON.stringify({
+      {
+        ...extrasRascunho,
+        ...({
         codigo:
           codigoResultado,
 
@@ -3236,7 +3329,8 @@ const descricaoResultado =
           )
             ? fotosAnuncio
             : [],
-      })
+      }),
+      }
     );
 
     // Base PAIIA achou o código mas sem aplicação de veículo.
@@ -3519,9 +3613,11 @@ async function executarPesquisaPaizinho(
       setMostrarAplicacoes(true);
 
       try {
-        localStorage.setItem(
-          "rascunhoNovoAnuncioTemp",
-          JSON.stringify({
+        gravarRascunhoAnuncio(
+      "rascunhoNovoAnuncioTemp",
+      {
+        ...extrasRascunho,
+        ...({
             codigo: codigoFinal,
             oem: campos.oem || "",
             titulo: campos.titulo || "",
@@ -3541,8 +3637,9 @@ async function executarPesquisaPaizinho(
             )
               ? fotosAnuncio
               : [],
-          })
-        );
+          }),
+      }
+    );
       } catch {
         // rascunho é só conveniência
       }
@@ -3784,19 +3881,21 @@ Deseja publicar mesmo assim?`
     clip: clipAnuncio || "",
   };
 
-  localStorage.setItem(
-    "novoAnuncioTemporario",
-    JSON.stringify(
-      dadosAnuncio
-    )
-  );
+  gravarRascunhoAnuncio(
+      "novoAnuncioTemporario",
+      {
+        ...extrasRascunho,
+        ...(dadosAnuncio),
+      }
+    );
 
-  localStorage.setItem(
-    "rascunhoNovoAnuncioTemp",
-    JSON.stringify(
-      dadosAnuncio
-    )
-  );
+  gravarRascunhoAnuncio(
+      "rascunhoNovoAnuncioTemp",
+      {
+        ...extrasRascunho,
+        ...(dadosAnuncio),
+      }
+    );
 
   let dadosPrecificacaoSalvos = {};
 
@@ -3870,11 +3969,24 @@ Deseja publicar mesmo assim?`
         clipAnuncio || "",
     };
 
-    localStorage.setItem(
+    gravarRascunhoAnuncio(
       "novoAnuncioTemporario",
-      JSON.stringify(
-        dadosLeves
-      )
+      {
+        ...extrasRascunho,
+        ...(dadosLeves),
+      }
+    );
+
+    // Reserva com as fotos só por referência (URL, ordem e capa).
+    gravarRascunhoAnuncio(
+      "rascunhoNovoAnuncioTemp",
+      {
+        ...extrasRascunho,
+        ...dadosLeves,
+        fotos: Array.isArray(fotosAnuncio)
+          ? fotosAnuncio
+          : [],
+      }
     );
   } catch (erro) {
     console.error(
@@ -3937,11 +4049,24 @@ function escolherBannerGaleria() {
         clipAnuncio || "",
     };
 
-    localStorage.setItem(
+    gravarRascunhoAnuncio(
       "novoAnuncioTemporario",
-      JSON.stringify(
-        dadosLeves
-      )
+      {
+        ...extrasRascunho,
+        ...(dadosLeves),
+      }
+    );
+
+    // Reserva com as fotos só por referência (URL, ordem e capa).
+    gravarRascunhoAnuncio(
+      "rascunhoNovoAnuncioTemp",
+      {
+        ...extrasRascunho,
+        ...dadosLeves,
+        fotos: Array.isArray(fotosAnuncio)
+          ? fotosAnuncio
+          : [],
+      }
     );
   } catch (erro) {
     console.error(
@@ -3990,9 +4115,11 @@ function escolherBannerGaleria() {
   }
 
   function salvarFluxoMidiasIA() {
-    localStorage.setItem(
+    gravarRascunhoAnuncio(
       chaveRascunhoTemp,
-      JSON.stringify({
+      {
+        ...extrasRascunho,
+        ...({
         codigo,
         oem,
         titulo,
@@ -4002,7 +4129,8 @@ function escolherBannerGaleria() {
         pecaEncontrada,
         fotos: fotosAnuncio || [],
         clip: clipAnuncio || "",
-      })
+      }),
+      }
     );
 
     localStorage.setItem(
@@ -4038,9 +4166,11 @@ function escolherBannerGaleria() {
   }
 
   function importarBannerDaGaleria() {
-    localStorage.setItem(
+    gravarRascunhoAnuncio(
       chaveRascunhoTemp,
-      JSON.stringify({
+      {
+        ...extrasRascunho,
+        ...({
         codigo,
         oem,
         titulo,
@@ -4052,12 +4182,15 @@ function escolherBannerGaleria() {
         auditoria,
         fotos: fotosAnuncio || [],
         clip: clipAnuncio || "",
-      })
+      }),
+      }
     );
 
-    localStorage.setItem(
+    gravarRascunhoAnuncio(
       "novoAnuncioTemporario",
-      JSON.stringify({
+      {
+        ...extrasRascunho,
+        ...({
         codigo,
         oem,
         titulo,
@@ -4069,7 +4202,8 @@ function escolherBannerGaleria() {
         auditoria,
         fotos: fotosAnuncio || [],
         clip: clipAnuncio || "",
-      })
+      }),
+      }
     );
 
     localStorage.setItem(
@@ -4519,13 +4653,16 @@ marcarAnuncioPronto({
       try {
         const rascunho = JSON.parse(salvo);
 
-        localStorage.setItem(
-          chaveRascunhoTemp,
-          JSON.stringify({
+        gravarRascunhoAnuncio(
+      chaveRascunhoTemp,
+      {
+        ...extrasRascunho,
+        ...({
             ...rascunho,
             fotos: [],
-          })
-        );
+          }),
+      }
+    );
       } catch {
         localStorage.removeItem(chaveRascunhoTemp);
       }

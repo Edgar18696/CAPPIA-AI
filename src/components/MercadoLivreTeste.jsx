@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
+import PesoEmbalagemML from "./PesoEmbalagemML";
+import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
+import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
 
 function normalizarTexto(valor = "") {
   return String(valor || "")
@@ -285,6 +288,8 @@ function obterDimensoesFoto(url) {
         largura: 0,
         altura: 0,
         ok: false,
+        aberta: false,
+        quadrada: false,
       });
       return;
     }
@@ -304,6 +309,10 @@ function obterDimensoesFoto(url) {
         ok:
           largura >= 1200 &&
           altura >= 1200,
+        aberta: true,
+        quadrada:
+          largura > 0 &&
+          largura === altura,
       });
     };
 
@@ -312,11 +321,36 @@ function obterDimensoesFoto(url) {
         largura: 0,
         altura: 0,
         ok: false,
+        aberta: false,
+        quadrada: false,
       });
     };
 
     imagem.src = url;
   });
+}
+
+// Mesma imagem (endereço igual, sem parâmetros) = foto repetida.
+function chaveFoto(url) {
+  return String(url || "")
+    .split("#")[0]
+    .split("?")[0]
+    .trim()
+    .toLowerCase();
+}
+
+// De onde vem a imagem usada no anúncio (somente informação; nada é alterado).
+function origemFoto(foto) {
+  if (typeof foto === "string") return "Endereço (URL)";
+  if (foto?.imagem_processada) return "Processada (Foto IA PAIIA)";
+  if (foto?.imagem_original) return "Original (sem processamento)";
+  if (foto?.url || foto?.src) return "Endereço (URL)";
+  return "—";
+}
+
+function numeroPositivo(valor) {
+  const n = Number(String(valor ?? "").replace(",", "."));
+  return Number.isFinite(n) && n > 0;
 }
 
 export default function MercadoLivreTeste({
@@ -1130,6 +1164,46 @@ function moverFoto(
     setValidandoFotos,
   ] = useState(false);
 
+  // Fotos repetidas: mesma imagem mais de uma vez no anúncio.
+  const indicesRepetidos = useMemo(() => {
+    const vistos = new Map();
+    const repetidos = new Set();
+    fotos.forEach((foto, indice) => {
+      const chave = chaveFoto(obterUrlFoto(foto));
+      if (!chave) return;
+      if (vistos.has(chave)) {
+        repetidos.add(indice);
+        repetidos.add(vistos.get(chave));
+      } else {
+        vistos.set(chave, indice);
+      }
+    });
+    return repetidos;
+  }, [fotos]);
+
+  // Contas Mercado Livre (somente leitura) para o passo seguinte à conferência.
+  const estadoContasML = useContasML();
+  const contasMLDisponiveis = contasMLConectadas(estadoContasML);
+  const contaMLAtivaConferencia =
+    contasMLDisponiveis.find((c) => c.ativa) || null;
+
+  // Peso e medidas vindos do bloco PESO E EMBALAGEM (PAIIA).
+  const [
+    logisticaConferencia,
+    setLogisticaConferencia,
+  ] = useState(null);
+
+  // Anúncio exatamente como foi aprovado na conferência.
+  const [
+    anuncioConferido,
+    setAnuncioConferido,
+  ] = useState(null);
+
+  const [
+    revisandoPublicacaoML,
+    setRevisandoPublicacaoML,
+  ] = useState(false);
+
   useEffect(() => {
     let ativo = true;
 
@@ -1481,6 +1555,31 @@ const [
   erroCategoria,
   setErroCategoria,
 ] = useState("");
+
+  // Qualquer mudança depois da aprovação exige conferir de novo
+  // (a publicação real usa SOMENTE o que foi aprovado na conferência).
+  const assinaturaConferencia = JSON.stringify([
+    tituloAnuncio,
+    preco,
+    descricao,
+    fotos.map(obterUrlFoto),
+    categoria,
+    categoriaId,
+    marca,
+    numeroPeca,
+    compatibilidades,
+    pesoEnvio,
+    comprimentoEnvio,
+    larguraEnvio,
+    alturaEnvio,
+    logisticaConferencia?.medida || null,
+  ]);
+
+  useEffect(() => {
+    setAnuncioConferido(null);
+    setRevisandoPublicacaoML(false);
+    setValidado(false);
+  }, [assinaturaConferencia]);
 
   function importarBannerDoComputador() {
     const input =
@@ -2536,6 +2635,19 @@ async function atualizarCategoria() {
       );
     }
 
+    if (indicesRepetidos.size > 0) {
+      alert(
+        "❌ Publicação bloqueada.\n\n" +
+          `${indicesRepetidos.size} foto(s) repetida(s) no anúncio. Remova as duplicadas no bloco ④ Fotos.`
+      );
+      setValidado(false);
+      setPayloadTeste(null);
+      setPendenciasRevisao([
+        `${indicesRepetidos.size} foto(s) repetida(s): remova as duplicadas.`,
+      ]);
+      return;
+    }
+
     if (fotos.length) {
       setValidandoFotos(true);
 
@@ -2596,6 +2708,24 @@ async function atualizarCategoria() {
     if (!numeroPeca.trim()) {
       faltando.push(
         "Número da peça"
+      );
+    }
+
+    // Peso e medidas: nunca inventados. Vale a medida do bloco PESO E
+    // EMBALAGEM (PAIIA) ou a embalagem de envio digitada no bloco ⑥.
+    const medidaEnvioManual = [
+      pesoEnvio,
+      comprimentoEnvio,
+      larguraEnvio,
+      alturaEnvio,
+    ].every(numeroPositivo);
+
+    if (
+      !logisticaConferencia?.medida &&
+      !medidaEnvioManual
+    ) {
+      faltando.push(
+        "Peso e medidas da embalagem"
       );
     }
 
@@ -2792,6 +2922,23 @@ async function atualizarCategoria() {
     setValidado(true);
     setPendenciasRevisao([]);
 
+    // Fotos do produto na ordem aprovada (banner e vídeo ficam separados).
+    setAnuncioConferido({
+      codigo: numeroPeca || codigo,
+      oem: anuncio?.oem || "",
+      titulo: tituloAnuncio,
+      preco,
+      descricao,
+      tipoAnuncio: modalidade,
+      marca,
+      gtin,
+      fotos: fotos.map(obterUrlFoto).filter(Boolean),
+      categoria,
+      categoriaId,
+      compatibilidades,
+      logistica: logisticaConferencia,
+    });
+
     localStorage.setItem(
       "mlPayloadTeste",
       JSON.stringify(
@@ -2858,13 +3005,13 @@ async function atualizarCategoria() {
         margin: "30px auto",
       }}
     >
-      <section style={cabecalho}>
+      <section style={cabecalho} data-paiia-conferencia-paiia>
         <div
           style={{
             fontSize: "42px",
           }}
         >
-          🧪
+          📋
         </div>
 
         <h2
@@ -2874,7 +3021,7 @@ async function atualizarCategoria() {
               "8px 0 6px 0",
           }}
         >
-          Simulador Mercado Livre
+          Conferência PAIIA — Mercado Livre
         </h2>
 
         <p
@@ -2883,9 +3030,9 @@ async function atualizarCategoria() {
             margin: 0,
           }}
         >
-          Revise todo o anúncio como
-          se fosse publicar no Mercado
-          Livre. Nada será enviado.
+          Confira os 16 blocos do anúncio. Nesta etapa nada é enviado ao
+          Mercado Livre. Depois da Revisão final aprovada você escolhe a
+          conta, valida no Mercado Livre e só publica com a sua autorização.
         </p>
       </section>
 
@@ -3629,9 +3776,37 @@ async function atualizarCategoria() {
                             "center",
                         }}
                       >
-                        {dimensao.largura} ×{" "}
-                        {dimensao.altura}
+                        {dimensao.aberta === false
+                          ? "❌ não abriu"
+                          : `${dimensao.largura} × ${dimensao.altura}${
+                              dimensao.quadrada
+                                ? " · quadrada"
+                                : " · NÃO quadrada"
+                            }`}
                       </span>
+                    )}
+                  </div>
+
+                  <div
+                    data-paiia-foto-origem
+                    style={{
+                      fontSize: "10px",
+                      color: "#94a3b8",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    Foto {index + 1}
+                    {index === 0 ? " (capa)" : ""} · {origemFoto(foto)}
+                    {indicesRepetidos.has(index) && (
+                      <div
+                        data-paiia-foto-repetida
+                        style={{
+                          color: "#fca5a5",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        ⚠ REPETIDA
+                      </div>
                     )}
                   </div>
 
@@ -3830,6 +4005,50 @@ async function atualizarCategoria() {
         : "❌ Corrigir fotos abaixo de 1200 × 1200"}
   </strong>
 </div>
+
+        <div
+          data-paiia-conferencia-fotos
+          style={{
+            ...resumoLinha,
+            display: "grid",
+            gap: "4px",
+            border:
+              indicesRepetidos.size > 0 ||
+              dimensoesFotos.some((item) => item.aberta === false)
+                ? "1px solid #ef4444"
+                : "1px solid #334155",
+          }}
+        >
+          <span>
+            🔁 Fotos repetidas:{" "}
+            <strong style={{ color: indicesRepetidos.size ? "#fca5a5" : "#86efac" }}>
+              {indicesRepetidos.size
+                ? `${indicesRepetidos.size} — remova as duplicadas`
+                : "nenhuma"}
+            </strong>
+          </span>
+          <span>
+            ⬛ Imagens quadradas:{" "}
+            <strong>
+              {dimensoesFotos.length === 0
+                ? "verificando..."
+                : `${dimensoesFotos.filter((item) => item.quadrada).length} de ${dimensoesFotos.length}`}
+            </strong>
+            {dimensoesFotos.some((item) => item.aberta && !item.quadrada) &&
+              " — o padrão PAIIA é 1200 × 1200 (quadrada)."}
+          </span>
+          <span>
+            🚫 Imagens que não abriram:{" "}
+            <strong style={{ color: dimensoesFotos.some((item) => item.aberta === false) ? "#fca5a5" : "#86efac" }}>
+              {dimensoesFotos.filter((item) => item.aberta === false).length}
+            </strong>
+          </span>
+          <span style={{ color: "#fde68a" }}>
+            ℹ️ Padrão PAIIA/Mercado Livre: 1200 × 1200, fundo branco, peça em
+            destaque, sem deformar e sem alterar características reais. O PAIIA
+            não corrige nem modifica a peça automaticamente: confira cada foto.
+          </span>
+        </div>
 
         <div
           id="secao-midias-publicacao"
@@ -4052,6 +4271,47 @@ async function atualizarCategoria() {
         <h3 style={titulo}>
           ⑥ Embalagem
         </h3>
+
+        <div data-paiia-conferencia-peso style={{ marginBottom: "16px" }}>
+          <h4 style={subtitulo}>
+            ⚖️ Peso e medidas para o Mercado Livre
+          </h4>
+
+          {contaMLAtivaConferencia ? (
+            <PesoEmbalagemML
+              sku={sku || numeroPeca || codigo}
+              categoriaId={categoriaId}
+              preco={preco}
+              tipoAnuncio={modalidade}
+              contaML={contaMLAtivaConferencia.ml_user_id}
+              onChange={setLogisticaConferencia}
+            />
+          ) : (
+            <p style={textoAuxiliar}>
+              Sem conta Mercado Livre ativa: informe a embalagem de envio
+              abaixo (peso e medidas). O PAIIA não inventa peso nem medida.
+            </p>
+          )}
+
+          <div style={{ ...resumoLinha, marginTop: "8px" }}>
+            <span>Peso e medidas desta conferência</span>
+            <strong
+              style={{
+                color:
+                  logisticaConferencia?.medida ||
+                  [pesoEnvio, comprimentoEnvio, larguraEnvio, alturaEnvio].every(numeroPositivo)
+                    ? "#86efac"
+                    : "#fca5a5",
+              }}
+            >
+              {logisticaConferencia?.medida
+                ? `${logisticaConferencia.medida.peso_g} g · ${logisticaConferencia.medida.comprimento_cm} × ${logisticaConferencia.medida.largura_cm} × ${logisticaConferencia.medida.altura_cm} cm · origem: ${logisticaConferencia.nivel || "a confirmar"}`
+                : [pesoEnvio, comprimentoEnvio, larguraEnvio, alturaEnvio].every(numeroPositivo)
+                  ? `${pesoEnvio} kg · ${comprimentoEnvio} × ${larguraEnvio} × ${alturaEnvio} cm · origem: manual (embalagem de envio)`
+                  : "❌ Pendente — preencha peso e medidas"}
+            </strong>
+          </div>
+        </div>
 
         <h4 style={subtitulo}>
           📦 Embalagem de fábrica
@@ -4583,6 +4843,60 @@ async function atualizarCategoria() {
         </h3>
 
         <div
+          data-paiia-conferencia-resumo
+          style={{
+            ...resumoLinha,
+            display: "grid",
+            gap: "4px",
+            marginBottom: "10px",
+          }}
+        >
+          <span>
+            🏷️ Categoria ML:{" "}
+            <strong style={{ color: categoria.trim() ? "#86efac" : "#fca5a5" }}>
+              {categoria.trim()
+                ? `${categoria}${categoriaId ? ` (${categoriaId})` : " — sem ID do Mercado Livre"}`
+                : "pendente"}
+            </strong>
+          </span>
+          <span>
+            🚗 Aplicações / compatibilidade:{" "}
+            <strong
+              style={{
+                color: String(compatibilidades || "").trim()
+                  ? "#86efac"
+                  : "#fbbf24",
+              }}
+            >
+              {String(compatibilidades || "").trim()
+                ? `${String(compatibilidades).split("\n").filter((l) => l.trim()).length} linha(s) — confira no bloco ⑨`
+                : "⚠ PENDENTE — sem aplicação confirmada (o PAIIA não completa por suposição)"}
+            </strong>
+          </span>
+          <span>
+            📷 Fotos: <strong>{fotos.length}</strong>
+            {indicesRepetidos.size ? ` · ${indicesRepetidos.size} repetida(s)` : ""}
+          </span>
+          <span>
+            ⚖️ Peso e medidas:{" "}
+            <strong
+              style={{
+                color:
+                  logisticaConferencia?.medida ||
+                  [pesoEnvio, comprimentoEnvio, larguraEnvio, alturaEnvio].every(numeroPositivo)
+                    ? "#86efac"
+                    : "#fca5a5",
+              }}
+            >
+              {logisticaConferencia?.medida ||
+              [pesoEnvio, comprimentoEnvio, larguraEnvio, alturaEnvio].every(numeroPositivo)
+                ? "informados (bloco ⑥)"
+                : "pendente"}
+            </strong>
+          </span>
+        </div>
+
+        <div
           style={{
             padding: "16px",
             borderRadius: "12px",
@@ -4817,6 +5131,51 @@ async function atualizarCategoria() {
                 🚀 Central de Publicação
               </button>
             </div>
+
+            <div
+              data-paiia-proximo-passo-ml
+              style={{
+                marginTop: "16px",
+                paddingTop: "14px",
+                borderTop: "1px solid #14532d",
+                textAlign: "center",
+              }}
+            >
+              {anuncioConferido && contasMLDisponiveis.length > 0 ? (
+                <button
+                  type="button"
+                  data-paiia-abrir-revisao-ml
+                  onClick={() => setRevisandoPublicacaoML(true)}
+                  style={{
+                    ...botaoPrincipal,
+                    width: "100%",
+                    padding: "14px",
+                    background: "linear-gradient(135deg,#ca8a04,#facc15)",
+                    color: "#1c1917",
+                  }}
+                >
+                  🟡 Próximo passo: escolher a conta Mercado Livre e validar
+                </button>
+              ) : (
+                <p style={textoAuxiliar}>
+                  {contasMLDisponiveis.length
+                    ? "Valide a conferência para seguir para a publicação real."
+                    : "Nenhuma conta Mercado Livre conectada: conecte em Contas Marketplace para publicar de verdade."}
+                </p>
+              )}
+              <p style={{ ...textoAuxiliar, marginTop: "8px" }}>
+                Abrir a próxima etapa NÃO publica nada: lá você escolhe a conta,
+                valida no Mercado Livre e só publica com autorização explícita.
+              </p>
+            </div>
+
+            {revisandoPublicacaoML && anuncioConferido && (
+              <RevisaoPublicacaoML
+                anuncio={anuncioConferido}
+                titulo={anuncioConferido.titulo}
+                onFechar={() => setRevisandoPublicacaoML(false)}
+              />
+            )}
           </section>
         )}
 
