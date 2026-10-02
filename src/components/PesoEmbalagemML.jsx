@@ -79,7 +79,7 @@ function medidaDoBling(p) {
 
 const VAZIO = { peso_g: "", comprimento_cm: "", largura_cm: "", altura_cm: "" };
 
-export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, onChange, contaML }) {
+export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, onChange, contaML, semTitulo = false }) {
   // Simulações de frete/tarifa da conta Mercado Livre escolhida na revisão (conta_ml).
   const chamarML = (acao, extra = {}) => chamarMLServidor(acao, { ...extra, ...(contaML ? { conta_ml: String(contaML) } : {}) });
   const [base, setBase] = useState(null); // resposta da leitura inicial
@@ -92,6 +92,8 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
   const [ocupado, setOcupado] = useState("");
   const [erro, setErro] = useState("");
   const preenchido = useRef("");
+  // Chave da última simulação automática (evita repetir a mesma consulta).
+  const ultimaSimulacao = useRef("");
 
   // Medida própria salva para ESTE SKU + ESTA configuração de embalagem.
   const propriaReg = (base?.medidas_proprias || []).find((m) => m.config_embalagem === config) || null;
@@ -242,7 +244,23 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
     setSimulacao(r);
     if (!r?.ok) setErro(r?.erro || "Falha na simulação.");
     setOcupado("");
+    return r;
   }
+
+  // Simulação oficial automática (somente leitura) quando os 4 campos estão
+  // preenchidos: mostra o peso considerado pelo ML e o frete estimado.
+  // Mesma consulta do antigo botão "Simular frete"; nada é gravado aqui.
+  const precoValido = Number(String(preco ?? "").replace(",", ".")) > 0;
+  const chaveSimulacao = completa ? `${dimensoesParaApi(medida)}|${modalidadeAtual}|${config}|${preco}` : "";
+  useEffect(() => {
+    if (!completa || !precoValido || !base?.ok || ocupado || simulacaoValida) return undefined;
+    if (ultimaSimulacao.current === chaveSimulacao) return undefined;
+    const t = setTimeout(() => {
+      ultimaSimulacao.current = chaveSimulacao;
+      simular();
+    }, 900);
+    return () => clearTimeout(t);
+  }, [chaveSimulacao, ocupado, base, simulacaoValida, precoValido]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function confirmar() {
     if (!completa || !simulacaoValida) return;
@@ -282,13 +300,77 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
   const modalidadesAtivas = (base?.modalidades || []).filter((m) => m.ativo && MODALIDADES[m.tipo]);
   const outrasConfigs = (base?.medidas_proprias || []).filter((m) => m.config_embalagem !== config);
 
+  const statusMedida = confirmacao?.ok
+    ? "✅ Peso e medidas confirmados. Ficam salvos para os próximos anúncios deste produto."
+    : propria
+      ? "Medida já cadastrada para este produto. Confira e confirme."
+      : completa
+        ? "Confira os valores e confirme."
+        : "Peso e medidas ainda não cadastrados. Informe a embalagem pronta para envio.";
+  const simulacaoFalhou = Boolean(simulacao && (!simulacao.ok || (simulacao.simulacao && !simulacao.simulacao.ok)) && !simulacaoValida);
+  const calculando = ocupado === "simular";
+  const valorPesoML = sim ? formatarPeso(sim.peso_considerado_g) : calculando ? "calculando..." : "—";
+  const valorFrete = sim ? `${formatarReais(sim.custo_vendedor)} por envio` : calculando ? "calculando..." : simulacaoFalhou ? "não disponível" : "—";
+  const podeConfirmar = completa && simulacaoValida && !ocupado && limites?.dentro !== false && !confirmadoAtual;
+
   return (
     <div data-paiia-peso-embalagem style={bloco}>
-      <strong style={subtitulo}>PESO E EMBALAGEM</strong>
+      {!semTitulo && <strong style={subtitulo}>PESO E EMBALAGEM</strong>}
+
+      {ocupado === "ler" ? (
+        <p style={info}>⏳ Carregando peso e medidas...</p>
+      ) : (
+        <p data-paiia-status-medida style={{ ...info, color: confirmacao?.ok ? "#86efac" : propria ? "#bae6fd" : completa ? "#e2e8f0" : "#fde68a" }}>{statusMedida}</p>
+      )}
+
+      <div style={grade}>
+        <Campo rotulo="Peso (g)">
+          <input data-campo="peso_g" style={entrada} inputMode="decimal" value={form.peso_g} onChange={(e) => alterar("peso_g", e.target.value)} placeholder="g" />
+        </Campo>
+        <Campo rotulo="Comprimento (cm)">
+          <input data-campo="comprimento_cm" style={entrada} inputMode="decimal" value={form.comprimento_cm} onChange={(e) => alterar("comprimento_cm", e.target.value)} placeholder="cm" />
+        </Campo>
+        <Campo rotulo="Largura (cm)">
+          <input data-campo="largura_cm" style={entrada} inputMode="decimal" value={form.largura_cm} onChange={(e) => alterar("largura_cm", e.target.value)} placeholder="cm" />
+        </Campo>
+        <Campo rotulo="Altura (cm)">
+          <input data-campo="altura_cm" style={entrada} inputMode="decimal" value={form.altura_cm} onChange={(e) => alterar("altura_cm", e.target.value)} placeholder="cm" />
+        </Campo>
+      </div>
+
+      <Campo rotulo="Modalidade de envio">
+        <select data-paiia-modalidade-envio style={{ ...entrada, maxWidth: 360 }} value={modalidadeAtual} disabled={modalidadesAtivas.length < 2} onChange={(e) => { setModalidade(e.target.value); setConfirmacao(null); }}>
+          {modalidadesAtivas.length ? (
+            modalidadesAtivas.map((m) => (
+              <option key={m.tipo} value={m.tipo}>{nomeSimplesModalidade(m.tipo)}</option>
+            ))
+          ) : (
+            <option value={modalidadeAtual}>{modalidadeAtual ? nomeSimplesModalidade(modalidadeAtual) : "Mercado Envios"}</option>
+          )}
+        </select>
+      </Campo>
+
+      <div data-paiia-resumo-envio style={resumoEnvio}>
+        <div style={linhaResumo}><span>Peso considerado pelo ML</span><b data-paiia-peso-ml>{valorPesoML}</b></div>
+        <div style={linhaResumo}><span>Frete estimado</span><b data-paiia-frete-estimado>{valorFrete}</b></div>
+      </div>
+
+      {limites?.dentro === false && (
+        <div data-paiia-fora-limite style={alerta}>
+          ⚠ Fora do limite de {nomeSimplesModalidade(modalidadeAtual) || limites.modalidade}: {limites.excedidos.map((e) => e.texto).join("; ")}. Confira a embalagem ou escolha outra modalidade.
+        </div>
+      )}
+      {!precoValido && completa && <p style={info}>Informe o preço do anúncio para calcular o frete.</p>}
+      {erro && <p style={erroTxt}>❌ {erro}</p>}
+
+      <button type="button" data-paiia-confirmar-medida onClick={confirmar} disabled={!podeConfirmar} style={{ ...botaoVerde, opacity: podeConfirmar ? 1 : 0.55 }}>
+        {ocupado === "confirmar" ? "⏳ Confirmando..." : confirmadoAtual ? "✔ Peso e medidas confirmados" : "Confirmar peso e medidas"}
+      </button>
+
+      <details data-paiia-detalhes-tecnicos style={{ marginTop: 12 }}>
+        <summary style={{ color: "#64748b", fontSize: 12, cursor: "pointer" }}>Ver detalhes técnicos</summary>
+        <div style={{ marginTop: 6 }}>
       <p data-paiia-aviso-permanente style={avisoForte}>{AVISO_PERMANENTE}</p>
-
-      {ocupado === "ler" && <p style={info}>⏳ Lendo suas medidas, referência do marketplace e modalidade de envio...</p>}
-
       <div style={grade}>
         <Campo rotulo="Configuração da embalagem">
           <select data-paiia-config-embalagem style={entrada} value={config} onChange={(e) => { setConfig(e.target.value); setSimulacao(null); setConfirmacao(null); }}>
@@ -305,21 +387,6 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
       ) : (
         <p style={info}>Sem medida registrada para {sku || "este SKU"} nesta configuração. Pese e meça a embalagem pronta para envio.{outrasConfigs.length ? ` Há medida sua em: ${outrasConfigs.map((m) => rotuloEmbalagem(m.config_embalagem)).join(", ")}.` : ""}</p>
       )}
-
-      <div style={grade}>
-        <Campo rotulo={`Peso da embalagem (g)${medida?.peso_g ? ` — ${formatarPeso(medida.peso_g)}` : ""}`}>
-          <input data-campo="peso_g" style={entrada} inputMode="decimal" value={form.peso_g} onChange={(e) => alterar("peso_g", e.target.value)} placeholder="ex.: 280" />
-        </Campo>
-        <Campo rotulo="Comprimento (cm)">
-          <input data-campo="comprimento_cm" style={entrada} inputMode="decimal" value={form.comprimento_cm} onChange={(e) => alterar("comprimento_cm", e.target.value)} />
-        </Campo>
-        <Campo rotulo="Largura (cm)">
-          <input data-campo="largura_cm" style={entrada} inputMode="decimal" value={form.largura_cm} onChange={(e) => alterar("largura_cm", e.target.value)} />
-        </Campo>
-        <Campo rotulo="Altura (cm)">
-          <input data-campo="altura_cm" style={entrada} inputMode="decimal" value={form.altura_cm} onChange={(e) => alterar("altura_cm", e.target.value)} />
-        </Campo>
-      </div>
 
       <div style={{ ...info, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         Nível de confiança:
@@ -347,16 +414,6 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
           <Linha rotulo="Modalidade logística" valor={modalidadeAtual ? rotuloModalidade(modalidadeAtual) : "___"} />
         </tbody>
       </table>
-
-      {modalidadesAtivas.length > 1 && (
-        <Campo rotulo="Modalidade para validar e simular">
-          <select style={{ ...entrada, maxWidth: 420 }} value={modalidadeAtual} onChange={(e) => { setModalidade(e.target.value); setConfirmacao(null); }}>
-            {modalidadesAtivas.map((m) => (
-              <option key={m.tipo} value={m.tipo}>{rotuloModalidade(m.tipo)}{m.padrao ? " — padrão da conta" : ""}</option>
-            ))}
-          </select>
-        </Campo>
-      )}
 
       {/* LIMITES */}
       <div data-paiia-limites style={{ marginTop: 10 }}>
@@ -441,37 +498,22 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
         </div>
       )}
 
-      {/* SIMULAÇÃO */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-        <button type="button" data-paiia-simular-frete onClick={simular} disabled={!completa || !!ocupado || !(Number(String(preco).replace(",", ".")) > 0)} style={botaoAzul}>
-          {ocupado === "simular" ? "⏳ Simulando..." : "🚚 Simular frete no Mercado Livre"}
-        </button>
-        <button
-          type="button"
-          data-paiia-confirmar-medida
-          onClick={confirmar}
-          disabled={!simulacaoValida || !!ocupado || limites?.dentro === false}
-          style={botaoVerde}
-        >
-          {ocupado === "confirmar" ? "⏳ Registrando..." : `✔ Confirmar peso e embalagem (${ROTULO_NIVEL[NIVEL.CONFIRMADO_PELO_USUARIO]})`}
-        </button>
-      </div>
-      {!simulacaoValida && completa && <p style={info}>Simule o frete com os valores atuais antes de confirmar e publicar.</p>}
       {sim && (
         <p data-paiia-resultado-simulacao style={{ ...info, color: "#86efac" }}>
-          ✅ Simulação oficial (somente leitura): {sim.dimensoes.replace(",", " cm, ")} g → ML considera {formatarPeso(sim.peso_considerado_g)}; custo estimado {formatarReais(sim.custo_vendedor)} por envio.
+          Simulação oficial (somente leitura): {sim.dimensoes.replace(",", " cm, ")} g → ML considera {formatarPeso(sim.peso_considerado_g)}; custo estimado {formatarReais(sim.custo_vendedor)} por envio.
         </p>
       )}
       {simulacao?.ok && simulacao.simulacao && !simulacao.simulacao.ok && <p style={erroTxt}>❌ {simulacao.simulacao.erro}</p>}
       {confirmacao?.ok && (
         <p data-paiia-medida-confirmada style={{ ...info, color: "#86efac" }}>
-          ✅ Registrado no histórico do PAIIA por {confirmacao.confirmado_por || "você"} em {new Date(confirmacao.confirmado_em).toLocaleString("pt-BR")}.
+          Registrado no histórico do PAIIA por {confirmacao.confirmado_por || "você"} em {new Date(confirmacao.confirmado_em).toLocaleString("pt-BR")}.
           {confirmacao.motivo ? ` ${confirmacao.motivo}` : ""}
-          {confirmacao.contribuicao === "registrada" ? " Contribuição anônima registrada (só aparece para outros usuários com 2 ou mais contribuições consistentes)." : ""}
+          {confirmacao.contribuicao === "registrada" ? " Contribuição anônima registrada." : ""}
         </p>
       )}
-      {erro && <p style={erroTxt}>❌ {erro}</p>}
-
+      <button type="button" data-paiia-simular-frete onClick={() => { ultimaSimulacao.current = chaveSimulacao; simular(); }} disabled={!completa || !!ocupado || !precoValido} style={{ ...botaoCinza, padding: "6px 12px", fontSize: 12 }}>
+        {calculando ? "⏳ Simulando..." : "Simular frete de novo"}
+      </button>
       {/* BASE LOGÍSTICA COMPARTILHADA — consentimento (desligado por padrão) */}
       <div data-paiia-consentimento style={{ marginTop: 12, padding: 10, borderRadius: 10, border: "1px solid #1f2937" }}>
         <label style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#e2e8f0", fontSize: 13 }}>
@@ -510,8 +552,15 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
           </table>
         </details>
       )}
+        </div>
+      </details>
     </div>
   );
+}
+
+// Nome da modalidade sem o código técnico entre parênteses.
+function nomeSimplesModalidade(tipo) {
+  return String(rotuloModalidade(tipo) || "").replace(/\s*\([^)]*\)\s*$/, "");
 }
 
 function LinhaFonte({ rotulo, m, extra, c, base, destaque }) {
@@ -555,6 +604,8 @@ const selo = (ativo) => ({
   color: ativo ? "#86efac" : "#64748b",
   background: ativo ? "#052e16" : "transparent",
 });
+const resumoEnvio = { marginTop: 10, padding: "8px 10px", borderRadius: 8, background: "#0b1220", border: "1px solid #1f2937", display: "grid", gap: 4 };
+const linhaResumo = { display: "flex", justifyContent: "space-between", gap: 12, color: "#cbd5e1", fontSize: 13 };
 const bloco = { marginTop: 14, padding: 14, borderRadius: 12, border: "1px solid #334155", background: "#111827" };
 const subtitulo = { color: "#e2e8f0", fontSize: 15 };
 const grade = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginTop: 6 };

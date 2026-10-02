@@ -4269,14 +4269,10 @@ async function atualizarCategoria() {
       {/* 6 - EMBALAGEM */}
       <section style={bloco}>
         <h3 style={titulo}>
-          ⑥ Embalagem
+          ⑥ Peso e Embalagem
         </h3>
 
         <div data-paiia-conferencia-peso style={{ marginBottom: "16px" }}>
-          <h4 style={subtitulo}>
-            ⚖️ Peso e medidas para o Mercado Livre
-          </h4>
-
           {contaMLAtivaConferencia ? (
             <PesoEmbalagemML
               sku={sku || numeroPeca || codigo}
@@ -4285,6 +4281,7 @@ async function atualizarCategoria() {
               tipoAnuncio={modalidade}
               contaML={contaMLAtivaConferencia.ml_user_id}
               onChange={setLogisticaConferencia}
+              semTitulo
             />
           ) : (
             <p style={textoAuxiliar}>
@@ -4293,25 +4290,18 @@ async function atualizarCategoria() {
             </p>
           )}
 
-          <div style={{ ...resumoLinha, marginTop: "8px" }}>
-            <span>Peso e medidas desta conferência</span>
-            <strong
-              style={{
-                color:
-                  logisticaConferencia?.medida ||
-                  [pesoEnvio, comprimentoEnvio, larguraEnvio, alturaEnvio].every(numeroPositivo)
-                    ? "#86efac"
-                    : "#fca5a5",
-              }}
-            >
-              {logisticaConferencia?.medida
-                ? `${logisticaConferencia.medida.peso_g} g · ${logisticaConferencia.medida.comprimento_cm} × ${logisticaConferencia.medida.largura_cm} × ${logisticaConferencia.medida.altura_cm} cm · origem: ${logisticaConferencia.nivel || "a confirmar"}`
-                : [pesoEnvio, comprimentoEnvio, larguraEnvio, alturaEnvio].every(numeroPositivo)
-                  ? `${pesoEnvio} kg · ${comprimentoEnvio} × ${larguraEnvio} × ${alturaEnvio} cm · origem: manual (embalagem de envio)`
-                  : "❌ Pendente — preencha peso e medidas"}
-            </strong>
-          </div>
         </div>
+
+        {/* Com conta ML ativa, o bloco PESO E EMBALAGEM acima é o principal:
+            as medidas de fábrica/envio ficam recolhidas (continuam valendo). */}
+        <details
+          data-paiia-outras-medidas
+          open={!contaMLAtivaConferencia}
+          style={{ marginTop: "4px" }}
+        >
+          <summary style={{ color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
+            Outras medidas de embalagem (fábrica e envio manual)
+          </summary>
 
         <h4 style={subtitulo}>
           📦 Embalagem de fábrica
@@ -4392,6 +4382,7 @@ async function atualizarCategoria() {
             }
           />
         </div>
+        </details>
       </section>
 
       {/* 7 - SECUNDÁRIAS */}
