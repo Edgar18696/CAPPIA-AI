@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
 import { conferirLogistica } from "../services/logistica/logisticaMercadoLivre";
+import { verificarDuplicidadeML, nomeDaLoja } from "../services/duplicidadeML";
 import {
   listarAnunciosDoCodigo,
   obterAnuncio,
@@ -12,7 +13,6 @@ import {
   registrarProdutoBlingCriado,
   conferirDuplicidadeBase,
   skuOficial,
-  normalizarCodigo,
   pendenciaPublicacao,
   publicacaoExiste,
 } from "../services/anuncioPublicacaoService";
@@ -24,6 +24,7 @@ import {
   descricaoAfirmaOriginal,
   conferirPublicacao,
 } from "../services/compatibilidadeML";
+import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 
 /*
  * PUBLICAÇÃO no Mercado Livre — etapa que vem DEPOIS da Conferência PAIIA.
@@ -57,13 +58,9 @@ function precoTexto(valor) {
 
 const CHAVE_MARCA_PADRAO = "paiia_ml_marca_padrao";
 
-// Lojas (contas Mercado Livre) da empresa. O vínculo nome ↔ ID vem do
-// usuário; conta sem ID ainda não está conectada ao PAIIA.
-const LOJAS_ML = [
-  { nome: "REVELAÇÃO", ml_user_id: "2412238242" },
-  { nome: "LOJA ONLINE", ml_user_id: "1729335019" },
-  { nome: "CIEBR", ml_user_id: "" },
-];
+// Lojas (contas Mercado Livre): vêm SEMPRE da base (contas conectadas ao
+// PAIIA). O nome amigável sai de nomeDaLoja (services/duplicidadeML.js);
+// conta nova conectada aparece sozinha, com o apelido do Mercado Livre.
 
 function lerMarcaPadrao() {
   try {
@@ -80,7 +77,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, preparo, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, skuEnvio, descricao, compatML, aplicacoes, tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
+function conferir({ campos, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, descricao, compatML, aplicacoes, tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
   const itens = [];
 
   // Ficha do anúncio na base PAIIA: a conta de destino precisa estar gravada.
@@ -98,11 +95,13 @@ function conferir({ campos, preparo, estoque, fotosUrls, logistica, ficha, dupli
   else if (duplicidadeBase?.verificado) itens.push({ item: "Duplicidade na base PAIIA", nivel: "ok", texto: "A base PAIIA não registra este código publicado nesta conta." });
   // Mesmo SKU + MESMA conta + anúncio já existente no Mercado Livre = bloqueia.
   // (O mesmo SKU em OUTRA conta é permitido: cada conta tem o seu MLB.)
-  if (duplicidadeML?.carregando) itens.push({ item: "Duplicidade na conta", nivel: "aviso", texto: "Conferindo no Mercado Livre se este SKU já está anunciado nesta conta..." });
-  else if (duplicidadeML?.erro) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Não foi possível conferir anúncios deste SKU nesta conta (${duplicidadeML.erro}). Sem essa conferência a publicação fica bloqueada.` });
-  else if (duplicidadeML?.mlbs?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Este SKU já tem anúncio nesta conta: ${duplicidadeML.mlbs.join(", ")}. Publicar de novo criaria duplicidade (em outra conta é permitido).` });
+  if (duplicidadeML?.carregando) itens.push({ item: "Duplicidade na conta", nivel: "aviso", texto: "Conferindo no Mercado Livre se este SKU/código já está anunciado nesta conta (maiúsculas, minúsculas, espaços e anúncios antigos)..." });
+  else if (duplicidadeML?.erro) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Não foi possível conferir anúncios deste SKU/código nesta conta (${duplicidadeML.erro}). Sem essa conferência a publicação fica bloqueada.` });
+  else if (duplicidadeML?.duplicados?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Este SKU/código já tem anúncio nesta conta: ${duplicidadeML.duplicados.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Publicar de novo criaria duplicidade (em outra conta é permitido).` });
   else if (duplicidadeML?.ativosBase?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `O anúncio registrado na base ainda existe no Mercado Livre nesta conta: ${duplicidadeML.ativosBase.join(", ")}.` });
-  else if (duplicidadeML?.verificado) itens.push({ item: "Duplicidade na conta", nivel: "ok", texto: "Nenhum anúncio deste SKU nesta conta. (O mesmo SKU em outras contas não bloqueia.)" });
+  else if (duplicidadeML?.possiveis?.length && !possivelConfirmado) itens.push({ item: "Possível duplicidade na conta", nivel: "erro", texto: `Anúncio desta conta com o mesmo código, mas SKU diferente/vazio: ${duplicidadeML.possiveis.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Confira no Mercado Livre; só publique se NÃO for o mesmo produto (marque a confirmação abaixo).` });
+  else if (duplicidadeML?.possiveis?.length) itens.push({ item: "Possível duplicidade na conta", nivel: "aviso", texto: `Você confirmou que ${duplicidadeML.possiveis.map((d) => d.id).join(", ")} NÃO é o mesmo produto.` });
+  else if (duplicidadeML?.verificado) itens.push({ item: "Duplicidade na conta", nivel: "ok", texto: `Nenhum anúncio deste SKU/código nesta conta (${duplicidadeML.buscas} buscas, ${duplicidadeML.candidatos} anúncios conferidos). O mesmo SKU em outras contas não bloqueia.` });
   if (estoque?.ambiguo) itens.push({ item: "Bling", nivel: "erro", texto: "Mais de um produto no Bling com este SKU: resolva no Bling antes (o PAIIA não escolhe sozinho)." });
 
   // Marca: a marca REAL aprovada. Código OEM/"original" não é marca.
@@ -181,6 +180,14 @@ function conferir({ campos, preparo, estoque, fotosUrls, logistica, ficha, dupli
 
   // Peso e embalagem (bloqueia sem medida validada/informada, fora do
   // limite, sem simulação com os valores atuais ou sem confirmação).
+  // Peso e as 3 medidas da embalagem são obrigatórios (o ML exige em
+  // várias categorias/contas, ex.: CIEBR). Só medidas DESTE produto,
+  // confirmadas na Conferência; nunca de outro anúncio.
+  const MEDIDAS = [["peso_g", "peso"], ["altura_cm", "altura"], ["largura_cm", "largura"], ["comprimento_cm", "comprimento"]];
+  const faltamMedidas = MEDIDAS.filter(([k]) => !(Number(String(logistica?.medida?.[k] ?? "").replace(",", ".")) > 0)).map(([, n]) => n);
+  if (faltamMedidas.length) {
+    itens.push({ item: "Peso e medidas", nivel: "erro", texto: `${TEXTO_MEDIDAS_OBRIGATORIAS} Falta: ${faltamMedidas.join(", ")}. Informe e confirme na Conferência (bloco Peso e Embalagem).` });
+  }
   const log = conferirLogistica({
     medidaEnvio: logistica?.medida,
     origem: logistica?.origem,
@@ -208,8 +215,23 @@ function conferir({ campos, preparo, estoque, fotosUrls, logistica, ficha, dupli
       texto: `Modos de envio da conta: ${modos}. Peso e medidas enviados: os do bloco PESO E EMBALAGEM.${gratis ? " Com preço a partir de R$ 79 o frete grátis é obrigatório e o custo fica com o vendedor." : ""}`,
     });
   }
+
+  // Padrões fixos de todo anúncio novo (garantia, retirada, regulatória):
+  // conferidos NO ITEM que a função monta para o Mercado Livre.
+  const montado = validacao?.ok && validacao?.padroes_ml && validacao?.item ? validacao : preparo;
+  if (!preparo) itens.push({ item: "Padrões ML", nivel: "aviso", texto: "Conferindo garantia, retirada e informação regulatória..." });
+  else if (preparo.ok === false) itens.push({ item: "Padrões ML", nivel: "erro", texto: "Não foi possível montar o anúncio para conferir garantia, retirada e informação regulatória." });
+  else if (!montado?.padroes_ml || !montado?.item) {
+    itens.push({ item: "Padrões ML", nivel: "erro", texto: "A função de publicação em uso ainda não aplica os padrões fixos (garantia 3 meses do vendedor, Ofereço retirada, informação regulatória). Publicação bloqueada até a nova versão da função ser publicada." });
+  } else {
+    for (const c of conferirPadroesNoItem(montado.item, montado.padroes_ml)) itens.push(c);
+    (montado.limitacoes_padroes || []).forEach((t, i) => itens.push({ item: `Limitação ML ${i + 1}`, nivel: "aviso", texto: t }));
+  }
   return itens;
 }
+
+const TEXTO_MEDIDAS_OBRIGATORIAS = "Peso e medidas da embalagem são obrigatórios para esta publicação.";
+const ehFaltaMedidasML = (c) => /seller[._]package|package[._]dimensions/i.test(`${c?.codigo || ""} ${c?.mensagem || ""}`);
 
 // Toda chamada leva a conta ML escolhida (conta_ml). Sem conta: não chama.
 async function chamar(acao, extra = {}, contaML = "") {
@@ -309,6 +331,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         categoria: anuncio?.categoria || "",
         categoriaId: anuncio?.categoriaId || "",
         logistica: anuncio?.logistica?.medida ? { medida: anuncio.logistica.medida, confirmado: Boolean(anuncio.logistica.confirmado) } : null,
+        padroes_ml: anuncio?.padroesML || padroesEsperadosConferencia(),
       },
     });
     setGravandoConta(false);
@@ -332,16 +355,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }
 
   const contaInfo = contasConectadas.find((c) => String(c.ml_user_id) === contaEscolhida) || null;
-  // Opções: as 3 lojas da empresa + qualquer outra conta conectada.
-  const opcoesConta = [
-    ...LOJAS_ML.map((l) => {
-      const c = contasConectadas.find((x) => String(x.ml_user_id) === l.ml_user_id);
-      return { nome: l.nome, id: l.ml_user_id, conectada: Boolean(c), nickname: c?.nickname || "" };
-    }),
-    ...contasConectadas
-      .filter((c) => !LOJAS_ML.some((l) => l.ml_user_id === String(c.ml_user_id)))
-      .map((c) => ({ nome: c.nickname || "Conta", id: String(c.ml_user_id), conectada: true, nickname: c.nickname || "" })),
-  ];
+  // Opções: TODAS as contas conectadas na base (uma opção por ID).
+  const opcoesConta = [...new Map(contasConectadas
+    .filter((c) => String(c.ml_user_id || "").trim())
+    .map((c) => [String(c.ml_user_id), { nome: nomeDaLoja(c.ml_user_id, c.nickname), id: String(c.ml_user_id), conectada: true, nickname: c.nickname || "" }])).values()];
 
   const fotosUrls = useMemo(
     () =>
@@ -378,6 +395,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       sku: skuEnvio,
       descricao: anuncio?.descricao || "",
       fotos: fotosUrls,
+      // Padrões fixos aprovados na Conferência (a função reaplica no servidor).
+      padroes_ml: anuncio?.padroesML || padroesEsperadosConferencia(),
       // Só a medida validada/informada e confirmada vai ao ML.
       embalagem:
         logistica?.medida && logistica.confirmado
@@ -503,23 +522,30 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   //    (pega anúncio antigo publicado SEM SKU, como o MLB5329721847).
   // Qualquer erro de consulta BLOQUEIA.
   async function consultarDuplicidadeML(conta, registrosBase = []) {
-    const variantes = [...new Set([skuEnvio, String(anuncio?.codigo || "").trim(), normalizarCodigo(skuEnvio)].filter(Boolean))];
-    const mlbs = new Set();
-    for (const v of variantes) {
-      const r = await chamar("ml_consulta", { metodo: "GET", caminho: `/users/${conta}/items/search?seller_sku=${encodeURIComponent(v)}` }, conta);
-      if (!r?.ok) return { erro: r?.erro || "consulta indisponível" };
-      for (const id of Array.isArray(r.dados?.results) ? r.dados.results : []) if (id) mlbs.add(id);
+    const consultar = (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, conta);
+    let r;
+    try {
+      r = await verificarDuplicidadeML({ conta, codigos: [skuEnvio, anuncio?.codigo, anuncio?.oem], consultar });
+    } catch (e) {
+      return { erro: e?.message || "falha na consulta" };
     }
+    if (r.erro) return r;
     const ativosBase = [];
+    const jaListados = new Set([...r.duplicados, ...r.possiveis].map((d) => d.id));
     for (const p of registrosBase) {
-      if (!/^MLB\d+$/.test(String(p?.mlb_id || ""))) continue;
-      const r = await chamar("ml_consulta", { metodo: "GET", caminho: `/items/${p.mlb_id}` }, conta);
-      if (!r?.ok) return { erro: r?.erro || `não foi possível consultar ${p.mlb_id}` };
-      const it = r.dados || {};
-      if (String(it.seller_id || "") === String(conta) && it.status !== "closed") ativosBase.push(`${p.mlb_id} (${it.status})`);
+      if (!/^MLB\d+$/.test(String(p?.mlb_id || "")) || jaListados.has(p.mlb_id)) continue;
+      const it = await consultar(`/items/${p.mlb_id}`);
+      if (!it?.ok) return { erro: it?.erro || `não foi possível consultar ${p.mlb_id}` };
+      const d = it.dados || {};
+      if (String(d.seller_id || "") === String(conta) && d.status !== "closed") ativosBase.push(`${p.mlb_id} (${d.status})`);
     }
-    return { verificado: true, mlbs: [...mlbs], ativosBase };
+    return { ...r, ativosBase };
   }
+  // Possível duplicidade (mesmo código no título/número da peça, SKU
+  // diferente): só libera com confirmação explícita, valendo para ESSES MLBs.
+  const [possivelConfirmadoIds, setPossivelConfirmadoIds] = useState("");
+  const idsPossiveis = (d) => (d?.possiveis || []).map((x) => x.id).sort().join(",");
+  const possivelConfirmado = Boolean(possivelConfirmadoIds) && possivelConfirmadoIds === idsPossiveis(duplicidadeML);
   async function consultarDuplicidadeBase(conta) {
     const r = await conferirDuplicidadeBase({ codigo: anuncio?.codigo || anuncio?.oem || "", sku: skuEnvio, contaId: conta });
     return r.ok ? { verificado: true, registros: r.registros } : { erro: r.erro || "base indisponível" };
@@ -597,6 +623,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setOcupado("validar");
     setValidacao(null);
     setArmado(false);
+    // Duplicidade conferida de novo na validação (base + Mercado Livre).
+    await conferirDuplicidadeML(contaEscolhida);
     const r = await chamar("validar_item", { anuncio: dadosAnuncio }, contaEscolhida);
     setValidacao(r);
     setOcupado("");
@@ -626,9 +654,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         ? `A base PAIIA já registra este código publicado nesta conta (${base.registros.map((p) => p.mlb_id || p.status_publicacao).join(", ")}).`
         : noML?.erro
           ? `Mercado Livre não conferido (${noML.erro}).`
-          : noML?.mlbs?.length || noML?.ativosBase?.length
-            ? `Já existe anúncio deste SKU nesta conta no Mercado Livre (${[...(noML.mlbs || []), ...(noML.ativosBase || [])].join(", ")}).`
-            : "";
+          : noML?.duplicados?.length || noML?.ativosBase?.length
+            ? `Já existe anúncio deste SKU/código nesta conta no Mercado Livre (${[...(noML.duplicados || []).map((d) => d.id), ...(noML.ativosBase || [])].join(", ")}).`
+            : noML?.possiveis?.length && possivelConfirmadoIds !== idsPossiveis(noML)
+              ? `Possível duplicidade nesta conta (${noML.possiveis.map((d) => d.id).join(", ")}) sem confirmação.`
+              : "";
     if (motivo) {
       setResultado({ ok: false, erro: `Publicação BLOQUEADA: ${motivo}` });
       setArmado(false);
@@ -691,6 +721,17 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       if (aplicacoes.length && !idsCompat.length && !verificacao.pendencias.some((t) => t.startsWith("Compatibilidades"))) {
         verificacao.pendencias.push("Compatibilidades: havia aplicações aprovadas e nenhum veículo foi vinculado.");
       }
+      // Padrões fixos relidos no MLB criado (garantia, retirada, regulatória).
+      const padroesEnviados = r.padroes_ml || validacao?.padroes_ml || preparo?.padroes_ml || null;
+      const vp = conferirPadroesPublicados(item, padroesEnviados);
+      verificacao.itens.push(...vp.itens);
+      verificacao.pendencias.push(...vp.pendencias);
+      verificacao.padroes_ml = {
+        enviados: padroesEnviados,
+        limitacoes: r.limitacoes_padroes || [],
+        releitura: vp,
+        releitura_funcao: r.padroes_publicados || null,
+      };
     }
     setResultado(verificacao ? { ...r, verificacao } : r);
     setArmado(false);
@@ -706,6 +747,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   useEffect(() => {
     setDuplicidadeML(null);
     setDuplicidadeBase(null);
+    setPossivelConfirmadoIds("");
     setCompatML(null);
     if (contaOk) {
       conferirDuplicidadeML(contaEscolhida);
@@ -731,7 +773,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     return (attrTipoVeiculo?.valores || []).find((v) => String(v.id) === String(e.value_id))?.nome || "";
   })();
   const conferencia = conferir({
-    campos, preparo, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, skuEnvio,
+    campos, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio,
     descricao: anuncio?.descricao, compatML, aplicacoes, tipoVeiculoEnvio, tipoVeiculoExigido: Boolean(attrTipoVeiculo && !attrTipoVeiculo.preenchido), compatTexto: anuncio?.compatibilidades,
   });
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
@@ -799,7 +841,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             <p style={aviso}>Este código já tem outras fichas na base PAIIA:</p>
             {(ficha.outros || []).map((a) => {
               const pub = a.publicacao;
-              const loja = LOJAS_ML.find((l) => l.ml_user_id === String(a.conta_destino_ml_user_id))?.nome || a.conta_destino_nome || "sem conta";
+              const loja = a.conta_destino_ml_user_id ? nomeDaLoja(a.conta_destino_ml_user_id, a.conta_destino_nome) : a.conta_destino_nome || "sem conta";
               const publicado = publicacaoExiste(pub);
               return (
                 <div key={a.id} style={{ color: "#e2e8f0", fontSize: 13, margin: "4px 0" }}>
@@ -1022,6 +1064,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           {/* Verificação técnica (não é uma segunda conferência) */}
           <div data-paiia-ml-conferencia style={bloco}>
             <strong style={subtitulo}>Verificação técnica da publicação</strong>
+            <div data-paiia-padroes-ml style={{ margin: "8px 0", padding: "8px 10px", borderRadius: 8, background: "#0b1220", border: "1px solid #334155", color: "#e2e8f0", fontSize: 13, display: "grid", gap: 2 }}>
+              <span>{(preparo?.padroes_ml || padroesEsperadosConferencia()).garantia.texto}</span>
+              <span>{(preparo?.padroes_ml || padroesEsperadosConferencia()).retirada.texto}</span>
+              <span>{(preparo?.padroes_ml || padroesEsperadosConferencia()).regulatoria.texto}</span>
+            </div>
             <table style={{ width: "100%", marginTop: 8, borderCollapse: "collapse", fontSize: 13 }}>
               <tbody>
                 {conferencia.map((c) => (
@@ -1055,7 +1102,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 ❌ {validacao.erro || validacao.mensagem || "O Mercado Livre apontou problemas:"}
                 <ul style={{ margin: "6px 0 0 18px" }}>
                   {(validacao.causas || []).map((c, i) => (
-                    <li key={i}>{c.mensagem || c.codigo}</li>
+                    <li key={i} data-paiia-causa-ml={c.codigo || ""}>{ehFaltaMedidasML(c) ? TEXTO_MEDIDAS_OBRIGATORIAS : c.mensagem || c.codigo}</li>
                   ))}
                 </ul>
                 {!(validacao.causas || []).length && validacao.detalhe && (
@@ -1068,6 +1115,19 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           {/* 4. Confirmação */}
           <div style={bloco}>
             <strong style={subtitulo}>4. Confirmar publicação real</strong>
+            {duplicidadeML?.possiveis?.length > 0 && !duplicidadeML?.duplicados?.length && (
+              <label data-paiia-possivel-duplicidade style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#fde047", fontSize: 14, margin: "8px 0" }}>
+                <input
+                  type="checkbox"
+                  checked={possivelConfirmado}
+                  onChange={(e) => {
+                    setPossivelConfirmadoIds(e.target.checked ? idsPossiveis(duplicidadeML) : "");
+                    setArmado(false);
+                  }}
+                />
+                Conferi no Mercado Livre: {duplicidadeML.possiveis.map((d) => d.id).join(", ")} NÃO é o mesmo produto deste anúncio.
+              </label>
+            )}
             <label style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#e2e8f0", fontSize: 14, margin: "8px 0" }}>
               <input
                 type="checkbox"

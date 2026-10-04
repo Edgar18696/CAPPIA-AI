@@ -10,6 +10,7 @@ import {
   montarDescricaoPadrao,
 } from "../services/compatibilidadeML";
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
+import { GARANTIA_ML, LINHAS_FIXAS, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import {
   obterAnuncio,
   salvarFichaAprovada,
@@ -2171,25 +2172,19 @@ useEffect(() => {
     setCondicao,
   ] = useState(() => inicial("condicao", "novo"));
 
-  const [
-    tipoGarantia,
-    setTipoGarantia,
-  ] = useState(() => inicial("tipoGarantia", "vendedor"));
-
-  const [
-    mesesGarantia,
-    setMesesGarantia,
-  ] = useState(() => inicial("mesesGarantia", "3"));
+  // Garantia FIXA de todo anúncio novo: 3 meses, garantia do vendedor
+  // (padrão PAIIA; nunca sem garantia, nunca garantia de fábrica).
+  const tipoGarantia = GARANTIA_ML.tipo;
+  const mesesGarantia = String(GARANTIA_ML.meses);
 
   const [
     limiteVenda,
     setLimiteVenda,
   ] = useState(() => inicial("limiteVenda", ""));
 
-  const [
-    informacaoRegulatoria,
-    setInformacaoRegulatoria,
-  ] = useState(() => inicial("informacaoRegulatoria", ""));
+  // Informação regulatória: padrão "Não se aplica" (enviado só quando a
+  // categoria do ML oferece o campo; conferido na Publicação).
+  const informacaoRegulatoria = "Não se aplica";
 
   const [
     caracteristicasSecundarias,
@@ -3705,6 +3700,10 @@ useEffect(() => {
         meses:
           mesesGarantia,
       },
+
+      // Padrões fixos do Mercado Livre (garantia, retirada, regulatória).
+      padroesML:
+        padroesEsperadosConferencia(),
     };
 
     setPayloadTeste(
@@ -3734,6 +3733,8 @@ useEffect(() => {
       nomePeca,
       condicao,
       logistica: logisticaConferencia,
+      // Padrões fixos: vão para a ficha e para a Publicação.
+      padroesML: padroesEsperadosConferencia(),
     });
 
     localStorage.setItem(
@@ -4552,6 +4553,10 @@ useEffect(() => {
             </option>
           </select>
         </label>
+
+        <p data-paiia-padrao-retirada style={{ color: "#bbf7d0", fontSize: 13, margin: "8px 0 0" }}>
+          ✅ {LINHAS_FIXAS.retirada} — sempre ativa em todo anúncio novo, junto com o modo de envio.
+        </p>
       </section>
 
       {/* 4 - FOTOS E MÍDIAS OPCIONAIS */}
@@ -5339,15 +5344,12 @@ useEffect(() => {
           ⑧ Informação regulatória
         </h3>
 
-        <AreaTexto
-          value={
-            informacaoRegulatoria
-          }
-          onChange={
-            setInformacaoRegulatoria
-          }
-          placeholder="Informações regulatórias quando aplicável."
-        />
+        <p data-paiia-padrao-regulatoria style={{ color: "#bbf7d0", fontSize: 14, margin: 0 }}>
+          ✅ {LINHAS_FIXAS.regulatoria}
+        </p>
+        <p style={{ color: "#94a3b8", fontSize: 12, margin: "6px 0 0" }}>
+          Padrão fixo. Só é enviado quando a categoria do Mercado Livre oferece o campo; se o ML exigir o número do registro, a Publicação mostra e bloqueia.
+        </p>
       </section>
 
       {/* 9 - COMPATIBILIDADE */}
@@ -5513,7 +5515,7 @@ useEffect(() => {
                 aplicacoes: lerAplicacoesAprovadas({ texto: compatibilidades }),
                 codigos: [numeroPeca, codigo, anuncio?.oem].filter(Boolean),
                 condicao,
-                mesesGarantia: tipoGarantia === "sem_garantia" ? "" : mesesGarantia,
+                mesesGarantia,
               });
               if (descricao.trim() && descricao.trim() !== nova && !window.confirm("Substituir a descrição atual pela descrição padrão montada com os dados aprovados?")) return;
               setDescricao(nova);
@@ -5584,42 +5586,12 @@ useEffect(() => {
           ⑭ Garantia
         </h3>
 
-        <div style={gradeDois}>
-          <label style={labelStyle}>
-            Tipo de garantia
-
-            <select
-              value={tipoGarantia}
-              onChange={(e) =>
-                setTipoGarantia(
-                  e.target.value
-                )
-              }
-              style={campo}
-            >
-              <option value="vendedor">
-                Garantia do vendedor
-              </option>
-
-              <option value="fabricante">
-                Garantia do fabricante
-              </option>
-
-              <option value="sem_garantia">
-                Sem garantia
-              </option>
-            </select>
-          </label>
-
-          <Campo
-            label="Meses"
-            value={mesesGarantia}
-            onChange={
-              setMesesGarantia
-            }
-            placeholder="3"
-          />
-        </div>
+        <p data-paiia-padrao-garantia style={{ color: "#bbf7d0", fontSize: 14, margin: 0 }}>
+          ✅ {LINHAS_FIXAS.garantia}
+        </p>
+        <p style={{ color: "#94a3b8", fontSize: 12, margin: "6px 0 0" }}>
+          Padrão fixo de todo anúncio novo (Garantia do vendedor, 3 meses).
+        </p>
       </section>
 
       {/* 15 - CATEGORIA */}
@@ -6029,6 +6001,18 @@ useEffect(() => {
                 ? "✅"
                 : "❌"}{" "}
               Condição
+            </span>
+
+            <span data-paiia-resumo-garantia>
+              ✅ {LINHAS_FIXAS.garantia}
+            </span>
+
+            <span data-paiia-resumo-retirada>
+              ✅ {LINHAS_FIXAS.retirada}
+            </span>
+
+            <span data-paiia-resumo-regulatoria>
+              ✅ {LINHAS_FIXAS.regulatoria}
             </span>
           </div>
 
