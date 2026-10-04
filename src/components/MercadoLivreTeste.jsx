@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
+import {
+  lerAplicacoesAprovadas,
+  inferirTipoVeiculo,
+  marcaInvalida,
+  descricaoAfirmaOriginal,
+  montarDescricaoPadrao,
+} from "../services/compatibilidadeML";
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
+import {
+  obterAnuncio,
+  salvarFichaAprovada,
+  registrarDecisaoBase,
+  publicacaoExiste,
+  pendenciaPublicacao,
+} from "../services/anuncioPublicacaoService";
 
 function normalizarTexto(valor = "") {
   return String(valor || "")
@@ -14,6 +28,501 @@ function normalizarTexto(valor = "") {
     .toLowerCase()
     .trim();
 }
+// =====================================================
+// IDENTIFICAÇÃO / APLICAÇÕES / CATEGORIA (Conferência)
+// Regra: nada é deduzido. Só entra o que veio da base/catálogo
+// ou o que o usuário confirmou. Campo ausente fica em branco.
+// =====================================================
+function limparCampoTexto(valor) {
+  return String(valor ?? "")
+    .replace(/�/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function chaveProduto(codigo) {
+  return String(codigo || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizarAplicacao(item, origem) {
+  if (!item || typeof item !== "object") return null;
+  const a = {
+    montadora: limparCampoTexto(item.montadora || item.marca_veiculo || item.marcaVeiculo || item.marca),
+    modelo: limparCampoTexto(item.modelo || item.veiculo || item.modelo_veiculo || item.modeloVeiculo),
+    motor: limparCampoTexto(item.motor || item.motorizacao || item.motor_descricao),
+    anoInicio: limparCampoTexto(item.ano_inicio || item.anoInicial || item.ano_de || item.anoDe || item.anoInicio),
+    anoFim: limparCampoTexto(item.ano_fim || item.anoFinal || item.ano_ate || item.anoAte || item.anoFim),
+    versao: limparCampoTexto(item.versao || item.versao_motor || item.versaoMotor),
+    origem,
+  };
+  if (!a.montadora && !a.modelo) return null;
+  return a;
+}
+
+function textoAnosAplicacao(a) {
+  if (a.anoInicio && a.anoFim) return `${a.anoInicio} a ${a.anoFim}`;
+  if (a.anoInicio) return `a partir de ${a.anoInicio}`;
+  if (a.anoFim) return `até ${a.anoFim}`;
+  return "";
+}
+
+// "Renault Symbol — 1.6 16V — 2009 a 2013 — Privilège"
+function textoAplicacao(a) {
+  return [
+    [a.montadora, a.modelo].filter(Boolean).join(" "),
+    a.motor,
+    textoAnosAplicacao(a),
+    a.versao,
+  ]
+    .filter(Boolean)
+    .join(" — ");
+}
+
+function juntarAplicacoes(listas) {
+  const vistos = new Set();
+  const saida = [];
+  listas.flat().forEach((a) => {
+    if (!a) return;
+    const chave = [a.montadora, a.modelo, a.motor, a.anoInicio, a.anoFim, a.versao]
+      .join("|")
+      .toUpperCase();
+    if (vistos.has(chave)) return;
+    vistos.add(chave);
+    saida.push(a);
+  });
+  return saida;
+}
+
+const CHAVE_APLICACOES_MANUAIS = "paiiaAplicacoesManuaisPorCodigo";
+const CHAVE_CATEGORIA_ML = "paiiaCategoriaMLPorCodigo";
+
+function lerMapaLocal(chave) {
+  try {
+    const dados = JSON.parse(localStorage.getItem(chave) || "{}");
+    return dados && typeof dados === "object" ? dados : {};
+  } catch {
+    return {};
+  }
+}
+
+function gravarNoMapaLocal(chave, produto, valor) {
+  if (!produto) return;
+  try {
+    const mapa = lerMapaLocal(chave);
+    if (valor === null) delete mapa[produto];
+    else mapa[produto] = valor;
+    localStorage.setItem(chave, JSON.stringify(mapa));
+  } catch (erro) {
+    console.warn("PAIIA: não foi possível guardar no navegador.", erro?.name || erro);
+  }
+}
+
+// =====================================================
+// FICHA PERSISTENTE DA CONFERÊNCIA (uma por código do anúncio)
+// Guarda o que já foi conferido/confirmado para não sumir ao ir para a
+// Central, escolher conta, validar, voltar ou atualizar a tela.
+// Merge seguro: valor vazio/null/undefined NUNCA apaga um valor
+// confirmado; só um valor NOVO vindo da origem (Criar Anúncio/Central),
+// diferente do que veio da última vez, substitui o que foi conferido.
+// =====================================================
+const CHAVE_CONFERENCIA = "paiiaConferenciaPorCodigo";
+const MAX_CONFERENCIAS_SALVAS = 40;
+
+function valorVazio(v) {
+  if (v === undefined || v === null) return true;
+  if (typeof v === "string") return !v.trim();
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.values(v).every(valorVazio);
+  return false;
+}
+
+function mesmoValor(a, b) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function valorPreservado(ficha, campo, doAnuncio) {
+  const salvo = ficha?.campos?.[campo];
+  if (valorVazio(salvo)) return doAnuncio;
+  if (valorVazio(doAnuncio)) return salvo;
+  const origem = ficha?.origem || {};
+  if (Object.prototype.hasOwnProperty.call(origem, campo) && !mesmoValor(doAnuncio, origem[campo])) {
+    return doAnuncio; // a origem mudou de verdade depois da conferência
+  }
+  return salvo;
+}
+
+function gravarFichaConferencia(chave, ficha) {
+  if (!chave) return;
+  try {
+    const mapa = lerMapaLocal(CHAVE_CONFERENCIA);
+    mapa[chave] = ficha;
+    Object.keys(mapa)
+      .sort((a, b) => String(mapa[b]?.salvoEm || "").localeCompare(String(mapa[a]?.salvoEm || "")))
+      .slice(MAX_CONFERENCIAS_SALVAS)
+      .forEach((k) => delete mapa[k]);
+    localStorage.setItem(CHAVE_CONFERENCIA, JSON.stringify(mapa));
+  } catch (erro) {
+    console.warn("PAIIA: não foi possível guardar a ficha da conferência.", erro?.name || erro);
+  }
+}
+
+// Só guarda cópias leves (sem imagens embutidas em base64).
+function copiaLeve(valor, limite = 150000) {
+  try {
+    const txt = JSON.stringify(valor ?? null);
+    if (txt.length > limite || txt.includes("data:image") || txt.includes("data:video")) return null;
+    return JSON.parse(txt);
+  } catch {
+    return null;
+  }
+}
+
+// Categoria já definida para o produto (nunca por suposição):
+// 1) vinda do anúncio/base com ID do Mercado Livre;
+// 2) escolhida antes pelo usuário para este mesmo código.
+function lerCategoriaDefinida(anuncio) {
+  const peca = anuncio?.pecaEncontrada || {};
+  const id = limparCampoTexto(
+    anuncio?.categoriaId || anuncio?.categoria_id || anuncio?.categoriaML?.id ||
+      peca.categoria_id || peca.categoriaId || peca.categoria_ml_id
+  );
+  if (id) {
+    return {
+      id,
+      caminho: limparCampoTexto(
+        anuncio?.categoriaCaminho || anuncio?.categoriaML?.caminho ||
+          peca.categoria_caminho || peca.categoria_nome || peca.categoria_ml_nome
+      ),
+      origem: "base",
+    };
+  }
+  const salva = lerMapaLocal(CHAVE_CATEGORIA_ML)[chaveProduto(anuncio?.codigo || anuncio?.oem)];
+  if (salva?.id) {
+    return { id: salva.id, caminho: limparCampoTexto(salva.caminho), origem: "escolhida" };
+  }
+  return null;
+}
+
+const ROTULO_ORIGEM_CATEGORIA_AUTO = "encontrada automaticamente no Mercado Livre — confira";
+const ROTULO_ORIGEM_CATEGORIA = {
+  automatica: ROTULO_ORIGEM_CATEGORIA_AUTO,
+  base: "definida pelo PAIIA para este produto",
+  escolhida: "escolhida por você para este código",
+  agora: "escolhida agora",
+};
+
+// =====================================================
+// CATEGORIA MERCADO LIVRE AUTOMÁTICA (sem suposição)
+// Consulta o próprio Mercado Livre (domain_discovery) pelo NOME DA PEÇA
+// e pelo título; aplicação serve só de contexto. Só escolhe sozinho
+// quando há UMA categoria real (com ID) do ramo do veículo que bate com
+// o tipo da peça. Se houver dúvida, devolve as opções e fica PENDENTE.
+// =====================================================
+const PALAVRAS_IGNORADAS_CATEGORIA = new Set([
+  "para", "com", "sem", "kit", "peca", "pecas", "original", "novo", "nova",
+  "oem", "marca", "jogo", "unidade", "carro", "carros", "veiculo", "veiculos",
+  "automotivo", "automotiva", "linha", "motor", "flex", "gasolina", "alcool",
+  "diesel", "valvulas", "valvula16", "torken", "kits", "jogos", "conjunto",
+  "conjuntos", "acompanha", "acompanham", "incluso", "inclusos", "inclui",
+]);
+
+// Mesma peça com outro nome no Mercado Livre (só equivalências certas).
+const SINONIMOS_TIPO_PECA = {
+  bico: ["injetor"],
+  injetor: ["bico"],
+};
+
+function radicalPalavra(p) {
+  if (p.length > 6 && p.endsWith("es")) return p.slice(0, -2);
+  if (p.length > 4 && p.endsWith("s")) return p.slice(0, -1);
+  return p;
+}
+
+function palavrasDaPeca(texto, ignorar) {
+  return normalizarTexto(texto)
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .split(/\s+/)
+    .filter((p) => p.length >= 4 && !/\d/.test(p) && !PALAVRAS_IGNORADAS_CATEGORIA.has(p) && !ignorar.has(p))
+    .map(radicalPalavra);
+}
+
+// =====================================================
+// PRODUTO PRINCIPAL (é ele que define a categoria)
+// Itens que acompanham a peça (presilhas, parafusos, mangueira, filtro,
+// sensor, anel, conector...) e a palavra "KIT" nunca definem a categoria.
+// A posição no título é só auxílio: fontes superiores (Base, cadastro, nome
+// da peça) mandam. "e"/vírgula/parênteses não quebram nomes compostos.
+// =====================================================
+// Palavras que NÃO são a peça (marca, montadora, modelo, comercial): servem
+// só de contexto. Modelos/motores da aplicação confirmada entram também.
+const MARCAS_E_MONTADORAS_CONTEXTO = new Set([
+  "renault", "fiat", "vw", "volkswagen", "chevrolet", "gm", "ford", "honda", "toyota",
+  "hyundai", "kia", "nissan", "peugeot", "citroen", "mitsubishi", "jeep", "dodge", "ram",
+  "chrysler", "bmw", "audi", "mercedes", "benz", "volvo", "subaru", "suzuki", "jac",
+  "chery", "caoa", "land", "rover", "troller", "iveco", "scania", "mwm", "cummins",
+  "bosch", "magneti", "marelli", "delphi", "ngk", "denso", "mte", "mte-thomson", "torken",
+  "vdo", "siemens", "continental", "valeo", "sachs", "skf", "tecfil", "sabo", "nytron",
+  "gauss", "dayco", "gates", "cofap", "monroe", "nakata", "trw", "fras-le", "fraslle", "hella",
+  "original", "originais", "genuino", "genuina", "novo", "nova", "novos", "novas", "premium",
+  "promocao", "oferta", "importado", "importada", "nacional", "paralelo", "similar",
+  "qualidade", "garantia", "pronta", "entrega", "envio", "imediato", "frete", "gratis",
+]);
+const MODELOS_CONTEXTO = new Set([
+  "symbol", "clio", "sandero", "logan", "duster", "kangoo", "megane", "scenic", "fluence",
+  "captur", "kwid", "oroch", "master", "trafic", "gol", "voyage", "saveiro", "fox", "polo",
+  "golf", "jetta", "passat", "bora", "parati", "santana", "amarok", "up", "virtus", "nivus",
+  "palio", "uno", "siena", "strada", "punto", "linea", "doblo", "idea", "toro", "mobi",
+  "argo", "cronos", "ducato", "onix", "prisma", "cobalt", "spin", "corsa", "celta", "classic",
+  "agile", "montana", "astra", "vectra", "zafira", "meriva", "cruze", "s10", "trailblazer",
+  "captiva", "malibu", "tracker", "ka", "fiesta", "ecosport", "focus", "fusion", "ranger",
+  "courier", "civic", "fit", "city", "hrv", "crv", "corolla", "etios", "hilux", "yaris",
+  "hb20", "tucson", "ix35", "santa", "fe", "creta", "azera", "sonata", "elantra", "i30",
+  "sportage", "cerato", "picanto", "sorento", "march", "versa", "kicks", "sentra", "frontier",
+  "livina", "tiida", "206", "207", "208", "2008", "307", "308", "408", "partner", "c3", "c4",
+  "xsara", "picasso", "aircross", "berlingo", "jumper", "boxer", "l200", "pajero", "lancer",
+  "asx", "outlander", "renegade", "compass", "e36", "e46",
+]);
+const PALAVRAS_KIT = new Set(["kit", "kits", "jogo", "jogos", "conjunto", "conjuntos", "conj", "cj", "jg", "par", "pares", "unidade", "unidades", "un", "und", "unid", "pcs", "pecas", "peca", "x"]);
+const PALAVRAS_PULAR = new Set(["para", "p/", "pra"]);
+const CONECTORES_NOME = new Set(["de", "da", "do", "dos", "das", "d", "a"]);
+// Separadores fortes: depois deles vêm itens que acompanham.
+const SEPARADORES_FORTES = new Set(["+", "&", ";", "|", "com", "c/", "acompanha", "acompanham", "inclui", "incluso", "inclusos", "inclusa", "inclusas", "incluindo", "mais", "compativel", "-", "–"]);
+// Separadores fracos ("e", vírgula, parênteses): só separam quando o que vem
+// depois é claramente um item acompanhante — nomes compostos são preservados
+// (ex.: "Sensor de Pressão e Temperatura").
+const SEPARADORES_FRACOS = new Set(["e", ",", "(", ")"]);
+const ITENS_ACOMPANHANTES = new Set([
+  "presilha", "trava", "fixacao", "parafuso", "arruela", "conector", "anel", "aneis", "oring",
+  "o-ring", "borracha", "abracadeira", "junta", "graxa", "grampo", "vedacao", "retentor", "porca",
+  "mangueira", "filtro", "pre-filtro", "prefiltro", "chicote", "plug", "suporte", "coxim",
+  "sensor", "pressostato", "boia", "tampa", "cinta", "bucha", "pino", "mola", "adesivo", "manual",
+]);
+// Substantivos que costumam ser o NOME da peça (para achar onde ela começa
+// no título quando há marca/montadora/código antes).
+const NUCLEOS_DE_PECA = new Set([
+  "bico", "injetor", "mangueira", "bomba", "sensor", "sonda", "bobina", "pressostato", "valvula",
+  "filtro", "cabo", "vela", "junta", "correia", "polia", "tensor", "rolamento", "amortecedor",
+  "pastilha", "disco", "tambor", "lona", "cilindro", "pistao", "anel", "atuador", "corpo",
+  "regulador", "modulo", "rele", "chicote", "interruptor", "alternador", "radiador",
+  "reservatorio", "tampa", "termostato", "eletroventilador", "ventoinha", "flauta", "galeria",
+  "coxim", "bucha", "bieleta", "terminal", "pivo", "homocinetica", "tulipa", "trambulador",
+  "embreagem", "plato", "retentor", "tubo", "cano", "mecanismo", "palheta", "moldura", "porca",
+  "presilha", "trava", "maquina", "fechadura", "farol", "lanterna", "retrovisor", "caixa",
+  "coletor", "catalisador", "silencioso", "cabecote", "bronzina", "biela", "comando", "tucho",
+  "engrenagem", "corrente", "carter", "bujao", "solenoide", "medidor", "boia", "motor",
+  "partida", "arranque", "borboleta", "unidade", "kit-reparo", "reparo", "acionador",
+  "servo", "cubo", "mancal", "eixo", "semi-eixo", "barra", "bandeja", "balanca", "mola",
+  "batente", "coifa", "cruzeta", "diferencial", "volante", "chave", "ignicao", "tanque",
+  "trocador", "intercooler", "turbina", "turbo", "compressor", "condensador", "evaporador",
+  "ventilador", "resistencia", "lampada", "vareta", "pedal", "alavanca", "suporte",
+]);
+
+function normalizarPalavra(p) {
+  return normalizarTexto(p).replace(/[^a-z0-9/+&;|,()\-–]/g, "");
+}
+
+function ehContextoDoTitulo(n, contexto) {
+  if (!n) return true;
+  if (/\d/.test(n)) return true; // código, OEM, motor (1.6, 16v), anos, quantidade
+  if (/^(?:flex|gasolina|alcool|etanol|diesel|gnv|turbo16v|\d*v|cv|hp|valvulas?)$/.test(n)) return true;
+  return MARCAS_E_MONTADORAS_CONTEXTO.has(n) || MODELOS_CONTEXTO.has(n) || contexto.has(n);
+}
+
+function singularDaPeca(texto) {
+  const palavras = texto.split(" ");
+  const primeira = normalizarTexto(palavras[0] || "");
+  if (!/s$/.test(primeira) || NUCLEOS_DE_PECA.has(primeira)) return texto;
+  let antesDoDe = true;
+  return palavras.map((w) => {
+    const n = normalizarTexto(w);
+    if (CONECTORES_NOME.has(n)) { antesDoDe = false; return w; }
+    if (!antesDoDe || w.length <= 3) return w;
+    if (/(?:or|ar|er)es$/i.test(w)) return w.slice(0, -2);
+    if (/[õo]es$/i.test(w)) return w.slice(0, -3) + "ão";
+    if (/[^s]s$/i.test(w)) return w.slice(0, -1);
+    return w;
+  }).join(" ");
+}
+
+// Separa, no título, marca/código/montadora/modelo/motor/anos/quantidade/
+// Kit e itens acompanhantes; depois identifica a peça principal.
+function extrairProdutoPrincipal(texto, contexto = new Set()) {
+  const t = limparCampoTexto(texto)
+    .replace(/\bc\/\s*/gi, " c/ ")
+    .replace(/\bp\/\s*/gi, " p/ ")
+    .replace(/([+&;|,()])/g, " $1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return { principal: "", acompanha: [] };
+  const tokens = t.split(" ").map((w) => ({ w, n: normalizarPalavra(w) }));
+  const ehNucleo = (n) => NUCLEOS_DE_PECA.has(n) || NUCLEOS_DE_PECA.has(radicalPalavra(n)) ||
+    NUCLEOS_DE_PECA.has(n.replace(/es$/, "")) || NUCLEOS_DE_PECA.has(n.replace(/oes$/, "ao"));
+  const pulavel = (n) => PALAVRAS_KIT.has(n) || PALAVRAS_PULAR.has(n) || CONECTORES_NOME.has(n) ||
+    ehContextoDoTitulo(n, contexto) || SEPARADORES_FRACOS.has(n);
+  // Início: 1º substantivo de peça antes de um separador forte; sem ele,
+  // a 1ª palavra que não é marca/modelo/código/Kit (só como auxílio).
+  let inicio = -1;
+  for (let i = 0; i < tokens.length; i++) {
+    if (SEPARADORES_FORTES.has(tokens[i].n)) break;
+    if (ehNucleo(tokens[i].n)) { inicio = i; break; }
+  }
+  if (inicio < 0) {
+    inicio = tokens.findIndex((x) => !pulavel(x.n) && !SEPARADORES_FORTES.has(x.n));
+  }
+  if (inicio < 0) return { principal: "", acompanha: [] };
+  const nome = [];
+  let quebraFraca = false;
+  let i = inicio;
+  for (; i < tokens.length; i++) {
+    const { w, n } = tokens[i];
+    if (SEPARADORES_FORTES.has(n)) break;
+    if (PALAVRAS_PULAR.has(n)) continue;
+    if (SEPARADORES_FRACOS.has(n)) {
+      const prox = tokens.slice(i + 1).find((x) => !SEPARADORES_FRACOS.has(x.n));
+      if (!prox || n === "(" || n === ")" || ITENS_ACOMPANHANTES.has(prox.n) || ITENS_ACOMPANHANTES.has(radicalPalavra(prox.n)) || ehContextoDoTitulo(prox.n, contexto)) {
+        quebraFraca = !!prox && (ITENS_ACOMPANHANTES.has(prox.n) || ITENS_ACOMPANHANTES.has(radicalPalavra(prox.n)));
+        break;
+      }
+      if (n === "e") nome.push(w);
+      continue;
+    }
+    if (i > inicio && (ehContextoDoTitulo(n, contexto) || PALAVRAS_KIT.has(n))) break;
+    nome.push(w);
+  }
+  while (nome.length && (CONECTORES_NOME.has(normalizarTexto(nome[nome.length - 1])) || normalizarTexto(nome[nome.length - 1]) === "e")) nome.pop();
+  // Acompanhantes: o que vem depois do separador, sem marca/modelo/código.
+  const acompanha = [];
+  let atual = [];
+  const fechar = () => {
+    const txt = atual.join(" ").trim();
+    if (txt && palavrasDaPeca(txt, new Set()).length) acompanha.push(txt);
+    atual = [];
+  };
+  let depois = quebraFraca;
+  for (let j = i; j < tokens.length; j++) {
+    const { w, n } = tokens[j];
+    if (SEPARADORES_FORTES.has(n)) { depois = true; fechar(); continue; }
+    if (!depois) continue;
+    if (SEPARADORES_FRACOS.has(n) || ehContextoDoTitulo(n, contexto) || PALAVRAS_KIT.has(n) || PALAVRAS_PULAR.has(n)) { fechar(); continue; }
+    if (ITENS_ACOMPANHANTES.has(n) || ITENS_ACOMPANHANTES.has(radicalPalavra(n))) fechar();
+    atual.push(w);
+  }
+  fechar();
+  return { principal: singularDaPeca(nome.join(" ")), acompanha };
+}
+
+function nucleoDoProduto(texto, ignorar = new Set()) {
+  return palavrasDaPeca(extrairProdutoPrincipal(texto, ignorar).principal, ignorar)[0] || "";
+}
+
+// Ordem de prioridade (só dados reais): 1) Base PAIIA/catálogo, 2) cadastro
+// confirmado, 3) nome da peça no anúncio, 4) título (marca, aplicação,
+// código e inclusos separados), 5) descrição (apoio). Uma fonte superior
+// vale mais que a posição das palavras no título.
+function identificarProdutoPrincipal({ anuncio, nomePeca, nomePecaBase, titulo, descricao, contexto = new Set() }) {
+  const peca = anuncio?.pecaEncontrada || {};
+  const editado = limparCampoTexto(nomePeca) && limparCampoTexto(nomePeca) !== limparCampoTexto(nomePecaBase);
+  const fontes = [
+    [editado ? "" : peca.peca, "Base PAIIA"],
+    [editado ? "" : peca.familia, "Base PAIIA (família)"],
+    [anuncio?.produtoPrincipal || anuncio?.nomePeca || anuncio?.produto?.nome, "cadastro do produto"],
+    [nomePeca, "nome da peça na Conferência"],
+    [titulo, "título do anúncio"],
+    [String(descricao || "").split(/[\n.]/)[0], "descrição (apoio)"],
+  ];
+  for (const [texto, fonte] of fontes) {
+    const r = extrairProdutoPrincipal(texto, contexto);
+    if (r.principal) return { ...r, fonte };
+  }
+  return { principal: "", acompanha: [], fonte: "" };
+}
+
+async function lerCaminhoCategoriaML(id, cache) {
+  if (cache[id]) return cache[id];
+  try {
+    const r = await fetch(`https://api.mercadolibre.com/categories/${encodeURIComponent(id)}`);
+    if (!r.ok) return (cache[id] = null);
+    const d = await r.json();
+    const niveis = Array.isArray(d?.path_from_root) ? d.path_from_root.map((n) => n?.name).filter(Boolean) : [];
+    return (cache[id] = { id, nome: d?.name || niveis[niveis.length - 1] || "", niveis, caminho: niveis.join(" > ") });
+  } catch {
+    return (cache[id] = null);
+  }
+}
+
+async function descobrirCategoriaML({ termos, nomePeca, tipoVeiculo, palavrasVeiculo }) {
+  const consultas = [...new Set(termos.map((t) => limparCampoTexto(t)).filter(Boolean))].slice(0, 3);
+  if (!consultas.length) {
+    return { escolhida: null, opcoes: [], motivo: "sem nome da peça nem título para consultar o Mercado Livre." };
+  }
+  const ignorar = new Set(palavrasVeiculo.flatMap((t) => normalizarTexto(t).split(/\s+/)));
+  // Tipo da peça = 1ª palavra significativa do NOME DA PEÇA (ou do título),
+  // ex.: "pressostato", "sonda", "bico". Qualificadores (direção, óleo...)
+  // não bastam sozinhos para escolher a categoria.
+  // Só o PRODUTO PRINCIPAL conta ("Kit", presilhas, filtro... não).
+  const nucleo = nucleoDoProduto(limparCampoTexto(nomePeca) || consultas[0], ignorar);
+  const tipoPeca = new Set(nucleo ? [nucleo, ...(SINONIMOS_TIPO_PECA[nucleo] || [])] : []);
+  if (!tipoPeca.size) {
+    return { escolhida: null, opcoes: [], motivo: "não foi possível identificar o tipo da peça (informe o nome da peça)." };
+  }
+  const cache = {};
+  const ordemPorConsulta = [];
+  const ids = [];
+  for (const q of consultas) {
+    try {
+      const r = await fetch(`https://api.mercadolibre.com/sites/MLB/domain_discovery/search?q=${encodeURIComponent(q)}&limit=8`);
+      if (!r.ok) continue;
+      const lista = await r.json();
+      const ordem = (Array.isArray(lista) ? lista : []).map((it) => it?.category_id).filter(Boolean);
+      ordemPorConsulta.push(ordem);
+      ordem.forEach((id) => { if (!ids.includes(id)) ids.push(id); });
+    } catch {
+      // segue para a próxima consulta
+    }
+  }
+  if (!ordemPorConsulta.length) {
+    return { escolhida: null, opcoes: [], motivo: "o Mercado Livre não respondeu à consulta de categorias." };
+  }
+  const detalhes = (await Promise.all(ids.slice(0, 12).map((id) => lerCaminhoCategoriaML(id, cache)))).filter(Boolean);
+  const porId = Object.fromEntries(detalhes.map((c) => [c.id, c]));
+  // Só categorias de peças de veículo; carro/caminhonete fica no ramo próprio.
+  const ehCarro = /carro|caminhonete/i.test(String(tipoVeiculo || "Carro"));
+  const doVeiculo = detalhes.filter((c) => c.niveis[0] === "Acessórios para Veículos");
+  const noRamo = (c) => c && c.niveis[0] === "Acessórios para Veículos" && (!ehCarro || c.niveis[1] === "Peças de Carros e Caminhonetes");
+  const doRamo = doVeiculo.filter(noRamo);
+  const opcoes = [...doRamo, ...doVeiculo.filter((c) => !doRamo.includes(c))].map((c) => ({ id: c.id, nome: c.nome, caminho: c.caminho }));
+  if (!opcoes.length) {
+    return { escolhida: null, opcoes: [], motivo: "o Mercado Livre não retornou categoria de peça automotiva para esta peça." };
+  }
+  // A categoria precisa conter o TIPO DA PEÇA (ex.: "injetor", "sonda",
+  // "pressostato") no seu caminho — montadora/modelo/motor não contam.
+  const temTipoPeca = (c) => {
+    const doCaminho = new Set(palavrasDaPeca(c.niveis.slice(2).join(" "), new Set()));
+    return [...tipoPeca].some((p) => doCaminho.has(p));
+  };
+  // "Kit" não leva a uma categoria genérica de kits.
+  const ehCategoriaDeKit = (c) => /^kits?\b/i.test(normalizarTexto(c.nome));
+  // Voto de cada consulta = 1ª categoria (na ordem do próprio ML) do ramo
+  // do veículo que contém o tipo da peça. Só escolhe se todos concordam.
+  const votos = ordemPorConsulta
+    .map((ordem) => ordem.find((id) => noRamo(porId[id]) && temTipoPeca(porId[id]) && !ehCategoriaDeKit(porId[id])))
+    .filter(Boolean);
+  const distintos = [...new Set(votos)];
+  if (distintos.length === 1) {
+    const c = porId[distintos[0]];
+    return { escolhida: { id: c.id, nome: c.nome, caminho: c.caminho }, opcoes, motivo: "" };
+  }
+  return {
+    escolhida: null,
+    opcoes,
+    motivo: distintos.length > 1
+      ? "o Mercado Livre indicou mais de uma categoria possível para esta peça. Escolha a correta abaixo."
+      : "nenhuma categoria retornada pelo Mercado Livre corresponde com segurança ao tipo da peça. Escolha abaixo ou ajuste o nome da peça e busque de novo.",
+  };
+}
+
 function formatarCompatibilidadesLegiveis(
   aplicacoes = [],
   textoOriginal = ""
@@ -353,7 +862,7 @@ function numeroPositivo(valor) {
   return Number.isFinite(n) && n > 0;
 }
 
-export default function MercadoLivreTeste({
+function ConferenciaPAIIA({
   usuario,
   setScreen,
 }) {
@@ -441,6 +950,17 @@ export default function MercadoLivreTeste({
       null
     );
   }, []);
+
+  // Ficha persistente deste anúncio (por código). Ver CHAVE_CONFERENCIA.
+  const chaveConferencia = chaveProduto(anuncio?.codigo || anuncio?.oem);
+  const [fichaSalva] = useState(() =>
+    chaveConferencia ? lerMapaLocal(CHAVE_CONFERENCIA)[chaveConferencia] || null : null
+  );
+  const origemConferenciaRef = useRef({});
+  function inicial(campo, doAnuncio) {
+    origemConferenciaRef.current[campo] = doAnuncio;
+    return valorPreservado(fichaSalva, campo, doAnuncio);
+  }
 
   const [
     bannerAtual,
@@ -1187,22 +1707,77 @@ function moverFoto(
   const contaMLAtivaConferencia =
     contasMLDisponiveis.find((c) => c.ativa) || null;
 
+  // Conta Mercado Livre de DESTINO deste anúncio (marketplaceAccountId).
+  // Pertence ao anúncio (fica na ficha dele), não à "conta ativa" global:
+  // trabalhar com outra conta em outro computador não muda este destino.
+  const [contaDestinoML, setContaDestinoML] = useState(() =>
+    String(fichaSalva?.campos?.contaDestinoML || "")
+  );
+  // ID da ficha deste anúncio na base PAIIA (paiia_anuncios). A conta de
+  // destino verdadeira é lida/gravada lá; aqui fica só o cache do ID.
+  const [anuncioIdPAIIA, setAnuncioIdPAIIA] = useState(() =>
+    String(fichaSalva?.campos?.anuncioIdPAIIA || "")
+  );
+  // Ficha aprovada gravada na base PAIIA (fonte da recuperação no F5).
+  const [fichaBase, setFichaBase] = useState({ pronta: false, erro: "" });
+  const fichaBaseGravadaRef = useRef("");
+  // Uma gravação por vez (o modo de desenvolvimento roda efeitos 2x; sem
+  // esta trava saíam duas fichas iguais no mesmo segundo).
+  const gravandoFichaRef = useRef(false);
+  const montadoRef = useRef(true);
+  useEffect(() => {
+    montadoRef.current = true;
+    return () => { montadoRef.current = false; };
+  }, []);
+  const contaDestinoConectada = contasMLDisponiveis.some(
+    (c) => String(c.ml_user_id) === contaDestinoML
+  );
+  // Simulação de frete/peso: usa a conta de destino do anúncio; enquanto ela
+  // não foi escolhida, a conta ativa serve só para a simulação (leitura).
+  const contaSimulacaoML = contaDestinoConectada
+    ? contaDestinoML
+    : String(contaMLAtivaConferencia?.ml_user_id || "");
+
   // Peso e medidas vindos do bloco PESO E EMBALAGEM (PAIIA).
   const [
     logisticaConferencia,
     setLogisticaConferencia,
-  ] = useState(null);
+  ] = useState(() => fichaSalva?.campos?.logistica || null);
 
   // Anúncio exatamente como foi aprovado na conferência.
   const [
     anuncioConferido,
     setAnuncioConferido,
-  ] = useState(null);
+  ] = useState(() => {
+    const salvo = (fichaSalva?.assinaturaAprovada && fichaSalva?.anuncioConferido) || null;
+    // Fichas aprovadas antes deste campo existir: o tipo de veículo
+    // aprovado fica em campos.tipoVeiculo (F5 não perde o valor).
+    if (salvo && !salvo.tipoVeiculo && fichaSalva?.campos?.tipoVeiculo) {
+      return { ...salvo, tipoVeiculo: fichaSalva.campos.tipoVeiculo };
+    }
+    return salvo;
+  });
+  // Assinatura do que foi aprovado: enquanto nada mudar, o "Anúncio pronto"
+  // continua valendo ao voltar para a Conferência.
+  const assinaturaAprovadaRef = useRef(
+    (fichaSalva?.anuncioConferido && fichaSalva?.assinaturaAprovada) || ""
+  );
 
-  const [
-    revisandoPublicacaoML,
-    setRevisandoPublicacaoML,
-  ] = useState(false);
+  // Etapa do fluxo DESTE anúncio: "conferencia" → "publicacao".
+  // Fica na ficha: depois de aprovada, a Conferência não reaparece ao voltar
+  // da Central/atualizar; só volta se o usuário pedir para editar/revisar
+  // ou se algum dado aprovado mudar.
+  const [etapaFluxo, setEtapaFluxo] = useState(() =>
+    fichaSalva?.etapa === "publicacao" &&
+    fichaSalva?.anuncioConferido &&
+    fichaSalva?.assinaturaAprovada
+      ? "publicacao"
+      : "conferencia"
+  );
+  function setRevisandoPublicacaoML(abrir) {
+    setEtapaFluxo(abrir ? "publicacao" : "conferencia");
+    window.scrollTo?.({ top: 0 });
+  }
 
   useEffect(() => {
     let ativo = true;
@@ -1238,20 +1813,18 @@ function moverFoto(
   }, [fotos]);
 
   const [tituloAnuncio, setTituloAnuncio] =
-    useState(
-      anuncio?.titulo || ""
+    useState(() =>
+      inicial("titulo", anuncio?.titulo || "")
     );
 
   const [preco, setPreco] =
-    useState(
-      String(
-        anuncio?.preco || ""
-      )
+    useState(() =>
+      inicial("preco", String(anuncio?.preco || ""))
     );
 
   const [codigo, setCodigo] =
-    useState(
-      anuncio?.codigo || ""
+    useState(() =>
+      inicial("codigo", anuncio?.codigo || "")
     );
 
   const [
@@ -1272,37 +1845,64 @@ function moverFoto(
   const [
     descricao,
     setDescricao,
-  ] = useState(
-    anuncio?.descricao || ""
+  ] = useState(() =>
+    inicial("descricao", anuncio?.descricao || "")
   );
+
+  // Categoria já definida para este produto (base PAIIA ou escolhida
+  // antes pelo usuário). Sem categoria definida = PENDENTE: o PAIIA não
+  // preenche categoria por suposição.
+  const categoriaDefinida = useMemo(
+    () => lerCategoriaDefinida(anuncio),
+    [anuncio]
+  );
+
+  // Categoria (nome + caminho + ID MLB + origem) decidida em conjunto.
+  const [categoriaInicial] = useState(() => {
+    const doAnuncio = categoriaDefinida
+      ? { id: categoriaDefinida.id, caminho: categoriaDefinida.caminho || categoriaDefinida.id, origem: categoriaDefinida.origem }
+      : null;
+    const escolhida = inicial("categoriaML", doAnuncio);
+    return valorVazio(escolhida) ? null : escolhida;
+  });
 
   const [
     categoria,
     setCategoria,
-  ] = useState(() =>
-    sugerirCategoriaPorTitulo(
-      anuncio?.titulo || ""
-    )
+  ] = useState(
+    () => categoriaInicial?.caminho || categoriaInicial?.id || ""
   );
 
+  const [
+    origemCategoria,
+    setOrigemCategoria,
+  ] = useState(categoriaInicial?.origem || "");
+
   const [marca, setMarca] =
-    useState("");
+    useState(() => inicial("marca", ""));
 
   const [
     numeroPeca,
     setNumeroPeca,
-  ] = useState(
-    anuncio?.codigo || ""
+  ] = useState(() =>
+    inicial("numeroPeca", anuncio?.codigo || "")
   );
 
   const [gtin, setGtin] =
-    useState("");
+    useState(() => inicial("gtin", ""));
 
   const [
     tipoVeiculo,
     setTipoVeiculo,
-  ] = useState(
-    "Carro / Caminhonete"
+  ] = useState(() =>
+    // Sugerido pelas aplicações aprovadas (todas de automóvel/caminhonete).
+    // Na dúvida fica em branco e a Conferência pede a confirmação.
+    inicial(
+      "tipoVeiculo",
+      inferirTipoVeiculo(
+        lerAplicacoesAprovadas({ aplicacoes: anuncio?.aplicacoes, texto: anuncio?.compatibilidades })
+      )
+    )
   );
 
   const [
@@ -1323,19 +1923,31 @@ function moverFoto(
             .aplicacoes
         : [];
 
-  return formatarCompatibilidadesLegiveis(
+  return inicial("compatibilidades", formatarCompatibilidadesLegiveis(
     aplicacoesDisponiveis,
     anuncio?.compatibilidades || ""
-  );
+  ));
 });
 
 const [
   observacaoCompatibilidade,
   setObservacaoCompatibilidade,
-] = useState(
-  anuncio?.observacaoCompatibilidade ||
-  ""
+] = useState(() =>
+  inicial("observacaoCompatibilidade", anuncio?.observacaoCompatibilidade || "")
 );
+
+// Aplicações confirmadas: base/catálogo (automática) + cadastradas e
+// confirmadas pelo usuário (manual). Nada é completado por suposição.
+const produtoAtual = chaveProduto(anuncio?.codigo || anuncio?.oem);
+const [aplicacoesManuais, setAplicacoesManuais] = useState(() => {
+  const salvas = lerMapaLocal(CHAVE_APLICACOES_MANUAIS)[produtoAtual];
+  return Array.isArray(salvas)
+    ? salvas.map((a) => normalizarAplicacao(a, "manual")).filter(Boolean)
+    : [];
+});
+const NOVA_APLICACAO_VAZIA = { montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "", versao: "" };
+const [novaAplicacao, setNovaAplicacao] = useState(NOVA_APLICACAO_VAZIA);
+const [avisoNovaAplicacao, setAvisoNovaAplicacao] = useState("");
 
 const aplicacoesCompatibilidade =
   Array.isArray(
@@ -1351,28 +1963,97 @@ const aplicacoesCompatibilidade =
           .aplicacoes
       : [];
 
-const totalCompatibilidades =
-  aplicacoesCompatibilidade.length > 0
-    ? aplicacoesCompatibilidade.length
-    : Number(
-        anuncio?.totalCompatibilidades ||
-          0
-      );
+const aplicacoesBase = useMemo(
+  () => aplicacoesCompatibilidade.map((a) => normalizarAplicacao(a, "base")).filter(Boolean),
+  [anuncio] // eslint-disable-line react-hooks/exhaustive-deps
+);
+const aplicacoesConfirmadas = useMemo(
+  () => juntarAplicacoes([aplicacoesBase, aplicacoesManuais]),
+  [aplicacoesBase, aplicacoesManuais]
+);
+
+const nomePecaBase = limparCampoTexto(
+  anuncio?.pecaEncontrada?.peca || anuncio?.pecaEncontrada?.familia || ""
+);
+const [nomePeca, setNomePeca] = useState(() => inicial("nomePeca", nomePecaBase));
+
+// Produto principal = o que define a Categoria ML (itens inclusos não).
+const produtoPrincipal = useMemo(() => {
+  // Montadora/modelo/motor/versão da aplicação: contexto, nunca a peça.
+  const doVeiculo = new Set(
+    aplicacoesConfirmadas.flatMap((a) => [a.montadora, a.modelo, a.motor, a.versao])
+      .filter(Boolean).flatMap((t) => normalizarTexto(t).split(/\s+/))
+  );
+  const r = identificarProdutoPrincipal({ anuncio, nomePeca, nomePecaBase, titulo: tituloAnuncio, descricao, contexto: doVeiculo });
+  // Na lista "acompanha" mostra só os itens (sem montadora/modelo/motor).
+  const acompanha = r.acompanha
+    .map((item) => item.split(/\s+/).filter((w) => !doVeiculo.has(normalizarTexto(w)) && !/\d/.test(w)).join(" ").trim())
+    .filter(Boolean);
+  return { ...r, acompanha, contexto: doVeiculo };
+}, [anuncio, nomePeca, nomePecaBase, tituloAnuncio, descricao, aplicacoesConfirmadas]);
+
+// Palavra-chave só quando peça + montadora + modelo + motor estão confirmados.
+const palavrasChave = useMemo(() => {
+  const peca = limparCampoTexto(nomePeca);
+  if (!peca) return [];
+  const lista = aplicacoesConfirmadas
+    .filter((a) => a.montadora && a.modelo && a.motor)
+    .map((a) => [peca, a.montadora, a.modelo, a.motor].join(" "));
+  return [...new Set(lista)].slice(0, 6);
+}, [nomePeca, aplicacoesConfirmadas]);
+
+function textoCompatibilidadesDe(lista) {
+  return formatarCompatibilidadesLegiveis(
+    lista.map((a) => ({
+      montadora: a.montadora,
+      modelo: a.modelo,
+      motor: [a.motor, a.versao].filter(Boolean).join(" "),
+      ano_inicio: a.anoInicio,
+      ano_fim: a.anoFim,
+    })),
+    ""
+  );
+}
+
+function salvarAplicacoesManuais(lista) {
+  setAplicacoesManuais(lista);
+  gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, lista.length ? lista : null);
+  const todas = juntarAplicacoes([aplicacoesBase, lista]);
+  setCompatibilidades(todas.length ? textoCompatibilidadesDe(todas) : "");
+}
+
+function confirmarNovaAplicacao() {
+  const a = normalizarAplicacao(novaAplicacao, "manual");
+  if (!a || !a.montadora || !a.modelo) {
+    setAvisoNovaAplicacao("Informe pelo menos a montadora e o modelo.");
+    return;
+  }
+  const anoValido = (v) => !v || /^\d{4}$/.test(v);
+  if (!anoValido(a.anoInicio) || !anoValido(a.anoFim)) {
+    setAvisoNovaAplicacao("Ano com 4 dígitos (ex.: 2012), ou deixe em branco.");
+    return;
+  }
+  setAvisoNovaAplicacao("");
+  salvarAplicacoesManuais(juntarAplicacoes([aplicacoesManuais, [a]]));
+  setNovaAplicacao(NOVA_APLICACAO_VAZIA);
+}
+
+function removerAplicacaoManual(indice) {
+  salvarAplicacoesManuais(aplicacoesManuais.filter((_, i) => i !== indice));
+}
+
+const totalCompatibilidades = aplicacoesConfirmadas.length;
 useEffect(() => {
   if (
-    aplicacoesCompatibilidade.length > 0
+    aplicacoesConfirmadas.length > 0
   ) {
-    const textoFormatado =
-      formatarCompatibilidadesLegiveis(
-        aplicacoesCompatibilidade,
-        anuncio?.compatibilidades || ""
-      );
-
     setCompatibilidades(
-      textoFormatado
+      textoCompatibilidadesDe(
+        aplicacoesConfirmadas
+      )
     );
   }
-}, [anuncio]);
+}, [anuncio]); // eslint-disable-line react-hooks/exhaustive-deps
   const [
     canalVendaPublicacao,
     setCanalVendaPublicacao,
@@ -1426,106 +2107,104 @@ useEffect(() => {
   const [
     modoEnvio,
     setModoEnvio,
-  ] = useState("meli");
+  ] = useState(() => inicial("modoEnvio", "meli"));
 
   const [
     lojaOficial,
     setLojaOficial,
-  ] = useState("");
+  ] = useState(() => inicial("lojaOficial", ""));
 
   const [
     quantidadeEstoque,
     setQuantidadeEstoque,
-  ] = useState("");
+  ] = useState(() => inicial("quantidadeEstoque", ""));
 
   const [
     sku,
     setSku,
-  ] = useState(
-    anuncio?.codigo || ""
+  ] = useState(() =>
+    inicial("sku", anuncio?.codigo || "")
   );
 
   const [
     larguraFabrica,
     setLarguraFabrica,
-  ] = useState("");
+  ] = useState(() => inicial("larguraFabrica", ""));
 
   const [
     alturaFabrica,
     setAlturaFabrica,
-  ] = useState("");
+  ] = useState(() => inicial("alturaFabrica", ""));
 
   const [
     comprimentoFabrica,
     setComprimentoFabrica,
-  ] = useState("");
+  ] = useState(() => inicial("comprimentoFabrica", ""));
 
   const [
     pesoFabrica,
     setPesoFabrica,
-  ] = useState("");
+  ] = useState(() => inicial("pesoFabrica", ""));
 
   const [
     larguraEnvio,
     setLarguraEnvio,
-  ] = useState("");
+  ] = useState(() => inicial("larguraEnvio", ""));
 
   const [
     alturaEnvio,
     setAlturaEnvio,
-  ] = useState("");
+  ] = useState(() => inicial("alturaEnvio", ""));
 
   const [
     comprimentoEnvio,
     setComprimentoEnvio,
-  ] = useState("");
+  ] = useState(() => inicial("comprimentoEnvio", ""));
 
   const [
     pesoEnvio,
     setPesoEnvio,
-  ] = useState("");
+  ] = useState(() => inicial("pesoEnvio", ""));
 
   const [
     condicao,
     setCondicao,
-  ] = useState("novo");
+  ] = useState(() => inicial("condicao", "novo"));
 
   const [
     tipoGarantia,
     setTipoGarantia,
-  ] = useState(
-    "vendedor"
-  );
+  ] = useState(() => inicial("tipoGarantia", "vendedor"));
 
   const [
     mesesGarantia,
     setMesesGarantia,
-  ] = useState("3");
+  ] = useState(() => inicial("mesesGarantia", "3"));
 
   const [
     limiteVenda,
     setLimiteVenda,
-  ] = useState("");
+  ] = useState(() => inicial("limiteVenda", ""));
 
   const [
     informacaoRegulatoria,
     setInformacaoRegulatoria,
-  ] = useState("");
+  ] = useState(() => inicial("informacaoRegulatoria", ""));
 
   const [
     caracteristicasSecundarias,
     setCaracteristicasSecundarias,
-  ] = useState("");
+  ] = useState(() => inicial("caracteristicasSecundarias", ""));
 
   const [
     validado,
     setValidado,
-  ] = useState(false);
+  ] = useState(() => Boolean(assinaturaAprovadaRef.current && fichaSalva?.payloadTeste));
 
   const [
     payloadTeste,
     setPayloadTeste,
-  ] = useState(null);
+  ] = useState(() => (assinaturaAprovadaRef.current && fichaSalva?.payloadTeste) || null);
 
   const [
     pendenciasRevisao,
@@ -1534,12 +2213,66 @@ useEffect(() => {
 const [
   termoCategoria,
   setTermoCategoria,
-] = useState("");
+] = useState(() =>
+  limparCampoTexto(
+    anuncio?.pecaEncontrada?.peca ||
+      anuncio?.pecaEncontrada?.familia ||
+      ""
+  )
+);
 
 const [
   categoriaId,
   setCategoriaId,
-] = useState("");
+] = useState(categoriaInicial?.id || "");
+
+const categoriaIdRef = useRef(categoriaInicial?.id || "");
+useEffect(() => {
+  categoriaIdRef.current = categoriaId;
+}, [categoriaId]);
+const [motivoCategoria, setMotivoCategoria] = useState("");
+// Conflito: fonte superior (Base/cadastro/nome da peça) × título.
+const [conflitoProduto, setConflitoProduto] = useState(null);
+
+// Escolha explícita do usuário fica guardada para este código (só neste
+// navegador). A escolha automática NÃO é guardada como "confirmada":
+// é refeita a cada conferência, até o usuário escolher.
+function escolherCategoria(opcao, origem = "agora", automatica = false) {
+  if (!opcao?.id) return;
+  categoriaIdRef.current = opcao.id;
+  setCategoria(opcao.caminho || opcao.nome || opcao.id);
+  setCategoriaId(opcao.id);
+  setOrigemCategoria(origem);
+  setMotivoCategoria("");
+  if (automatica) return;
+  gravarNoMapaLocal(CHAVE_CATEGORIA_ML, chaveProduto(numeroPeca || codigo), {
+    id: opcao.id,
+    caminho: opcao.caminho || opcao.nome || "",
+    salvoEm: new Date().toISOString(),
+  });
+}
+
+// Categoria com ID mas sem o nome: só consulta o nome no ML (não troca o ID).
+useEffect(() => {
+  if (!categoriaId || (categoria && categoria !== categoriaId)) return undefined;
+  let ativo = true;
+  (async () => {
+    try {
+      const r = await fetch(`https://api.mercadolibre.com/categories/${encodeURIComponent(categoriaId)}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const caminho = Array.isArray(d?.path_from_root)
+        ? d.path_from_root.map((n) => n?.name).filter(Boolean).join(" > ")
+        : d?.name || "";
+      if (ativo && caminho) setCategoria(caminho);
+    } catch {
+      // sem nome: continua mostrando o ID
+    }
+  })();
+  return () => {
+    ativo = false;
+  };
+}, [categoriaId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 const [
   buscandoCategoria,
@@ -1576,8 +2309,17 @@ const [
   ]);
 
   useEffect(() => {
+    // Nada mudou desde a aprovação (ex.: voltou da Central): mantém pronto.
+    if (assinaturaAprovadaRef.current && assinaturaAprovadaRef.current === assinaturaConferencia) return;
+    // Na PUBLICAÇÃO não há edição: a aprovação só cai por mudança feita na
+    // Conferência. Diferença vinda da recuperação (F5/reabertura) é adotada.
+    if (etapaFluxo === "publicacao" && assinaturaAprovadaRef.current && anuncioConferido) {
+      assinaturaAprovadaRef.current = assinaturaConferencia;
+      return;
+    }
+    assinaturaAprovadaRef.current = "";
     setAnuncioConferido(null);
-    setRevisandoPublicacaoML(false);
+    setEtapaFluxo("conferencia");
     setValidado(false);
   }, [assinaturaConferencia]);
 
@@ -2283,188 +3025,212 @@ async function pesquisarConcorrenciaPaizinho() {
   }
 }
 
-async function atualizarCategoria() {
-  const termo =
-    String(
-      termoCategoria || ""
-    ).trim();
+// Palavras do veículo (montadora/modelo/motor) só como contexto:
+// não contam como "tipo da peça" na escolha da categoria.
+function palavrasVeiculoConferencia() {
+  return aplicacoesConfirmadas.flatMap((a) => [a.montadora, a.modelo, a.motor, a.versao]).filter(Boolean);
+}
 
-  if (!termo) {
-    alert(
-      "Digite o nome da peça para buscar a categoria."
-    );
-
-    return;
-  }
-
+async function consultarCategoriaML(termos, automatica, permitirEscolha = true) {
   setBuscandoCategoria(true);
   setErroCategoria("");
-  setCategoria("");
-  setCategoriaId("");
-  setOpcoesCategoria([]);
-
   try {
-    const resposta =
-      await fetch(
-        "https://api.mercadolibre.com/sites/MLB/domain_discovery/search" +
-          `?q=${encodeURIComponent(
-            termo
-          )}` +
-          "&limit=8"
-      );
-
-    if (!resposta.ok) {
-      throw new Error(
-        `Erro Mercado Livre: ${resposta.status}`
-      );
+    const r = await descobrirCategoriaML({
+      termos,
+      nomePeca: automatica ? produtoPrincipal.principal : termos[0],
+      tipoVeiculo,
+      palavrasVeiculo: palavrasVeiculoConferencia(),
+    });
+    setOpcoesCategoria(r.opcoes);
+    // Nunca troca uma categoria já selecionada: só preenche quando vazia
+    // e quando há UMA categoria segura. Senão fica PENDENTE com as opções.
+    if (permitirEscolha && !categoriaIdRef.current && r.escolhida) {
+      escolherCategoria(r.escolhida, automatica ? "automatica" : "agora", automatica);
+      setMotivoCategoria("");
+    } else if (!categoriaIdRef.current) {
+      setMotivoCategoria(r.motivo);
     }
-
-    const dados =
-      await resposta.json();
-
-    const lista =
-      Array.isArray(dados)
-        ? dados
-        : [];
-
-    if (!lista.length) {
-      throw new Error(
-        "Nenhuma categoria encontrada para esta peça."
-      );
+    if (!automatica && !r.opcoes.length) {
+      setErroCategoria(r.motivo || "Nenhuma categoria encontrada para esta peça.");
     }
-
-    const categorias =
-      await Promise.all(
-        lista
-          .filter(
-            (item) =>
-              item?.category_id
-          )
-          .slice(0, 5)
-          .map(
-            async (item) => {
-              try {
-                const respostaDetalhe =
-                  await fetch(
-                    `https://api.mercadolibre.com/categories/${item.category_id}`
-                  );
-
-                if (
-                  !respostaDetalhe.ok
-                ) {
-                  return {
-                    id:
-                      item.category_id,
-                    nome:
-                      item.category_name ||
-                      "",
-                    caminho:
-                      item.category_name ||
-                      "",
-                  };
-                }
-
-                const detalhe =
-                  await respostaDetalhe.json();
-
-                const caminho =
-                  Array.isArray(
-                    detalhe
-                      ?.path_from_root
-                  )
-                    ? detalhe
-                        .path_from_root
-                        .map(
-                          (nivel) =>
-                            nivel?.name
-                        )
-                        .filter(Boolean)
-                        .join(" > ")
-                    : "";
-
-                return {
-                  id:
-                    item.category_id,
-
-                  nome:
-                    detalhe?.name ||
-                    item.category_name ||
-                    "",
-
-                  caminho:
-                    caminho ||
-                    detalhe?.name ||
-                    item.category_name ||
-                    "",
-                };
-              } catch {
-                return {
-                  id:
-                    item.category_id,
-
-                  nome:
-                    item.category_name ||
-                    "",
-
-                  caminho:
-                    item.category_name ||
-                    "",
-                };
-              }
-            }
-          )
-      );
-
-    const validas =
-      categorias.filter(
-        (item) =>
-          item?.id &&
-          item?.caminho
-      );
-
-    if (!validas.length) {
-      throw new Error(
-        "O Mercado Livre não retornou uma categoria válida."
-      );
-    }
-
-    const principal =
-      validas[0];
-
-    setCategoria(
-      principal.caminho
-    );
-
-    setCategoriaId(
-      principal.id
-    );
-
-    setOpcoesCategoria(
-      validas
-    );
-
-    console.log(
-      "✅ CATEGORIAS MERCADO LIVRE:",
-      validas
-    );
   } catch (erro) {
-    console.error(
-      "❌ ERRO CATEGORIA MERCADO LIVRE:",
-      erro
-    );
-
-    setCategoria("");
-    setCategoriaId("");
-    setOpcoesCategoria([]);
-
-    setErroCategoria(
-      erro?.message ||
-        "Não foi possível consultar a categoria no Mercado Livre."
-    );
+    console.error("❌ ERRO CATEGORIA MERCADO LIVRE:", erro);
+    if (!categoriaIdRef.current) setMotivoCategoria("não foi possível consultar o Mercado Livre agora.");
+    if (!automatica) setErroCategoria("Não foi possível consultar a categoria no Mercado Livre.");
   } finally {
     setBuscandoCategoria(false);
   }
 }
+
+// Busca manual (ferramenta auxiliar): consulta/troca; nunca apaga a atual.
+async function atualizarCategoria() {
+  const termo = String(termoCategoria || "").trim();
+  if (!termo) {
+    alert("Digite o nome da peça para buscar a categoria.");
+    return;
+  }
+  // Mesmo na busca manual, "Kit" e itens inclusos não definem a categoria.
+  const principal = extrairProdutoPrincipal(termo, produtoPrincipal.contexto).principal || termo;
+  await consultarCategoriaML([...new Set([principal, termo])], false);
+}
+
+// Automática: ao abrir a Conferência sem categoria definida, consulta o ML
+// pelo nome da peça e pelo título (aplicação só como contexto).
+const categoriaAutoTentadaRef = useRef(false);
+useEffect(() => {
+  if (categoriaAutoTentadaRef.current || categoriaIdRef.current) return;
+  categoriaAutoTentadaRef.current = true;
+  const contexto = aplicacoesConfirmadas[0];
+  const principal = produtoPrincipal.principal;
+  if (!principal) {
+    setMotivoCategoria("não foi possível identificar a peça principal (informe o nome da peça).");
+    return;
+  }
+  // Título só entra se a peça principal dele for a mesma; se a base e o
+  // título indicarem peças principais diferentes, não escolhe por suposição.
+  const ignorar = new Set(palavrasVeiculoConferencia().flatMap((t) => normalizarTexto(t).split(/\s+/)));
+  const doTitulo = extrairProdutoPrincipal(tituloAnuncio, produtoPrincipal.contexto).principal;
+  const nucleoBase = nucleoDoProduto(principal, ignorar);
+  const nucleoTitulo = doTitulo ? nucleoDoProduto(doTitulo, ignorar) : "";
+  const tiposIguais = (a, b) => a === b || (SINONIMOS_TIPO_PECA[a] || []).includes(b);
+  const fonteSuperior = !/^(título|descrição)/.test(produtoPrincipal.fonte);
+  if (fonteSuperior && nucleoTitulo && !tiposIguais(nucleoBase, nucleoTitulo)) {
+    // Conflito: não decide sozinho. Só mostra as opções; nada é escolhido.
+    setConflitoProduto({ fonte: produtoPrincipal.fonte, base: principal, titulo: doTitulo });
+    consultarCategoriaML([principal, doTitulo], false, false).then(() => {
+      if (!categoriaIdRef.current) {
+        setMotivoCategoria("confirme qual é o produto principal (corrija o nome da peça se preciso) e só então escolha a categoria abaixo.");
+      }
+    });
+    return;
+  }
+  const termos = [
+    principal,
+    doTitulo && doTitulo !== principal ? doTitulo : "",
+    contexto ? [principal, contexto.montadora, contexto.modelo].filter(Boolean).join(" ") : "",
+  ];
+  consultarCategoriaML(termos, true);
+}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Grava a ficha da conferência a cada alteração (uma por código).
+  // Assim nada do que foi conferido some ao navegar ou atualizar a tela.
+  const camposFicha = {
+    titulo: tituloAnuncio,
+    preco,
+    codigo,
+    descricao,
+    marca,
+    numeroPeca,
+    gtin,
+    tipoVeiculo,
+    nomePeca,
+    categoriaML: categoriaId || categoria ? { id: categoriaId, caminho: categoria, origem: origemCategoria } : null,
+    compatibilidades,
+    observacaoCompatibilidade,
+    modoEnvio,
+    lojaOficial,
+    quantidadeEstoque,
+    sku,
+    larguraFabrica,
+    alturaFabrica,
+    comprimentoFabrica,
+    pesoFabrica,
+    larguraEnvio,
+    alturaEnvio,
+    comprimentoEnvio,
+    pesoEnvio,
+    condicao,
+    tipoGarantia,
+    mesesGarantia,
+    limiteVenda,
+    informacaoRegulatoria,
+    caracteristicasSecundarias,
+    logistica: copiaLeve(logisticaConferencia, 60000),
+    contaDestinoML,
+    anuncioIdPAIIA,
+  };
+  const assinaturaFicha = JSON.stringify([camposFicha, Boolean(anuncioConferido), validado, etapaFluxo]);
+  useEffect(() => {
+    if (!chaveConferencia) return;
+    const conferidoLeve = anuncioConferido && assinaturaAprovadaRef.current ? copiaLeve(anuncioConferido) : null;
+    const payloadLeve = conferidoLeve && validado ? copiaLeve(payloadTeste) : null;
+    gravarFichaConferencia(chaveConferencia, {
+      campos: camposFicha,
+      origem: origemConferenciaRef.current,
+      anuncioConferido: conferidoLeve,
+      payloadTeste: payloadLeve,
+      assinaturaAprovada: conferidoLeve ? assinaturaAprovadaRef.current : "",
+      etapa: conferidoLeve ? etapaFluxo : "conferencia",
+      salvoEm: new Date().toISOString(),
+    });
+  }, [assinaturaFicha]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ao entrar na PUBLICAÇÃO: grava a ficha aprovada na base PAIIA (mesmo ID
+  // se já existir) com tudo o que foi aprovado. É dela que o F5/reabertura
+  // recupera o anúncio — não do estado da tela nem do navegador.
+  useEffect(() => {
+    if (etapaFluxo !== "publicacao" || !anuncioConferido || !assinaturaAprovadaRef.current) return;
+    const chaveGravacao = `${anuncioIdPAIIA}|${assinaturaAprovadaRef.current}`;
+    if (fichaBaseGravadaRef.current === chaveGravacao && fichaBase.pronta) return;
+    if (gravandoFichaRef.current) return;
+    gravandoFichaRef.current = true;
+    (async () => {
+      // Anúncio de origem COMPLETO o bastante para reconstruir a tela em
+      // qualquer computador: fotos aprovadas (URLs), dados e base de peça.
+      // (O mlAnuncioTeste do navegador não guarda fotos — por isso não serve.)
+      const { fotos: _f, imagens: _i, banners: _b, ...resto } = anuncio || {};
+      const anuncioLeve = copiaLeve(resto, 150000) || copiaLeve({
+        codigo: anuncio?.codigo, oem: anuncio?.oem, titulo: anuncio?.titulo, descricao: anuncio?.descricao,
+        preco: anuncio?.preco, tipoAnuncio: anuncio?.tipoAnuncio, aplicacoes: anuncio?.aplicacoes,
+      }, 150000) || {};
+      const fotosAprovadas = Array.isArray(anuncioConferido.fotos) ? anuncioConferido.fotos : [];
+      const dados = {
+        versao: 2,
+        anuncio: { ...anuncioLeve, fotos: fotosAprovadas, imagens: fotosAprovadas },
+        ficha: copiaLeve({
+          campos: { ...camposFicha, anuncioIdPAIIA: "" },
+          origem: origemConferenciaRef.current,
+          anuncioConferido,
+          payloadTeste: copiaLeve(payloadTeste),
+          assinaturaAprovada: assinaturaAprovadaRef.current,
+          etapa: "publicacao",
+        }, 200000),
+      };
+      const r = await salvarFichaAprovada({
+        anuncioId: anuncioIdPAIIA,
+        codigo: anuncio?.codigo || anuncio?.oem || anuncioConferido.codigo,
+        titulo: anuncioConferido.titulo,
+        dadosConferencia: dados,
+      });
+      gravandoFichaRef.current = false;
+      // O ID criado nunca é descartado (mesmo se o efeito foi refeito).
+      if (r.ok) {
+        fichaBaseGravadaRef.current = `${r.anuncioId}|${assinaturaAprovadaRef.current}`;
+        if (!montadoRef.current) return;
+        if (r.anuncioId !== anuncioIdPAIIA) setAnuncioIdPAIIA(r.anuncioId);
+        setFichaBase({ pronta: true, erro: "" });
+      } else if (montadoRef.current) {
+        setFichaBase({ pronta: true, erro: r.erro || "Não foi possível gravar a ficha na base PAIIA." });
+      }
+    })();
+  }, [etapaFluxo, anuncioConferido, anuncioIdPAIIA]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Endereço da página identifica a ficha (?ficha=<ID>) enquanto o anúncio
+  // está na Publicação: o F5 reabre a MESMA ficha direto na Publicação.
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      if (etapaFluxo === "publicacao") {
+        // Enquanto a ficha é gravada/recuperada, o ID do endereço é mantido.
+        if (anuncioIdPAIIA && fichaBase.pronta && !fichaBase.erro) url.searchParams.set("ficha", anuncioIdPAIIA);
+      } else {
+        url.searchParams.delete("ficha");
+      }
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch {
+      // sem acesso ao endereço: segue sem o atalho do F5
+    }
+  }, [etapaFluxo, anuncioIdPAIIA, fichaBase]);
 
   function salvarEstadoAtualDoTeste() {
   try {
@@ -2729,6 +3495,18 @@ async function atualizarCategoria() {
       );
     }
 
+    // Conferência ÚNICA: a publicação usa só a medida confirmada aqui.
+    // Confirmar no bloco ⑥ evita ter de conferir de novo na publicação.
+    if (
+      contaSimulacaoML &&
+      logisticaConferencia?.medida &&
+      !logisticaConferencia?.confirmado
+    ) {
+      faltando.push(
+        "Confirmação de peso e medidas (botão Confirmar no bloco ⑥)"
+      );
+    }
+
     if (!tipoVeiculo.trim()) {
       faltando.push(
         "Tipo de veículo"
@@ -2747,6 +3525,18 @@ async function atualizarCategoria() {
       );
     }
 
+    // Marca real (código OEM/"original" não é marca) e descrição sem
+    // afirmar original/genuína sem comprovação.
+    const problemaMarca = marca.trim() ? marcaInvalida(marca) : "";
+    if (problemaMarca) {
+      faltando.push(`Marca — ${problemaMarca}`);
+    }
+    if (descricaoAfirmaOriginal(descricao)) {
+      faltando.push(
+        'Descrição — afirma "original/genuína" sem comprovação. Use "Montar descrição padrão" ou corrija o texto.'
+      );
+    }
+
     if (
       faltando.length > 0
     ) {
@@ -2759,12 +3549,14 @@ async function atualizarCategoria() {
       setPendenciasRevisao(
         faltando.map(
           (item) =>
-            `${item} precisa ser preenchido.`
+            item.includes(" — ")
+              ? item
+              : `${item} precisa ser preenchido.`
         )
       );
 
       alert(
-        "⚠ Campos obrigatórios:\n\n" +
+        "⚠ Corrija antes de aprovar:\n\n" +
           faltando.join("\n")
       );
 
@@ -2921,6 +3713,7 @@ async function atualizarCategoria() {
 
     setValidado(true);
     setPendenciasRevisao([]);
+    assinaturaAprovadaRef.current = assinaturaConferencia;
 
     // Fotos do produto na ordem aprovada (banner e vídeo ficam separados).
     setAnuncioConferido({
@@ -2936,6 +3729,10 @@ async function atualizarCategoria() {
       categoria,
       categoriaId,
       compatibilidades,
+      // Tipo de veículo aprovado (vai como VEHICLE_TYPE na Publicação).
+      tipoVeiculo,
+      nomePeca,
+      condicao,
       logistica: logisticaConferencia,
     });
 
@@ -2993,6 +3790,78 @@ async function atualizarCategoria() {
             ⬅ Voltar
           </button>
         </section>
+      </div>
+    );
+  }
+
+  // Etapa PUBLICAÇÃO: a Conferência já foi aprovada. Aqui só se escolhe a
+  // conta de destino, valida no Mercado Livre e publica — sem conferir de novo.
+  if (etapaFluxo === "publicacao" && anuncioConferido) {
+    return (
+      <div
+        data-paiia-etapa-publicacao
+        style={{
+          width: "100%",
+          maxWidth: "1180px",
+          margin: "30px auto",
+        }}
+      >
+        <section style={cabecalho}>
+          <h2 style={{ color: "#86efac", margin: "0 0 6px 0" }}>
+            ✅ Conferência PAIIA aprovada
+          </h2>
+          <p style={{ color: "#bfdbfe", margin: 0 }}>
+            {anuncioConferido.titulo} · Código {anuncioConferido.codigo}
+          </p>
+          <button
+            type="button"
+            data-paiia-editar-conferencia
+            onClick={() => setRevisandoPublicacaoML(false)}
+            style={{ ...botaoSecundario, marginTop: "12px" }}
+          >
+            ✏️ Editar / revisar a Conferência
+          </button>
+        </section>
+
+        {!fichaBase.pronta ? (
+          <section style={{ ...bloco, color: "#94a3b8" }} data-paiia-gravando-ficha>
+            ⏳ Gravando a ficha aprovada deste anúncio na base PAIIA...
+          </section>
+        ) : (
+          <>
+            {fichaBase.erro && (
+              <section style={{ ...bloco, color: "#fca5a5" }} data-paiia-erro-ficha>
+                ❌ {fichaBase.erro} Sem a ficha na base, o F5 não consegue recuperar este anúncio e a publicação fica bloqueada.
+              </section>
+            )}
+            <DecisaoBasePAIIA
+              anuncioId={anuncioIdPAIIA}
+              existeNaBase={Boolean(anuncio?.pecaEncontrada)}
+              anuncioConferido={anuncioConferido}
+              aplicacoes={aplicacoesConfirmadas}
+              nomePeca={nomePeca}
+            />
+            <RevisaoPublicacaoML
+              anuncio={anuncioConferido}
+              titulo={anuncioConferido.titulo}
+              contaDestino={contaDestinoML}
+              onContaDestino={setContaDestinoML}
+              anuncioId={anuncioIdPAIIA}
+              onAnuncioId={setAnuncioIdPAIIA}
+              onFechar={() => setRevisandoPublicacaoML(false)}
+            />
+          </>
+        )}
+
+        <div style={acoes}>
+          <button
+            type="button"
+            onClick={() => setScreen?.("centralPublicacao")}
+            style={botaoSecundario}
+          >
+            ⬅ Central de Publicação
+          </button>
+        </div>
       </div>
     );
   }
@@ -3115,6 +3984,63 @@ async function atualizarCategoria() {
           🖼 {fotos.length} foto(s)
           recebida(s) do anúncio.
         </div>
+      </section>
+
+      {/* PEÇA E APLICAÇÃO (identificação) — só dados confirmados */}
+      <section data-paiia-identificacao style={bloco}>
+        <h3 style={titulo}>
+          🔎 Peça e aplicação
+        </h3>
+
+        <Campo
+          label="Nome da peça"
+          value={nomePeca}
+          onChange={setNomePeca}
+          placeholder="Ex.: Pressostato, sensor, bico injetor..."
+        />
+        <p style={{ ...textoAuxiliar, marginTop: "6px" }}>
+          {nomePecaBase
+            ? "Nome vindo da base/catálogo do PAIIA. Corrija se necessário."
+            : "A base não informou o nome da peça. Informe para usar na identificação."}
+        </p>
+
+        <div data-paiia-aplicacoes-identificacao style={{ marginTop: "12px", display: "grid", gap: "6px" }}>
+          {aplicacoesConfirmadas.length ? (
+            aplicacoesConfirmadas.slice(0, 8).map((a, i) => (
+              <div key={i} style={linhaAplicacao}>
+                <span>
+                  {nomePeca ? <strong>{nomePeca} · </strong> : null}
+                  {textoAplicacao(a)}
+                </span>
+                <span style={seloOrigemAplicacao(a.origem)}>
+                  {a.origem === "manual" ? "manual" : "base"}
+                </span>
+              </div>
+            ))
+          ) : (
+            <div style={{ ...linhaAplicacao, color: "#fbbf24", fontWeight: "bold" }}>
+              ⚠ PENDENTE — sem aplicação confirmada
+            </div>
+          )}
+          {aplicacoesConfirmadas.length > 8 && (
+            <span style={textoAuxiliar}>
+              + {aplicacoesConfirmadas.length - 8} aplicação(ões) — lista completa no bloco ⑨.
+            </span>
+          )}
+        </div>
+
+        {palavrasChave.length > 0 && (
+          <div data-paiia-palavras-chave style={{ marginTop: "12px" }}>
+            <div style={{ ...textoAuxiliar, marginBottom: "6px" }}>
+              Identificação / palavras-chave (só com peça, montadora, modelo e motor confirmados):
+            </div>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {palavrasChave.map((p) => (
+                <span key={p} style={chipPalavra}>{p}</span>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* PAIIA - INTELIGÊNCIA DE BUSCA */}
@@ -4273,14 +5199,15 @@ async function atualizarCategoria() {
         </h3>
 
         <div data-paiia-conferencia-peso style={{ marginBottom: "16px" }}>
-          {contaMLAtivaConferencia ? (
+          {contaSimulacaoML ? (
             <PesoEmbalagemML
               sku={sku || numeroPeca || codigo}
               categoriaId={categoriaId}
               preco={preco}
               tipoAnuncio={modalidade}
-              contaML={contaMLAtivaConferencia.ml_user_id}
+              contaML={contaSimulacaoML}
               onChange={setLogisticaConferencia}
+              valorInicial={fichaSalva?.campos?.logistica || null}
               semTitulo
             />
           ) : (
@@ -4296,7 +5223,7 @@ async function atualizarCategoria() {
             as medidas de fábrica/envio ficam recolhidas (continuam valendo). */}
         <details
           data-paiia-outras-medidas
-          open={!contaMLAtivaConferencia}
+          open={!contaSimulacaoML}
           style={{ marginTop: "4px" }}
         >
           <summary style={{ color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
@@ -4452,9 +5379,9 @@ async function atualizarCategoria() {
         margin: 0,
       }}
     >
-      Compatibilidades recuperadas da
-      Base Mestre e dos catálogos
-      técnicos do PAIIA.
+      Automáticas: vindas confirmadas da Base Mestre e dos catálogos
+      técnicos do PAIIA. Manuais: cadastradas e confirmadas por você.
+      O PAIIA não completa compatibilidade por suposição.
     </p>
 
     <span
@@ -4479,14 +5406,65 @@ async function atualizarCategoria() {
     </span>
   </div>
 
-  <AreaTexto
-    value={compatibilidades}
-    onChange={
-      setCompatibilidades
-    }
-    placeholder="As aplicações encontradas pelo PAIIA aparecerão aqui."
-    minHeight="220px"
-  />
+  <div data-paiia-lista-aplicacoes style={{ display: "grid", gap: "6px", marginBottom: "12px" }}>
+    {aplicacoesConfirmadas.length ? (
+      aplicacoesConfirmadas.map((a, i) => {
+        const indiceManual = a.origem === "manual" ? aplicacoesManuais.indexOf(a) : -1;
+        return (
+          <div key={i} style={linhaAplicacao}>
+            <span>{textoAplicacao(a)}</span>
+            <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <span style={seloOrigemAplicacao(a.origem)}>{a.origem === "manual" ? "manual" : "base"}</span>
+              {indiceManual >= 0 && (
+                <button type="button" onClick={() => removerAplicacaoManual(indiceManual)} style={botaoMini}>
+                  Remover
+                </button>
+              )}
+            </span>
+          </div>
+        );
+      })
+    ) : (
+      <div style={{ ...linhaAplicacao, color: "#fbbf24", fontWeight: "bold" }}>
+        ⚠ PENDENTE — sem aplicação confirmada
+      </div>
+    )}
+  </div>
+
+  <div data-paiia-aplicacao-manual style={{ padding: "12px", borderRadius: "10px", border: "1px solid #334155", background: "#020617", marginBottom: "12px" }}>
+    <div style={{ color: "#e2e8f0", fontWeight: "bold", fontSize: "13px", marginBottom: "6px" }}>
+      ➕ Cadastrar aplicação manual
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px" }}>
+      <Campo label="Montadora *" value={novaAplicacao.montadora} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, montadora: v })} placeholder="Renault" />
+      <Campo label="Modelo *" value={novaAplicacao.modelo} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, modelo: v })} placeholder="Symbol" />
+      <Campo label="Motor" value={novaAplicacao.motor} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, motor: v })} placeholder="1.6 16V" />
+      <Campo label="Ano inicial" value={novaAplicacao.anoInicio} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, anoInicio: v })} placeholder="2009" maxLength={4} />
+      <Campo label="Ano final" value={novaAplicacao.anoFim} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, anoFim: v })} placeholder="2013" maxLength={4} />
+      <Campo label="Versão" value={novaAplicacao.versao} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, versao: v })} placeholder="Opcional" />
+    </div>
+    <p style={{ ...textoAuxiliar, marginTop: "6px" }}>
+      Preencha só o que você confirmou. Campo em branco fica em branco — o PAIIA não completa.
+    </p>
+    {avisoNovaAplicacao && <p style={{ color: "#fca5a5", fontSize: "12px", margin: "6px 0 0" }}>⚠ {avisoNovaAplicacao}</p>}
+    <button type="button" data-paiia-confirmar-aplicacao onClick={confirmarNovaAplicacao} style={{ ...botaoMini, marginTop: "8px", padding: "8px 14px", background: "#2563eb", border: "1px solid #2563eb", color: "#fff" }}>
+      ✔ Confirmar aplicação
+    </button>
+  </div>
+
+  <details>
+    <summary style={{ color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
+      Texto das compatibilidades (gerado a partir da lista; pode ajustar)
+    </summary>
+    <AreaTexto
+      value={compatibilidades}
+      onChange={
+        setCompatibilidades
+      }
+      placeholder="As aplicações confirmadas aparecerão aqui."
+      minHeight="180px"
+    />
+  </details>
 </section>
 
       {/* 10 - PAGAMENTO */}
@@ -4524,6 +5502,35 @@ async function atualizarCategoria() {
           placeholder="Descrição completa do anúncio"
           minHeight="220px"
         />
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <button
+            type="button"
+            data-paiia-montar-descricao
+            onClick={() => {
+              const nova = montarDescricaoPadrao({
+                nomePeca,
+                titulo: tituloAnuncio,
+                aplicacoes: lerAplicacoesAprovadas({ texto: compatibilidades }),
+                codigos: [numeroPeca, codigo, anuncio?.oem].filter(Boolean),
+                condicao,
+                mesesGarantia: tipoGarantia === "sem_garantia" ? "" : mesesGarantia,
+              });
+              if (descricao.trim() && descricao.trim() !== nova && !window.confirm("Substituir a descrição atual pela descrição padrão montada com os dados aprovados?")) return;
+              setDescricao(nova);
+            }}
+            style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#334155", color: "#e2e8f0", cursor: "pointer", fontWeight: 700 }}
+          >
+            📝 Montar descrição padrão
+          </button>
+          <span style={{ color: "#94a3b8", fontSize: 12 }}>
+            Usa só dados aprovados: peça, aplicações (modelo, motor, anos), códigos, condição, garantia e a orientação de conferir o código. Sem marca, sem montadora e sem "original".
+          </span>
+        </div>
+        {descricaoAfirmaOriginal(descricao) && (
+          <p style={{ color: "#fca5a5", fontSize: 13 }} data-paiia-descricao-original>
+            ⚠ A descrição afirma "original/genuína". Sem comprovação isso não pode ser publicado.
+          </p>
+        )}
       </section>
 
       {/* 12 - LIMITE */}
@@ -4627,10 +5634,64 @@ async function atualizarCategoria() {
   ⑮ Categoria Mercado Livre
 </h3>
 
+<div
+  data-paiia-categoria-definida
+  style={{
+    padding: "14px 16px",
+    borderRadius: "12px",
+    border: categoriaId || categoria.trim() ? "1px solid #22c55e" : "1px solid #f59e0b",
+    background: "#020617",
+    marginBottom: "14px",
+  }}
+>
+  {conflitoProduto && !categoriaId ? (
+    <div data-paiia-conflito-produto style={{ color: "#fde68a", fontSize: "12px", marginBottom: "8px", lineHeight: 1.6 }}>
+      <div style={{ color: "#fbbf24", fontWeight: "bold", fontSize: "13px" }}>
+        PENDENTE — conflito na identificação do produto principal
+      </div>
+      <div>{conflitoProduto.fonte.startsWith("Base") ? "Base" : conflitoProduto.fonte}: <strong style={{ color: "#f8fafc" }}>{conflitoProduto.base}</strong></div>
+      <div>Título: <strong style={{ color: "#f8fafc" }}>{conflitoProduto.titulo}</strong></div>
+    </div>
+  ) : produtoPrincipal.principal ? (
+    <div data-paiia-produto-principal style={{ color: "#cbd5e1", fontSize: "12px", marginBottom: "8px", lineHeight: 1.5 }}>
+      Produto principal (define a categoria): <strong style={{ color: "#f8fafc" }}>{produtoPrincipal.principal}</strong>
+      {produtoPrincipal.fonte ? ` · fonte: ${produtoPrincipal.fonte}` : ""}
+      {produtoPrincipal.acompanha.length ? (
+        <div data-paiia-itens-inclusos style={{ color: "#94a3b8" }}>
+          Acompanha (não define a categoria): {produtoPrincipal.acompanha.join(", ")}
+        </div>
+      ) : null}
+    </div>
+  ) : null}
+  {categoriaId || categoria.trim() ? (
+    <>
+      <div style={{ color: "#86efac", fontWeight: "bold", marginBottom: "6px" }}>
+        ✅ Categoria Mercado Livre selecionada
+      </div>
+      <div style={{ color: "#f8fafc", fontWeight: "bold", lineHeight: 1.5 }}>{categoria || categoriaId}</div>
+      <div style={{ marginTop: "6px", color: "#94a3b8", fontSize: "12px" }}>
+        {categoriaId ? <>ID Mercado Livre: <strong>{categoriaId}</strong></> : "sem ID do Mercado Livre — use a busca abaixo para confirmar"}
+        {origemCategoria ? ` · ${ROTULO_ORIGEM_CATEGORIA[origemCategoria] || origemCategoria}` : ""}
+      </div>
+    </>
+  ) : (
+    <>
+      <div style={{ color: "#fbbf24", fontWeight: "bold" }}>
+        {buscandoCategoria ? "⏳ Procurando a categoria no Mercado Livre..." : "Categoria Mercado Livre: PENDENTE"}
+      </div>
+      {!buscandoCategoria && motivoCategoria && (
+        <div data-paiia-motivo-categoria style={{ marginTop: "6px", color: "#fde68a", fontSize: "12px" }}>
+          Motivo: {motivoCategoria}
+        </div>
+      )}
+    </>
+  )}
+</div>
+
 <p style={textoAuxiliar}>
-  Digite o nome da peça e o PAIIA
-  consulta o Mercado Livre para
-  encontrar a categoria recomendada.
+  {categoriaId || categoria.trim()
+    ? "Busca auxiliar: consulte, confira ou escolha outra categoria. A categoria selecionada só muda se você escolher outra."
+    : "Digite o nome da peça e o PAIIA consulta o Mercado Livre para encontrar a categoria."}
 </p>
 
 <div
@@ -4690,55 +5751,7 @@ async function atualizarCategoria() {
   </div>
 )}
 
-{categoria && (
-  <div
-    style={{
-      padding: "16px",
-      borderRadius: "12px",
-      border:
-        "1px solid #2563eb",
-      background: "#020617",
-      marginBottom: "14px",
-    }}
-  >
-    <div
-      style={{
-        color: "#67e8f9",
-        fontWeight: "bold",
-        marginBottom: "8px",
-      }}
-    >
-      🤖 Categoria recomendada
-    </div>
-
-    <div
-      style={{
-        color: "#f8fafc",
-        lineHeight: 1.5,
-        fontWeight: "bold",
-      }}
-    >
-      {categoria}
-    </div>
-
-    {categoriaId && (
-      <div
-        style={{
-          marginTop: "8px",
-          color: "#94a3b8",
-          fontSize: "12px",
-        }}
-      >
-        ID Mercado Livre:{" "}
-        <strong>
-          {categoriaId}
-        </strong>
-      </div>
-    )}
-  </div>
-)}
-
-{opcoesCategoria.length > 1 && (
+{opcoesCategoria.length > 0 && (
   <div
     style={{
       marginBottom: "16px",
@@ -4751,7 +5764,7 @@ async function atualizarCategoria() {
         marginBottom: "8px",
       }}
     >
-      🔎 Outras categorias encontradas
+      🔎 Categorias encontradas na busca
     </div>
 
     <div
@@ -4765,15 +5778,12 @@ async function atualizarCategoria() {
           <button
             key={opcao.id}
             type="button"
-            onClick={() => {
-              setCategoria(
-                opcao.caminho
-              );
-
-              setCategoriaId(
-                opcao.id
-              );
-            }}
+            onClick={() =>
+              escolherCategoria(
+                opcao,
+                "agora"
+              )
+            }
             style={{
               padding:
                 "12px 14px",
@@ -4805,6 +5815,9 @@ async function atualizarCategoria() {
               }}
             >
               {opcao.id}
+              {opcao.id === categoriaId
+                ? " · selecionada"
+                : " · clique para usar esta categoria"}
             </span>
           </button>
         )
@@ -4813,11 +5826,17 @@ async function atualizarCategoria() {
   </div>
 )}
 
-<AreaTexto
-  value={categoria}
-  onChange={setCategoria}
-  placeholder="Categoria selecionada"
-/>
+<details style={{ marginTop: "6px" }}>
+  <summary style={{ color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
+    Editar o nome da categoria manualmente
+  </summary>
+  <AreaTexto
+    value={categoria}
+    onChange={setCategoria}
+    placeholder="Categoria selecionada"
+  />
+</details>
+
 </section>
 
       {/* 16 - REVISÃO FINAL */}
@@ -4844,25 +5863,38 @@ async function atualizarCategoria() {
         >
           <span>
             🏷️ Categoria ML:{" "}
-            <strong style={{ color: categoria.trim() ? "#86efac" : "#fca5a5" }}>
-              {categoria.trim()
-                ? `${categoria}${categoriaId ? ` (${categoriaId})` : " — sem ID do Mercado Livre"}`
-                : "pendente"}
+            <strong data-paiia-revisao-categoria style={{ color: categoria.trim() || categoriaId ? "#86efac" : "#fca5a5" }}>
+              {categoria.trim() || categoriaId
+                ? `${categoria || categoriaId}${categoriaId ? ` (${categoriaId})` : " — sem ID do Mercado Livre"}`
+                : "PENDENTE"}
             </strong>
           </span>
           <span>
             🚗 Aplicações / compatibilidade:{" "}
             <strong
+              data-paiia-revisao-aplicacoes
               style={{
-                color: String(compatibilidades || "").trim()
+                color: aplicacoesConfirmadas.length || String(compatibilidades || "").trim()
                   ? "#86efac"
                   : "#fbbf24",
               }}
             >
-              {String(compatibilidades || "").trim()
-                ? `${String(compatibilidades).split("\n").filter((l) => l.trim()).length} linha(s) — confira no bloco ⑨`
-                : "⚠ PENDENTE — sem aplicação confirmada (o PAIIA não completa por suposição)"}
+              {aplicacoesConfirmadas.length
+                ? `${aplicacoesConfirmadas.length} confirmada(s)`
+                : String(compatibilidades || "").trim()
+                  ? "texto informado no bloco ⑨"
+                  : "⚠ PENDENTE — sem aplicação confirmada"}
             </strong>
+            {aplicacoesConfirmadas.length > 0 && (
+              <span style={{ display: "block", marginTop: "4px", color: "#e2e8f0", fontSize: "12px", lineHeight: 1.6 }}>
+                {aplicacoesConfirmadas.slice(0, 10).map((a, i) => (
+                  <span key={i} style={{ display: "block" }}>
+                    • {nomePeca ? `${nomePeca} · ` : ""}{textoAplicacao(a)}
+                  </span>
+                ))}
+                {aplicacoesConfirmadas.length > 10 ? <span style={{ display: "block", color: "#94a3b8" }}>+ {aplicacoesConfirmadas.length - 10} no bloco ⑨</span> : null}
+              </span>
+            )}
           </span>
           <span>
             📷 Fotos: <strong>{fotos.length}</strong>
@@ -5145,7 +6177,7 @@ async function atualizarCategoria() {
                     color: "#1c1917",
                   }}
                 >
-                  🟡 Próximo passo: escolher a conta Mercado Livre e validar
+                  🟡 Próximo passo: escolher a conta e publicar
                 </button>
               ) : (
                 <p style={textoAuxiliar}>
@@ -5160,13 +6192,6 @@ async function atualizarCategoria() {
               </p>
             </div>
 
-            {revisandoPublicacaoML && anuncioConferido && (
-              <RevisaoPublicacaoML
-                anuncio={anuncioConferido}
-                titulo={anuncioConferido.titulo}
-                onFechar={() => setRevisandoPublicacaoML(false)}
-              />
-            )}
           </section>
         )}
 
@@ -5355,6 +6380,49 @@ const fotoCard = {
   justifyContent: "center",
 };
 
+const linhaAplicacao = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: "10px",
+  padding: "8px 10px",
+  borderRadius: "8px",
+  border: "1px solid #1e293b",
+  background: "#020617",
+  color: "#e2e8f0",
+  fontSize: "13px",
+  textAlign: "left",
+};
+
+const seloOrigemAplicacao = (origem) => ({
+  padding: "2px 8px",
+  borderRadius: "999px",
+  fontSize: "11px",
+  fontWeight: "bold",
+  border: `1px solid ${origem === "manual" ? "#a855f7" : "#22c55e"}`,
+  color: origem === "manual" ? "#d8b4fe" : "#86efac",
+  whiteSpace: "nowrap",
+});
+
+const chipPalavra = {
+  padding: "5px 10px",
+  borderRadius: "999px",
+  border: "1px solid #0891b2",
+  background: "#083344",
+  color: "#a5f3fc",
+  fontSize: "12px",
+};
+
+const botaoMini = {
+  padding: "4px 10px",
+  borderRadius: "8px",
+  border: "1px solid #334155",
+  background: "#0f172a",
+  color: "#e2e8f0",
+  fontSize: "12px",
+  cursor: "pointer",
+};
+
 const resumoLinha = {
   marginTop: "10px",
   padding: "12px",
@@ -5435,3 +6503,253 @@ const valorInteligenciaPreco = {
   color: "#f8fafc",
   fontSize: "18px",
 };
+
+// =====================================================
+// RECUPERAÇÃO DA FICHA (F5 / reabertura)
+// Com ?ficha=<ID> no endereço, a Conferência é remontada a partir da ficha
+// gravada na base PAIIA (Supabase) — a fonte de verdade —, direto na
+// Publicação, sem nova ficha e sem repetir a Conferência.
+// =====================================================
+function lerFichaDoEndereco() {
+  try {
+    const id = new URL(window.location.href).searchParams.get("ficha") || "";
+    return /^[0-9a-f-]{36}$/i.test(id) ? id : "";
+  } catch {
+    return "";
+  }
+}
+
+export default function MercadoLivreTeste(props) {
+  const [fichaUrl] = useState(lerFichaDoEndereco);
+  const [estado, setEstado] = useState(() => ({ pronto: !fichaUrl, erro: "" }));
+
+  useEffect(() => {
+    if (!fichaUrl) return undefined;
+    let ativo = true;
+    (async () => {
+      const r = await obterAnuncio(fichaUrl);
+      if (!ativo) return;
+      const dados = r.ok ? r.anuncio.dados_conferencia || {} : {};
+      if (!r.ok || !dados.ficha?.anuncioConferido) {
+        setEstado({ pronto: false, erro: r.erro || "A ficha deste anúncio não tem os dados aprovados para recuperar." });
+        return;
+      }
+      if (publicacaoExiste(r.anuncio.publicacao)) {
+        // O MLB já existe (com ou sem pendência): nunca reabre para publicar de novo.
+        const pend = pendenciaPublicacao(r.anuncio.publicacao);
+        setEstado({ pronto: false, erro: `Este anúncio já foi publicado (${r.anuncio.publicacao.mlb_id || "MLB"})${pend ? ` e está COM PENDÊNCIA: ${pend.replace(/^PENDÊNCIA — /, "")} A correção é feita no mesmo MLB, sem publicar de novo.` : "."}` });
+        return;
+      }
+      // A base é a fonte: a cópia do navegador é refeita a partir dela.
+      try {
+        const chave = String(r.anuncio.codigo || dados.anuncio.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        // Fotos: as APROVADAS na Conferência (gravadas na ficha da base).
+        const conferido = dados.ficha.anuncioConferido;
+        const fotosAprovadas = Array.isArray(conferido.fotos) ? conferido.fotos.filter(Boolean) : [];
+        const anuncioBase = {
+          ...(dados.anuncio || {}),
+          codigo: dados.anuncio?.codigo || conferido.codigo || r.anuncio.codigo,
+          titulo: dados.anuncio?.titulo || conferido.titulo,
+          descricao: dados.anuncio?.descricao ?? conferido.descricao,
+          preco: dados.anuncio?.preco ?? conferido.preco,
+          fotos: fotosAprovadas,
+          imagens: fotosAprovadas,
+        };
+        window.__paiiaAnuncioSimulador = null;
+        window.__paiiaFotosPublicacao = fotosAprovadas;
+        localStorage.setItem("mlAnuncioTeste", JSON.stringify(anuncioBase));
+        const mapa = JSON.parse(localStorage.getItem("paiiaConferenciaPorCodigo") || "{}");
+        mapa[chave] = {
+          ...dados.ficha,
+          campos: {
+            ...(dados.ficha.campos || {}),
+            anuncioIdPAIIA: r.anuncio.id,
+            contaDestinoML: String(r.anuncio.conta_destino_ml_user_id || ""),
+          },
+          // A aprovação vem da base: a tela reabre já aprovada (na Publicação
+          // nada é editável; a Conferência só reaparece se o usuário pedir).
+          assinaturaAprovada: dados.ficha.assinaturaAprovada || "aprovada-na-base",
+          etapa: "publicacao",
+          salvoEm: new Date().toISOString(),
+        };
+        localStorage.setItem("paiiaConferenciaPorCodigo", JSON.stringify(mapa));
+      } catch (erro) {
+        setEstado({ pronto: false, erro: `Não foi possível preparar a tela: ${erro?.name || erro}` });
+        return;
+      }
+      setEstado({ pronto: true, erro: "" });
+    })();
+    return () => { ativo = false; };
+  }, [fichaUrl]);
+
+  // Saiu da Conferência/Publicação: o endereço deixa de apontar a ficha.
+  useEffect(() => () => {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("ficha")) {
+        url.searchParams.delete("ficha");
+        window.history.replaceState(window.history.state, "", url.toString());
+      }
+    } catch {
+      // ignora
+    }
+  }, []);
+
+  if (!estado.pronto) {
+    return (
+      <div data-paiia-recuperando-ficha style={{ width: "100%", maxWidth: "1180px", margin: "30px auto" }}>
+        <section style={cabecalho}>
+          {estado.erro ? (
+            <>
+              <p style={{ color: "#fca5a5" }}>❌ {estado.erro}</p>
+              <button type="button" onClick={() => props.setScreen?.("centralPublicacao")} style={botaoSecundario}>
+                ⬅ Central de Publicação
+              </button>
+            </>
+          ) : (
+            <p style={{ color: "#bfdbfe" }}>⏳ Recuperando a ficha do anúncio na base PAIIA...</p>
+          )}
+        </section>
+      </div>
+    );
+  }
+  return <ConferenciaPAIIA {...props} />;
+}
+
+// =====================================================
+// BASE PAIIA — autorização OBRIGATÓRIA para incorporar conhecimento
+// Publicar NÃO autoriza alimentar a base. Só com "SIM, SALVAR NA BASE" e
+// confirmação após a simulação; "NÃO" não bloqueia publicação nem Bling.
+// =====================================================
+function DecisaoBasePAIIA({ anuncioId, existeNaBase, anuncioConferido, aplicacoes, nomePeca }) {
+  const [decisao, setDecisao] = useState({ carregando: true, valor: "", simulacao: null, gravacao: null, erro: "", ocupado: "" });
+
+  useEffect(() => {
+    let ativo = true;
+    if (!anuncioId || existeNaBase) {
+      setDecisao((d) => ({ ...d, carregando: false }));
+      return undefined;
+    }
+    (async () => {
+      const r = await obterAnuncio(anuncioId);
+      if (!ativo) return;
+      const salva = r.ok ? r.anuncio.dados_conferencia?.base_paiia : null;
+      setDecisao((d) => ({ ...d, carregando: false, valor: salva?.decisao || "", gravacao: salva?.gravacao || null }));
+    })();
+    return () => { ativo = false; };
+  }, [anuncioId, existeNaBase]);
+
+  if (existeNaBase || !anuncioId || decisao.carregando) return null;
+
+  // Só dados conferidos/aprovados; nada é completado por suposição.
+  function montarRegistros() {
+    const c = anuncioConferido || {};
+    const categoriaFolha = String(c.categoria || "").split(">").pop().trim();
+    const medida = c.logistica?.confirmado ? c.logistica.medida : null;
+    const obs = [
+      "Confirmado pelo usuário na Conferência PAIIA",
+      c.gtin ? `GTIN ${c.gtin}` : "",
+      c.marca ? `marca anunciada ${c.marca}` : "",
+      c.categoriaId ? `categoria ML ${c.categoriaId}` : "",
+      medida ? `embalagem ${medida.peso_g} g ${medida.comprimento_cm}x${medida.largura_cm}x${medida.altura_cm} cm (confirmada)` : "",
+    ].filter(Boolean).join(" · ");
+    const base = {
+      codigo_oem: c.codigo,
+      peca: nomePeca || c.titulo,
+      fabricante: c.marca || "",
+      origem_catalogo: "Conferência PAIIA (aprovado pelo usuário)",
+      categoria: categoriaFolha,
+      confiabilidade: 90,
+      observacao: obs,
+    };
+    const lista = (aplicacoes || []).filter((a) => a.montadora || a.modelo);
+    if (!lista.length) return [{ ...base, tipo_referencia: "nota_tecnica" }];
+    return lista.map((a) => ({
+      ...base,
+      montadora: a.montadora || "",
+      modelo: a.modelo || "",
+      motor: a.motor || "",
+      ano_inicio: a.anoInicio ? Number(a.anoInicio) : undefined,
+      ano_fim: a.anoFim ? Number(a.anoFim) : undefined,
+      tipo_referencia: "aplicacao_veiculo",
+    }));
+  }
+
+  async function responder(valor) {
+    setDecisao((d) => ({ ...d, ocupado: valor, erro: "" }));
+    const r = await registrarDecisaoBase({ anuncioId, decisao: valor === "sim" ? "autorizado" : "nao_salvar" });
+    if (!r.ok) {
+      setDecisao((d) => ({ ...d, ocupado: "", erro: r.erro || "Não foi possível registrar a decisão." }));
+      return;
+    }
+    let simulacao = null;
+    if (valor === "sim") {
+      // Primeiro só SIMULA (nada é gravado): mostra o que entraria na base.
+      const { data, error } = await supabase.functions.invoke("catalogo-escrita", {
+        body: { acao: "simular_lote", registros: montarRegistros(), meta: { catalogo: "Conferência PAIIA" } },
+      });
+      simulacao = error ? { ok: false, erro: error.message } : data || { ok: false, erro: "Resposta vazia." };
+    }
+    setDecisao((d) => ({ ...d, ocupado: "", valor: valor === "sim" ? "autorizado" : "nao_salvar", simulacao }));
+  }
+
+  async function confirmarGravacao() {
+    setDecisao((d) => ({ ...d, ocupado: "gravar", erro: "" }));
+    const { data, error } = await supabase.functions.invoke("catalogo-escrita", {
+      body: { acao: "gravar_lote", registros: montarRegistros(), meta: { catalogo: "Conferência PAIIA" } },
+    });
+    const gravacao = error ? { ok: false, erro: error.message } : data || { ok: false };
+    if (gravacao.ok) {
+      await registrarDecisaoBase({ anuncioId, decisao: "autorizado", detalhe: { gravacao: { lote_id: gravacao.lote_id || gravacao.loteId || null, inseridos: gravacao.inseridos ?? null } } });
+    }
+    setDecisao((d) => ({ ...d, ocupado: "", gravacao }));
+  }
+
+  return (
+    <section data-paiia-decisao-base style={{ ...bloco, border: "1px solid #a855f7" }}>
+      <strong style={{ color: "#e9d5ff" }}>📚 Base PAIIA</strong>
+      {!decisao.valor ? (
+        <>
+          <p style={{ color: "#e2e8f0", margin: "8px 0" }}>
+            Este produto ainda não existe na base PAIIA. Deseja salvar os dados conferidos na base para reaproveitamento futuro?
+          </p>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button type="button" data-paiia-base-sim disabled={!!decisao.ocupado} onClick={() => responder("sim")} style={botaoPrincipal}>
+              SIM, SALVAR NA BASE
+            </button>
+            <button type="button" data-paiia-base-nao disabled={!!decisao.ocupado} onClick={() => responder("nao")} style={botaoSecundario}>
+              NÃO, SOMENTE ESTE ANÚNCIO
+            </button>
+          </div>
+          <p style={{ ...textoAuxiliar, marginTop: 8 }}>Publicar não salva nada na base: são decisões separadas.</p>
+        </>
+      ) : decisao.valor === "nao_salvar" ? (
+        <p data-paiia-base-decisao="nao" style={{ color: "#94a3b8", margin: "8px 0 0" }}>
+          Decidido: <b>somente este anúncio</b>. Nada é incorporado à base PAIIA; a publicação e o Bling seguem normalmente.
+        </p>
+      ) : (
+        <div data-paiia-base-decisao="sim" style={{ color: "#e2e8f0", fontSize: 14, marginTop: 8 }}>
+          <div>Autorizado salvar na base PAIIA ({montarRegistros().length} registro(s), só dados conferidos).</div>
+          {decisao.gravacao?.ok ? (
+            <div style={{ color: "#86efac" }}>✅ Gravado na base PAIIA{decisao.gravacao.lote_id ? ` (lote ${String(decisao.gravacao.lote_id).slice(0, 8)})` : ""}.</div>
+          ) : (
+            <>
+              {decisao.simulacao && (
+                <div style={{ color: decisao.simulacao.ok ? "#bae6fd" : "#fca5a5" }}>
+                  {decisao.simulacao.ok
+                    ? `Simulação: ${decisao.simulacao.novos ?? decisao.simulacao.resumo?.novos ?? "?"} novo(s), ${decisao.simulacao.existentes ?? decisao.simulacao.resumo?.existentes ?? "?"} já existente(s). Nada foi gravado ainda.`
+                    : `Simulação indisponível: ${decisao.simulacao.erro}`}
+                </div>
+              )}
+              <button type="button" data-paiia-base-confirmar disabled={!!decisao.ocupado} onClick={confirmarGravacao} style={{ ...botaoPrincipal, marginTop: 8 }}>
+                {decisao.ocupado === "gravar" ? "⏳ Gravando..." : "Confirmar gravação na base PAIIA"}
+              </button>
+              {decisao.gravacao && !decisao.gravacao.ok && <div style={{ color: "#fca5a5" }}>❌ {decisao.gravacao.erro}</div>}
+            </>
+          )}
+        </div>
+      )}
+      {decisao.erro && <p style={{ color: "#fca5a5" }}>❌ {decisao.erro}</p>}
+    </section>
+  );
+}

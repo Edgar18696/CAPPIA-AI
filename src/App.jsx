@@ -119,7 +119,13 @@ const [screen, setScreen] =
   useState(() =>
     // Volta da autorização oficial (Mercado Livre / Bling): abre direto
     // Contas Marketplace para concluir a conexão.
-    retornoOAuthPendente() ? "contasMarketplace" : "home"
+    retornoOAuthPendente()
+      ? "contasMarketplace"
+      : // F5/reabertura de um anúncio na Publicação (?ficha=<ID>): volta direto
+        // para ele; a ficha é recuperada da base PAIIA pelo ID.
+        /[?&]ficha=[0-9a-f-]{36}(&|$)/i.test(window.location.search)
+        ? "mercadoLivreTeste"
+        : "home"
   );
 
 const [

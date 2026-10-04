@@ -566,6 +566,14 @@ export default function CentralPublicacao({
             codigo_equivalente:
               pecaEncontrada?.codigo_equivalente ||
               "",
+            // Categoria ML já definida pela base (se houver) segue para a Conferência.
+            categoria_id:
+              pecaEncontrada?.categoria_id ||
+              "",
+            categoria_nome:
+              pecaEncontrada?.categoria_nome ||
+              pecaEncontrada?.categoria_caminho ||
+              "",
             aplicacoes,
           }
         : null;

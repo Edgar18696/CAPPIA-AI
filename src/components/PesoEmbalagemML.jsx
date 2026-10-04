@@ -79,19 +79,33 @@ function medidaDoBling(p) {
 
 const VAZIO = { peso_g: "", comprimento_cm: "", largura_cm: "", altura_cm: "" };
 
-export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, onChange, contaML, semTitulo = false }) {
+export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, onChange, contaML, semTitulo = false, valorInicial = null }) {
+  // Estado já conferido nesta Conferência (ficha persistente): ao voltar da
+  // Central/atualizar a tela, os campos e a confirmação continuam como estavam.
+  const inicialCompleto = medidaCompleta(valorInicial?.medida);
+  const formInicial = inicialCompleto
+    ? {
+        peso_g: String(valorInicial.medida.peso_g),
+        comprimento_cm: String(valorInicial.medida.comprimento_cm),
+        largura_cm: String(valorInicial.medida.largura_cm),
+        altura_cm: String(valorInicial.medida.altura_cm),
+      }
+    : VAZIO;
   // Simulações de frete/tarifa da conta Mercado Livre escolhida na revisão (conta_ml).
   const chamarML = (acao, extra = {}) => chamarMLServidor(acao, { ...extra, ...(contaML ? { conta_ml: String(contaML) } : {}) });
   const [base, setBase] = useState(null); // resposta da leitura inicial
   const [bling, setBling] = useState(null);
-  const [config, setConfig] = useState(CONFIG_EMBALAGEM_PADRAO);
-  const [form, setForm] = useState(VAZIO);
-  const [modalidade, setModalidade] = useState("");
+  const [config, setConfig] = useState((inicialCompleto && valorInicial?.config_embalagem) || CONFIG_EMBALAGEM_PADRAO);
+  const [form, setForm] = useState(formInicial);
+  const [modalidade, setModalidade] = useState((inicialCompleto && valorInicial?.modalidade) || "");
   const [simulacao, setSimulacao] = useState(null);
-  const [confirmacao, setConfirmacao] = useState(null);
+  const [confirmacao, setConfirmacao] = useState(() =>
+    inicialCompleto && valorInicial?.confirmacao?.ok ? valorInicial.confirmacao : null
+  );
   const [ocupado, setOcupado] = useState("");
   const [erro, setErro] = useState("");
-  const preenchido = useRef("");
+  // Com estado já conferido, a leitura da base não sobrescreve os campos.
+  const preenchido = useRef(inicialCompleto ? (valorInicial?.config_embalagem || CONFIG_EMBALAGEM_PADRAO) : "");
   // Chave da última simulação automática (evita repetir a mesma consulta).
   const ultimaSimulacao = useRef("");
 
@@ -214,6 +228,16 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
       validacao: limites,
       simulacao: simulacaoValida ? simulacao.simulacao : null,
       confirmado: confirmadoAtual,
+      // Dados mínimos da confirmação, para a ficha persistente da Conferência.
+      confirmacao: confirmadoAtual
+        ? {
+            ok: true,
+            dimensoes: confirmacao.dimensoes,
+            config: confirmacao.config,
+            confirmado_em: confirmacao.confirmado_em || "",
+            confirmado_por: confirmacao.confirmado_por || "",
+          }
+        : null,
     });
   }, [medida, nivelEnvio, config, modalidadeAtual, simulacao, confirmacao]); // eslint-disable-line react-hooks/exhaustive-deps
 
