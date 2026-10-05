@@ -190,3 +190,31 @@ test("K/L) modelos sem detalhes, exclusões e dados técnicos voltam no F5 / out
   assert.equal(c.especificacaoTecnica, "M12 × 1,75 × 35");
   assert.equal(c.termoComercial, "Parafuso suporte motor");
 });
+
+// ---------------- Aprovação: compara conteúdo, não formato ----------------
+import { mesmaAprovacao, diferencasAssinatura } from "../../src/services/fichaConferencia.js";
+const ASSIN = ["Parafuso Aço Suporte", "31.51", "PARAFUSO DE AÇO\nCódigo: 7703101596", ["https://x/1.jpg"], "Acessórios > Peças", "MLB271145", "Torken", "7703101596", "RENAULT\n\n• Logan", "", "", "", "", { peso_g: 41, altura_cm: 8, largura_cm: 10, comprimento_cm: 10 }];
+
+test("abrir/F5/versão nova: mesmo conteúdo em outro formato mantém a aprovação", () => {
+  const atual = ["Parafuso Aço Suporte ", 31.51, "PARAFUSO DE AÇO\r\nCódigo: 7703101596\n", ["https://x/1.jpg"], "Acessórios > Peças de Carros", "MLB271145", "Torken", "7703101596", "RENAULT\r\n\r\n• Logan\n", null, undefined, "", "", { comprimento_cm: "10", largura_cm: "10", altura_cm: "8", peso_g: "41" }, 68];
+  assert.equal(mesmaAprovacao(JSON.stringify(ASSIN), JSON.stringify(atual)), true);
+  assert.deepEqual(diferencasAssinatura(JSON.stringify(ASSIN), JSON.stringify(atual)), []);
+});
+
+test("alteração real exige validar de novo e diz o campo; desfazer reconhece de novo", () => {
+  const mudou = [...ASSIN]; mudou[0] = "Outro título";
+  assert.deepEqual(diferencasAssinatura(JSON.stringify(ASSIN), JSON.stringify(mudou)), ["título"]);
+  const kangoo = [...ASSIN]; kangoo[8] = "RENAULT\n\n• Logan\n\n• Kangoo";
+  assert.deepEqual(diferencasAssinatura(JSON.stringify(ASSIN), JSON.stringify(kangoo)), ["compatibilidades"]);
+  const medida = [...ASSIN]; medida[13] = { peso_g: 42, altura_cm: 8, largura_cm: 10, comprimento_cm: 10 };
+  assert.deepEqual(diferencasAssinatura(JSON.stringify(ASSIN), JSON.stringify(medida)), ["peso e medidas confirmados"]);
+  assert.equal(mesmaAprovacao(JSON.stringify(ASSIN), JSON.stringify([...ASSIN])), true, "desfez: igual de novo");
+});
+
+test("quantidade: aprovação nova compara; aprovação antiga (sem o campo) não cai", () => {
+  const a = [...ASSIN, 68];
+  assert.equal(mesmaAprovacao(JSON.stringify(a), JSON.stringify([...ASSIN, 68])), true);
+  assert.deepEqual(diferencasAssinatura(JSON.stringify(a), JSON.stringify([...ASSIN, 67])), ["quantidade"]);
+  assert.equal(mesmaAprovacao(JSON.stringify(ASSIN), JSON.stringify([...ASSIN, 68])), true);
+  assert.deepEqual(diferencasAssinatura("aprovada-na-base", JSON.stringify(ASSIN)), ["assinatura ilegível"]);
+});

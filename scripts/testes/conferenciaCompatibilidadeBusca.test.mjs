@@ -193,3 +193,28 @@ test("base/catálogo com vários modelos sem motor/ano: vira modelos sem detalhe
   // nenhum modelo sem detalhes chega à tabela oficial do ML
   assert.equal(separarAplicacoesParaML(r.modelos).detalhadas.length, 0);
 });
+
+// ---------------- Rodada 3 (05/10): falso código "INFORMADO" ----------------
+import { pareceCodigo } from "../../src/services/inteligenciaBusca.js";
+
+test("palavra só com letras nunca vira código (código informado / da peça / de referência)", () => {
+  const desc = "PARAFUSO DE AÇO\n\nCódigo de Referência:\n7703101596\n\nATENÇÃO: Antes de efetuar a compra, verifique o código da peça instalada em seu veículo. A compatibilidade deve ser confirmada comparando o código informado neste anúncio com o código da peça do veículo.\nRef.: ABCDEF\nCódigo informado\nCódigo da peça\nCódigo de referência";
+  assert.deepEqual(extrairDadosDescricao(desc).codigos, ["7703101596"]);
+  for (const w of ["INFORMADO", "informado", "PEÇA", "REFERENCIA", "ABCDEF", ""]) assert.equal(pareceCodigo(w), false, w);
+});
+
+test("códigos reais alfanuméricos (com número) continuam sendo reconhecidos", () => {
+  const c = extrairDadosDescricao("Código: 0280158276\nRef: 16600-3AC0A\nOEM: K2-7703035048\nCódigo: SF5293161aa").codigos;
+  assert.deepEqual(c, ["0280158276", "16600-3AC0A", "K2-7703035048", "SF5293161AA"]);
+  const t = termosConfirmados({ codigos: ["7703101596", "INFORMADO"] }).map((x) => x.termo);
+  assert.deepEqual(t, ["7703101596"]);
+});
+
+test("7703101596 real: função preenchida + 7 modelos (com Kangoo) → buscas pedidas, sem INFORMADO", () => {
+  const modelos = ["Logan", "Sandero", "Duster", "Kangoo", "Laguna", "Megane", "Grand Scenic"].map((modelo) => ({ montadora: "Renault", modelo }));
+  const b = gerarIntencoesBusca({ codigos: ["7703101596", "INFORMADO"], nomePeca: "Parafuso de Aço", funcao: "Suporte do conjunto de transmissão e motor", medida: "M12x1,75-35", modelos }).map((x) => x.texto);
+  for (const m of ["Logan", "Sandero", "Duster", "Kangoo", "Laguna", "Megane", "Grand Scenic"]) assert.ok(b.includes(`Parafuso suporte motor ${m}`), m);
+  assert.ok(b.includes("7703101596"));
+  assert.ok(!b.some((x) => /INFORMADO/i.test(x)));
+  assert.ok(!b.some((x) => /\b(19|20)\d{2}\b/.test(x)), "sem ano inventado");
+});

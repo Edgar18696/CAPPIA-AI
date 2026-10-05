@@ -23,7 +23,7 @@ import {
   publicacaoExiste,
   pendenciaPublicacao,
 } from "../services/anuncioPublicacaoService";
-import { montarRecuperacaoDaFicha, urlsFotosFicha } from "../services/fichaConferencia";
+import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
 import {
   separarModelos,
   separarAplicacoesBase,
@@ -1791,6 +1791,11 @@ function moverFoto(
   const assinaturaAprovadaRef = useRef(
     (fichaSalva?.anuncioConferido && fichaSalva?.assinaturaAprovada) || ""
   );
+  // Aprovação guardada quando um campo relevante muda de verdade: se o
+  // usuário desfizer e os dados voltarem a ser os aprovados, ela volta.
+  const aprovacaoGuardadaRef = useRef(
+    (!fichaSalva?.anuncioConferido && fichaSalva?.aprovacaoAnterior?.assinatura && fichaSalva.aprovacaoAnterior) || null
+  );
 
   // Etapa do fluxo DESTE anúncio: "conferencia" → "publicacao".
   // Fica na ficha: depois de aprovada, a Conferência não reaparece ao voltar
@@ -2482,22 +2487,51 @@ const [
     larguraEnvio,
     alturaEnvio,
     logisticaConferencia?.medida || null,
+    normalizarQuantidade(quantidadeEstoque),
   ]);
 
+  // A aprovação compara o CONTEÚDO (não o formato): abrir/revisar, F5,
+  // navegar ou abrir uma ficha antiga na versão nova não derrubam a
+  // aprovação. Só uma alteração real em campo relevante exige validar de
+  // novo — e, se o usuário desfizer, a aprovação guardada volta.
   useEffect(() => {
-    // Nada mudou desde a aprovação (ex.: voltou da Central): mantém pronto.
-    if (assinaturaAprovadaRef.current && assinaturaAprovadaRef.current === assinaturaConferencia) return;
-    // Na PUBLICAÇÃO não há edição: a aprovação só cai por mudança feita na
-    // Conferência. Diferença vinda da recuperação (F5/reabertura) é adotada.
-    if (etapaFluxo === "publicacao" && assinaturaAprovadaRef.current && anuncioConferido) {
-      assinaturaAprovadaRef.current = assinaturaConferencia;
+    const aprovada = assinaturaAprovadaRef.current;
+    if (aprovada && anuncioConferido) {
+      if (mesmaAprovacao(aprovada, assinaturaConferencia)) {
+        // Diagnóstico: só o FORMATO mudou (antes, isso derrubava a aprovação).
+        if (typeof window !== "undefined" && aprovada !== assinaturaConferencia) {
+          try {
+            const a = JSON.parse(aprovada), b = JSON.parse(assinaturaConferencia);
+            window.__paiiaSoFormatoMudou = a.map((v, i) => (JSON.stringify(v) !== JSON.stringify(b[i]) ? i : -1)).filter((i) => i >= 0);
+          } catch { /* assinatura antiga ilegível */ }
+        }
+        return;
+      }
+      const mudou = diferencasAssinatura(aprovada, assinaturaConferencia);
+      if (typeof window !== "undefined") window.__paiiaDiferencasAprovacao = mudou;
+      // Assinatura antiga ilegível, ou PUBLICAÇÃO (sem edição; diferença
+      // vinda da recuperação): adota a atual e mantém a aprovação.
+      if (mudou.includes("assinatura ilegível") || etapaFluxo === "publicacao") {
+        assinaturaAprovadaRef.current = assinaturaConferencia;
+        return;
+      }
+      aprovacaoGuardadaRef.current = { assinatura: aprovada, anuncioConferido, payloadTeste, campos: mudou };
+      assinaturaAprovadaRef.current = "";
+      setAnuncioConferido(null);
+      setEtapaFluxo("conferencia");
+      setValidado(false);
       return;
     }
-    assinaturaAprovadaRef.current = "";
-    setAnuncioConferido(null);
-    setEtapaFluxo("conferencia");
-    setValidado(false);
-  }, [assinaturaConferencia]);
+    const guardada = aprovacaoGuardadaRef.current;
+    if (guardada && mesmaAprovacao(guardada.assinatura, assinaturaConferencia)) {
+      aprovacaoGuardadaRef.current = null;
+      assinaturaAprovadaRef.current = guardada.assinatura;
+      setAnuncioConferido(guardada.anuncioConferido);
+      setPayloadTeste(guardada.payloadTeste || null);
+      setValidado(Boolean(guardada.payloadTeste));
+      setPendenciasRevisao([]);
+    }
+  }, [assinaturaConferencia]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function importarBannerDoComputador() {
     const input =
@@ -3342,6 +3376,7 @@ useEffect(() => {
       anuncioConferido: conferidoLeve,
       payloadTeste: payloadLeve,
       assinaturaAprovada: conferidoLeve ? assinaturaAprovadaRef.current : "",
+      aprovacaoAnterior: conferidoLeve ? null : copiaLeve(aprovacaoGuardadaRef.current),
       etapa: conferidoLeve ? etapaFluxo : "conferencia",
       salvoEm: new Date().toISOString(),
     });
@@ -3427,6 +3462,7 @@ useEffect(() => {
         anuncioConferido: aprovado ? anuncioConferido : null,
         payloadTeste: aprovado && validado ? copiaLeve(payloadTeste) : null,
         assinaturaAprovada: aprovado ? assinaturaAprovadaRef.current : "",
+        aprovacaoAnterior: aprovado ? null : aprovacaoGuardadaRef.current,
         etapa: aprovado ? etapaFluxo : "conferencia",
         fotosForaDaFicha,
       }, 400000) ||
@@ -4032,6 +4068,7 @@ useEffect(() => {
     setValidado(true);
     setPendenciasRevisao([]);
     assinaturaAprovadaRef.current = assinaturaConferencia;
+    aprovacaoGuardadaRef.current = null;
 
     // Fotos do produto na ordem aprovada (banner e vídeo ficam separados).
     setAnuncioConferido({

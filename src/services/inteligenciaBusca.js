@@ -120,12 +120,24 @@ export function extrairFuncoes(texto) {
   return [...new Set(saida)];
 }
 
+/**
+ * Código/OEM: precisa ter pelo menos UM número. Palavra só com letras
+ * ("informado", "peça", "referência") nunca é código.
+ */
+export function pareceCodigo(valor) {
+  const t = limpar(valor).toUpperCase();
+  return /\d/.test(t) && t.replace(/[^A-Z0-9]/g, "").length >= 4;
+}
+
 /** Códigos rotulados na descrição ("Código: 7703101596", "Código:- 7703101596", "Ref.: ..."). */
 export function extrairCodigos(texto) {
   const saida = [];
   const re = /(?:c[oó]d(?:igo)?(?:\s+de\s+refer[eê]ncia)?|ref(?:er[eê]ncia)?\.?|oem)\s*[:.\-–]*\s*([A-Z0-9][A-Z0-9./-]{4,})/gi;
   let m;
-  while ((m = re.exec(String(texto || "")))) saida.push(m[1].replace(/[./-]+$/, "").toUpperCase());
+  while ((m = re.exec(String(texto || "")))) {
+    const c = m[1].replace(/[./-]+$/, "").toUpperCase();
+    if (pareceCodigo(c)) saida.push(c);
+  }
   return [...new Set(saida)];
 }
 
@@ -143,7 +155,7 @@ function normalizarCodigos(lista) {
   for (const c of lista || []) {
     const t = limpar(c).toUpperCase();
     const k = t.replace(/[^A-Z0-9]/g, "");
-    if (k.length < 4 || vistos.has(k)) continue;
+    if (!pareceCodigo(t) || vistos.has(k)) continue;
     vistos.add(k);
     saida.push(t);
   }
