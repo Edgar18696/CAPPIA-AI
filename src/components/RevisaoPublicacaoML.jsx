@@ -23,8 +23,10 @@ import {
   marcaInvalida,
   descricaoAfirmaOriginal,
   conferirPublicacao,
+  separarAplicacoesParaML,
 } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, decidirCriacaoBling, conferirProdutoCriado } from "../services/estoqueBlingPAIIA";
 
 /*
  * PUBLICAÇÃO no Mercado Livre — etapa que vem DEPOIS da Conferência PAIIA.
@@ -77,7 +79,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, descricao, compatML, aplicacoes, tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
+function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
   const itens = [];
 
   // Ficha do anúncio na base PAIIA: a conta de destino precisa estar gravada.
@@ -124,7 +126,12 @@ function conferir({ campos, preparo, validacao, estoque, fotosUrls, logistica, f
   }
 
   // Compatibilidades aprovadas → veículos do catálogo do Mercado Livre.
-  if (!aplicacoes.length && String(compatTexto || "").trim()) {
+  // Modelos confirmados SEM ano/motor: ficam na descrição e na busca, mas
+  // NÃO vão para a tabela oficial do ML (zero aplicação > aplicação errada).
+  if (modelosSemDetalhes.length) {
+    itens.push({ item: "Modelos sem detalhes", nivel: "ok", texto: `${modelosSemDetalhes.length} modelo(s) confirmado(s) sem ano/motor (${modelosSemDetalhes.map((a) => a.modelo).join(", ")}) ficam na descrição e na busca; não são vinculados à tabela de compatibilidade do Mercado Livre.` });
+  }
+  if (!aplicacoes.length && !modelosSemDetalhes.length && String(compatTexto || "").trim()) {
     itens.push({ item: "Compatibilidades", nivel: "aviso", texto: "O texto de compatibilidade aprovado não está no formato de aplicações (montadora / • modelo / Motor / Período). Nenhum veículo será vinculado: revise na Conferência." });
   }
   if (aplicacoes.length) {
@@ -156,27 +163,11 @@ function conferir({ campos, preparo, validacao, estoque, fotosUrls, logistica, f
       : { item: "Preço", nivel: "erro", texto: "Preço inválido." }
   );
 
-  // Estoque
-  const qtd = Math.floor(Number(campos.quantidade));
-  if (!(qtd >= 1)) itens.push({ item: "Estoque", nivel: "erro", texto: "Quantidade precisa ser 1 ou mais." });
-  else if (estoque?.ok && estoque.encontrado && estoque.saldoVirtualTotal != null)
-    itens.push({
-      item: "Estoque",
-      nivel: qtd > Number(estoque.saldoVirtualTotal) ? "erro" : "ok",
-      texto: `Bling: ${estoque.saldoVirtualTotal} disponível (SKU ${estoque.produto?.codigo}). Anúncio: ${qtd}.`,
-    });
-  else
-    itens.push({
-      item: "Estoque",
-      nivel: "aviso",
-      texto: `Quantidade informada à mão: ${qtd}. ${
-        estoque === null
-          ? "Consultando o Bling..."
-          : estoque?.encontrado === false
-            ? "SKU não encontrado no Bling."
-            : "O Bling ainda não libera a leitura de estoque para o PAIIA (falta o escopo de Estoques)."
-      }`,
-    });
+  // Estoque: UMA quantidade confirmada (ficha = Conferência = Publicação =
+  // validação = payload do ML). Nunca assume 1. SKU fora do Bling exige a
+  // criação do produto no Bling antes de validar no Mercado Livre.
+  const est = conferirEstoque({ quantidade: campos.quantidade, confirmada: quantidadeConfirmada, bling: estoque });
+  itens.push({ item: "Estoque", nivel: est.nivel, texto: est.texto });
 
   // Peso e embalagem (bloqueia sem medida validada/informada, fora do
   // limite, sem simulação com os valores atuais ou sem confirmação).
@@ -243,7 +234,7 @@ async function chamar(acao, extra = {}, contaML = "") {
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
 
-export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId }) {
+export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada }) {
   const [conexao, setConexao] = useState(null);
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
@@ -373,10 +364,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   // SKU oficial deste anúncio (SKU específico ou o código da peça).
   const skuEnvio = skuOficial({ sku: anuncio?.sku, codigo: anuncio?.codigo || anuncio?.oem });
 
+  // Quantidade: a CONFIRMADA na ficha (nunca 1 por padrão).
+  const qtdInicial = quantidadeDaFicha(anuncio, quantidadeFicha);
+  const [quantidadeConfirmada, setQuantidadeConfirmada] = useState(qtdInicial.confirmada);
+  const [avisoQuantidade, setAvisoQuantidade] = useState("");
   const [campos, setCampos] = useState(() => ({
     titulo: String(titulo || anuncio?.titulo || "").slice(0, 60),
     preco: String(anuncio?.preco ?? ""),
-    quantidade: 1,
+    quantidade: qtdInicial.valor ? String(qtdInicial.valor) : "",
     tipoAnuncio: anuncio?.tipoAnuncio === "premium" ? "premium" : "classico",
     // Marca e categoria: as APROVADAS na Conferência.
     marca: String(anuncio?.marca || lerMarcaPadrao() || ""),
@@ -390,6 +385,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   const dadosAnuncio = useMemo(
     () => ({
       ...campos,
+      // Mesma quantidade confirmada da ficha (a função recusa se vier vazia).
+      quantidade: quantidadeConfirmada ? normalizarQuantidade(campos.quantidade) : null,
       oem: anuncio?.oem || "",
       // SKU oficial vai ao ML como atributo SELLER_SKU.
       sku: skuEnvio,
@@ -406,7 +403,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         .filter(([, v]) => v && (v.value_id || v.value_name))
         .map(([id, v]) => ({ id, ...(v.value_id ? { value_id: v.value_id } : { value_name: v.value_name }) })),
     }),
-    [campos, anuncio, fotosUrls, extras, logistica, skuEnvio]
+    [campos, anuncio, fotosUrls, extras, logistica, skuEnvio, quantidadeConfirmada]
   );
 
   function alterarExtra(id, valor) {
@@ -417,8 +414,23 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
 
   function alterar(campo, valor) {
     setCampos((c) => ({ ...c, [campo]: valor }));
+    if (campo === "quantidade") { setQuantidadeConfirmada(false); setAvisoQuantidade(""); }
     setValidacao(null);
     setArmado(false);
+  }
+  // Confirma a quantidade e grava na ficha (Conferência + Publicação).
+  function confirmarQuantidade() {
+    const q = normalizarQuantidade(campos.quantidade);
+    if (!q) {
+      setAvisoQuantidade("Informe um número inteiro, 1 ou mais (o PAIIA não assume nenhum valor).");
+      return;
+    }
+    setCampos((c) => ({ ...c, quantidade: String(q) }));
+    setQuantidadeConfirmada(true);
+    setAvisoQuantidade("");
+    setValidacao(null);
+    setArmado(false);
+    onQuantidadeConfirmada?.(q);
   }
 
   async function preparar(categoriaId) {
@@ -489,22 +501,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     return p ? p.publicacao.mlb_id || "já publicado" : "";
   })();
 
-  // Cadastro que SERÁ criado no Bling se o produto não existir (só preparo;
-  // nada é enviado ao Bling nesta fase).
-  const preparoBling = useMemo(() => ({
-    codigo: String(anuncio?.codigo || ""),
-    nome: String(titulo || anuncio?.titulo || ""),
-    preco: String(anuncio?.preco ?? ""),
-    gtin: String(anuncio?.gtin || ""),
-    marca: String(anuncio?.marca || ""),
-    tipo: "P",
-    situacao: "A",
-    formato: "S",
-    pesoBruto_g: logistica?.medida?.peso_g ?? null,
-    dimensoes_cm: logistica?.medida
-      ? { largura: logistica.medida.largura_cm, altura: logistica.medida.altura_cm, profundidade: logistica.medida.comprimento_cm }
-      : null,
-  }), [anuncio, titulo, logistica]);
+  // Cadastro que SERÁ criado no Bling se o produto não existir: só dados
+  // confirmados da ficha (nada inventado). Estoque inicial = quantidade
+  // CONFIRMADA do anúncio.
+  const cadastroBling = useMemo(
+    () => montarProdutoBling({ anuncio, titulo: titulo || anuncio?.titulo, quantidade: quantidadeConfirmada ? campos.quantidade : null, logistica }),
+    [anuncio, titulo, logistica, quantidadeConfirmada, campos.quantidade]
+  );
+  const preparoBling = cadastroBling.produto;
 
   // Estado do Bling gravado na ficha da publicação (somente leitura do Bling).
   useEffect(() => {
@@ -562,10 +566,15 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
 
   // Compatibilidades: SOMENTE as aplicações aprovadas na Conferência,
   // casadas com o catálogo de veículos do ML (consultas somente leitura).
-  const aplicacoes = useMemo(
+  // Só aplicações com dados suficientes (motor e/ou ano confirmados) vão para
+  // a tabela do ML; modelos sem detalhes ficam fora (nunca por suposição).
+  const todasAplicacoes = useMemo(
     () => lerAplicacoesAprovadas({ aplicacoes: anuncio?.aplicacoes, texto: anuncio?.compatibilidades }),
     [anuncio]
   );
+  const separadas = useMemo(() => separarAplicacoesParaML(todasAplicacoes), [todasAplicacoes]);
+  const aplicacoes = separadas.detalhadas;
+  const modelosSemDetalhes = separadas.semDetalhes;
   const [compatML, setCompatML] = useState(null);
   async function resolverCompat(conta) {
     if (!conta || !aplicacoes.length) { setCompatML(null); return; }
@@ -592,31 +601,55 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     return { item, compat };
   }
 
-  // Bling: releitura (somente leitura) e criação do produto só DEPOIS da
-  // publicação e com autorização explícita (não roda sozinho).
+  // Bling: releitura (somente leitura) e criação do produto ANTES de validar
+  // no Mercado Livre, só com clique/autorização (nunca automática).
   const [criacaoBling, setCriacaoBling] = useState(null);
-  async function relerBling() {
+  const [painelBling, setPainelBling] = useState(false);
+  async function lerBling() {
     const sku = String(anuncio?.codigo || "").trim();
-    if (!sku) return;
-    setEstoque(null);
+    if (!sku) return { ok: false, encontrado: false };
     try {
       const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } });
-      setEstoque(data || { ok: false });
+      return data || { ok: false };
     } catch {
-      setEstoque({ ok: false });
+      return { ok: false };
     }
   }
+  async function relerBling() {
+    setEstoque(null);
+    setEstoque(await lerBling());
+  }
   async function criarProdutoBling() {
-    setCriacaoBling({ ocupado: true });
+    if (cadastroBling.faltando.length) return;
+    const enviado = cadastroBling.produto;
+    setCriacaoBling({ ocupado: true, etapa: "Conferindo de novo o SKU no Bling..." });
+    // 1) Releitura imediatamente antes de criar: se já existir, NÃO cria.
+    const antes = await lerBling();
+    const decisao = decidirCriacaoBling(antes);
+    if (decisao.acao !== "criar") {
+      setEstoque(antes);
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, jaExistia: decisao.acao === "ja_existe", erro: decisao.motivo });
+      return;
+    }
+    // 2) Criação (a função confere o SKU de novo no servidor).
+    setCriacaoBling({ ocupado: true, etapa: "Criando o produto no Bling..." });
     const { data, error } = await supabase.functions.invoke("bling-integracao", {
-      body: { acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: preparoBling },
+      body: { acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: enviado },
     });
     const r = error ? { ok: false, erro: error.message } : data || { ok: false, erro: "Resposta vazia." };
-    if (r.ok && r.produto?.id && ficha.anuncioId) {
-      await registrarProdutoBlingCriado({ anuncioId: ficha.anuncioId, blingProdutoId: r.produto.id });
-      await relerBling();
+    if (!r.ok || (!r.criado && !r.ja_existia)) {
+      setCriacaoBling({ ocupado: false, ok: false, erro: r.erro || "O Bling não criou o produto." });
+      return;
     }
-    setCriacaoBling({ ocupado: false, ...r });
+    // 3) Releitura depois: confere ID, SKU e estoque; vincula à ficha.
+    setCriacaoBling({ ocupado: true, etapa: "Relendo o produto no Bling..." });
+    const depois = await lerBling();
+    setEstoque(depois);
+    const conf = r.ja_existia ? { ok: true, problemas: [] } : conferirProdutoCriado({ enviado, criado: r, releitura: depois });
+    const idBling = r.produto?.id || depois?.produto?.id;
+    if (idBling && ficha.anuncioId) await registrarProdutoBlingCriado({ anuncioId: ficha.anuncioId, blingProdutoId: idBling });
+    setCriacaoBling({ ocupado: false, ok: conf.ok, criado: Boolean(r.criado), jaExistia: Boolean(r.ja_existia), produto: { id: idBling, codigo: enviado.codigo }, problemas: conf.problemas, estoqueInicial: r.estoque_inicial || null });
+    setPainelBling(false);
   }
 
   async function validarNoML() {
@@ -773,10 +806,19 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     return (attrTipoVeiculo?.valores || []).find((v) => String(v.id) === String(e.value_id))?.nome || "";
   })();
   const conferencia = conferir({
-    campos, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio,
-    descricao: anuncio?.descricao, compatML, aplicacoes, tipoVeiculoEnvio, tipoVeiculoExigido: Boolean(attrTipoVeiculo && !attrTipoVeiculo.preenchido), compatTexto: anuncio?.compatibilidades,
+    campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio,
+    descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoEnvio, tipoVeiculoExigido: Boolean(attrTipoVeiculo && !attrTipoVeiculo.preenchido), compatTexto: anuncio?.compatibilidades,
   });
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
+  // Ordem do fluxo: quantidade confirmada e produto no Bling ANTES de validar no ML.
+  const blingPronto = Boolean(estoque?.encontrado && !estoque?.ambiguo);
+  const motivoSemValidar = !quantidadeConfirmada
+    ? "Confirme a quantidade antes de validar no Mercado Livre."
+    : !blingPronto
+      ? estoque?.encontrado === false
+        ? "Crie o produto no Bling (botão acima) antes de validar no Mercado Livre."
+        : "O Bling precisa ser consultado (e o SKU encontrado) antes de validar no Mercado Livre."
+      : "";
   // Marca, código e GTIN já têm campo próprio acima.
   const cobertosPelosCampos = {
     BRAND: campos.marca.trim(),
@@ -882,10 +924,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         )}
       </div>
 
-      {/* Bling — controle de estoque (somente leitura nesta fase) */}
+      {/* Bling — produto e estoque (leitura; criação só com clique) */}
       <div data-paiia-bling-publicacao style={bloco}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <strong style={subtitulo}>Bling — controle de estoque</strong>
+          <strong style={subtitulo}>Bling — produto e estoque</strong>
           <button type="button" data-paiia-reler-bling onClick={relerBling} disabled={estoque === null} style={{ ...botaoCinza, padding: "4px 10px" }}>
             🔄 Reler Bling
           </button>
@@ -901,30 +943,65 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             <div>✅ Produto já existe no Bling: <b>{estoque.produto?.nome}</b> (ID {estoque.produto?.id}, SKU {estoque.produto?.codigo}).</div>
             <div data-paiia-bling-estoque>Estoque no Bling: físico <b>{estoque.saldoFisicoTotal ?? "—"}</b> · disponível <b>{estoque.saldoVirtualTotal ?? "—"}</b>{estoque.ok === false && estoque.mensagem ? ` — ${estoque.mensagem}` : ""}</div>
             <div style={info}>Na publicação o anúncio é VINCULADO a este produto (nada é duplicado no Bling). Um produto Bling pode atender anúncios em várias contas Mercado Livre, cada um com o seu MLB.</div>
+            {criacaoBling && !criacaoBling.ocupado && (
+              <div data-paiia-bling-criacao={criacaoBling.ok ? "ok" : "conferir"} style={criacaoBling.ok ? { ...info, color: "#86efac" } : erro}>
+                {criacaoBling.jaExistia
+                  ? `ℹ O SKU já existia no Bling (ID ${criacaoBling.produto?.id || estoque.produto?.id}): nada foi criado; o anúncio foi vinculado a ele.`
+                  : `${criacaoBling.ok ? "✅" : "⚠"} Produto criado no Bling (ID ${criacaoBling.produto?.id}, SKU ${criacaoBling.produto?.codigo}) e vinculado à ficha.`}
+                {criacaoBling.estoqueInicial && !criacaoBling.estoqueInicial.ok ? ` Estoque inicial NÃO lançado: ${criacaoBling.estoqueInicial.erro || "erro do Bling"}.` : ""}
+                {(criacaoBling.problemas || []).map((p) => <div key={p}>• {p}</div>)}
+              </div>
+            )}
           </div>
         ) : estoque?.ok ? (
           <div data-paiia-bling-estado="nao-encontrado" style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>
-            <div>⚠ Produto com SKU <b>{anuncio?.codigo}</b> não existe no Bling.</div>
-            <div style={info}>
-              Cadastro PREPARADO para criar quando a publicação real for liberada (nada é enviado ao Bling agora):
-              {" "}código {preparoBling.codigo} · {preparoBling.nome} · preço {precoTexto(preparoBling.preco) || "—"}
-              {preparoBling.gtin ? ` · GTIN ${preparoBling.gtin}` : ""}{preparoBling.marca ? ` · marca ${preparoBling.marca}` : ""}
-              {preparoBling.pesoBruto_g ? ` · ${preparoBling.pesoBruto_g} g` : ""}
-              {preparoBling.dimensoes_cm ? ` · ${preparoBling.dimensoes_cm.profundidade}×${preparoBling.dimensoes_cm.largura}×${preparoBling.dimensoes_cm.altura} cm` : ""}.
-            </div>
-            {resultado?.ok && resultado.publicado ? (
+            <div>⚠ SKU <b>{anuncio?.codigo}</b> não encontrado no Bling.</div>
+            {!painelBling ? (
               <div style={{ marginTop: 8 }}>
-                <button type="button" data-paiia-criar-bling onClick={criarProdutoBling} disabled={criacaoBling?.ocupado} style={botaoAzul}>
-                  {criacaoBling?.ocupado ? "⏳ Criando no Bling..." : "Criar produto no Bling e vincular a este anúncio"}
+                <button type="button" data-paiia-abrir-criar-bling onClick={() => { setPainelBling(true); setCriacaoBling(null); }} disabled={!contaOk || criacaoBling?.ocupado} style={botaoAzul}>
+                  ➕ Criar produto no Bling
                 </button>
-                {criacaoBling && !criacaoBling.ocupado && (
-                  <p style={criacaoBling.ok ? { ...info, color: "#86efac" } : erro}>
-                    {criacaoBling.ok ? `✅ Produto criado no Bling (ID ${criacaoBling.produto?.id}) e vinculado.` : `❌ ${criacaoBling.erro}`}
-                  </p>
-                )}
+                {!contaOk && <p style={info}>Escolha a conta do Mercado Livre primeiro.</p>}
+                <p style={info}>Nada é criado sem o seu clique. Antes de criar, o PAIIA confere o SKU de novo no Bling (se já existir, não cria outro).</p>
               </div>
             ) : (
-              <p style={info}>A criação no Bling só fica disponível depois da publicação, com o seu clique (nunca automática). Nada é duplicado: o SKU é conferido de novo antes de criar.</p>
+              <div data-paiia-conferir-criar-bling style={{ marginTop: 8, border: "1px solid #334155", borderRadius: 10, padding: 12 }}>
+                <strong>Conferir antes de criar no Bling</strong>
+                <table style={{ width: "100%", fontSize: 13, marginTop: 6, borderCollapse: "collapse" }}>
+                  <tbody>
+                    {[
+                      ["SKU/código", preparoBling.codigo],
+                      ["Descrição/nome", preparoBling.nome],
+                      ["Marca", preparoBling.marca],
+                      ["Preço", precoTexto(preparoBling.preco)],
+                      ["Estoque inicial", preparoBling.estoque_inicial],
+                      ["Peso", preparoBling.pesoBruto_g ? `${preparoBling.pesoBruto_g} g` : ""],
+                      ["Comprimento", preparoBling.dimensoes_cm?.profundidade ? `${preparoBling.dimensoes_cm.profundidade} cm` : ""],
+                      ["Largura", preparoBling.dimensoes_cm?.largura ? `${preparoBling.dimensoes_cm.largura} cm` : ""],
+                      ["Altura", preparoBling.dimensoes_cm?.altura ? `${preparoBling.dimensoes_cm.altura} cm` : ""],
+                      ["GTIN/EAN", preparoBling.gtin || "(sem GTIN — não é inventado)"],
+                    ].map(([k, v]) => (
+                      <tr key={k} data-paiia-bling-campo={k}>
+                        <td style={{ padding: "3px 8px", color: "#94a3b8", width: 160 }}>{k}</td>
+                        <td style={{ padding: "3px 8px", color: v ? "#e2e8f0" : "#fca5a5" }}>{v || "FALTANDO"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {cadastroBling.faltando.length > 0 && (
+                  <p data-paiia-bling-faltando style={erro}>❌ Falta (confirme na ficha antes de criar): {cadastroBling.faltando.join(", ")}.</p>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  <button type="button" data-paiia-confirmar-criar-bling onClick={criarProdutoBling} disabled={cadastroBling.faltando.length > 0 || criacaoBling?.ocupado} style={botaoAzul}>
+                    {criacaoBling?.ocupado ? `⏳ ${criacaoBling.etapa || "Criando..."}` : "✔ Confirmar e criar no Bling"}
+                  </button>
+                  <button type="button" onClick={() => setPainelBling(false)} disabled={criacaoBling?.ocupado} style={botaoCinza}>Cancelar</button>
+                </div>
+                <p style={info}>Somente este produto. O estoque inicial é lançado só nele; nenhum outro produto do Bling é alterado.</p>
+              </div>
+            )}
+            {criacaoBling && !criacaoBling.ocupado && !criacaoBling.ok && (
+              <p data-paiia-bling-criacao="erro" style={erro}>❌ {criacaoBling.erro}</p>
             )}
           </div>
         ) : (
@@ -944,8 +1021,20 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
               <Campo rotulo="Preço (aprovado)">
                 <div style={valorAprovado}>{precoTexto(campos.preco) || "—"}</div>
               </Campo>
-              <Campo rotulo="Quantidade">
-                <input style={entrada} type="number" min={1} value={campos.quantidade} onChange={(e) => alterar("quantidade", e.target.value)} />
+              <Campo rotulo="Quantidade (a mesma da ficha)">
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input data-paiia-pub-quantidade style={entrada} type="number" min={1} step={1} placeholder="Informe" value={campos.quantidade} onChange={(e) => alterar("quantidade", e.target.value)} />
+                  {!quantidadeConfirmada && (
+                    <button type="button" data-paiia-confirmar-quantidade onClick={confirmarQuantidade} style={{ ...botaoAzul, padding: "6px 10px", whiteSpace: "nowrap" }}>✔ Confirmar</button>
+                  )}
+                </div>
+                <div data-paiia-quantidade-estado style={{ fontSize: 12, marginTop: 4, color: quantidadeConfirmada ? "#86efac" : "#fde68a" }}>
+                  {quantidadeConfirmada
+                    ? `✅ ${campos.quantidade} unidade(s) confirmada(s) — gravada na ficha; é esta que vai ao Mercado Livre${estoque?.encontrado ? "" : " e ao Bling"}.`
+                    : avisoQuantidade || (qtdInicial.origem === "ficha_campo_estoque" && campos.quantidade === String(qtdInicial.valor)
+                      ? `Valor da ficha (${qtdInicial.valor}). Confirme para usar.`
+                      : "Informe e confirme a quantidade (o PAIIA não assume nenhum valor).")}
+                </div>
               </Campo>
               <Campo rotulo="Tipo de anúncio (aprovado)">
                 <div style={valorAprovado}>{campos.tipoAnuncio === "premium" ? "Premium" : "Clássico"}</div>
@@ -1040,7 +1129,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             {aplicacoes.length > 0 && (
               <div data-paiia-compat-ml style={{ marginTop: 10, color: "#e2e8f0", fontSize: 13 }}>
                 <b>Compatibilidades (só as aplicações aprovadas):</b>{" "}
-                {aplicacoes.map((a) => `${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`).join(" · ")}
+                {aplicacoes.map((a) => [a.modelo, a.motor, a.anoInicio && a.anoFim ? (a.anoInicio === a.anoFim ? a.anoInicio : `${a.anoInicio}–${a.anoFim}`) : a.anoInicio ? `a partir de ${a.anoInicio}` : a.anoFim ? `até ${a.anoFim}` : ""].filter(Boolean).join(" ")).join(" · ")}
                 {compatML?.carregando && <p style={info}>⏳ Procurando os veículos no catálogo do Mercado Livre...</p>}
                 {compatML?.erro && (
                   <p style={erro}>
@@ -1089,11 +1178,12 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
               type="button"
               data-paiia-validar-ml
               onClick={validarNoML}
-              disabled={!!ocupado || !campos.categoria_id || faltandoSemValor.length > 0}
+              disabled={!!ocupado || !campos.categoria_id || faltandoSemValor.length > 0 || Boolean(motivoSemValidar)}
               style={botaoAzul}
             >
               {ocupado === "validar" ? "⏳ Validando..." : "🔎 Validar dados no Mercado Livre"}
             </button>
+            {motivoSemValidar && <p data-paiia-motivo-sem-validar style={{ ...info, color: "#fde68a" }}>⚠ {motivoSemValidar}</p>}
             {validacao && validacao.ok && validacao.valido && (
               <p style={{ ...info, color: "#86efac" }}>✅ O Mercado Livre aceitou os dados. Nenhum anúncio foi criado.</p>
             )}

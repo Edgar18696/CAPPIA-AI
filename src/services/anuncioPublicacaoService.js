@@ -342,6 +342,63 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
   return { ok: true, disponivel: true, anuncioId: data.id, nova: true };
 }
 
+/**
+ * RASCUNHO PERSISTENTE da Conferência (F5 / voltar / outro navegador).
+ * Desde o início do anúncio existe UMA ficha na base PAIIA; cada alteração
+ * da Conferência é gravada nela (dados_conferencia), com o mesmo formato da
+ * ficha aprovada ({ versao, anuncio, ficha: { campos, origem, ... } }).
+ * - Sem ID: cria a ficha (status "rascunho").
+ * - Com ID de ficha ainda não publicada: atualiza a MESMA ficha.
+ * - Ficha publicada/cancelada: nunca é alterada. Com criarSeFechada (só na
+ *   abertura de um anúncio novo para o mesmo código) cria uma ficha nova;
+ *   sem ele devolve { ok:false, fechada:true } e nada é gravado.
+ * A conta de destino (conta_destino_*) não é tocada aqui.
+ */
+const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendencia", "cancelado"];
+export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConferencia, aprovada = false, criarSeFechada = false }) {
+  const usuarioId = await usuarioAtual();
+  if (!usuarioId) return { ok: false, disponivel: true, erro: "Sessão expirada: entre de novo no PAIIA." };
+  const agora = new Date().toISOString();
+  if (anuncioId) {
+    const atual = await obterAnuncio(anuncioId);
+    if (!atual.ok && !atual.naoEncontrado) return atual;
+    const fechada = atual.ok && (publicacaoExiste(atual.anuncio.publicacao) || STATUS_FICHA_FECHADA.includes(atual.anuncio.status_fluxo));
+    if (atual.ok && !fechada) {
+      const antigos = atual.anuncio.dados_conferencia || {};
+      const { error } = await supabase
+        .from(T_ANUNCIOS)
+        .update({
+          titulo: titulo || null,
+          status_fluxo: aprovada ? "conferencia_aprovada" : "rascunho",
+          // Decisão da Base PAIIA (gravada à parte) nunca é perdida.
+          dados_conferencia: { ...(dadosConferencia || {}), ...(antigos.base_paiia ? { base_paiia: antigos.base_paiia } : {}) },
+          updated_at: agora,
+        })
+        .eq("id", anuncioId);
+      if (error) return falha(error);
+      return { ok: true, disponivel: true, anuncioId, nova: false };
+    }
+    if (fechada && !criarSeFechada) {
+      return { ok: false, disponivel: true, fechada: true, erro: "Esta ficha já foi publicada ou cancelada: não é alterada." };
+    }
+  }
+  const { data, error } = await supabase
+    .from(T_ANUNCIOS)
+    .insert({
+      usuario_id: usuarioId,
+      codigo: String(codigo || ""),
+      codigo_normalizado: normalizarCodigo(codigo),
+      titulo: titulo || null,
+      marketplace: MARKETPLACE_ML,
+      status_fluxo: aprovada ? "conferencia_aprovada" : "rascunho",
+      dados_conferencia: dadosConferencia || {},
+    })
+    .select("id")
+    .single();
+  if (error) return falha(error);
+  return { ok: true, disponivel: true, anuncioId: data.id, nova: true };
+}
+
 /** Ficha criada neste computador e abandonada (o usuário continuou outra). */
 export async function cancelarFichaSemConta(anuncioId) {
   if (!anuncioId) return { ok: true };

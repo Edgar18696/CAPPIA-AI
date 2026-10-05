@@ -2,9 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
+import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
 import {
   lerAplicacoesAprovadas,
   inferirTipoVeiculo,
+  valorTipoVeiculo,
+  tipoVeiculoDaCategoria,
+  tipoVeiculoParaFicha,
   marcaInvalida,
   descricaoAfirmaOriginal,
   montarDescricaoPadrao,
@@ -14,10 +18,22 @@ import { GARANTIA_ML, LINHAS_FIXAS, padroesEsperadosConferencia } from "../servi
 import {
   obterAnuncio,
   salvarFichaAprovada,
+  salvarRascunhoFicha,
   registrarDecisaoBase,
   publicacaoExiste,
   pendenciaPublicacao,
 } from "../services/anuncioPublicacaoService";
+import { montarRecuperacaoDaFicha, urlsFotosFicha } from "../services/fichaConferencia";
+import {
+  separarModelos,
+  separarAplicacoesBase,
+  juntarModelos,
+  separarAplicacoesLegadas,
+  extrairDadosDescricao,
+  termosConfirmados,
+  gerarIntencoesBusca,
+  separarSugestoesConcorrentes,
+} from "../services/inteligenciaBusca";
 
 function normalizarTexto(valor = "") {
   return String(valor || "")
@@ -63,6 +79,7 @@ function normalizarAplicacao(item, origem) {
 }
 
 function textoAnosAplicacao(a) {
+  if (a.anoInicio && a.anoFim && a.anoInicio === a.anoFim) return a.anoInicio;
   if (a.anoInicio && a.anoFim) return `${a.anoInicio} a ${a.anoFim}`;
   if (a.anoInicio) return `a partir de ${a.anoInicio}`;
   if (a.anoFim) return `até ${a.anoFim}`;
@@ -79,6 +96,10 @@ function textoAplicacao(a) {
   ]
     .filter(Boolean)
     .join(" — ");
+}
+
+function chaveAplicacao(a) {
+  return [a?.montadora, a?.modelo, a?.motor, a?.anoInicio, a?.anoFim, a?.versao].join("|").toUpperCase();
 }
 
 function juntarAplicacoes(listas) {
@@ -168,6 +189,11 @@ function gravarFichaConferencia(chave, ficha) {
     console.warn("PAIIA: não foi possível guardar a ficha da conferência.", erro?.name || erro);
   }
 }
+
+// Criação da ficha (uma por anúncio em andamento): se duas gravações
+// chegarem juntas (modo de desenvolvimento roda efeitos 2x), só a primeira
+// cria; as outras esperam o MESMO ID.
+const criandoFichaPorCodigo = new Map();
 
 // Só guarda cópias leves (sem imagens embutidas em base64).
 function copiaLeve(valor, limite = 150000) {
@@ -674,20 +700,16 @@ function formatarCompatibilidadesLegiveis(
             `\n  Motor: ${item.motor}`;
         }
 
-        if (
-          item.anoInicio ||
-          item.anoFim
-        ) {
-          const inicio =
-            item.anoInicio ||
-            "?";
-
-          const fim =
-            item.anoFim ||
-            "Atual";
-
+        // Só o período CONFIRMADO: nada de "até Atual" ou ano inventado.
+        if (item.anoInicio && item.anoFim) {
           bloco +=
-            `\n  Período: ${inicio} até ${fim}`;
+            item.anoInicio === item.anoFim
+              ? `\n  Período: ${item.anoInicio}`
+              : `\n  Período: ${item.anoInicio} até ${item.anoFim}`;
+        } else if (item.anoInicio) {
+          bloco += `\n  Período: a partir de ${item.anoInicio}`;
+        } else if (item.anoFim) {
+          bloco += `\n  Período: até ${item.anoFim}`;
         }
 
         blocos.push(bloco);
@@ -1721,6 +1743,12 @@ function moverFoto(
   );
   // Ficha aprovada gravada na base PAIIA (fonte da recuperação no F5).
   const [fichaBase, setFichaBase] = useState({ pronta: false, erro: "" });
+  // Rascunho desta Conferência já confirmado na base (mesmo ID): só então o
+  // endereço passa a ter ?ficha=<ID>. Ficha recuperada pelo F5 já vem confirmada.
+  const [fichaConfirmada, setFichaConfirmada] = useState(() =>
+    Boolean(window.__paiiaFichaRecuperada) && window.__paiiaFichaRecuperada === String(fichaSalva?.campos?.anuncioIdPAIIA || "")
+  );
+  const [avisoRascunho, setAvisoRascunho] = useState("");
   const fichaBaseGravadaRef = useRef("");
   // Uma gravação por vez (o modo de desenvolvimento roda efeitos 2x; sem
   // esta trava saíam duas fichas iguais no mesmo segundo).
@@ -1940,12 +1968,19 @@ const [
 // Aplicações confirmadas: base/catálogo (automática) + cadastradas e
 // confirmadas pelo usuário (manual). Nada é completado por suposição.
 const produtoAtual = chaveProduto(anuncio?.codigo || anuncio?.oem);
-const [aplicacoesManuais, setAplicacoesManuais] = useState(() => {
+// Aplicações manuais antigas com VÁRIOS modelos numa linha (sem motor/ano)
+// viram "modelos confirmados sem detalhes" — nada é inventado nem apagado.
+const [legadoAplicacoes] = useState(() => {
   const salvas = lerMapaLocal(CHAVE_APLICACOES_MANUAIS)[produtoAtual];
-  return Array.isArray(salvas)
-    ? salvas.map((a) => normalizarAplicacao(a, "manual")).filter(Boolean)
-    : [];
+  const lista = Array.isArray(salvas) ? salvas.map((a) => normalizarAplicacao(a, "manual")).filter(Boolean) : [];
+  return separarAplicacoesLegadas(lista);
 });
+const [aplicacoesManuais, setAplicacoesManuais] = useState(() => legadoAplicacoes.detalhadas);
+// Aplicações vindas da base que o usuário removeu/editou NESTE anúncio.
+const [aplicacoesBaseExcluidas, setAplicacoesBaseExcluidas] = useState(() => inicial("aplicacoesBaseExcluidas", []) || []);
+const [novosModelos, setNovosModelos] = useState({ montadora: "", modelos: "" });
+const [modeloEditando, setModeloEditando] = useState({ indice: -1, montadora: "", modelo: "" });
+const [aplicacaoEditando, setAplicacaoEditando] = useState(null);
 const NOVA_APLICACAO_VAZIA = { montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "", versao: "" };
 const [novaAplicacao, setNovaAplicacao] = useState(NOVA_APLICACAO_VAZIA);
 const [avisoNovaAplicacao, setAvisoNovaAplicacao] = useState("");
@@ -1964,9 +1999,33 @@ const aplicacoesCompatibilidade =
           .aplicacoes
       : [];
 
-const aplicacoesBase = useMemo(
-  () => aplicacoesCompatibilidade.map((a) => normalizarAplicacao(a, "base")).filter(Boolean),
+// Base/catálogo: linha SÓ com montadora + modelo(s) (sem motor, ano e versão)
+// é "modelo confirmado sem detalhes" — vai para a área própria, nunca para a
+// lista detalhada nem para a tabela oficial do ML. Nada é inventado.
+const aplicacoesBaseSeparadas = useMemo(
+  () => separarAplicacoesBase(aplicacoesCompatibilidade.map((a) => normalizarAplicacao(a, "base")).filter(Boolean)),
   [anuncio] // eslint-disable-line react-hooks/exhaustive-deps
+);
+const aplicacoesBaseTodas = aplicacoesBaseSeparadas.detalhadas;
+// Modelos confirmados SEM detalhes (montadora + modelo; sem ano/motor/versão).
+// Os da base SEMPRE voltam (também em fichas salvas antes desta regra), salvo
+// os que o usuário removeu/editou neste anúncio (ficam em aplicacoesBaseExcluidas).
+const chaveModeloBase = (m) => chaveAplicacao({ montadora: m?.montadora, modelo: m?.modelo });
+const chavesModelosBase = new Set(aplicacoesBaseSeparadas.modelos.map(chaveModeloBase));
+const [modelosSemDetalhes, setModelosSemDetalhes] = useState(() =>
+  juntarModelos(
+    inicial("modelosSemDetalhes", []) || [],
+    legadoAplicacoes.modelos,
+    aplicacoesBaseSeparadas.modelos.filter((m) => !aplicacoesBaseExcluidas.includes(chaveModeloBase(m)))
+  )
+);
+function excluirModeloDaBase(m) {
+  const k = chaveModeloBase(m);
+  if (chavesModelosBase.has(k)) setAplicacoesBaseExcluidas((prev) => [...new Set([...prev, k])]);
+}
+const aplicacoesBase = useMemo(
+  () => aplicacoesBaseTodas.filter((a) => !aplicacoesBaseExcluidas.includes(chaveAplicacao(a))),
+  [aplicacoesBaseTodas, aplicacoesBaseExcluidas]
 );
 const aplicacoesConfirmadas = useMemo(
   () => juntarAplicacoes([aplicacoesBase, aplicacoesManuais]),
@@ -1977,6 +2036,12 @@ const nomePecaBase = limparCampoTexto(
   anuncio?.pecaEncontrada?.peca || anuncio?.pecaEncontrada?.familia || ""
 );
 const [nomePeca, setNomePeca] = useState(() => inicial("nomePeca", nomePecaBase));
+// Dados técnicos da PEÇA (só confirmados: base, descrição ou fonte técnica).
+const [funcaoPeca, setFuncaoPeca] = useState(() => inicial("funcaoPeca", ""));
+const [fonteFuncao, setFonteFuncao] = useState(() => inicial("fonteFuncao", ""));
+const [especificacaoTecnica, setEspecificacaoTecnica] = useState(() => inicial("especificacaoTecnica", ""));
+// Como o comprador procura a peça (opcional, confirmado pelo usuário).
+const [termoComercial, setTermoComercial] = useState(() => inicial("termoComercial", ""));
 
 // Produto principal = o que define a Categoria ML (itens inclusos não).
 const produtoPrincipal = useMemo(() => {
@@ -1993,36 +2058,72 @@ const produtoPrincipal = useMemo(() => {
   return { ...r, acompanha, contexto: doVeiculo };
 }, [anuncio, nomePeca, nomePecaBase, tituloAnuncio, descricao, aplicacoesConfirmadas]);
 
-// Palavra-chave só quando peça + montadora + modelo + motor estão confirmados.
-const palavrasChave = useMemo(() => {
-  const peca = limparCampoTexto(nomePeca);
-  if (!peca) return [];
-  const lista = aplicacoesConfirmadas
-    .filter((a) => a.montadora && a.modelo && a.motor)
-    .map((a) => [peca, a.montadora, a.modelo, a.motor].join(" "));
-  return [...new Set(lista)].slice(0, 6);
-}, [nomePeca, aplicacoesConfirmadas]);
-
-function textoCompatibilidadesDe(lista) {
+// Texto do bloco ⑨ (o que a Publicação lê): aplicações detalhadas +
+// modelos sem detalhes ("• Logan", sem motor/período). Nada é completado.
+function textoCompatibilidadesDe(lista, modelos = modelosSemDetalhes) {
   return formatarCompatibilidadesLegiveis(
-    lista.map((a) => ({
-      montadora: a.montadora,
-      modelo: a.modelo,
-      motor: [a.motor, a.versao].filter(Boolean).join(" "),
-      ano_inicio: a.anoInicio,
-      ano_fim: a.anoFim,
-    })),
+    [
+      ...lista.map((a) => ({
+        montadora: a.montadora,
+        modelo: a.modelo,
+        motor: [a.motor, a.versao].filter(Boolean).join(" "),
+        ano_inicio: a.anoInicio,
+        ano_fim: a.anoFim,
+      })),
+      ...modelos.map((m) => ({ montadora: m.montadora, modelo: m.modelo })),
+    ],
     ""
   );
 }
 
-function salvarAplicacoesManuais(lista) {
-  setAplicacoesManuais(lista);
-  gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, lista.length ? lista : null);
-  const todas = juntarAplicacoes([aplicacoesBase, lista]);
-  setCompatibilidades(todas.length ? textoCompatibilidadesDe(todas) : "");
+function atualizarTextoCompat({ manuais = aplicacoesManuais, modelos = modelosSemDetalhes, base = aplicacoesBase } = {}) {
+  const todas = juntarAplicacoes([base, manuais]);
+  setCompatibilidades(todas.length || modelos.length ? textoCompatibilidadesDe(todas, modelos) : "");
 }
 
+function salvarAplicacoesManuais(lista, base = aplicacoesBase) {
+  setAplicacoesManuais(lista);
+  gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, lista.length ? lista : null);
+  atualizarTextoCompat({ manuais: lista, base });
+}
+
+function salvarModelos(lista) {
+  const limpa = juntarModelos(lista);
+  setModelosSemDetalhes(limpa);
+  atualizarTextoCompat({ modelos: limpa });
+}
+
+// A) Modelos confirmados sem detalhes — vários de uma vez.
+function adicionarModelos() {
+  const montadora = limparCampoTexto(novosModelos.montadora);
+  const lista = separarModelos(novosModelos.modelos);
+  if (!montadora || !lista.length) {
+    setAvisoNovaAplicacao("Informe a montadora e pelo menos um modelo (separe por vírgula).");
+    return;
+  }
+  setAvisoNovaAplicacao("");
+  salvarModelos([...modelosSemDetalhes, ...lista.map((modelo) => ({ montadora, modelo }))]);
+  setNovosModelos({ montadora, modelos: "" });
+}
+function salvarEdicaoModelo() {
+  const { indice, montadora, modelo } = modeloEditando;
+  if (indice < 0) return;
+  if (!limparCampoTexto(montadora) || !limparCampoTexto(modelo)) {
+    setAvisoNovaAplicacao("Modelo e montadora não podem ficar em branco (use Remover).");
+    return;
+  }
+  setAvisoNovaAplicacao("");
+  excluirModeloDaBase(modelosSemDetalhes[indice]);
+  salvarModelos(modelosSemDetalhes.map((m, i) => (i === indice ? { montadora: limparCampoTexto(montadora), modelo: limparCampoTexto(modelo) } : m)));
+  setModeloEditando({ indice: -1, montadora: "", modelo: "" });
+}
+function removerModelo(indice) {
+  excluirModeloDaBase(modelosSemDetalhes[indice]);
+  salvarModelos(modelosSemDetalhes.filter((_, i) => i !== indice));
+  if (modeloEditando.indice === indice) setModeloEditando({ indice: -1, montadora: "", modelo: "" });
+}
+
+// B) Aplicação detalhada (cadastrar, editar, remover).
 function confirmarNovaAplicacao() {
   const a = normalizarAplicacao(novaAplicacao, "manual");
   if (!a || !a.montadora || !a.modelo) {
@@ -2034,25 +2135,63 @@ function confirmarNovaAplicacao() {
     setAvisoNovaAplicacao("Ano com 4 dígitos (ex.: 2012), ou deixe em branco.");
     return;
   }
+  if (a.anoInicio && a.anoFim && Number(a.anoInicio) > Number(a.anoFim)) {
+    setAvisoNovaAplicacao("O ano inicial não pode ser maior que o ano final.");
+    return;
+  }
   setAvisoNovaAplicacao("");
-  salvarAplicacoesManuais(juntarAplicacoes([aplicacoesManuais, [a]]));
+  let manuais = aplicacoesManuais;
+  let base = aplicacoesBase;
+  if (aplicacaoEditando?.origem === "manual") {
+    manuais = manuais.filter((_, i) => i !== aplicacaoEditando.indice);
+  } else if (aplicacaoEditando?.origem === "base") {
+    const excl = [...new Set([...aplicacoesBaseExcluidas, aplicacaoEditando.chave])];
+    setAplicacoesBaseExcluidas(excl);
+    base = aplicacoesBaseTodas.filter((x) => !excl.includes(chaveAplicacao(x)));
+  }
+  const semDetalhe = !a.motor && !a.anoInicio && !a.anoFim && !a.versao;
+  if (semDetalhe) {
+    // Só montadora + modelo = modelo sem detalhes (área própria).
+    salvarAplicacoesManuais(manuais, base);
+    const modelos = juntarModelos(modelosSemDetalhes, [{ montadora: a.montadora, modelo: a.modelo }]);
+    setModelosSemDetalhes(modelos);
+    atualizarTextoCompat({ manuais, modelos, base });
+  } else {
+    salvarAplicacoesManuais(juntarAplicacoes([manuais, [a]]), base);
+  }
+  setAplicacaoEditando(null);
   setNovaAplicacao(NOVA_APLICACAO_VAZIA);
 }
 
-function removerAplicacaoManual(indice) {
-  salvarAplicacoesManuais(aplicacoesManuais.filter((_, i) => i !== indice));
+function editarAplicacao(a) {
+  const indice = a.origem === "manual" ? aplicacoesManuais.indexOf(a) : -1;
+  setAplicacaoEditando({ origem: a.origem, indice, chave: chaveAplicacao(a) });
+  setNovaAplicacao({ montadora: a.montadora, modelo: a.modelo, motor: a.motor, anoInicio: a.anoInicio, anoFim: a.anoFim, versao: a.versao });
+  setAvisoNovaAplicacao("");
+}
+function cancelarEdicaoAplicacao() {
+  setAplicacaoEditando(null);
+  setNovaAplicacao(NOVA_APLICACAO_VAZIA);
+}
+function removerAplicacao(a) {
+  if (a.origem === "manual") {
+    salvarAplicacoesManuais(aplicacoesManuais.filter((x) => x !== a));
+  } else {
+    const excl = [...new Set([...aplicacoesBaseExcluidas, chaveAplicacao(a)])];
+    setAplicacoesBaseExcluidas(excl);
+    atualizarTextoCompat({ base: aplicacoesBaseTodas.filter((x) => !excl.includes(chaveAplicacao(x))) });
+  }
+  if (aplicacaoEditando) cancelarEdicaoAplicacao();
 }
 
-const totalCompatibilidades = aplicacoesConfirmadas.length;
+const totalCompatibilidades = aplicacoesConfirmadas.length + modelosSemDetalhes.length;
 useEffect(() => {
-  if (
-    aplicacoesConfirmadas.length > 0
-  ) {
-    setCompatibilidades(
-      textoCompatibilidadesDe(
-        aplicacoesConfirmadas
-      )
-    );
+  if (aplicacoesConfirmadas.length > 0 || modelosSemDetalhes.length > 0) {
+    setCompatibilidades(textoCompatibilidadesDe(aplicacoesConfirmadas, modelosSemDetalhes));
+  }
+  // Linha antiga convertida: grava já no formato novo (sem perder nada).
+  if (legadoAplicacoes.convertidas) {
+    gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, legadoAplicacoes.detalhadas.length ? legadoAplicacoes.detalhadas : null);
   }
 }, [anuncio]); // eslint-disable-line react-hooks/exhaustive-deps
   const [
@@ -2225,6 +2364,48 @@ const categoriaIdRef = useRef(categoriaInicial?.id || "");
 useEffect(() => {
   categoriaIdRef.current = categoriaId;
 }, [categoriaId]);
+
+// TIPO DE VEÍCULO = atributo VEHICLE_TYPE da CATEGORIA no Mercado Livre
+// (leitura). Cada ramo de categoria tem o seu valor: Carro/Caminhonete,
+// Moto/Quadriciclo, Linha Pesada; categorias náuticas não têm o campo.
+// O PAIIA só usa os valores que o ML oferece — nunca inventa.
+const [tipoVeiculoML, setTipoVeiculoML] = useState({ estado: "inicial", existe: null, valores: [] });
+useEffect(() => {
+  let ativo = true;
+  if (!categoriaId) {
+    setTipoVeiculoML({ estado: "sem_categoria", existe: null, valores: [] });
+    return undefined;
+  }
+  if (!contaSimulacaoML) {
+    setTipoVeiculoML({ estado: "sem_conta", existe: null, valores: [] });
+    return undefined;
+  }
+  setTipoVeiculoML((t) => ({ ...t, estado: "carregando" }));
+  (async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("mercadolivre-publicacao", {
+        body: { acao: "ml_consulta", conta_ml: String(contaSimulacaoML), metodo: "GET", caminho: `/categories/${categoriaId}/attributes` },
+      });
+      if (!ativo) return;
+      const lista = !error && data?.ok && Array.isArray(data.dados) ? data.dados : null;
+      if (!lista) {
+        setTipoVeiculoML({ estado: "erro", existe: null, valores: [] });
+        return;
+      }
+      setTipoVeiculoML({ estado: "ok", ...tipoVeiculoDaCategoria(lista) });
+    } catch {
+      if (ativo) setTipoVeiculoML({ estado: "erro", existe: null, valores: [] });
+    }
+  })();
+  return () => { ativo = false; };
+}, [categoriaId, contaSimulacaoML]);
+// Categoria com UM só valor (fixo pelo ML): seleciona e SALVA esse valor.
+// Com vários: só ajusta a grafia do valor escolhido para a do ML.
+useEffect(() => {
+  if (tipoVeiculoML.estado !== "ok" || !tipoVeiculoML.existe) return;
+  const novo = tipoVeiculoParaFicha(tipoVeiculoML, tipoVeiculo);
+  if (novo !== tipoVeiculo) setTipoVeiculo(novo);
+}, [tipoVeiculoML]); // eslint-disable-line react-hooks/exhaustive-deps
 const [motivoCategoria, setMotivoCategoria] = useState("");
 // Conflito: fonte superior (Base/cadastro/nome da peça) × título.
 const [conflitoProduto, setConflitoProduto] = useState(null);
@@ -3122,6 +3303,12 @@ useEffect(() => {
     categoriaML: categoriaId || categoria ? { id: categoriaId, caminho: categoria, origem: origemCategoria } : null,
     compatibilidades,
     observacaoCompatibilidade,
+    modelosSemDetalhes,
+    aplicacoesBaseExcluidas,
+    funcaoPeca,
+    fonteFuncao,
+    especificacaoTecnica,
+    termoComercial,
     modoEnvio,
     lojaOficial,
     quantidadeEstoque,
@@ -3191,8 +3378,10 @@ useEffect(() => {
           etapa: "publicacao",
         }, 200000),
       };
+      // Rascunho ainda sendo criado: usa o MESMO ID (nunca duas fichas).
+      const idRascunho = anuncioIdPAIIA || (criandoFichaPorCodigo.has(chaveConferencia) ? await criandoFichaPorCodigo.get(chaveConferencia).catch(() => "") : "") || idFichaRef.current || "";
       const r = await salvarFichaAprovada({
-        anuncioId: anuncioIdPAIIA,
+        anuncioId: idRascunho,
         codigo: anuncio?.codigo || anuncio?.oem || anuncioConferido.codigo,
         titulo: anuncioConferido.titulo,
         dadosConferencia: dados,
@@ -3210,22 +3399,140 @@ useEffect(() => {
     })();
   }, [etapaFluxo, anuncioConferido, anuncioIdPAIIA]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Endereço da página identifica a ficha (?ficha=<ID>) enquanto o anúncio
-  // está na Publicação: o F5 reabre a MESMA ficha direto na Publicação.
+  // =====================================================
+  // RASCUNHO NA BASE PAIIA desde o início do anúncio
+  // Uma ficha por anúncio em andamento; toda alteração da Conferência é
+  // gravada nela (fonte de verdade do F5, do "voltar" e de outro navegador).
+  // =====================================================
+  const fotosFicha = urlsFotosFicha(fotos);
+  const fotosForaDaFicha = (Array.isArray(fotos) ? fotos.length : 0) - fotosFicha.length;
+  const aprovadoAgora = Boolean(anuncioConferido && assinaturaAprovadaRef.current);
+  const assinaturaRascunho = JSON.stringify([assinaturaFicha, fotosFicha, aplicacoesManuais, aprovadoAgora]);
+  const idFichaRef = useRef(anuncioIdPAIIA);
+  useEffect(() => { if (anuncioIdPAIIA) idFichaRef.current = anuncioIdPAIIA; }, [anuncioIdPAIIA]);
+  const rascunhoRef = useRef({ timer: 0, gravando: false, pendente: false, ultima: "", confirmadoNestaTela: fichaConfirmada, fechada: "" });
+  function montarDadosFicha() {
+    const { fotos: _f, imagens: _i, banners: _b, ...resto } = anuncio || {};
+    const anuncioLeve = copiaLeve(resto, 150000) || copiaLeve({
+      codigo: anuncio?.codigo, oem: anuncio?.oem, titulo: anuncio?.titulo, descricao: anuncio?.descricao,
+      preco: anuncio?.preco, tipoAnuncio: anuncio?.tipoAnuncio, aplicacoes: anuncio?.aplicacoes,
+      compatibilidades: anuncio?.compatibilidades,
+    }, 150000) || {};
+    const aprovado = Boolean(anuncioConferido && assinaturaAprovadaRef.current);
+    const campos = { ...camposFicha, anuncioIdPAIIA: "", fotos: fotosFicha, aplicacoesManuais };
+    const ficha =
+      copiaLeve({
+        campos,
+        origem: origemConferenciaRef.current,
+        anuncioConferido: aprovado ? anuncioConferido : null,
+        payloadTeste: aprovado && validado ? copiaLeve(payloadTeste) : null,
+        assinaturaAprovada: aprovado ? assinaturaAprovadaRef.current : "",
+        etapa: aprovado ? etapaFluxo : "conferencia",
+        fotosForaDaFicha,
+      }, 400000) ||
+      copiaLeve({ campos, origem: origemConferenciaRef.current, etapa: "conferencia", assinaturaAprovada: "" }, 400000);
+    return {
+      versao: 3,
+      salvo_em: new Date().toISOString(),
+      anuncio: { ...anuncioLeve, fotos: fotosFicha, imagens: fotosFicha },
+      ficha,
+    };
+  }
+  const montarDadosRef = useRef(montarDadosFicha);
+  montarDadosRef.current = montarDadosFicha;
+  const assinaturaRascunhoRef = useRef(assinaturaRascunho);
+  assinaturaRascunhoRef.current = assinaturaRascunho;
+  const aprovadoRef = useRef(aprovadoAgora);
+  aprovadoRef.current = aprovadoAgora;
+
+  async function gravarRascunhoNaBase() {
+    const st = rascunhoRef.current;
+    st.timer = 0;
+    if (!chaveConferencia || !anuncio) return;
+    if (st.gravando) { st.pendente = true; return; }
+    const assinatura = assinaturaRascunhoRef.current;
+    if (assinatura === st.ultima && idFichaRef.current) return;
+    st.gravando = true;
+    try {
+      let id = idFichaRef.current || "";
+      if (!id && criandoFichaPorCodigo.has(chaveConferencia)) {
+        id = (await criandoFichaPorCodigo.get(chaveConferencia).catch(() => "")) || "";
+      }
+      if (id && st.fechada === id) return; // ficha publicada/cancelada: nunca é regravada
+      const dados = montarDadosRef.current();
+      const pedido = salvarRascunhoFicha({
+        anuncioId: id,
+        codigo: anuncio?.codigo || anuncio?.oem || codigo,
+        titulo: tituloAnuncio,
+        dadosConferencia: dados,
+        aprovada: aprovadoRef.current,
+        // Ficha antiga (já publicada) guardada para este código: só nesta
+        // abertura da Conferência vira um anúncio NOVO; depois, nunca.
+        criarSeFechada: !st.confirmadoNestaTela,
+      });
+      if (!id) {
+        criandoFichaPorCodigo.set(chaveConferencia, pedido.then((r) => (r.ok ? r.anuncioId : "")));
+      }
+      const r = await pedido;
+      if (!id) criandoFichaPorCodigo.delete(chaveConferencia);
+      if (r.ok) {
+        st.ultima = assinatura;
+        st.confirmadoNestaTela = true;
+        idFichaRef.current = r.anuncioId;
+        if (montadoRef.current) {
+          if (r.anuncioId !== anuncioIdPAIIA) setAnuncioIdPAIIA(r.anuncioId);
+          setFichaConfirmada(true);
+          setAvisoRascunho("");
+        }
+      } else if (r.fechada) {
+        st.fechada = id;
+        if (montadoRef.current) setAvisoRascunho("Esta ficha já foi publicada: alterações aqui não são gravadas nela.");
+      } else if (montadoRef.current) {
+        setAvisoRascunho(r.erro || "Não foi possível gravar o rascunho na base PAIIA.");
+      }
+    } finally {
+      st.gravando = false;
+      if (st.pendente) {
+        st.pendente = false;
+        gravarRascunhoNaBase();
+      }
+    }
+  }
+  const gravarRascunhoRef = useRef(gravarRascunhoNaBase);
+  gravarRascunhoRef.current = gravarRascunhoNaBase;
+
+  // Cada alteração grava na MESMA ficha (pequena espera para juntar a digitação).
+  useEffect(() => {
+    if (!chaveConferencia || !anuncio) return undefined;
+    const st = rascunhoRef.current;
+    window.clearTimeout(st.timer);
+    st.timer = window.setTimeout(() => gravarRascunhoRef.current(), st.ultima ? 800 : 0);
+    return undefined;
+  }, [assinaturaRascunho]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Saindo da tela com gravação pendente: grava na hora.
+  useEffect(() => () => {
+    const st = rascunhoRef.current;
+    if (st.timer) {
+      window.clearTimeout(st.timer);
+      gravarRascunhoRef.current();
+    }
+  }, []);
+
+  // Endereço da página identifica a ficha (?ficha=<ID>) desde a Conferência:
+  // o F5 reabre a MESMA ficha, na etapa em que o usuário estava.
   useEffect(() => {
     try {
       const url = new URL(window.location.href);
-      if (etapaFluxo === "publicacao") {
-        // Enquanto a ficha é gravada/recuperada, o ID do endereço é mantido.
-        if (anuncioIdPAIIA && fichaBase.pronta && !fichaBase.erro) url.searchParams.set("ficha", anuncioIdPAIIA);
-      } else {
-        url.searchParams.delete("ficha");
+      const confirmada = fichaConfirmada || (fichaBase.pronta && !fichaBase.erro);
+      if (anuncioIdPAIIA && confirmada && url.searchParams.get("ficha") !== anuncioIdPAIIA) {
+        url.searchParams.set("ficha", anuncioIdPAIIA);
+        window.history.replaceState(window.history.state, "", url.toString());
       }
-      window.history.replaceState(window.history.state, "", url.toString());
     } catch {
       // sem acesso ao endereço: segue sem o atalho do F5
     }
-  }, [etapaFluxo, anuncioIdPAIIA, fichaBase]);
+  }, [anuncioIdPAIIA, fichaConfirmada, fichaBase]);
 
   function salvarEstadoAtualDoTeste() {
   try {
@@ -3502,7 +3809,12 @@ useEffect(() => {
       );
     }
 
-    if (!tipoVeiculo.trim()) {
+    // Só exige quando a categoria do ML tem Tipo de veículo (ou ainda não
+    // foi possível conferir); categoria sem o campo não pede nada.
+    if (
+      !(tipoVeiculoML.estado === "ok" && tipoVeiculoML.existe === false) &&
+      !tipoVeiculo.trim()
+    ) {
       faltando.push(
         "Tipo de veículo"
       );
@@ -3511,6 +3823,13 @@ useEffect(() => {
     if (!modoEnvio) {
       faltando.push(
         "Modo de envio"
+      );
+    }
+
+    // Estoque: quantidade confirmada pelo usuário (nunca assumida).
+    if (!normalizarQuantidade(quantidadeEstoque)) {
+      faltando.push(
+        "Estoque — informe a quantidade confirmada (número inteiro, 1 ou mais). O PAIIA não assume quantidade."
       );
     }
 
@@ -3731,6 +4050,14 @@ useEffect(() => {
       // Tipo de veículo aprovado (vai como VEHICLE_TYPE na Publicação).
       tipoVeiculo,
       nomePeca,
+      // UMA quantidade confirmada (Estoque da Conferência): a mesma vai para
+      // a Publicação, a validação, o Bling e o Mercado Livre.
+      quantidade: normalizarQuantidade(quantidadeEstoque),
+      quantidadeConfirmada: Boolean(normalizarQuantidade(quantidadeEstoque)),
+      // Compatibilidade estruturada e dados técnicos confirmados da peça.
+      aplicacoesDetalhadas: aplicacoesConfirmadas,
+      modelosSemDetalhes,
+      dadosTecnicos: { funcao: funcaoPeca, fonteFuncao, especificacao: especificacaoTecnica, termoComercial },
       condicao,
       logistica: logisticaConferencia,
       // Padrões fixos: vão para a ficha e para a Publicação.
@@ -3850,6 +4177,12 @@ useEffect(() => {
               anuncioId={anuncioIdPAIIA}
               onAnuncioId={setAnuncioIdPAIIA}
               onFechar={() => setRevisandoPublicacaoML(false)}
+              quantidadeFicha={quantidadeEstoque}
+              onQuantidadeConfirmada={(q) => {
+                // Mesma quantidade na ficha: campo Estoque + anúncio aprovado.
+                setQuantidadeEstoque(String(q));
+                setAnuncioConferido((a) => (a ? { ...a, quantidade: q, quantidadeConfirmada: true } : a));
+              }}
             />
           </>
         )}
@@ -3903,6 +4236,18 @@ useEffect(() => {
           Confira os 16 blocos do anúncio. Nesta etapa nada é enviado ao
           Mercado Livre. Depois da Revisão final aprovada você escolhe a
           conta, valida no Mercado Livre e só publica com a sua autorização.
+        </p>
+
+        <p
+          data-paiia-ficha-rascunho={fichaConfirmada && anuncioIdPAIIA ? anuncioIdPAIIA : ""}
+          style={{ margin: "8px 0 0", fontSize: 12, color: avisoRascunho ? "#fca5a5" : fichaConfirmada ? "#86efac" : "#94a3b8" }}
+        >
+          {avisoRascunho
+            ? `⚠ ${avisoRascunho} Sem a ficha na base, o F5 não consegue recuperar este anúncio.`
+            : fichaConfirmada && anuncioIdPAIIA
+              ? `💾 Ficha ${anuncioIdPAIIA.slice(0, 8)} salva na base PAIIA — o F5 e outro navegador reabrem este mesmo anúncio.`
+              : "⏳ Criando a ficha deste anúncio na base PAIIA..."}
+          {fotosForaDaFicha > 0 && ` ${fotosForaDaFicha} foto(s) sem endereço público (imagem embutida) não vão para a ficha: use fotos da Galeria.`}
         </p>
       </section>
 
@@ -3987,61 +4332,79 @@ useEffect(() => {
         </div>
       </section>
 
-      {/* PEÇA E APLICAÇÃO (identificação) — só dados confirmados */}
+      {/* PEÇA — DADOS TÉCNICOS (só da peça; aplicações ficam no bloco ⑨) */}
       <section data-paiia-identificacao style={bloco}>
         <h3 style={titulo}>
-          🔎 Peça e aplicação
+          🔩 Peça — dados técnicos
         </h3>
+        <p style={{ ...textoAuxiliar, marginTop: 0 }}>
+          Só informações da PEÇA confirmadas (base PAIIA, descrição do anúncio ou fonte técnica). Veículos/aplicações: bloco ⑨ Compatibilidades.
+        </p>
 
-        <Campo
-          label="Nome da peça"
-          value={nomePeca}
-          onChange={setNomePeca}
-          placeholder="Ex.: Pressostato, sensor, bico injetor..."
-        />
+        <div style={gradeDois}>
+          <Campo
+            label="Nome da peça"
+            value={nomePeca}
+            onChange={setNomePeca}
+            placeholder="Ex.: Parafuso de aço, sensor, bico injetor..."
+          />
+          <label style={labelStyle}>
+            Código / OEM
+            <div data-paiia-codigo-oem style={{ ...campo, display: "flex", alignItems: "center", color: "#e2e8f0" }}>
+              {[...new Set([numeroPeca, codigo, anuncio?.oem].map((c) => String(c || "").trim()).filter(Boolean))].join(" · ") || "—"}
+            </div>
+          </label>
+          <Campo
+            label="Função / localização da peça"
+            value={funcaoPeca}
+            onChange={setFuncaoPeca}
+            placeholder="Só se confirmada (ex.: Suporte do conjunto de transmissão e motor)"
+          />
+          <Campo
+            label="Fonte da função/localização"
+            value={fonteFuncao}
+            onChange={setFonteFuncao}
+            placeholder="Ex.: Renault Mecânico, catálogo, base PAIIA"
+          />
+          <Campo
+            label="Especificação técnica / medida"
+            value={especificacaoTecnica}
+            onChange={setEspecificacaoTecnica}
+            placeholder="Ex.: M12 × 1,75 × 35"
+          />
+          <Campo
+            label="Como o comprador procura (opcional)"
+            value={termoComercial}
+            onChange={setTermoComercial}
+            placeholder="Opcional — se vazio, o PAIIA usa a função (ex.: Parafuso suporte motor)"
+          />
+        </div>
         <p style={{ ...textoAuxiliar, marginTop: "6px" }}>
           {nomePecaBase
             ? "Nome vindo da base/catálogo do PAIIA. Corrija se necessário."
-            : "A base não informou o nome da peça. Informe para usar na identificação."}
+            : "A base não informou o nome da peça. Informe para usar na identificação."}{" "}
+          Campo em branco fica em branco — o PAIIA não inventa função nem medida.
         </p>
 
-        <div data-paiia-aplicacoes-identificacao style={{ marginTop: "12px", display: "grid", gap: "6px" }}>
-          {aplicacoesConfirmadas.length ? (
-            aplicacoesConfirmadas.slice(0, 8).map((a, i) => (
-              <div key={i} style={linhaAplicacao}>
-                <span>
-                  {nomePeca ? <strong>{nomePeca} · </strong> : null}
-                  {textoAplicacao(a)}
-                </span>
-                <span style={seloOrigemAplicacao(a.origem)}>
-                  {a.origem === "manual" ? "manual" : "base"}
-                </span>
-              </div>
-            ))
-          ) : (
-            <div style={{ ...linhaAplicacao, color: "#fbbf24", fontWeight: "bold" }}>
-              ⚠ PENDENTE — sem aplicação confirmada
-            </div>
-          )}
-          {aplicacoesConfirmadas.length > 8 && (
-            <span style={textoAuxiliar}>
-              + {aplicacoesConfirmadas.length - 8} aplicação(ões) — lista completa no bloco ⑨.
-            </span>
-          )}
-        </div>
-
-        {palavrasChave.length > 0 && (
-          <div data-paiia-palavras-chave style={{ marginTop: "12px" }}>
-            <div style={{ ...textoAuxiliar, marginBottom: "6px" }}>
-              Identificação / palavras-chave (só com peça, montadora, modelo e motor confirmados):
-            </div>
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-              {palavrasChave.map((p) => (
-                <span key={p} style={chipPalavra}>{p}</span>
+        {(() => {
+          // Dados lidos da DESCRIÇÃO do próprio anúncio (como dado, não palavra solta).
+          const lidos = extrairDadosDescricao(descricao);
+          const sugestoes = [
+            ...lidos.medidas.filter((m) => normalizarTexto(m) !== normalizarTexto(especificacaoTecnica)).map((m) => ({ rotulo: `Medida: ${m}`, aplicar: () => setEspecificacaoTecnica(m) })),
+            ...lidos.funcoes.filter((f) => normalizarTexto(f) !== normalizarTexto(funcaoPeca)).map((f) => ({ rotulo: `Função: ${f}`, aplicar: () => { setFuncaoPeca(f); if (!fonteFuncao.trim()) setFonteFuncao("Descrição do anúncio"); } })),
+          ];
+          if (!sugestoes.length) return null;
+          return (
+            <div data-paiia-dados-descricao style={{ marginTop: "8px", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+              <span style={textoAuxiliar}>Encontrado na descrição:</span>
+              {sugestoes.map((x) => (
+                <button key={x.rotulo} type="button" onClick={x.aplicar} style={botaoMini}>
+                  Usar {x.rotulo}
+                </button>
               ))}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </section>
 
       {/* PAIIA - INTELIGÊNCIA DE BUSCA */}
@@ -4088,9 +4451,9 @@ useEffect(() => {
                 lineHeight: "1.5",
               }}
             >
-              Palavras-chave encontradas no anúncio e
-              nos concorrentes para ajudar o algoritmo
-              a entender melhor o produto.
+              Buscas montadas com os dados CONFIRMADOS do próprio
+              produto: código, peça, função, medida e compatibilidades.
+              Concorrentes ficam separados, só como sugestão.
             </div>
           </div>
 
@@ -4123,302 +4486,90 @@ useEffect(() => {
             }}
           >
             {pesquisandoConcorrencia
-              ? "⏳ Analisando buscas..."
+              ? "⏳ Consultando concorrentes..."
               : resultadoConcorrencia
-                ? "🔄 Atualizar palavras-chave"
-                : "✨ Gerar palavras-chave"}
+                ? "🔄 Atualizar sugestões de concorrentes"
+                : "Ver sugestões de concorrentes (secundário)"}
           </button>
         </div>
 
         {(() => {
-          const ignorar = new Set([
-            "para",
-            "com",
-            "sem",
-            "por",
-            "uma",
-            "um",
-            "das",
-            "dos",
-            "de",
-            "do",
-            "da",
-            "e",
-            "a",
-            "o",
-            "no",
-            "na",
-            "em",
-            "novo",
-            "nova",
-            "produto",
-            "peca",
-            "peça",
-            "original",
-          ]);
-
-          const palavras = [];
-          const vistos = new Set();
-
-          const adicionar = (valor, origem = "anuncio") => {
-            const termo = String(valor || "")
-              .replace(/\s+/g, " ")
-              .trim();
-
-            if (!termo) {
-              return;
-            }
-
-            const chave = normalizarTexto(termo);
-
-            if (!chave || vistos.has(chave)) {
-              return;
-            }
-
-            vistos.add(chave);
-            palavras.push({
-              termo,
-              origem,
-            });
+          // FONTE = dados confirmados do próprio produto (nunca concorrente).
+          const lidos = extrairDadosDescricao(descricao);
+          const dadosBusca = {
+            codigos: [numeroPeca, codigo, anuncio?.oem, ...lidos.codigos],
+            nomePeca,
+            termoComercial,
+            funcao: funcaoPeca,
+            medida: especificacaoTecnica,
+            aplicacoes: aplicacoesConfirmadas,
+            modelos: modelosSemDetalhes,
           };
-
-          adicionar(
-            codigo || numeroPeca,
-            "codigo"
+          const confirmados = termosConfirmados(dadosBusca);
+          const intencoes = gerarIntencoesBusca(dadosBusca);
+          const sugeridasConcorrentes = separarSugestoesConcorrentes(
+            Array.isArray(resultadoConcorrencia?.palavrasChaveSugeridas) ? resultadoConcorrencia.palavrasChaveSugeridas : [],
+            confirmados
           );
-
-          adicionar(marca, "marca");
-
-          const sugeridas =
-            Array.isArray(
-              resultadoConcorrencia
-                ?.palavrasChaveSugeridas
-            )
-              ? resultadoConcorrencia
-                  .palavrasChaveSugeridas
-              : [];
-
-          sugeridas.forEach((item) => {
-            adicionar(
-              item?.termo || item,
-              "concorrencia"
-            );
-          });
-
-          String(tituloAnuncio || "")
-            .replace(/[^a-zA-ZÀ-ÿ0-9\s-]/g, " ")
-            .split(/\s+/)
-            .map((item) => item.trim())
-            .filter(Boolean)
-            .filter((item) => {
-              const normalizado =
-                normalizarTexto(item);
-
-              return (
-                normalizado.length >= 3 &&
-                !ignorar.has(normalizado)
-              );
-            })
-            .forEach((item) =>
-              adicionar(item, "titulo")
-            );
-
-          const principais =
-            palavras.slice(0, 14);
-
-          const buscaRecomendada =
-            principais
-              .slice(0, 6)
-              .map((item) => item.termo)
-              .join(" ");
-
+          const rotuloOrigem = {
+            codigo: "Código/OEM", peca: "Peça", funcao: "Função/localização", medida: "Especificação",
+            montadora: "Montadora", modelo: "Modelo confirmado", motor: "Motor", ano: "Ano", versao: "Versão",
+          };
+          const caixa = { padding: "14px", borderRadius: "12px", border: "1px solid #164e63", background: "#020617", textAlign: "left" };
+          const tituloCaixa = { color: "#67e8f9", fontSize: "12px", fontWeight: "bold", marginBottom: "10px" };
           return (
             <>
-              <div
-                style={{
-                  padding: "14px",
-                  borderRadius: "12px",
-                  border:
-                    "1px solid #164e63",
-                  background: "#020617",
-                  textAlign: "left",
-                }}
-              >
-                <div
-                  style={{
-                    color: "#67e8f9",
-                    fontSize: "12px",
-                    fontWeight: "bold",
-                    marginBottom: "10px",
-                  }}
-                >
-                  PALAVRAS-CHAVE PRINCIPAIS
-                </div>
-
-                {principais.length > 0 ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: "8px",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {principais.map(
-                      (item, index) => (
-                        <span
-                          key={`${item.termo}-${index}`}
-                          title={
-                            item.origem ===
-                            "concorrencia"
-                              ? "Encontrada nos anúncios concorrentes"
-                              : item.origem ===
-                                  "codigo"
-                                ? "Código principal da peça"
-                                : item.origem ===
-                                    "marca"
-                                  ? "Marca do produto"
-                                  : "Encontrada no título"
-                          }
-                          style={{
-                            padding: "8px 11px",
-                            borderRadius: "999px",
-                            border:
-                              item.origem ===
-                              "concorrencia"
-                                ? "1px solid #22d3ee"
-                                : item.origem ===
-                                    "codigo"
-                                  ? "1px solid #60a5fa"
-                                  : "1px solid #334155",
-                            background:
-                              item.origem ===
-                              "concorrencia"
-                                ? "#164e63"
-                                : item.origem ===
-                                    "codigo"
-                                  ? "#172554"
-                                  : "#0f172a",
-                            color: "#e0f2fe",
-                            fontSize: "12px",
-                            fontWeight: "bold",
-                          }}
-                        >
-                          {item.termo}
-                        </span>
-                      )
-                    )}
+              <div data-paiia-termos-confirmados style={caixa}>
+                <div style={tituloCaixa}>DADOS CONFIRMADOS DO PRODUTO</div>
+                {confirmados.length ? (
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    {confirmados.map((t) => (
+                      <span key={`${t.origem}-${t.termo}`} title={rotuloOrigem[t.origem] || ""} style={{ ...chipPalavra, border: t.origem === "codigo" ? "1px solid #60a5fa" : chipPalavra.border }}>
+                        {t.termo}
+                      </span>
+                    ))}
                   </div>
                 ) : (
-                  <div
-                    style={{
-                      color: "#94a3b8",
-                      fontSize: "13px",
-                    }}
-                  >
-                    Preencha o título e o código para
-                    começar a montar as palavras-chave.
-                  </div>
+                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>Preencha o código, a peça e as compatibilidades para montar as buscas.</div>
                 )}
               </div>
 
-              <div
-                style={{
-                  marginTop: "12px",
-                  display: "grid",
-                  gridTemplateColumns:
-                    "repeat(auto-fit,minmax(250px,1fr))",
-                  gap: "10px",
-                }}
-              >
-                <div
-                  style={{
-                    padding: "12px 14px",
-                    borderRadius: "10px",
-                    border:
-                      "1px solid #164e63",
-                    background: "#082f49",
-                    textAlign: "left",
-                  }}
-                >
-                  <div
-                    style={{
-                      color: "#67e8f9",
-                      fontSize: "11px",
-                      fontWeight: "bold",
-                      marginBottom: "5px",
-                    }}
-                  >
-                    🔍 BUSCA RECOMENDADA
+              <div data-paiia-intencoes-busca style={{ ...caixa, marginTop: "12px", background: "#082f49" }}>
+                <div style={tituloCaixa}>🔍 COMO O COMPRADOR PODE PROCURAR ({intencoes.length})</div>
+                {intencoes.length ? (
+                  <div style={{ display: "grid", gap: "4px" }}>
+                    {intencoes.map((x) => (
+                      <div key={x.texto} data-tipo-busca={x.tipo} style={{ color: "#f8fafc", fontSize: "13px" }}>
+                        {x.tipo === "codigo" ? "🔢" : x.tipo === "funcao" ? "🛠" : "🚗"} {x.texto}
+                      </div>
+                    ))}
                   </div>
-
-                  <div
-                    style={{
-                      color: "#f8fafc",
-                      fontSize: "13px",
-                      lineHeight: "1.45",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {buscaRecomendada ||
-                      "Aguardando dados do anúncio"}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    padding: "12px 14px",
-                    borderRadius: "10px",
-                    border:
-                      "1px solid #334155",
-                    background: "#020617",
-                    textAlign: "left",
-                  }}
-                >
-                  <div
-                    style={{
-                      color: "#a5f3fc",
-                      fontSize: "11px",
-                      fontWeight: "bold",
-                      marginBottom: "5px",
-                    }}
-                  >
-                    🧠 LEITURA DA PAIIA
-                  </div>
-
-                  <div
-                    style={{
-                      color: "#cbd5e1",
-                      fontSize: "12px",
-                      lineHeight: "1.5",
-                    }}
-                  >
-                    {erroConcorrencia
-                      ? `⚠️ ${erroConcorrencia}`
-                      : resultadoConcorrencia
-                        ? `${principais.length} termo(s) relevante(s) preparados. ${sugeridas.length} vieram da análise dos anúncios encontrados.`
-                        : "As palavras do título já são analisadas. Clique em “Gerar palavras-chave” para enriquecer a lista com termos recorrentes da concorrência."}
-                  </div>
+                ) : (
+                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>Aguardando código ou nome da peça.</div>
+                )}
+                <div style={{ color: "#94a3b8", fontSize: "11px", marginTop: "8px" }}>
+                  Buscas por código (quem conhece a peça) e por intenção (peça + veículo, ano/motor só quando confirmados, medida). O título continua com até 60 caracteres; estas buscas usam o conjunto completo.
                 </div>
               </div>
 
-              <div
-                style={{
-                  marginTop: "12px",
-                  padding: "10px 12px",
-                  borderRadius: "9px",
-                  border:
-                    "1px dashed #155e75",
-                  color: "#94a3b8",
-                  background:
-                    "rgba(2,6,23,.55)",
-                  fontSize: "11px",
-                  lineHeight: "1.5",
-                  textAlign: "left",
-                }}
-              >
-                ℹ️ Nesta etapa a PAIIA apenas sugere
-                termos. O título e a descrição não são
-                alterados automaticamente.
+              <details data-paiia-sugestoes-concorrentes style={{ ...caixa, marginTop: "12px", border: "1px dashed #334155" }}>
+                <summary style={{ color: "#94a3b8", fontSize: "12px", cursor: "pointer" }}>
+                  Sugestões de concorrentes — NÃO confirmadas, não usadas ({erroConcorrencia ? "erro" : sugeridasConcorrentes.length})
+                </summary>
+                <div style={{ color: "#94a3b8", fontSize: "12px", margin: "8px 0" }}>
+                  {erroConcorrencia
+                    ? `⚠️ ${erroConcorrencia}`
+                    : "Palavras que aparecem em anúncios de concorrentes. Servem só para você avaliar sinônimos; não entram nos dados confirmados nem nas buscas acima."}
+                </div>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {sugeridasConcorrentes.map((t) => (
+                    <span key={t.termo} style={{ ...chipPalavra, opacity: 0.7, borderStyle: "dashed" }}>{t.termo}</span>
+                  ))}
+                </div>
+              </details>
+
+              <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "9px", border: "1px dashed #155e75", color: "#94a3b8", background: "rgba(2,6,23,.55)", fontSize: "11px", lineHeight: "1.5", textAlign: "left" }}>
+                ℹ️ Nesta etapa a PAIIA apenas organiza as buscas. O título e a descrição não são alterados automaticamente.
               </div>
             </>
           );
@@ -4484,14 +4635,14 @@ useEffect(() => {
           </label>
 
           <Campo
-            label="Estoque"
+            label="Estoque (quantidade confirmada)"
             value={
               quantidadeEstoque
             }
             onChange={
               setQuantidadeEstoque
             }
-            placeholder="Ex.: 10"
+            placeholder="Ex.: 68"
           />
 
           <Campo
@@ -5186,14 +5337,53 @@ useEffect(() => {
             placeholder="Opcional"
           />
 
-          <Campo
-            label="Tipo de veículo"
-            value={tipoVeiculo}
-            onChange={
-              setTipoVeiculo
-            }
-            placeholder="Carro / Caminhonete"
-          />
+          {tipoVeiculoML.estado === "ok" && tipoVeiculoML.existe ? (
+            <label style={labelStyle}>
+              Tipo de veículo
+              <select
+                data-paiia-tipo-veiculo
+                value={(valorTipoVeiculo(tipoVeiculoML.valores, tipoVeiculo) || {}).nome || ""}
+                onChange={(e) => setTipoVeiculo(e.target.value)}
+                disabled={tipoVeiculoML.fixo}
+                style={campo}
+              >
+                {!tipoVeiculoML.fixo && <option value="">Selecione (valores do Mercado Livre)</option>}
+                {tipoVeiculoML.valores.map((v) => (
+                  <option key={v.id} value={v.nome}>{v.nome}</option>
+                ))}
+              </select>
+              <span style={{ ...textoAuxiliar, fontWeight: "normal" }}>
+                {tipoVeiculoML.fixo
+                  ? "Definido pela categoria no Mercado Livre (valor único) — selecionado e salvo na ficha."
+                  : "Valores oferecidos pelo Mercado Livre para esta categoria."}
+              </span>
+            </label>
+          ) : tipoVeiculoML.estado === "ok" && tipoVeiculoML.existe === false ? (
+            <label style={labelStyle}>
+              Tipo de veículo
+              <div data-paiia-tipo-veiculo-nao-se-aplica style={{ ...campo, display: "flex", alignItems: "center", color: "#94a3b8" }}>
+                Não se aplica — esta categoria do Mercado Livre não tem esse campo
+              </div>
+            </label>
+          ) : (
+            <div style={labelStyle}>
+              <Campo
+                label="Tipo de veículo"
+                value={tipoVeiculo}
+                onChange={setTipoVeiculo}
+                placeholder="Não informado (ex.: Carro/Caminhonete)"
+              />
+              <span style={{ ...textoAuxiliar, fontWeight: "normal" }}>
+                {tipoVeiculoML.estado === "carregando"
+                  ? "Lendo o Tipo de veículo da categoria no Mercado Livre..."
+                  : tipoVeiculoML.estado === "sem_categoria"
+                    ? "Defina a Categoria ML (bloco ⑮) para o PAIIA ler os valores do Mercado Livre."
+                    : tipoVeiculoML.estado === "sem_conta"
+                      ? "Sem conta Mercado Livre conectada: confirme o tipo manualmente."
+                      : "Não foi possível ler a categoria no Mercado Livre agora: confirme o tipo manualmente."}
+              </span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -5323,19 +5513,12 @@ useEffect(() => {
           ⑦ Características secundárias
         </h3>
 
-        <AreaTexto
-  value={
-    formatarCompatibilidadesLegiveis(
-      aplicacoesCompatibilidade,
-      compatibilidades
-    )
-  }
-  onChange={
-    setCompatibilidades
-  }
-  placeholder="As aplicações encontradas pelo PAIIA aparecerão aqui."
-  minHeight="220px"
-/>
+        {/* Compatibilidade tem UM lugar de edição: o bloco ⑨. Aqui só leitura,
+            sempre igual ao texto gerado lá (sem a lista crua da base). */}
+        <div data-paiia-compat-resumo style={{ whiteSpace: "pre-wrap", color: "#e2e8f0", fontSize: 14, background: "rgba(15,23,42,.6)", border: "1px solid #334155", borderRadius: 10, padding: 12, minHeight: 60 }}>
+          {String(compatibilidades || "").trim() || "As aplicações confirmadas aparecerão aqui."}
+        </div>
+        <span style={textoAuxiliar}>Para incluir, editar ou remover, use o bloco ⑨ Compatibilidades.</span>
       </section>
 
       {/* 8 - REGULATÓRIA */}
@@ -5408,34 +5591,85 @@ useEffect(() => {
     </span>
   </div>
 
-  <div data-paiia-lista-aplicacoes style={{ display: "grid", gap: "6px", marginBottom: "12px" }}>
-    {aplicacoesConfirmadas.length ? (
-      aplicacoesConfirmadas.map((a, i) => {
-        const indiceManual = a.origem === "manual" ? aplicacoesManuais.indexOf(a) : -1;
-        return (
-          <div key={i} style={linhaAplicacao}>
-            <span>{textoAplicacao(a)}</span>
-            <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-              <span style={seloOrigemAplicacao(a.origem)}>{a.origem === "manual" ? "manual" : "base"}</span>
-              {indiceManual >= 0 && (
-                <button type="button" onClick={() => removerAplicacaoManual(indiceManual)} style={botaoMini}>
-                  Remover
-                </button>
-              )}
+  {legadoAplicacoes.convertidas > 0 && (
+    <p data-paiia-legado-convertido style={{ ...textoAuxiliar, color: "#fde68a" }}>
+      ℹ️ {legadoAplicacoes.convertidas} linha(s) antiga(s) com vários modelos foram separadas em "Modelos confirmados — detalhes não informados" (sem inventar ano/motor).
+    </p>
+  )}
+
+  {/* A) MODELOS CONFIRMADOS SEM DETALHES */}
+  <div data-paiia-modelos-sem-detalhes style={{ padding: "12px", borderRadius: "10px", border: "1px solid #334155", background: "#020617", marginBottom: "12px" }}>
+    <div style={{ color: "#e2e8f0", fontWeight: "bold", fontSize: "13px", marginBottom: "4px" }}>
+      🚘 Modelos confirmados — detalhes não informados ({modelosSemDetalhes.length})
+    </div>
+    <p style={{ ...textoAuxiliar, margin: "0 0 8px" }}>
+      A peça serve nesses modelos; ano, motor e versão não são informados (o PAIIA não completa).
+    </p>
+    <div style={{ display: "grid", gap: "6px", marginBottom: "8px" }}>
+      {modelosSemDetalhes.length ? modelosSemDetalhes.map((m, i) =>
+        modeloEditando.indice === i ? (
+          <div key={`ed-${i}`} style={{ ...linhaAplicacao, gap: "6px", flexWrap: "wrap" }}>
+            <input value={modeloEditando.montadora} onChange={(e) => setModeloEditando({ ...modeloEditando, montadora: e.target.value })} style={{ ...campo, maxWidth: 160 }} />
+            <input value={modeloEditando.modelo} onChange={(e) => setModeloEditando({ ...modeloEditando, modelo: e.target.value })} style={{ ...campo, maxWidth: 220 }} />
+            <span style={{ display: "flex", gap: "6px" }}>
+              <button type="button" data-paiia-salvar-modelo onClick={salvarEdicaoModelo} style={botaoMini}>Salvar</button>
+              <button type="button" onClick={() => setModeloEditando({ indice: -1, montadora: "", modelo: "" })} style={botaoMini}>Cancelar</button>
             </span>
           </div>
-        );
-      })
+        ) : (
+          <div key={`${m.montadora}-${m.modelo}`} data-paiia-modelo={`${m.montadora} ${m.modelo}`} style={linhaAplicacao}>
+            <span>{m.montadora} {m.modelo}</span>
+            <span style={{ display: "flex", gap: "6px" }}>
+              <button type="button" data-paiia-editar-modelo onClick={() => setModeloEditando({ indice: i, montadora: m.montadora, modelo: m.modelo })} style={botaoMini}>Editar</button>
+              <button type="button" data-paiia-remover-modelo onClick={() => removerModelo(i)} style={botaoMini}>Remover</button>
+            </span>
+          </div>
+        )
+      ) : (
+        <span style={textoAuxiliar}>Nenhum modelo sem detalhes.</span>
+      )}
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) minmax(220px, 3fr) auto", gap: "8px", alignItems: "end" }}>
+      <Campo label="Montadora *" value={novosModelos.montadora} onChange={(v) => setNovosModelos({ ...novosModelos, montadora: v })} placeholder="Renault" />
+      <Campo label="Modelos (separe por vírgula) *" value={novosModelos.modelos} onChange={(v) => setNovosModelos({ ...novosModelos, modelos: v })} placeholder="Logan, Sandero, Duster, Kangoo" />
+      <button type="button" data-paiia-adicionar-modelos onClick={adicionarModelos} style={{ ...botaoMini, padding: "9px 14px", background: "#2563eb", border: "1px solid #2563eb", color: "#fff" }}>
+        ➕ Adicionar modelos
+      </button>
+    </div>
+  </div>
+
+  {/* B) APLICAÇÕES DETALHADAS */}
+  <div style={{ color: "#e2e8f0", fontWeight: "bold", fontSize: "13px", margin: "4px 0 6px" }}>
+    🔧 Aplicações detalhadas ({aplicacoesConfirmadas.length})
+  </div>
+  <div data-paiia-lista-aplicacoes style={{ display: "grid", gap: "6px", marginBottom: "12px" }}>
+    {aplicacoesConfirmadas.length ? (
+      aplicacoesConfirmadas.map((a, i) => (
+        <div key={i} data-paiia-aplicacao={textoAplicacao(a)} style={linhaAplicacao}>
+          <span>{textoAplicacao(a)}</span>
+          <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+            <span style={seloOrigemAplicacao(a.origem)}>{a.origem === "manual" ? "manual" : "base"}</span>
+            <button type="button" data-paiia-editar-aplicacao onClick={() => editarAplicacao(a)} style={botaoMini}>Editar</button>
+            <button type="button" data-paiia-remover-aplicacao onClick={() => removerAplicacao(a)} style={botaoMini}>Remover</button>
+          </span>
+        </div>
+      ))
     ) : (
-      <div style={{ ...linhaAplicacao, color: "#fbbf24", fontWeight: "bold" }}>
-        ⚠ PENDENTE — sem aplicação confirmada
+      <div style={{ ...linhaAplicacao, color: modelosSemDetalhes.length ? "#94a3b8" : "#fbbf24", fontWeight: "bold" }}>
+        {modelosSemDetalhes.length ? "Nenhuma aplicação detalhada (há modelos confirmados acima)." : "⚠ PENDENTE — sem aplicação confirmada"}
       </div>
+    )}
+    {aplicacoesBaseExcluidas.length > 0 && (
+      <span style={textoAuxiliar}>
+        {aplicacoesBaseExcluidas.length} aplicação(ões) da base removida(s) só deste anúncio.{" "}
+        <button type="button" onClick={() => { setAplicacoesBaseExcluidas([]); const modelos = juntarModelos(modelosSemDetalhes, aplicacoesBaseSeparadas.modelos); setModelosSemDetalhes(modelos); atualizarTextoCompat({ base: aplicacoesBaseTodas, modelos }); }} style={botaoMini}>Restaurar</button>
+      </span>
     )}
   </div>
 
-  <div data-paiia-aplicacao-manual style={{ padding: "12px", borderRadius: "10px", border: "1px solid #334155", background: "#020617", marginBottom: "12px" }}>
+  <div data-paiia-aplicacao-manual style={{ padding: "12px", borderRadius: "10px", border: `1px solid ${aplicacaoEditando ? "#f59e0b" : "#334155"}`, background: "#020617", marginBottom: "12px" }}>
     <div style={{ color: "#e2e8f0", fontWeight: "bold", fontSize: "13px", marginBottom: "6px" }}>
-      ➕ Cadastrar aplicação manual
+      {aplicacaoEditando ? "✏️ Editar aplicação detalhada" : "➕ Cadastrar aplicação detalhada"}
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px" }}>
       <Campo label="Montadora *" value={novaAplicacao.montadora} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, montadora: v })} placeholder="Renault" />
@@ -5446,12 +5680,17 @@ useEffect(() => {
       <Campo label="Versão" value={novaAplicacao.versao} onChange={(v) => setNovaAplicacao({ ...novaAplicacao, versao: v })} placeholder="Opcional" />
     </div>
     <p style={{ ...textoAuxiliar, marginTop: "6px" }}>
-      Preencha só o que você confirmou. Campo em branco fica em branco — o PAIIA não completa.
+      Preencha só o que você confirmou. Campo em branco fica em branco — o PAIIA não completa ano, motor ou versão. Só montadora + modelo vai para "Modelos confirmados".
     </p>
     {avisoNovaAplicacao && <p style={{ color: "#fca5a5", fontSize: "12px", margin: "6px 0 0" }}>⚠ {avisoNovaAplicacao}</p>}
-    <button type="button" data-paiia-confirmar-aplicacao onClick={confirmarNovaAplicacao} style={{ ...botaoMini, marginTop: "8px", padding: "8px 14px", background: "#2563eb", border: "1px solid #2563eb", color: "#fff" }}>
-      ✔ Confirmar aplicação
-    </button>
+    <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+      <button type="button" data-paiia-confirmar-aplicacao onClick={confirmarNovaAplicacao} style={{ ...botaoMini, padding: "8px 14px", background: "#2563eb", border: "1px solid #2563eb", color: "#fff" }}>
+        {aplicacaoEditando ? "✔ Salvar alteração" : "✔ Confirmar aplicação"}
+      </button>
+      {aplicacaoEditando && (
+        <button type="button" onClick={cancelarEdicaoAplicacao} style={{ ...botaoMini, padding: "8px 14px" }}>Cancelar</button>
+      )}
+    </div>
   </div>
 
   <details>
@@ -5846,27 +6085,17 @@ useEffect(() => {
             <strong
               data-paiia-revisao-aplicacoes
               style={{
-                color: aplicacoesConfirmadas.length || String(compatibilidades || "").trim()
+                color: aplicacoesConfirmadas.length || modelosSemDetalhes.length || String(compatibilidades || "").trim()
                   ? "#86efac"
                   : "#fbbf24",
               }}
             >
-              {aplicacoesConfirmadas.length
-                ? `${aplicacoesConfirmadas.length} confirmada(s)`
+              {aplicacoesConfirmadas.length || modelosSemDetalhes.length
+                ? `${aplicacoesConfirmadas.length} detalhada(s) + ${modelosSemDetalhes.length} modelo(s) sem detalhes — lista no bloco ⑨`
                 : String(compatibilidades || "").trim()
                   ? "texto informado no bloco ⑨"
                   : "⚠ PENDENTE — sem aplicação confirmada"}
             </strong>
-            {aplicacoesConfirmadas.length > 0 && (
-              <span style={{ display: "block", marginTop: "4px", color: "#e2e8f0", fontSize: "12px", lineHeight: 1.6 }}>
-                {aplicacoesConfirmadas.slice(0, 10).map((a, i) => (
-                  <span key={i} style={{ display: "block" }}>
-                    • {nomePeca ? `${nomePeca} · ` : ""}{textoAplicacao(a)}
-                  </span>
-                ))}
-                {aplicacoesConfirmadas.length > 10 ? <span style={{ display: "block", color: "#94a3b8" }}>+ {aplicacoesConfirmadas.length - 10} no bloco ⑨</span> : null}
-              </span>
-            )}
           </span>
           <span>
             📷 Fotos: <strong>{fotos.length}</strong>
@@ -6076,105 +6305,51 @@ useEffect(() => {
               ✅ Anúncio pronto
             </h3>
 
-            <p
-              style={{
-                ...textoAuxiliar,
-                textAlign: "center",
-                marginBottom: "18px",
-              }}
-            >
-              Escolha o próximo passo.
-            </p>
-
             <div
+              data-paiia-proximo-passo-ml
               style={{
                 display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit,minmax(210px,1fr))",
+                gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))",
                 gap: "12px",
               }}
             >
               <button
                 type="button"
-                onClick={
-                  abrirMidiasAppia
-                }
-                style={{
-                  ...botaoSecundario,
-                  width: "100%",
-                  padding: "14px",
-                }}
+                data-paiia-voltar-conferencia
+                onClick={() => window.scrollTo?.({ top: 0, behavior: "smooth" })}
+                style={{ ...botaoSecundario, width: "100%", padding: "14px" }}
               >
-                🎞️ Exportar Mídias
+                ← Voltar
               </button>
-
               <button
                 type="button"
-                onClick={
-                  exportarAnuncio
-                }
+                data-paiia-abrir-revisao-ml
+                onClick={() => setRevisandoPublicacaoML(true)}
+                disabled={!anuncioConferido || contasMLDisponiveis.length === 0}
                 style={{
                   ...botaoPrincipal,
                   width: "100%",
                   padding: "14px",
+                  background: "linear-gradient(135deg,#16a34a,#22c55e)",
+                  opacity: !anuncioConferido || contasMLDisponiveis.length === 0 ? 0.5 : 1,
                 }}
               >
-                ⬇️ Exportar Anúncio
-              </button>
-
-              <button
-                type="button"
-                onClick={
-                  irParaCentralPublicacao
-                }
-                style={{
-                  ...botaoPrincipal,
-                  width: "100%",
-                  padding: "14px",
-                  background:
-                    "linear-gradient(135deg,#2563eb,#22d3ee)",
-                }}
-              >
-                🚀 Central de Publicação
+                ✅ Finalizar e escolher conta
               </button>
             </div>
-
-            <div
-              data-paiia-proximo-passo-ml
-              style={{
-                marginTop: "16px",
-                paddingTop: "14px",
-                borderTop: "1px solid #14532d",
-                textAlign: "center",
-              }}
-            >
-              {anuncioConferido && contasMLDisponiveis.length > 0 ? (
-                <button
-                  type="button"
-                  data-paiia-abrir-revisao-ml
-                  onClick={() => setRevisandoPublicacaoML(true)}
-                  style={{
-                    ...botaoPrincipal,
-                    width: "100%",
-                    padding: "14px",
-                    background: "linear-gradient(135deg,#ca8a04,#facc15)",
-                    color: "#1c1917",
-                  }}
-                >
-                  🟡 Próximo passo: escolher a conta e publicar
-                </button>
-              ) : (
-                <p style={textoAuxiliar}>
-                  {contasMLDisponiveis.length
-                    ? "Valide a conferência para seguir para a publicação real."
-                    : "Nenhuma conta Mercado Livre conectada: conecte em Contas Marketplace para publicar de verdade."}
-                </p>
-              )}
-              <p style={{ ...textoAuxiliar, marginTop: "8px" }}>
-                Abrir a próxima etapa NÃO publica nada: lá você escolhe a conta,
-                valida no Mercado Livre e só publica com autorização explícita.
-              </p>
-            </div>
+            <p style={{ ...textoAuxiliar, marginTop: "10px", textAlign: "center" }}>
+              {contasMLDisponiveis.length
+                ? "Abre a Publicação DESTA ficha (REVELAÇÃO, LOJA ONLINE ou CIEBR). Nada é publicado: lá você confere, valida no Mercado Livre e só publica com autorização explícita."
+                : "Nenhuma conta Mercado Livre conectada: conecte em Contas Marketplace para publicar de verdade."}
+            </p>
+            <details style={{ marginTop: "12px" }}>
+              <summary style={{ ...textoAuxiliar, cursor: "pointer" }}>Outras opções (fora do caminho principal)</summary>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "8px" }}>
+                <button type="button" onClick={abrirMidiasAppia} style={botaoSecundario}>🎞️ Exportar Mídias</button>
+                <button type="button" onClick={exportarAnuncio} style={botaoSecundario}>⬇️ Exportar Anúncio</button>
+                <button type="button" onClick={irParaCentralPublicacao} style={botaoSecundario}>🚀 Central de Publicação</button>
+              </div>
+            </details>
 
           </section>
         )}
@@ -6489,10 +6664,11 @@ const valorInteligenciaPreco = {
 };
 
 // =====================================================
-// RECUPERAÇÃO DA FICHA (F5 / reabertura)
-// Com ?ficha=<ID> no endereço, a Conferência é remontada a partir da ficha
-// gravada na base PAIIA (Supabase) — a fonte de verdade —, direto na
-// Publicação, sem nova ficha e sem repetir a Conferência.
+// RECUPERAÇÃO DA FICHA (F5 / reabertura / outro navegador)
+// Com ?ficha=<ID> no endereço, o anúncio é remontado a partir da ficha
+// gravada na base PAIIA (Supabase) — a fonte de verdade —, na MESMA ficha e
+// na etapa em que o usuário estava (Conferência ou Publicação). Nunca cria
+// outra ficha, nunca apaga dados e nunca manda para a Home.
 // =====================================================
 function lerFichaDoEndereco() {
   try {
@@ -6513,9 +6689,8 @@ export default function MercadoLivreTeste(props) {
     (async () => {
       const r = await obterAnuncio(fichaUrl);
       if (!ativo) return;
-      const dados = r.ok ? r.anuncio.dados_conferencia || {} : {};
-      if (!r.ok || !dados.ficha?.anuncioConferido) {
-        setEstado({ pronto: false, erro: r.erro || "A ficha deste anúncio não tem os dados aprovados para recuperar." });
+      if (!r.ok) {
+        setEstado({ pronto: false, erro: r.erro || "Não foi possível ler a ficha deste anúncio na base PAIIA." });
         return;
       }
       if (publicacaoExiste(r.anuncio.publicacao)) {
@@ -6524,39 +6699,31 @@ export default function MercadoLivreTeste(props) {
         setEstado({ pronto: false, erro: `Este anúncio já foi publicado (${r.anuncio.publicacao.mlb_id || "MLB"})${pend ? ` e está COM PENDÊNCIA: ${pend.replace(/^PENDÊNCIA — /, "")} A correção é feita no mesmo MLB, sem publicar de novo.` : "."}` });
         return;
       }
+      if (r.anuncio.status_fluxo === "cancelado") {
+        setEstado({ pronto: false, erro: "Esta ficha foi cancelada (o anúncio continuou em outra ficha)." });
+        return;
+      }
       // A base é a fonte: a cópia do navegador é refeita a partir dela.
       try {
-        const chave = String(r.anuncio.codigo || dados.anuncio.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-        // Fotos: as APROVADAS na Conferência (gravadas na ficha da base).
-        const conferido = dados.ficha.anuncioConferido;
-        const fotosAprovadas = Array.isArray(conferido.fotos) ? conferido.fotos.filter(Boolean) : [];
-        const anuncioBase = {
-          ...(dados.anuncio || {}),
-          codigo: dados.anuncio?.codigo || conferido.codigo || r.anuncio.codigo,
-          titulo: dados.anuncio?.titulo || conferido.titulo,
-          descricao: dados.anuncio?.descricao ?? conferido.descricao,
-          preco: dados.anuncio?.preco ?? conferido.preco,
-          fotos: fotosAprovadas,
-          imagens: fotosAprovadas,
-        };
-        window.__paiiaAnuncioSimulador = null;
-        window.__paiiaFotosPublicacao = fotosAprovadas;
-        localStorage.setItem("mlAnuncioTeste", JSON.stringify(anuncioBase));
+        const chaveLocal = String(r.anuncio.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
         const mapa = JSON.parse(localStorage.getItem("paiiaConferenciaPorCodigo") || "{}");
-        mapa[chave] = {
-          ...dados.ficha,
-          campos: {
-            ...(dados.ficha.campos || {}),
-            anuncioIdPAIIA: r.anuncio.id,
-            contaDestinoML: String(r.anuncio.conta_destino_ml_user_id || ""),
-          },
-          // A aprovação vem da base: a tela reabre já aprovada (na Publicação
-          // nada é editável; a Conferência só reaparece se o usuário pedir).
-          assinaturaAprovada: dados.ficha.assinaturaAprovada || "aprovada-na-base",
-          etapa: "publicacao",
-          salvoEm: new Date().toISOString(),
-        };
+        const rec = montarRecuperacaoDaFicha(r.anuncio, mapa[chaveLocal] || null);
+        if (!rec.ok) {
+          setEstado({ pronto: false, erro: rec.erro });
+          return;
+        }
+        window.__paiiaAnuncioSimulador = null;
+        window.__paiiaFotosPublicacao = rec.fotos;
+        window.__paiiaFichaRecuperada = rec.id;
+        localStorage.setItem("mlAnuncioTeste", JSON.stringify(rec.anuncio));
+        mapa[rec.chave] = rec.fichaConferencia;
         localStorage.setItem("paiiaConferenciaPorCodigo", JSON.stringify(mapa));
+        if (rec.aplicacoesManuais) {
+          const manuais = JSON.parse(localStorage.getItem("paiiaAplicacoesManuaisPorCodigo") || "{}");
+          if (rec.aplicacoesManuais.length) manuais[rec.chave] = rec.aplicacoesManuais;
+          else delete manuais[rec.chave];
+          localStorage.setItem("paiiaAplicacoesManuaisPorCodigo", JSON.stringify(manuais));
+        }
       } catch (erro) {
         setEstado({ pronto: false, erro: `Não foi possível preparar a tela: ${erro?.name || erro}` });
         return;

@@ -47,10 +47,17 @@ export function lerAplicacoesAprovadas({ aplicacoes, texto } = {}) {
     } else if (/^motor\s*:/i.test(linha) && atual) {
       atual.motor = limpar(linha.replace(/^motor\s*:/i, ""));
     } else if (/^per[ií]odo\s*:/i.test(linha) && atual) {
+      // Só o período escrito: "Atual"/"?" ficam em branco (nunca ano inventado).
+      const desde = linha.match(/a\s+partir\s+de\s+(\d{4})/i);
+      const ate = linha.match(/:\s*at[eé]\s+(\d{4})/i);
       const m = linha.match(/(\d{4}|\?)\s*(?:até|ate|a|à|-)\s*(\d{4}|atual|\?)/i);
-      if (m) {
+      if (desde) {
+        atual.anoInicio = Number(desde[1]);
+      } else if (ate) {
+        atual.anoFim = Number(ate[1]);
+      } else if (m) {
         atual.anoInicio = ano(m[1]);
-        atual.anoFim = /atual/i.test(m[2]) ? new Date().getFullYear() + 1 : ano(m[2]);
+        atual.anoFim = ano(m[2]);
       } else {
         const unico = linha.match(/\d{4}/);
         if (unico) atual.anoInicio = atual.anoFim = Number(unico[0]);
@@ -61,6 +68,16 @@ export function lerAplicacoesAprovadas({ aplicacoes, texto } = {}) {
     }
   }
   return lista.filter((a) => a.montadora && a.modelo && a.modelo !== "Modelo não informado");
+}
+
+/**
+ * Separa o que pode ir para a tabela OFICIAL de compatibilidade do ML
+ * (aplicação com motor e/ou ano confirmados) dos modelos confirmados sem
+ * detalhes (ficam na descrição/busca; nunca viram todas as versões/anos).
+ */
+export function separarAplicacoesParaML(lista = []) {
+  const temDetalhe = (a) => Boolean(a?.motor || a?.anoInicio || a?.anoFim);
+  return { detalhadas: lista.filter(temDetalhe), semDetalhes: lista.filter((a) => !temDetalhe(a)) };
 }
 
 // Montadoras de automóvel/caminhonete. Fabricantes que também fazem
@@ -91,6 +108,31 @@ export function valorTipoVeiculo(valoresCategoria = [], tipoAprovado = "") {
   const alvo = chaveTipo(tipoAprovado);
   if (!alvo) return null;
   return (valoresCategoria || []).find((v) => chaveTipo(v?.nome || v?.name) === alvo) || null;
+}
+
+/**
+ * Tipo de veículo a partir dos ATRIBUTOS DA CATEGORIA no Mercado Livre
+ * (GET /categories/{id}/attributes). Verificado em 05/10/2026:
+ *  - Peças/Acessórios de Carros e Caminhonetes → 1 valor "Carro/Caminhonete" (fixo)
+ *  - Peças de Motos e Quadriciclos → 1 valor "Moto/Quadriciclo" (fixo)
+ *  - Peças de Linha Pesada → 1 valor "Linha Pesada" (fixo)
+ *  - Peças Náuticas → categoria SEM o atributo (não se aplica)
+ * Devolve { existe, valores:[{id,nome}], fixo, obrigatorio }. Nunca inventa valor.
+ */
+export function tipoVeiculoDaCategoria(atributos) {
+  if (!Array.isArray(atributos)) return null;
+  const vt = atributos.find((a) => a?.id === "VEHICLE_TYPE");
+  if (!vt) return { existe: false, valores: [], fixo: false, obrigatorio: false };
+  const valores = (Array.isArray(vt.values) ? vt.values : []).map((v) => ({ id: String(v.id), nome: String(v.name) }));
+  return { existe: true, valores, fixo: valores.length === 1, obrigatorio: Boolean(vt.tags?.required || vt.tags?.catalog_required) };
+}
+
+/** Valor a gravar na ficha: o único da categoria, ou o escolhido na grafia do ML. */
+export function tipoVeiculoParaFicha(infoCategoria, atual = "") {
+  if (!infoCategoria?.existe) return atual;
+  if (infoCategoria.valores.length === 1) return infoCategoria.valores[0].nome;
+  const igual = valorTipoVeiculo(infoCategoria.valores, atual);
+  return igual ? igual.nome : atual;
 }
 
 // ---------- Casamento aplicação aprovada × veículo do catálogo ML ----------
@@ -151,6 +193,12 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
   const rotulo = (a) => `${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`.replace(/\s+/g, " ");
   const cacheMarca = new Map();
   for (const a of aplicacoes) {
+    // Modelo confirmado SEM detalhes (sem motor e sem período): não é
+    // vinculado automaticamente a todas as versões/anos do catálogo.
+    if (!a.motor && !a.anoInicio && !a.anoFim) {
+      semCatalogo.push({ aplicacao: rotulo(a), motivo: "modelo sem detalhes (sem motor/ano): não vinculado automaticamente ao catálogo do Mercado Livre" });
+      continue;
+    }
     // 1) montadora no catálogo
     let marcas = cacheMarca.get(a.montadora);
     if (!marcas) {
