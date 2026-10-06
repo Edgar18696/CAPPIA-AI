@@ -27,6 +27,7 @@ import {
 } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, decidirCriacaoBling, conferirProdutoCriado } from "../services/estoqueBlingPAIIA";
+import { conferirFichaPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
  * PUBLICAÇÃO no Mercado Livre — etapa que vem DEPOIS da Conferência PAIIA.
@@ -118,6 +119,13 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
   else if (descricaoAfirmaOriginal(desc)) itens.push({ item: "Descrição", nivel: "erro", texto: "A descrição afirma \"original/genuína\" sem comprovação. Corrija na Conferência." });
   else if (desc.length < 200) itens.push({ item: "Descrição", nivel: "aviso", texto: `Descrição curta (${desc.length} caracteres). Confira se tem peça, aplicações, códigos e a orientação de conferir o código.` });
   else itens.push({ item: "Descrição", nivel: "ok", texto: `${desc.length} caracteres.` });
+
+  // Modelos confirmados × descrição: bloqueia validar/publicar até revisar.
+  // O PAIIA não altera a descrição sozinho e não inventa ano/motor/aplicação.
+  const faltamModelos = modelosFaltandoNaDescricao({ modelos: modelosConfirmados({ aplicacoes, modelosSemDetalhes }), descricao: desc });
+  if (desc && faltamModelos.length) {
+    itens.push({ item: "Modelos na descrição", nivel: "erro", texto: `${TEXTO_MODELOS_FALTANDO} Faltando: ${faltamModelos.join(", ")}. Revise a descrição na Conferência ("Editar / revisar a Conferência").` });
+  }
 
   // Tipo de veículo: vem da Conferência; categoria que exige e sem valor = erro.
   if (tipoVeiculoExigido) {
@@ -242,6 +250,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   const [ocupado, setOcupado] = useState("conexao");
   const [autorizado, setAutorizado] = useState(false);
   const [armado, setArmado] = useState(false);
+  // Ficha PERSISTIDA (fonte de verdade): relida pelo ID antes de validar e
+  // de novo antes de publicar. digitalValidada = versão da ficha que o
+  // Mercado Livre validou; a publicação só segue com essa MESMA versão.
+  const [fichaPersistida, setFichaPersistida] = useState(null);
+  const [digitalValidada, setDigitalValidada] = useState("");
   const [estoque, setEstoque] = useState(null);
   // Peso e medidas: os CONFIRMADOS na Conferência (não se confere de novo).
   const logistica = anuncio?.logistica || null;
@@ -652,14 +665,53 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setPainelBling(false);
   }
 
+  // Relê a ficha na base e compara com a tela e com o que vai ao ML.
+  // Divergência = não segue (nada é validado nem publicado calado).
+  async function reconferirFichaPersistida() {
+    const id = ficha.anuncioId;
+    if (!id) return { ok: false, motivo: "Sem a ficha gravada na base PAIIA: nada é validado nem publicado.", divergencias: [] };
+    let r = null;
+    let res = null;
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      // 2ª leitura: dá tempo de uma gravação desta tela (ex.: quantidade) chegar à base.
+      if (tentativa) await new Promise((ok) => setTimeout(ok, 1500));
+      r = await obterAnuncio(id);
+      if (r.ok && publicacaoExiste(r.anuncio.publicacao)) {
+        return { ok: false, motivo: `Esta ficha já foi publicada (${r.anuncio.publicacao.mlb_id || "MLB"}). Nada é publicado de novo.`, divergencias: [] };
+      }
+      res = conferirFichaPersistida({ tela: anuncio, envio: dadosAnuncio, base: r.ok ? r.anuncio : null });
+      if (res.ok || !res.divergencias.length) break;
+    }
+    return res;
+  }
+  function recarregarFicha() {
+    try {
+      const url = new URL(window.location.href);
+      if (ficha.anuncioId) url.searchParams.set("ficha", ficha.anuncioId);
+      window.location.assign(url.toString());
+    } catch {
+      window.location.reload();
+    }
+  }
+
   async function validarNoML() {
     setOcupado("validar");
     setValidacao(null);
     setArmado(false);
+    setDigitalValidada("");
+    // Fonte de verdade: a ficha persistida, relida AGORA.
+    const fp = await reconferirFichaPersistida();
+    setFichaPersistida(fp);
+    if (!fp.ok) {
+      setValidacao({ ok: false, erro: `Validação NÃO executada: ${fp.motivo}` });
+      setOcupado("");
+      return;
+    }
     // Duplicidade conferida de novo na validação (base + Mercado Livre).
     await conferirDuplicidadeML(contaEscolhida);
     const r = await chamar("validar_item", { anuncio: dadosAnuncio }, contaEscolhida);
     setValidacao(r);
+    if (r?.ok && r.valido) setDigitalValidada(fp.digital);
     setOcupado("");
   }
 
@@ -676,6 +728,20 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       return;
     }
     setOcupado("publicar");
+    // Ficha persistida relida NA HORA: tem de ser a MESMA versão validada.
+    const fp = await reconferirFichaPersistida();
+    setFichaPersistida(fp);
+    if (!fp.ok || !digitalValidada || fp.digital !== digitalValidada) {
+      setResultado({
+        ok: false,
+        erro: `Publicação BLOQUEADA: ${fp.ok ? "a ficha gravada mudou depois da validação. Valide de novo." : fp.motivo}`,
+      });
+      setValidacao(null);
+      setDigitalValidada("");
+      setArmado(false);
+      setOcupado("");
+      return;
+    }
     // Proteção dupla, conferida de novo NA HORA do clique (sem cache).
     const base = await consultarDuplicidadeBase(contaEscolhida);
     setDuplicidadeBase(base);
@@ -812,7 +878,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
   // Ordem do fluxo: quantidade confirmada e produto no Bling ANTES de validar no ML.
   const blingPronto = Boolean(estoque?.encontrado && !estoque?.ambiguo);
-  const motivoSemValidar = !quantidadeConfirmada
+  const modelosForaDescricao = conferencia.find((c) => c.item === "Modelos na descrição");
+  const motivoSemValidar = modelosForaDescricao
+    ? modelosForaDescricao.texto
+    : !quantidadeConfirmada
     ? "Confirme a quantidade antes de validar no Mercado Livre."
     : !blingPronto
       ? estoque?.encontrado === false
@@ -1184,6 +1253,19 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
               {ocupado === "validar" ? "⏳ Validando..." : "🔎 Validar dados no Mercado Livre"}
             </button>
             {motivoSemValidar && <p data-paiia-motivo-sem-validar style={{ ...info, color: "#fde68a" }}>⚠ {motivoSemValidar}</p>}
+            {fichaPersistida && !fichaPersistida.ok && (
+              <div data-paiia-ficha-divergente={(fichaPersistida.divergencias || []).join("|")} style={{ ...erro, marginTop: 8 }}>
+                ❌ {fichaPersistida.motivo}
+                {fichaPersistida.divergencias?.length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <button type="button" data-paiia-recarregar-ficha onClick={recarregarFicha} style={botaoCinza}>
+                      🔄 Recarregar a ficha gravada
+                    </button>{" "}
+                    <span style={{ color: "#cbd5e1" }}>Depois confira os dados (ou use "Editar / revisar a Conferência").</span>
+                  </div>
+                )}
+              </div>
+            )}
             {validacao && validacao.ok && validacao.valido && (
               <p style={{ ...info, color: "#86efac" }}>✅ O Mercado Livre aceitou os dados. Nenhum anúncio foi criado.</p>
             )}

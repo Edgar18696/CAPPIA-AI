@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { conflitoDeVersao, decisaoBaseComGravacao } from "./publicacaoSegura";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -15,6 +16,8 @@ import { supabase } from "../supabase";
  */
 
 const T_ANUNCIOS = "paiia_anuncios";
+const ERRO_CONFLITO =
+  "Esta ficha foi alterada em outra aba ou computador depois que esta tela a abriu. Para não sobrescrever a versão mais nova, nada foi gravado aqui: recarregue a ficha (F5).";
 const T_PUBLICACOES = "paiia_anuncios_publicacoes";
 const MARKETPLACE_ML = "mercado_livre";
 
@@ -302,27 +305,33 @@ export async function conferirDuplicidadeBase({ codigo, sku, contaId }) {
  * - Sem ID, ou ficha já publicada: cria uma ficha nova.
  * A conta de destino (conta_destino_*) não é tocada aqui.
  */
-export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConferencia }) {
+export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConferencia, versaoEsperada = "" }) {
   const usuarioId = await usuarioAtual();
   if (!usuarioId) return { ok: false, disponivel: true, erro: "Sessão expirada: entre de novo no PAIIA." };
   const agora = new Date().toISOString();
+  // Toda gravação leva a versão (salvo_em): é ela que impede uma aba com
+  // cópia antiga de sobrescrever a ficha mais nova.
+  const dadosComVersao = { ...(dadosConferencia || {}), salvo_em: agora };
   if (anuncioId) {
     const atual = await obterAnuncio(anuncioId);
     if (!atual.ok && !atual.naoEncontrado) return atual;
     const publicado = atual.ok && publicacaoExiste(atual.anuncio.publicacao);
     if (atual.ok && !publicado) {
+      if (conflitoDeVersao({ versaoEsperada, versaoNaBase: atual.anuncio.dados_conferencia?.salvo_em })) {
+        return { ok: false, disponivel: true, conflito: true, erro: ERRO_CONFLITO };
+      }
       const decisaoBase = atual.anuncio.dados_conferencia?.base_paiia || null;
       const { error } = await supabase
         .from(T_ANUNCIOS)
         .update({
           titulo: titulo || null,
           status_fluxo: "conferencia_aprovada",
-          dados_conferencia: { ...(dadosConferencia || {}), ...(decisaoBase ? { base_paiia: decisaoBase } : {}) },
+          dados_conferencia: { ...dadosComVersao, ...(decisaoBase ? { base_paiia: decisaoBase } : {}) },
           updated_at: agora,
         })
         .eq("id", anuncioId);
       if (error) return falha(error);
-      return { ok: true, disponivel: true, anuncioId, nova: false };
+      return { ok: true, disponivel: true, anuncioId, nova: false, versao: agora };
     }
   }
   const { data, error } = await supabase
@@ -334,12 +343,12 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
       titulo: titulo || null,
       marketplace: MARKETPLACE_ML,
       status_fluxo: "conferencia_aprovada",
-      dados_conferencia: dadosConferencia || {},
+      dados_conferencia: dadosComVersao,
     })
     .select("id")
     .single();
   if (error) return falha(error);
-  return { ok: true, disponivel: true, anuncioId: data.id, nova: true };
+  return { ok: true, disponivel: true, anuncioId: data.id, nova: true, versao: agora };
 }
 
 /**
@@ -355,14 +364,18 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
  * A conta de destino (conta_destino_*) não é tocada aqui.
  */
 const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendencia", "cancelado"];
-export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConferencia, aprovada = false, criarSeFechada = false }) {
+export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConferencia, aprovada = false, criarSeFechada = false, versaoEsperada = "" }) {
   const usuarioId = await usuarioAtual();
   if (!usuarioId) return { ok: false, disponivel: true, erro: "Sessão expirada: entre de novo no PAIIA." };
   const agora = new Date().toISOString();
+  const versao = String(dadosConferencia?.salvo_em || agora);
   if (anuncioId) {
     const atual = await obterAnuncio(anuncioId);
     if (!atual.ok && !atual.naoEncontrado) return atual;
     const fechada = atual.ok && (publicacaoExiste(atual.anuncio.publicacao) || STATUS_FICHA_FECHADA.includes(atual.anuncio.status_fluxo));
+    if (atual.ok && !fechada && conflitoDeVersao({ versaoEsperada, versaoNaBase: atual.anuncio.dados_conferencia?.salvo_em })) {
+      return { ok: false, disponivel: true, conflito: true, erro: ERRO_CONFLITO };
+    }
     if (atual.ok && !fechada) {
       const antigos = atual.anuncio.dados_conferencia || {};
       const { error } = await supabase
@@ -376,7 +389,7 @@ export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConf
         })
         .eq("id", anuncioId);
       if (error) return falha(error);
-      return { ok: true, disponivel: true, anuncioId, nova: false };
+      return { ok: true, disponivel: true, anuncioId, nova: false, versao };
     }
     if (fechada && !criarSeFechada) {
       return { ok: false, disponivel: true, fechada: true, erro: "Esta ficha já foi publicada ou cancelada: não é alterada." };
@@ -396,7 +409,7 @@ export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConf
     .select("id")
     .single();
   if (error) return falha(error);
-  return { ok: true, disponivel: true, anuncioId: data.id, nova: true };
+  return { ok: true, disponivel: true, anuncioId: data.id, nova: true, versao };
 }
 
 /** Ficha criada neste computador e abandonada (o usuário continuou outra). */
@@ -414,21 +427,25 @@ export async function cancelarFichaSemConta(anuncioId) {
 /**
  * Decisão do usuário sobre alimentar a BASE PAIIA com os dados deste anúncio.
  * É independente da publicação: "nao_salvar" não bloqueia nada.
+ * Uma gravação já feita (lote) NUNCA é apagada por uma decisão nova: assim
+ * a tela sempre reconhece o lote e não oferece gravar de novo.
+ * (Não muda dados_conferencia.salvo_em: a versão da ficha continua a mesma.)
  */
 export async function registrarDecisaoBase({ anuncioId, decisao, detalhe }) {
   if (!anuncioId) return { ok: false, erro: "Sem ID do anúncio." };
   const atual = await obterAnuncio(anuncioId);
   if (!atual.ok) return atual;
   const dados = atual.anuncio.dados_conferencia || {};
+  const base_paiia = decisaoBaseComGravacao(dados.base_paiia || null, { decisao, decidido_em: new Date().toISOString(), ...(detalhe || {}) });
   const { error } = await supabase
     .from(T_ANUNCIOS)
     .update({
-      dados_conferencia: { ...dados, base_paiia: { decisao, decidido_em: new Date().toISOString(), ...(detalhe || {}) } },
+      dados_conferencia: { ...dados, base_paiia },
       updated_at: new Date().toISOString(),
     })
     .eq("id", anuncioId);
   if (error) return falha(error);
-  return { ok: true };
+  return { ok: true, base_paiia };
 }
 
 /** Vínculo com o produto criado no Bling (após a criação autorizada). */

@@ -24,6 +24,7 @@ import {
   pendenciaPublicacao,
 } from "../services/anuncioPublicacaoService";
 import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
+import { divergenciasAnuncio, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO, estadoBasePAIIA, podeGravarNaBase } from "../services/publicacaoSegura";
 import {
   separarModelos,
   separarAplicacoesBase,
@@ -979,6 +980,24 @@ function ConferenciaPAIIA({
   const [fichaSalva] = useState(() =>
     chaveConferencia ? lerMapaLocal(CHAVE_CONFERENCIA)[chaveConferencia] || null : null
   );
+  // Versão (dados_conferencia.salvo_em) da ficha da base que esta tela leu ou
+  // gravou por último. Toda gravação confere: se a base estiver em outra
+  // versão (outra aba/computador gravou depois), NADA é gravado — uma cópia
+  // antiga nunca sobrescreve a ficha mais nova.
+  const versaoFichaRef = useRef({
+    id: String(fichaSalva?.campos?.anuncioIdPAIIA || ""),
+    versao: String(fichaSalva?.versaoBase || ""),
+  });
+  const versaoEsperadaPara = (id) => (id && versaoFichaRef.current.id === id ? versaoFichaRef.current.versao : "");
+  const conflitoFichaRef = useRef(false);
+  // Gravações da ficha (rascunho e ficha aprovada) uma de cada vez: a versão
+  // lida por uma é a gravada pela anterior.
+  const filaGravacaoRef = useRef(Promise.resolve());
+  function naFilaDeGravacao(tarefa) {
+    const p = filaGravacaoRef.current.then(tarefa, tarefa);
+    filaGravacaoRef.current = p.catch(() => {});
+    return p;
+  }
   const origemConferenciaRef = useRef({});
   function inicial(campo, doAnuncio) {
     origemConferenciaRef.current[campo] = doAnuncio;
@@ -2470,6 +2489,53 @@ const [
   setErroCategoria,
 ] = useState("");
 
+  // Cópia aprovada montada com os dados ATUAIS da Conferência. É a mesma
+  // usada ao aprovar e para conferir, depois, se a aprovação ainda vale.
+  function montarAnuncioConferidoAtual() {
+    return {
+      codigo: numeroPeca || codigo,
+      oem: anuncio?.oem || "",
+      titulo: tituloAnuncio,
+      preco,
+      descricao,
+      tipoAnuncio: modalidade,
+      marca,
+      gtin,
+      fotos: fotos.map(obterUrlFoto).filter(Boolean),
+      categoria,
+      categoriaId,
+      compatibilidades,
+      // Tipo de veículo aprovado (vai como VEHICLE_TYPE na Publicação).
+      tipoVeiculo,
+      nomePeca,
+      // UMA quantidade confirmada (Estoque da Conferência): a mesma vai para
+      // a Publicação, a validação, o Bling e o Mercado Livre.
+      quantidade: normalizarQuantidade(quantidadeEstoque),
+      quantidadeConfirmada: Boolean(normalizarQuantidade(quantidadeEstoque)),
+      // Compatibilidade estruturada e dados técnicos confirmados da peça.
+      aplicacoesDetalhadas: aplicacoesConfirmadas,
+      modelosSemDetalhes,
+      dadosTecnicos: { funcao: funcaoPeca, fonteFuncao, especificacao: especificacaoTecnica, termoComercial },
+      condicao,
+      logistica: logisticaConferencia,
+      // Padrões fixos: vão para a ficha e para a Publicação.
+      padroesML: padroesEsperadosConferencia(),
+    };
+  }
+  const montarAnuncioConferidoRef = useRef(montarAnuncioConferidoAtual);
+  montarAnuncioConferidoRef.current = montarAnuncioConferidoAtual;
+
+  // Modelos confirmados (compatibilidade aprovada) que NÃO aparecem na
+  // descrição: aviso na Conferência e bloqueio na aprovação/publicação.
+  const modelosFaltandoDescricao = useMemo(
+    () =>
+      modelosFaltandoNaDescricao({
+        modelos: modelosConfirmados({ aplicacoes: lerAplicacoesAprovadas({ texto: compatibilidades }), modelosSemDetalhes }),
+        descricao,
+      }),
+    [compatibilidades, modelosSemDetalhes, descricao]
+  );
+
   // Qualquer mudança depois da aprovação exige conferir de novo
   // (a publicação real usa SOMENTE o que foi aprovado na conferência).
   const assinaturaConferencia = JSON.stringify([
@@ -2488,6 +2554,10 @@ const [
     alturaEnvio,
     logisticaConferencia?.medida || null,
     normalizarQuantidade(quantidadeEstoque),
+    // Novos no fim (aprovações antigas sem eles não caem sozinhas).
+    tipoVeiculo,
+    gtin,
+    modalidade,
   ]);
 
   // A aprovação compara o CONTEÚDO (não o formato): abrir/revisar, F5,
@@ -2507,14 +2577,23 @@ const [
         }
         return;
       }
-      const mudou = diferencasAssinatura(aprovada, assinaturaConferencia);
-      if (typeof window !== "undefined") window.__paiiaDiferencasAprovacao = mudou;
-      // Assinatura antiga ilegível, ou PUBLICAÇÃO (sem edição; diferença
-      // vinda da recuperação): adota a atual e mantém a aprovação.
+      let mudou = diferencasAssinatura(aprovada, assinaturaConferencia);
+      // Assinatura antiga ilegível, ou etapa PUBLICAÇÃO: a aprovação só é
+      // mantida se a CÓPIA APROVADA for igual aos dados atuais, campo a campo
+      // (ex.: quantidade confirmada na Publicação, que atualiza as duas).
+      // Antes, a assinatura nova era adotada calada e a cópia aprovada podia
+      // continuar antiga (caso MLB7755979208: descrição sem o Kangoo).
       if (mudou.includes("assinatura ilegível") || etapaFluxo === "publicacao") {
-        assinaturaAprovadaRef.current = assinaturaConferencia;
-        return;
+        const divergentes = divergenciasAnuncio(montarAnuncioConferidoRef.current(), anuncioConferido, { somenteCamposDe: anuncioConferido });
+        if (!divergentes.length) {
+          assinaturaAprovadaRef.current = assinaturaConferencia;
+          return;
+        }
+        mudou = divergentes;
       }
+      if (typeof window !== "undefined") window.__paiiaDiferencasAprovacao = mudou;
+      // Dado aprovado mudou de verdade: a aprovação é invalidada (nova
+      // Conferência). Se o usuário desfizer, a aprovação guardada volta.
       aprovacaoGuardadaRef.current = { assinatura: aprovada, anuncioConferido, payloadTeste, campos: mudou };
       assinaturaAprovadaRef.current = "";
       setAnuncioConferido(null);
@@ -3379,6 +3458,7 @@ useEffect(() => {
       aprovacaoAnterior: conferidoLeve ? null : copiaLeve(aprovacaoGuardadaRef.current),
       etapa: conferidoLeve ? etapaFluxo : "conferencia",
       salvoEm: new Date().toISOString(),
+      versaoBase: versaoFichaRef.current.id === anuncioIdPAIIA ? versaoFichaRef.current.versao : "",
     });
   }, [assinaturaFicha]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3415,13 +3495,23 @@ useEffect(() => {
       };
       // Rascunho ainda sendo criado: usa o MESMO ID (nunca duas fichas).
       const idRascunho = anuncioIdPAIIA || (criandoFichaPorCodigo.has(chaveConferencia) ? await criandoFichaPorCodigo.get(chaveConferencia).catch(() => "") : "") || idFichaRef.current || "";
-      const r = await salvarFichaAprovada({
-        anuncioId: idRascunho,
-        codigo: anuncio?.codigo || anuncio?.oem || anuncioConferido.codigo,
-        titulo: anuncioConferido.titulo,
-        dadosConferencia: dados,
-      });
+      if (conflitoFichaRef.current) {
+        gravandoFichaRef.current = false;
+        if (montadoRef.current) setFichaBase({ pronta: true, erro: "Esta ficha foi alterada em outra aba ou computador: recarregue a ficha (F5) antes de continuar." });
+        return;
+      }
+      const r = await naFilaDeGravacao(() =>
+        salvarFichaAprovada({
+          anuncioId: idRascunho,
+          codigo: anuncio?.codigo || anuncio?.oem || anuncioConferido.codigo,
+          titulo: anuncioConferido.titulo,
+          dadosConferencia: dados,
+          versaoEsperada: versaoEsperadaPara(idRascunho),
+        })
+      );
       gravandoFichaRef.current = false;
+      if (r.ok && r.versao) versaoFichaRef.current = { id: r.anuncioId, versao: r.versao };
+      if (r.conflito) conflitoFichaRef.current = true;
       // O ID criado nunca é descartado (mesmo se o efeito foi refeito).
       if (r.ok) {
         fichaBaseGravadaRef.current = `${r.anuncioId}|${assinaturaAprovadaRef.current}`;
@@ -3495,23 +3585,31 @@ useEffect(() => {
         id = (await criandoFichaPorCodigo.get(chaveConferencia).catch(() => "")) || "";
       }
       if (id && st.fechada === id) return; // ficha publicada/cancelada: nunca é regravada
+      if (conflitoFichaRef.current) return; // outra aba gravou depois: não sobrescreve
       const dados = montarDadosRef.current();
-      const pedido = salvarRascunhoFicha({
-        anuncioId: id,
-        codigo: anuncio?.codigo || anuncio?.oem || codigo,
-        titulo: tituloAnuncio,
-        dadosConferencia: dados,
-        aprovada: aprovadoRef.current,
-        // Ficha antiga (já publicada) guardada para este código: só nesta
-        // abertura da Conferência vira um anúncio NOVO; depois, nunca.
-        criarSeFechada: !st.confirmadoNestaTela,
-      });
+      const pedido = naFilaDeGravacao(() =>
+        salvarRascunhoFicha({
+          anuncioId: id,
+          codigo: anuncio?.codigo || anuncio?.oem || codigo,
+          titulo: tituloAnuncio,
+          dadosConferencia: dados,
+          aprovada: aprovadoRef.current,
+          // Ficha antiga (já publicada) guardada para este código: só nesta
+          // abertura da Conferência vira um anúncio NOVO; depois, nunca.
+          criarSeFechada: !st.confirmadoNestaTela,
+          versaoEsperada: versaoEsperadaPara(id),
+        })
+      );
       if (!id) {
         criandoFichaPorCodigo.set(chaveConferencia, pedido.then((r) => (r.ok ? r.anuncioId : "")));
       }
       const r = await pedido;
       if (!id) criandoFichaPorCodigo.delete(chaveConferencia);
-      if (r.ok) {
+      if (r.ok && r.versao) versaoFichaRef.current = { id: r.anuncioId, versao: r.versao };
+      if (r.conflito) {
+        conflitoFichaRef.current = true;
+        if (montadoRef.current) setAvisoRascunho(r.erro);
+      } else if (r.ok) {
         st.ultima = assinatura;
         st.confirmadoNestaTela = true;
         idFichaRef.current = r.anuncioId;
@@ -3886,6 +3984,13 @@ useEffect(() => {
         'Descrição — afirma "original/genuína" sem comprovação. Use "Montar descrição padrão" ou corrija o texto.'
       );
     }
+    // Modelos confirmados × descrição: só avisa. A descrição (que o usuário
+    // pode ter editado) nunca é alterada sozinha; nada é inventado.
+    if (modelosFaltandoDescricao.length) {
+      faltando.push(
+        `Descrição — ${TEXTO_MODELOS_FALTANDO} Faltando: ${modelosFaltandoDescricao.join(", ")}. Revise o texto (ou use "Montar descrição padrão"); nenhum ano, motor ou aplicação é inventado.`
+      );
+    }
 
     if (
       faltando.length > 0
@@ -4071,35 +4176,7 @@ useEffect(() => {
     aprovacaoGuardadaRef.current = null;
 
     // Fotos do produto na ordem aprovada (banner e vídeo ficam separados).
-    setAnuncioConferido({
-      codigo: numeroPeca || codigo,
-      oem: anuncio?.oem || "",
-      titulo: tituloAnuncio,
-      preco,
-      descricao,
-      tipoAnuncio: modalidade,
-      marca,
-      gtin,
-      fotos: fotos.map(obterUrlFoto).filter(Boolean),
-      categoria,
-      categoriaId,
-      compatibilidades,
-      // Tipo de veículo aprovado (vai como VEHICLE_TYPE na Publicação).
-      tipoVeiculo,
-      nomePeca,
-      // UMA quantidade confirmada (Estoque da Conferência): a mesma vai para
-      // a Publicação, a validação, o Bling e o Mercado Livre.
-      quantidade: normalizarQuantidade(quantidadeEstoque),
-      quantidadeConfirmada: Boolean(normalizarQuantidade(quantidadeEstoque)),
-      // Compatibilidade estruturada e dados técnicos confirmados da peça.
-      aplicacoesDetalhadas: aplicacoesConfirmadas,
-      modelosSemDetalhes,
-      dadosTecnicos: { funcao: funcaoPeca, fonteFuncao, especificacao: especificacaoTecnica, termoComercial },
-      condicao,
-      logistica: logisticaConferencia,
-      // Padrões fixos: vão para a ficha e para a Publicação.
-      padroesML: padroesEsperadosConferencia(),
-    });
+    setAnuncioConferido(montarAnuncioConferidoAtual());
 
     localStorage.setItem(
       "mlPayloadTeste",
@@ -5809,6 +5886,12 @@ useEffect(() => {
             ⚠ A descrição afirma "original/genuína". Sem comprovação isso não pode ser publicado.
           </p>
         )}
+        {modelosFaltandoDescricao.length > 0 && (
+          <p style={{ color: "#fde68a", fontSize: 13 }} data-paiia-modelos-fora-descricao={modelosFaltandoDescricao.join("|")}>
+            ⚠ {TEXTO_MODELOS_FALTANDO} Faltando: <b>{modelosFaltandoDescricao.join(", ")}</b>. Revise a descrição antes de aprovar
+            (o PAIIA não altera o texto sozinho e não inventa ano, motor ou aplicação).
+          </p>
+        )}
       </section>
 
       {/* 12 - LIMITE */}
@@ -6811,6 +6894,8 @@ export default function MercadoLivreTeste(props) {
 // =====================================================
 function DecisaoBasePAIIA({ anuncioId, existeNaBase, anuncioConferido, aplicacoes, nomePeca }) {
   const [decisao, setDecisao] = useState({ carregando: true, valor: "", simulacao: null, gravacao: null, erro: "", ocupado: "" });
+  // Trava contra duplo clique (o estado do React só muda no próximo render).
+  const gravandoRef = useRef(false);
 
   useEffect(() => {
     let ativo = true;
@@ -6822,7 +6907,10 @@ function DecisaoBasePAIIA({ anuncioId, existeNaBase, anuncioConferido, aplicacoe
       const r = await obterAnuncio(anuncioId);
       if (!ativo) return;
       const salva = r.ok ? r.anuncio.dados_conferencia?.base_paiia : null;
-      setDecisao((d) => ({ ...d, carregando: false, valor: salva?.decisao || "", gravacao: salva?.gravacao || null }));
+      // Lote já gravado (mesmo em fichas antigas, gravadas sem o campo "ok")
+      // é reconhecido: a tela mostra "✅ Gravado" e não oferece gravar de novo.
+      const est = estadoBasePAIIA(salva);
+      setDecisao((d) => ({ ...d, carregando: false, valor: est.gravado ? "autorizado" : salva?.decisao || "", gravacao: est.gravado ? { ...salva.gravacao, ok: true } : salva?.gravacao || null }));
     })();
     return () => { ativo = false; };
   }, [anuncioId, existeNaBase]);
@@ -6881,16 +6969,44 @@ function DecisaoBasePAIIA({ anuncioId, existeNaBase, anuncioConferido, aplicacoe
     setDecisao((d) => ({ ...d, ocupado: "", valor: valor === "sim" ? "autorizado" : "nao_salvar", simulacao }));
   }
 
+  // ÚNICO caminho de gravação deste produto em catalogo_pecas: o clique em
+  // "Confirmar gravação na base PAIIA". Publicar, criar no Bling, estoque ou
+  // concluir a ficha nunca chegam aqui.
   async function confirmarGravacao() {
-    setDecisao((d) => ({ ...d, ocupado: "gravar", erro: "" }));
-    const { data, error } = await supabase.functions.invoke("catalogo-escrita", {
-      body: { acao: "gravar_lote", registros: montarRegistros(), meta: { catalogo: "Conferência PAIIA" } },
-    });
-    const gravacao = error ? { ok: false, erro: error.message } : data || { ok: false };
-    if (gravacao.ok) {
-      await registrarDecisaoBase({ anuncioId, decisao: "autorizado", detalhe: { gravacao: { lote_id: gravacao.lote_id || gravacao.loteId || null, inseridos: gravacao.inseridos ?? null } } });
+    if (gravandoRef.current) return;
+    gravandoRef.current = true;
+    try {
+      setDecisao((d) => ({ ...d, ocupado: "gravar", erro: "" }));
+      // Relê a ficha AGORA (F5, outra aba, reabertura): lote já gravado = não grava.
+      const atual = await obterAnuncio(anuncioId);
+      const estado = atual.ok ? estadoBasePAIIA(atual.anuncio.dados_conferencia?.base_paiia) : null;
+      const pode = podeGravarNaBase({ estado, confirmacao: "CONFIRMAR_GRAVACAO_BASE_PAIIA" });
+      if (!pode.pode) {
+        setDecisao((d) => ({
+          ...d,
+          ocupado: "",
+          ...(pode.jaGravado ? { valor: "autorizado", gravacao: { ...atual.anuncio.dados_conferencia.base_paiia.gravacao, ok: true } } : {}),
+          erro: pode.jaGravado ? "" : pode.motivo,
+        }));
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke("catalogo-escrita", {
+        body: { acao: "gravar_lote", registros: montarRegistros(), meta: { catalogo: "Conferência PAIIA" } },
+      });
+      const gravacao = error ? { ok: false, erro: error.message } : data || { ok: false };
+      if (gravacao.ok) {
+        // Grava COM "ok" e lote: F5/reabrir reconhecem e não gravam de novo.
+        const reg = await registrarDecisaoBase({
+          anuncioId,
+          decisao: "autorizado",
+          detalhe: { gravacao: { ok: true, lote_id: gravacao.lote_id || gravacao.loteId || null, inseridos: gravacao.inseridos ?? null, gravado_em: new Date().toISOString() } },
+        });
+        if (!reg.ok) gravacao.avisoRegistro = reg.erro || "Gravado na base, mas o registro na ficha falhou.";
+      }
+      setDecisao((d) => ({ ...d, ocupado: "", gravacao }));
+    } finally {
+      gravandoRef.current = false;
     }
-    setDecisao((d) => ({ ...d, ocupado: "", gravacao }));
   }
 
   return (
@@ -6917,9 +7033,16 @@ function DecisaoBasePAIIA({ anuncioId, existeNaBase, anuncioConferido, aplicacoe
         </p>
       ) : (
         <div data-paiia-base-decisao="sim" style={{ color: "#e2e8f0", fontSize: 14, marginTop: 8 }}>
-          <div>Autorizado salvar na base PAIIA ({montarRegistros().length} registro(s), só dados conferidos).</div>
+          <div>
+            {decisao.gravacao?.ok
+              ? "Base PAIIA"
+              : `Você respondeu SIM (${montarRegistros().length} registro(s), só dados conferidos). Ainda NÃO foi gravado: só grava com o botão abaixo.`}
+          </div>
           {decisao.gravacao?.ok ? (
-            <div style={{ color: "#86efac" }}>✅ Gravado na base PAIIA{decisao.gravacao.lote_id ? ` (lote ${String(decisao.gravacao.lote_id).slice(0, 8)})` : ""}.</div>
+            <div data-paiia-base-gravado={decisao.gravacao.lote_id || "sim"} style={{ color: "#86efac" }}>
+              ✅ Gravado na base PAIIA{decisao.gravacao.lote_id ? ` (lote ${String(decisao.gravacao.lote_id).slice(0, 8)})` : ""}. Nada mais será gravado para este anúncio.
+              {decisao.gravacao.avisoRegistro && <div style={{ color: "#fde68a" }}>⚠ {decisao.gravacao.avisoRegistro}</div>}
+            </div>
           ) : (
             <>
               {decisao.simulacao && (

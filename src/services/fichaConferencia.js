@@ -30,10 +30,16 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
   const conferido = ficha.anuncioConferido || null;
   const aprovada = Boolean(conferido && ficha.assinaturaAprovada);
   // Cópia local MAIS NOVA da MESMA ficha (ex.: F5 logo depois de digitar,
-  // antes da gravação chegar à base): os campos dela são mantidos.
+  // antes da gravação chegar à base): os campos dela são mantidos — mas só
+  // se ela partiu da MESMA versão que está na base. Cópia de uma aba antiga
+  // (feita sobre uma versão anterior) nunca volta por cima da ficha atual.
+  const versaoLocal = String(fichaLocal?.versaoBase || "");
+  const versaoNaBase = String(dados.salvo_em || "");
+  const partiuDaVersaoAtual = !versaoLocal || !versaoNaBase || versaoLocal === versaoNaBase;
   const localMesmaFicha =
     fichaLocal && String(fichaLocal?.campos?.anuncioIdPAIIA || "") === id &&
-    String(fichaLocal.salvoEm || "") > String(dados.salvo_em || anuncioBase.updated_at || "");
+    String(fichaLocal.salvoEm || "") > String(dados.salvo_em || anuncioBase.updated_at || "") &&
+    partiuDaVersaoAtual;
   const campos = {
     ...(ficha.campos || {}),
     ...(localMesmaFicha ? fichaLocal.campos || {} : {}),
@@ -65,6 +71,10 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
     anuncioConferido: aprovada ? conferido : null,
     etapa: aprovada ? etapaSalva || "publicacao" : "conferencia",
     salvoEm: new Date().toISOString(),
+    // Versão da ficha na base que esta tela leu: as gravações seguintes só
+    // acontecem se a base ainda estiver nesta versão (cópia antiga de uma
+    // aba nunca sobrescreve a ficha mais nova gravada por outra).
+    versaoBase: String(dados.salvo_em || ""),
   };
   return {
     ok: true,
@@ -84,9 +94,10 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
 // outra ordem de chaves na medida, espaços ou quebras de linha diferentes.
 // Ordem da assinatura (MercadoLivreTeste): [titulo, preco, descricao, fotos,
 // categoria, categoriaId, marca, numeroPeca, compatibilidades, pesoEnvio,
-// comprimentoEnvio, larguraEnvio, alturaEnvio, medida, quantidade?]
+// comprimentoEnvio, larguraEnvio, alturaEnvio, medida, quantidade?,
+// tipoVeiculo?, gtin?, tipoAnuncio?] — campos novos no fim: aprovação antiga não cai.
 // ---------------------------------------------------------------
-const CAMPOS_ASSINATURA = ["título", "preço", "descrição", "fotos", "categoria", "categoria (ID)", "marca", "número da peça", "compatibilidades", "peso de envio", "comprimento de envio", "largura de envio", "altura de envio", "peso e medidas confirmados", "quantidade"];
+const CAMPOS_ASSINATURA = ["título", "preço", "descrição", "fotos", "categoria", "categoria (ID)", "marca", "número da peça", "compatibilidades", "peso de envio", "comprimento de envio", "largura de envio", "altura de envio", "peso e medidas confirmados", "quantidade", "tipo de veículo", "GTIN", "tipo de anúncio"];
 const txt = (v) => String(v ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
 const num = (v) => {
   const t = String(v ?? "").trim();
@@ -110,6 +121,7 @@ function campoCanonico(i, v, todos) {
     // Com ID de categoria, o nome é só exibição (pode ser preenchido depois).
     case 4: return txt(todos[5]) ? "" : txt(v);
     case 7: return txt(v).toUpperCase();
+    case 15: return txt(v).toUpperCase().replace(/\s*\/\s*/g, "/");
     case 13: return v && typeof v === "object" ? [num(v.peso_g), num(v.comprimento_cm), num(v.largura_cm), num(v.altura_cm)] : null;
     default: return txt(v);
   }
