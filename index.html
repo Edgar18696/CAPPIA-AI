@@ -4,11 +4,31 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PAIIA AI</title>
+
+  <!-- App instalável (PWA): nome, ícone e cor do PAIIA AI -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#030816" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="PAIIA AI" />
+  <meta name="application-name" content="PAIIA AI" />
 </head>
 
 <body>
   <div id="root"></div>
 
   <script type="module" src="/src/main.jsx"></script>
+
+  <!-- Service worker mínimo (sem cache) só no site publicado: permite "Instalar" -->
+  <script>
+    if ("serviceWorker" in navigator && /(^|\.)paiia\.com\.br$/.test(location.hostname)) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" }).catch(function () {});
+      });
+    }
+  </script>
 </body>
 </html>
