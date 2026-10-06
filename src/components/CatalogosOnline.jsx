@@ -686,7 +686,11 @@ function CartaoCatalogo({ catalogo: c, destacarVin, indisponivel, onAbrir }) {
         >
           {ROTULO_SELO[c.acesso] || c.acesso}
         </span>
-        {!c.oficial && <span style={estilos.seloNaoOficial}>Não oficial</span>}
+        {c.oficial ? (
+          <span style={estilos.seloOficial} data-testid="selo-oficial">✔ Oficial</span>
+        ) : (
+          <span style={estilos.seloNaoOficial}>Não oficial</span>
+        )}
         {c.restricaoBrasil && !ROTULO_SELO[c.acesso] && (
           <span style={estilos.seloBloqueado} data-testid="selo-bloqueado">
             🚫 Bloqueado no Brasil
@@ -748,7 +752,7 @@ function CartaoCatalogo({ catalogo: c, destacarVin, indisponivel, onAbrir }) {
 
       {!destacarVin && c.testeBrasil && (
         <p style={estilos.testeBrasil} data-testid="teste-brasil">
-          Teste no Brasil (23/09/2026): {c.testeBrasil}
+          Teste no Brasil ({c.verificadoEm ? c.verificadoEm.split("-").reverse().join("/") : "23/09/2026"}): {c.testeBrasil}
         </p>
       )}
 
@@ -1019,6 +1023,15 @@ const estilos = {
     lineHeight: 1.4,
     margin: "0 0 8px",
     fontWeight: 700,
+  },
+  seloOficial: {
+    padding: "3px 9px",
+    borderRadius: "999px",
+    border: "1px solid #15803d",
+    background: "#052e16",
+    color: "#86efac",
+    fontSize: "11px",
+    fontWeight: 800,
   },
   seloNaoOficial: {
     padding: "3px 9px",

@@ -726,6 +726,22 @@ export const CATALOGOS_ONLINE = [
 
   // Bosch
   {
+    id: "bosch-catalogo-online-br",
+    nome: "Bosch Automotive Aftermarket — Catálogo Online Brasil",
+    fabricante: "Bosch",
+    marcas: ["Bosch"],
+    grupo: "componentes",
+    categoria: "Fabricante de Componentes — FONTE OFICIAL BOSCH",
+    descricao:
+      "FONTE OFICIAL BOSCH: catálogo online Brasil com busca por código, peça e veículo.",
+    acesso: "Livre",
+    busca: ["codigo", "peca", "veiculo"],
+    oficial: true,
+    url: "https://catalogo.boschaftermarket.com.br/",
+    testeBrasil: "Abriu: \"Página Inicial | Catálogo Robert Bosch GmbH\"; busca pelo código 0280158683 retornou o bico injetor com aplicação detalhada",
+    verificadoEm: "2026-10-06",
+  },
+  {
     id: "bosch-pesquisa-veiculos",
     nome: "Bosch Autopeças — Pesquisa de veículos",
     fabricante: "Bosch",
