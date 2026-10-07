@@ -105,6 +105,12 @@ import {
   deveIniciarNovaCriacaoMidia,
   prepararNovaCriacaoMidia,
 } from "./services/limparEstadoTemporarioMidia";
+import {
+  guardarAnuncioEmAndamento,
+  telaInicialDoEndereco,
+  enderecoComTela,
+} from "./services/fichasCentral";
+import { fichaDoRascunhoLocal } from "./hooks/useFichaNovoAnuncio";
 // =====================================================
 // PAIIA AI
 // Organização do projeto
@@ -121,12 +127,23 @@ const [screen, setScreen] =
     // Contas Marketplace para concluir a conexão.
     retornoOAuthPendente()
       ? "contasMarketplace"
-      : // F5/reabertura de um anúncio na Publicação (?ficha=<ID>): volta direto
-        // para ele; a ficha é recuperada da base PAIIA pelo ID.
-        /[?&]ficha=[0-9a-f-]{36}(&|$)/i.test(window.location.search)
-        ? "mercadoLivreTeste"
-        : "home"
+      : // F5/reabertura: ?ficha=<ID> volta para a MESMA ficha (recuperada da
+        // base PAIIA pelo ID); ?tela= volta para a etapa do fluxo do anúncio
+        // (Novo Anúncio, Central de Publicação, Conferência) — nunca para a Home.
+        telaInicialDoEndereco(window.location.search, "home", { fichaNovoAnuncioLocal: fichaDoRascunhoLocal() })
   );
+
+// A etapa do fluxo do anúncio fica no endereço (?tela=): o F5 volta para ela.
+useEffect(() => {
+  try {
+    const novo = enderecoComTela(window.location.href, screen);
+    if (novo !== window.location.href) {
+      window.history.replaceState(window.history.state, "", novo);
+    }
+  } catch {
+    // sem acesso ao endereço: segue sem o atalho do F5
+  }
+}, [screen]);
 
 const [
   mostrarPaizinho,
@@ -463,6 +480,13 @@ useEffect(() => {
 
 useEffect(() => {
   if (screen === "home") {
+    // A Home inicia uma criação nova. Antes de limpar as chaves temporárias,
+    // o anúncio em andamento é GUARDADO (a Central oferece "Retomar").
+    try {
+      guardarAnuncioEmAndamento(localStorage);
+    } catch {
+      // sem acesso ao navegador: nada a guardar
+    }
     prepararNovaCriacaoMidia();
     limparTelaFoto();
     setFotosAnuncio([]);

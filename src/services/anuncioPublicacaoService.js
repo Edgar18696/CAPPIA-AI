@@ -1,5 +1,5 @@
 import { supabase } from "../supabase";
-import { conflitoDeVersao, decisaoBaseComGravacao } from "./publicacaoSegura";
+import { conflitoDeVersao, decisaoBaseComGravacao, montarCompatibilidadesPersistidas } from "./publicacaoSegura";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -183,6 +183,10 @@ export async function salvarContaDestino({ anuncioId, codigo, titulo, contaId, c
 /** Estado do Bling (somente leitura) guardado na ficha da publicação. */
 export async function registrarBling({ anuncioId, bling, preparo }) {
   if (!anuncioId) return { ok: false, erro: "Sem ID do anúncio." };
+  // Leitura do Bling que FALHOU (rede, função fora): não apaga o que a ficha
+  // já sabe do Bling (produto/estoque). Antes, um erro passageiro gravava
+  // status "erro" e bling_produto_id = null por cima do produto encontrado.
+  if (!bling || (bling.ok === false && !bling.encontrado)) return { ok: true, ignorado: true };
   const status = !bling
     ? "nao_verificado"
     : bling.ok === false && !bling.encontrado
@@ -321,12 +325,14 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
         return { ok: false, disponivel: true, conflito: true, erro: ERRO_CONFLITO };
       }
       const decisaoBase = atual.anuncio.dados_conferencia?.base_paiia || null;
+      // Dados do Novo Anúncio (mesma ficha) também nunca se perdem.
+      const novoAnuncio = atual.anuncio.dados_conferencia?.novo_anuncio || null;
       const { error } = await supabase
         .from(T_ANUNCIOS)
         .update({
           titulo: titulo || null,
           status_fluxo: "conferencia_aprovada",
-          dados_conferencia: { ...dadosComVersao, ...(decisaoBase ? { base_paiia: decisaoBase } : {}) },
+          dados_conferencia: { ...dadosComVersao, ...(decisaoBase ? { base_paiia: decisaoBase } : {}), ...(novoAnuncio ? { novo_anuncio: novoAnuncio } : {}) },
           updated_at: agora,
         })
         .eq("id", anuncioId);
@@ -383,8 +389,9 @@ export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConf
         .update({
           titulo: titulo || null,
           status_fluxo: aprovada ? "conferencia_aprovada" : "rascunho",
-          // Decisão da Base PAIIA (gravada à parte) nunca é perdida.
-          dados_conferencia: { ...(dadosConferencia || {}), ...(antigos.base_paiia ? { base_paiia: antigos.base_paiia } : {}) },
+          // Decisão da Base PAIIA (gravada à parte) e os dados do Novo
+          // Anúncio (mesma ficha) nunca são perdidos.
+          dados_conferencia: { ...(dadosConferencia || {}), ...(antigos.base_paiia ? { base_paiia: antigos.base_paiia } : {}), ...(antigos.novo_anuncio ? { novo_anuncio: antigos.novo_anuncio } : {}) },
           updated_at: agora,
         })
         .eq("id", anuncioId);
@@ -446,6 +453,25 @@ export async function registrarDecisaoBase({ anuncioId, decisao, detalhe }) {
     .eq("id", anuncioId);
   if (error) return falha(error);
   return { ok: true, base_paiia };
+}
+
+/**
+ * Compatibilidade estruturada PERSISTIDA na ficha (não depende da memória da
+ * tela): aplicações aprovadas + versões do catálogo do Mercado Livre que as
+ * confirmam. Não altera a versão (salvo_em) da ficha aprovada.
+ */
+export async function salvarCompatibilidadesML({ anuncioId, aplicacoes = [], compat = null }) {
+  if (!anuncioId) return { ok: false, erro: "Sem ID do anúncio." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const dados = atual.anuncio.dados_conferencia || {};
+  const compatibilidades_ml = montarCompatibilidadesPersistidas({ aplicacoes, compat });
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, compatibilidades_ml }, updated_at: new Date().toISOString() })
+    .eq("id", anuncioId);
+  if (error) return falha(error);
+  return { ok: true, compatibilidades_ml };
 }
 
 /** Vínculo com o produto criado no Bling (após a criação autorizada). */

@@ -135,6 +135,23 @@ export function rascunhoTemTexto(dados) {
   );
 }
 
+/**
+ * O rascunho MAIS RECENTE entre a cópia principal e a reserva (pela hora
+ * da gravação). Antes, a principal sempre vencia — e uma principal antiga
+ * (ex.: gravada ao voltar da Central) apagava, no F5, o que foi digitado
+ * depois no Novo Anúncio (o salvamento automático grava a reserva).
+ */
+export function rascunhoMaisRecente() {
+  const principal = lerRascunhoAnuncio("novoAnuncioTemporario");
+  const reserva = lerRascunhoAnuncio("rascunhoNovoAnuncioTemp");
+  const p = rascunhoTemTexto(principal);
+  const r = rascunhoTemTexto(reserva);
+  if (p && r) return Number(reserva.salvoEm || 0) > Number(principal.salvoEm || 0) ? reserva : principal;
+  if (p) return principal;
+  if (r) return reserva;
+  return principal || reserva || null;
+}
+
 export function lerRascunhoAnuncio(chave) {
   try {
     const texto = localStorage.getItem(chave);
@@ -154,6 +171,8 @@ export function gravarRascunhoAnuncio(
     const rascunho = {
       ...semMidiaEmbutida(resto),
       rascunhoLeve: 1,
+      // Hora da gravação: no F5 vale o rascunho mais recente.
+      salvoEm: Date.now(),
     };
 
     // Só mexe nas fotos quando quem gravou mandou as fotos.
@@ -344,6 +363,24 @@ export default function useNovoAnuncio({
         anuncio.auditoria || null
       );
 
+      // Ficha reaberta da BASE (?ficha=<id>): as fotos são as DELA, mesmo
+      // que a memória tenha fotos de outro anúncio. Vale uma vez só.
+      if (podeAtualizarFotos && anuncio.fotosDaFicha === true) {
+        setFotosAnuncio(Array.isArray(anuncio.fotos) ? anuncio.fotos : []);
+        ["novoAnuncioTemporario", "rascunhoNovoAnuncioTemp"].forEach((chave) => {
+          const r = lerRascunhoAnuncio(chave);
+          if (r && r.fotosDaFicha) {
+            delete r.fotosDaFicha;
+            try {
+              localStorage.setItem(chave, JSON.stringify(r));
+            } catch {
+              // sem espaço: na próxima abertura as fotos da ficha valem de novo
+            }
+          }
+        });
+        return;
+      }
+
       if (
         podeAtualizarFotos &&
         Array.isArray(anuncio.fotos) &&
@@ -368,14 +405,8 @@ export default function useNovoAnuncio({
       );
 
     if (anuncioTemporario) {
-      // Se a cópia principal veio sem texto (gravação falhou ou
-      // ficou incompleta), usa o rascunho de reserva.
-      aplicarRascunho(
-        !rascunhoTemTexto(anuncioTemporario) &&
-          rascunhoTemTexto(rascunhoReserva)
-          ? rascunhoReserva
-          : anuncioTemporario
-      );
+      // Vale o rascunho MAIS RECENTE (principal ou reserva).
+      aplicarRascunho(rascunhoMaisRecente() || anuncioTemporario);
 
       return;
     }

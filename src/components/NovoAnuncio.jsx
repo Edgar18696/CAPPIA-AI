@@ -11,6 +11,7 @@ import {
   STATUS_DIMENSOES,
   ORIGEM_DIMENSOES,
   ROTULO_ORIGEM,
+  ROTULO_NIVEL,
 } from "../services/precificacao/dimensoesProduto";
 import PainelCatalogo from "./PainelCatalogo";
 import ChecklistAnuncio from "./ChecklistAnuncio";
@@ -22,10 +23,10 @@ import AssistenteAnuncio from "./AssistenteAnuncio";
 import DadosPeca from "./DadosPeca";
 import useNovoAnuncio, {
   gravarRascunhoAnuncio,
-  lerRascunhoAnuncio,
-  rascunhoTemTexto,
+  rascunhoMaisRecente,
 } from "../hooks/useNovoAnuncio";
 import { deveIniciarNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import useFichaNovoAnuncio from "../hooks/useFichaNovoAnuncio";
 import {
   gerarAnuncioV2,
 } from "../services/inteligencia";
@@ -507,20 +508,9 @@ useEffect(() => {
     return;
   }
 
-  // Cópia principal; se não existir ou vier sem texto, usa o
-  // rascunho de reserva (que não é mais zerado ao voltar da Galeria).
-  const principal = lerRascunhoAnuncio(
-    "novoAnuncioTemporario"
-  );
-  const reserva = lerRascunhoAnuncio(
-    "rascunhoNovoAnuncioTemp"
-  );
-  const dadosRestaurar =
-    rascunhoTemTexto(principal)
-      ? principal
-      : rascunhoTemTexto(reserva)
-        ? reserva
-        : principal;
+  // Vale o rascunho MAIS RECENTE (cópia principal ou reserva do
+  // salvamento automático): o F5 não volta a uma versão antiga.
+  const dadosRestaurar = rascunhoMaisRecente();
 
   if (!dadosRestaurar) {
     return;
@@ -581,19 +571,12 @@ useEffect(() => {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        const salvo =
-          localStorage.getItem(
-            "novoAnuncioTemporario"
-          ) ||
-          localStorage.getItem(
-            "rascunhoNovoAnuncioTemp"
-          );
+        // Mesmo rascunho escolhido na restauração (o mais recente).
+        const dados = rascunhoMaisRecente();
 
-        if (!salvo) {
+        if (!dados) {
           return;
         }
-
-        const dados = JSON.parse(salvo);
 
         if (
           String(
@@ -1565,6 +1548,8 @@ function formatarPrecoAppia(
   const [freteAutoInfo, setFreteAutoInfo] = useState(null);
   const [erroFreteAuto, setErroFreteAuto] = useState("");
   const [estimativaFrete, setEstimativaFrete] = useState(null);
+  // Embalagem do anúncio ML / catálogo: SÓ COMPARAÇÃO (não é medida física real).
+  const [comparacoesFrete, setComparacoesFrete] = useState([]);
   const [dimensoesManuaisDeEstimativa, setDimensoesManuaisDeEstimativa] =
     useState(null);
   const ultimoFreteAutoRef = useRef("");
@@ -1635,6 +1620,7 @@ function formatarPrecoAppia(
     setDimensoesFrete(null);
     setFreteAutoInfo(null);
     setEstimativaFrete(null);
+    setComparacoesFrete([]);
     setErroFreteAuto("");
     setDimensoesManuaisDeEstimativa(null);
     setAvisoGravacaoFrete("");
@@ -1676,24 +1662,11 @@ function formatarPrecoAppia(
             String(resultado.altura_cm).replace(".", ",")
           );
 
-          // Fonte confiável fora da base → grava na base PAIIA
-          // para reutilizar na próxima pesquisa deste código.
-          if (resultado.origem !== ORIGEM_DIMENSOES.BASE_PAIIA) {
-            salvarDimensoesProduto({
-              codigos: codigosParaFrete(),
-              peca: pecaEncontrada,
-              peso_g: resultado.peso_g,
-              comprimento_cm: resultado.comprimento_cm,
-              largura_cm: resultado.largura_cm,
-              altura_cm: resultado.altura_cm,
-              embalagem: resultado.embalagem,
-              status: STATUS_DIMENSOES.CONFIRMADO,
-              origem: resultado.origem,
-              detalheOrigem: resultado.detalheOrigem,
-            }).then(conferirGravacaoFrete);
-          }
+          // Só a medida própria do usuário chega aqui: nada é gravado
+          // automaticamente (o navegador não promove nível de confiança).
         } else {
           setEstimativaFrete(resultado?.estimativa || null);
+          setComparacoesFrete(resultado?.comparacoes || []);
           setStatusFreteAuto("sem_dados");
         }
       } catch (erro) {
@@ -1799,6 +1772,7 @@ function formatarPrecoAppia(
         largura_cm: d.largura_cm,
         altura_cm: d.altura_cm,
         status: d.status,
+        nivel: d.nivel,
         origem: d.origem,
       });
       setStatusFreteAuto("ok");
@@ -1912,6 +1886,7 @@ function formatarPrecoAppia(
               largura_cm: largura,
               altura_cm: altura,
               status,
+              nivel: "CONFIRMADO_PELO_USUARIO",
               origem,
             }
           : null
@@ -2039,8 +2014,27 @@ setVeioDaCentralTecnica(true);
     }
   }, []);
 
+  // FICHA PERSISTENTE NA BASE PAIIA desde o Novo Anúncio (mesma ficha até
+  // a publicação). Não cria anúncio no ML, produto no Bling nem registro na
+  // base de conhecimento: é só a ficha operacional deste anúncio.
+  const fichaNovo = useFichaNovoAnuncio({
+    desativado: Boolean(anuncioEditando),
+    estado: {
+      codigo, oem, titulo, descricao, preco, tipoAnuncio, pecaEncontrada,
+      fotos: fotosAnuncio, clip: clipAnuncio, canalVenda, categoriaConcorrencia,
+      precificacao: {
+        custo, fretePrecificacao, despesasPrecificacao, comissaoPrecificacao, impostoPrecificacao,
+        custoCompraDetalhado, freteCompraDetalhado, embalagemDetalhada, despesasFixasMensais,
+        vendasMediasMes, outrosCustosDetalhados,
+      },
+      embalagem: { pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML },
+    },
+  });
+
   // Dados extras do anúncio que também precisam voltar da Galeria.
   const extrasRascunho = {
+    // ID da ficha na base: o rascunho do navegador volta sempre para ELA.
+    fichaIdPAIIA: fichaNovo.fichaId || "",
     clip: clipAnuncio || "",
     canalVenda,
     categoriaConcorrencia,
@@ -2704,6 +2698,12 @@ async function buscarEMontarAnuncio() {
 
   if (processando) {
     return;
+  }
+
+  // Outro código = outro anúncio: a próxima gravação cria OUTRA ficha (a
+  // anterior continua salva na base e aparece na Central).
+  if (!fichaNovo.fichaServeParaCodigo(codigoFinal)) {
+    fichaNovo.novaFicha();
   }
 
   setOem("");
@@ -4429,7 +4429,17 @@ marcarAnuncioPronto({
     alert("💾 Anúncio salvo com sucesso!");
   }
 
-  function continuarParaPublicacao() {
+  async function continuarParaPublicacao() {
+    // A ficha é gravada na base ANTES de seguir. Se falhar, avisa e só
+    // segue se o usuário quiser (os dados continuam no navegador).
+    const gravacao = await fichaNovo.salvarAgora();
+    if (!gravacao.ok && !gravacao.vazio && !gravacao.fechada) {
+      const seguir = window.confirm(
+        `Não foi possível salvar a ficha na base PAIIA: ${gravacao.erro || "erro desconhecido"}.\n\nOs dados continuam neste navegador. Seguir para a Central de Publicação mesmo assim?`
+      );
+      if (!seguir) return;
+    }
+    const fichaIdAtual = gravacao.fichaId || fichaNovo.fichaId || "";
     let dadosSalvos = {};
 
     try {
@@ -4540,6 +4550,8 @@ marcarAnuncioPronto({
           auditoria ||
           dadosSalvos?.auditoria ||
           null,
+        // MESMA ficha da base: a Conferência continua nela (não cria outra).
+        fichaIdPAIIA: fichaIdAtual,
       })
     );
 
@@ -4590,6 +4602,8 @@ marcarAnuncioPronto({
   }
 
   function limparAnuncio() {
+    // Anúncio novo: a ficha anterior continua salva na base (Central).
+    fichaNovo.novaFicha();
     setCodigo("");
     setOem("");
     setTitulo("");
@@ -4756,7 +4770,7 @@ marcarAnuncioPronto({
     totalMidiasConcluidas === 3;
 
   return (
-    <div style={{ marginTop: "25px" }}>
+    <div style={{ marginTop: "25px" }} {...fichaNovo.propsInteracao}>
       <div style={cardStyle}>
         <h2 style={tituloPagina}>
           🤖 Criador Inteligente de Anúncios
@@ -4765,6 +4779,29 @@ marcarAnuncioPronto({
         <p style={subtituloPagina}>
           Informe o código da peça, revise os dados,
           adicione fotos e finalize o anúncio.
+        </p>
+        <p
+          data-paiia-ficha-novo-anuncio={fichaNovo.status.estado || "sem_ficha"}
+          style={{
+            fontSize: "12px",
+            margin: "4px 0 12px",
+            color:
+              fichaNovo.status.estado === "erro" || fichaNovo.status.estado === "fechada"
+                ? "#fca5a5"
+                : fichaNovo.status.estado === "salvo"
+                  ? "#86efac"
+                  : "#94a3b8",
+          }}
+        >
+          {fichaNovo.status.estado === "salvando"
+            ? "⏳ Salvando a ficha na base PAIIA..."
+            : fichaNovo.status.estado === "erro"
+              ? `⚠ A ficha NÃO foi salva na base PAIIA: ${fichaNovo.status.erro} Os dados continuam neste navegador; nova tentativa na próxima alteração.`
+              : fichaNovo.status.estado === "fechada"
+                ? `⚠ ${fichaNovo.status.erro} Para começar um anúncio novo, use "Limpar anúncio".`
+                : fichaNovo.fichaId
+                  ? `💾 Ficha salva na base PAIIA (ID ${fichaNovo.fichaId.slice(0, 8)})${fichaNovo.status.em ? ` · ${new Date(fichaNovo.status.em).toLocaleTimeString("pt-BR")}` : ""}`
+                  : "A ficha é criada na base PAIIA assim que houver o código da peça e algum dado do anúncio."}
         </p>
         <DadosPeca
   codigo={codigo}
@@ -5430,6 +5467,12 @@ marcarAnuncioPronto({
           <div style={{ color: "#fbbf24", fontWeight: 700 }}>
             ⏳ Frete pendente: peso e medidas não confirmados. O frete NÃO foi calculado — informe os dados para calcular.
           </div>
+          {comparacoesFrete.map((c, i) => (
+            <div key={i} data-paiia-frete-comparacao style={{ marginTop: "6px", color: "#94a3b8" }}>
+              🔍 Comparação — {ROTULO_ORIGEM[c.origem] || c.origem} [{ROTULO_NIVEL[c.nivel] || "NÃO VALIDADO"}]:
+              {" "}peso {Math.round(c.peso_g)} g | embalagem {textoEmbalagemFrete(c)}. Não é medida física confirmada: confira a sua embalagem.
+            </div>
+          ))}
           {estimativaFrete && (
             <div style={{ marginTop: "6px", color: "#94a3b8" }}>
               💡 Sugestão por categoria ({estimativaFrete.detalheOrigem}) — ESTIMADO, não confirmado:
@@ -5460,7 +5503,7 @@ marcarAnuncioPronto({
         statusFreteAuto === "aguardando_custo") &&
         dimensoesFrete && (
         <div>
-          📦 Peso e medidas encontrados ({ROTULO_ORIGEM[dimensoesFrete.origem] || dimensoesFrete.origem} · {dimensoesFrete.status}).
+          📦 Peso e medidas encontrados ({ROTULO_ORIGEM[dimensoesFrete.origem] || dimensoesFrete.origem} · {ROTULO_NIVEL[dimensoesFrete.nivel] || dimensoesFrete.status}).
           {" "}Informe o custo da mercadoria para o Paizinho calcular o frete.
         </div>
       )}
@@ -5488,7 +5531,7 @@ marcarAnuncioPronto({
             Peso: {Math.round(freteAutoInfo.peso_g)} g | Embalagem: {textoEmbalagemFrete(freteAutoInfo)}
           </div>
           <div style={{ color: "#64748b" }}>
-            Origem dos dados: {ROTULO_ORIGEM[freteAutoInfo.origem] || freteAutoInfo.origem} · {freteAutoInfo.status}
+            Origem dos dados: {ROTULO_ORIGEM[freteAutoInfo.origem] || freteAutoInfo.origem} · {ROTULO_NIVEL[freteAutoInfo.nivel] || freteAutoInfo.status}
           </div>
           {avisoGravacaoFrete && (
             <div style={{ color: "#fbbf24" }}>{avisoGravacaoFrete}</div>

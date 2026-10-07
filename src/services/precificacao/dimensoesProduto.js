@@ -2,18 +2,23 @@
  * Peso e dimensões de embalagem por código/OEM — usado SOMENTE pelo
  * cálculo de frete do "Calcule o preço ideal" (Criar Anúncio).
  *
- * Ordem obrigatória das fontes:
- *   1. Base PAIIA (tabela produto_dimensoes) — dados CONFIRMADOS ou MANUAIS.
- *   2. Catálogos PAIIA / dados já validados da peça identificada.
- *   3. Fonte externa confiável: o próprio anúncio do vendedor na conta
- *      Mercado Livre conectada (função buscar-dimensoes-mercado-livre).
- *   4. Estimativa por categoria — apenas SUGESTÃO (status ESTIMADO),
- *      nunca usada para calcular o frete automaticamente.
+ * Regra oficial (30/09/2026) — níveis: MEDIDO E VALIDADO > CONFIRMADO PELO
+ * USUÁRIO > REFERÊNCIA DO MARKETPLACE > PADRÃO PAIIA > NÃO VALIDADO.
  *
- * Nada aqui inventa peso ou medidas: sem fonte confiável → confiavel=false.
+ * Só calcula o frete sozinho com a MEDIDA PRÓPRIA do usuário (logistica_medidas
+ * ou produto_dimensoes, só as linhas dele). Todo o resto é COMPARAÇÃO:
+ *   - embalagem do anúncio no Mercado Livre: NÃO é medida física real;
+ *   - peso/medida vinda do catálogo da peça: comparação;
+ *   - estimativa por categoria: SUGESTÃO.
+ * Valor digitado no navegador = CONFIRMADO PELO USUÁRIO (status MANUAL), nunca
+ * MEDIDO E VALIDADO. Só o servidor pode promover nível de confiança.
+ * Nada aqui inventa peso ou medidas: sem medida própria → confiavel=false.
  */
 import { supabase } from "../../supabase";
 import { idContaMLAtivaOpcional } from "../contaMLAtiva";
+import { NIVEL, ROTULO_NIVEL, normalizarNivel } from "../logistica/logisticaMercadoLivre";
+
+export { NIVEL, ROTULO_NIVEL };
 
 export const TABELA_DIMENSOES = "produto_dimensoes";
 
@@ -32,9 +37,9 @@ export const ORIGEM_DIMENSOES = {
 };
 
 export const ROTULO_ORIGEM = {
-  [ORIGEM_DIMENSOES.BASE_PAIIA]: "Base PAIIA",
-  [ORIGEM_DIMENSOES.CATALOGO]: "Catálogo PAIIA",
-  [ORIGEM_DIMENSOES.ANUNCIO_ML]: "Seu anúncio no Mercado Livre",
+  [ORIGEM_DIMENSOES.BASE_PAIIA]: "Sua medida na base PAIIA",
+  [ORIGEM_DIMENSOES.CATALOGO]: "Catálogo PAIIA (comparação)",
+  [ORIGEM_DIMENSOES.ANUNCIO_ML]: "Embalagem do seu anúncio no ML (comparação)",
   [ORIGEM_DIMENSOES.ESTIMATIVA]: "Estimativa por categoria",
   [ORIGEM_DIMENSOES.MANUAL]: "Informado por você",
 };
@@ -84,9 +89,46 @@ function montarResultado(d, extra) {
   };
 }
 
-/* 1. Base PAIIA ------------------------------------------------------ */
+/* 1. Medida PRÓPRIA do usuário ------------------------------------ */
+// Origens antigas que NÃO são medida física (ficam só como comparação).
+const ORIGENS_NAO_FISICAS = ["anuncio_mercado_livre_proprio", "estimativa_categoria"];
+
+function nivelDaLinha(l) {
+  return (
+    normalizarNivel(l?.nivel_confianca) ||
+    (l?.status === STATUS_DIMENSOES.MANUAL || ["validado_pelo_usuario", "informado_pelo_usuario", ORIGEM_DIMENSOES.MANUAL].includes(l?.origem)
+      ? NIVEL.CONFIRMADO_PELO_USUARIO
+      : NIVEL.NAO_VALIDADO)
+  );
+}
+
 async function buscarNaBasePaiia(codigos, usuarioId) {
   const normalizados = codigos.map((c) => c.normalizado);
+
+  // 1a. Estrutura nova (SKU + configuração de embalagem), só do usuário.
+  try {
+    const { data: novas } = await supabase
+      .from("logistica_medidas")
+      .select("sku, config_embalagem, peso_g, comprimento_cm, largura_cm, altura_cm, nivel_confianca, confirmado_em")
+      .in("sku_normalizado", normalizados)
+      .order("confirmado_em", { ascending: false })
+      .limit(20);
+    const nova = (novas || []).find((l) => dimensoesValidas(l) && l.config_embalagem === "caixa_padrao") || (novas || []).find(dimensoesValidas);
+    if (nova) {
+      const nivel = normalizarNivel(nova.nivel_confianca);
+      return montarResultado(nova, {
+        status: nivel === NIVEL.MEDIDO_E_VALIDADO ? STATUS_DIMENSOES.CONFIRMADO : STATUS_DIMENSOES.MANUAL,
+        nivel,
+        origem: ORIGEM_DIMENSOES.BASE_PAIIA,
+        detalheOrigem: `Sua medida · ${nova.config_embalagem}`,
+        codigo: nova.sku,
+      });
+    }
+  } catch (erro) {
+    console.warn("Medidas próprias (nova estrutura) indisponíveis:", erro?.message || erro);
+  }
+
+  // 1b. Tabela antiga (a leitura só devolve as linhas do próprio usuário).
   const { data, error } = await supabase
     .from(TABELA_DIMENSOES)
     .select("*")
@@ -101,19 +143,19 @@ async function buscarNaBasePaiia(codigos, usuarioId) {
     return null;
   }
 
-  const linhas = (data || []).filter(dimensoesValidas);
-  // Prioridade: registro do próprio usuário (inclui MANUAL) > CONFIRMADO de fonte confiável.
-  const doUsuario = linhas.find((l) => l.user_id === usuarioId);
-  const escolhida =
-    doUsuario || linhas.find((l) => l.status === STATUS_DIMENSOES.CONFIRMADO);
+  const escolhida = (data || [])
+    .filter(dimensoesValidas)
+    .filter((l) => (!usuarioId || l.user_id === usuarioId) && !ORIGENS_NAO_FISICAS.includes(l.origem))
+    .find((l) => [NIVEL.MEDIDO_E_VALIDADO, NIVEL.CONFIRMADO_PELO_USUARIO].includes(nivelDaLinha(l)));
 
   if (!escolhida) return null;
 
   return montarResultado(escolhida, {
     status: escolhida.status,
+    nivel: nivelDaLinha(escolhida),
     origem: ORIGEM_DIMENSOES.BASE_PAIIA,
     origemRegistro: escolhida.origem,
-    detalheOrigem: escolhida.detalhe_origem || "",
+    detalheOrigem: "",
     codigo: escolhida.codigo,
   });
 }
@@ -132,14 +174,19 @@ function buscarNaPecaIdentificada(peca) {
     embalagem: peca.embalagem || "",
   };
   if (!dimensoesValidas(d)) return null;
-  return montarResultado(d, {
-    status: STATUS_DIMENSOES.CONFIRMADO,
-    origem: ORIGEM_DIMENSOES.CATALOGO,
-    detalheOrigem: peca.origem_catalogo || "",
-  });
+  // Comparação: não é medida da embalagem conferida pelo usuário.
+  return {
+    ...montarResultado(d, {
+      status: STATUS_DIMENSOES.ESTIMADO,
+      nivel: NIVEL.NAO_VALIDADO,
+      origem: ORIGEM_DIMENSOES.CATALOGO,
+      detalheOrigem: peca.origem_catalogo || "",
+    }),
+    confiavel: false,
+  };
 }
 
-/* 3. Fonte externa confiável: anúncio próprio no Mercado Livre -------- */
+/* 3. Embalagem do anúncio no Mercado Livre: SÓ COMPARAÇÃO ------------ */
 async function buscarNoAnuncioMercadoLivre(codigos) {
   try {
     const { data, error } = await supabase.functions.invoke(
@@ -149,11 +196,16 @@ async function buscarNoAnuncioMercadoLivre(codigos) {
     if (error || !data?.ok || !data?.encontrado) return null;
     const d = data.dimensoes || {};
     if (!dimensoesValidas(d)) return null;
-    return montarResultado(d, {
-      status: STATUS_DIMENSOES.CONFIRMADO,
-      origem: ORIGEM_DIMENSOES.ANUNCIO_ML,
-      detalheOrigem: data.itemId ? `Anúncio ${data.itemId}` : "",
-    });
+    // Não é medida física real: pode ter sido cadastrada por estimativa.
+    return {
+      ...montarResultado(d, {
+        status: STATUS_DIMENSOES.ESTIMADO,
+        nivel: NIVEL.NAO_VALIDADO,
+        origem: ORIGEM_DIMENSOES.ANUNCIO_ML,
+        detalheOrigem: "Embalagem cadastrada no seu anúncio (comparação)",
+      }),
+      confiavel: false,
+    };
   } catch (erro) {
     // Função ainda não publicada ou conta ML não conectada: sem dado externo.
     console.warn("Dimensões pelo anúncio ML indisponíveis:", erro?.message || erro);
@@ -183,6 +235,7 @@ export function estimarPorCategoria(peca) {
   return {
     confiavel: false,
     status: STATUS_DIMENSOES.ESTIMADO,
+    nivel: NIVEL.NAO_VALIDADO,
     origem: ORIGEM_DIMENSOES.ESTIMATIVA,
     detalheOrigem: item.rotulo,
     peso_g: item.peso_g,
@@ -206,22 +259,23 @@ export async function buscarDimensoesProduto({ codigos, peca, usuarioId }) {
     if (daBase) return daBase;
   }
 
+  // Sem medida própria: só COMPARAÇÕES e SUGESTÃO — nada calcula sozinho.
+  const comparacoes = [];
   const doCatalogo = buscarNaPecaIdentificada(peca);
-  if (doCatalogo) return doCatalogo;
-
+  if (doCatalogo) comparacoes.push(doCatalogo);
   if (lista.length) {
     const doAnuncio = await buscarNoAnuncioMercadoLivre(lista);
-    if (doAnuncio) return doAnuncio;
+    if (doAnuncio) comparacoes.push(doAnuncio);
   }
 
-  return { confiavel: false, estimativa: estimarPorCategoria(peca) };
+  return { confiavel: false, estimativa: estimarPorCategoria(peca), comparacoes };
 }
 
 /*
  * Grava peso/medidas vinculados ao código (e OEMs) do usuário.
- * status: CONFIRMADO (fonte confiável), MANUAL (usuário informou)
- * ou ESTIMADO (sugestão por categoria usada sem revisão — não é
- * reaproveitado automaticamente nas próximas pesquisas).
+ * status: MANUAL (usuário informou = CONFIRMADO PELO USUÁRIO) ou ESTIMADO
+ * (sugestão usada sem revisão — NÃO VALIDADO, não é reaproveitado sozinho).
+ * CONFIRMADO não pode ser gravado pelo navegador.
  */
 export async function salvarDimensoesProduto({
   codigos,
@@ -239,6 +293,10 @@ export async function salvarDimensoesProduto({
   const dados = { peso_g, comprimento_cm, largura_cm, altura_cm };
   if (!lista.length || !dimensoesValidas(dados)) return { ok: false };
   if (!Object.values(STATUS_DIMENSOES).includes(status)) return { ok: false };
+  // O navegador nunca grava CONFIRMADO: só o servidor promove nível de confiança.
+  if (status === STATUS_DIMENSOES.CONFIRMADO) {
+    return { ok: false, erro: "Somente o servidor do PAIIA pode promover o nível de confiança." };
+  }
 
   const { data: sessao } = await supabase.auth.getSession();
   const usuarioId = sessao?.session?.user?.id;
@@ -257,8 +315,11 @@ export async function salvarDimensoesProduto({
     altura_cm: positivo(altura_cm),
     embalagem: embalagem || null,
     status,
+    nivel_confianca: status === STATUS_DIMENSOES.MANUAL ? NIVEL.CONFIRMADO_PELO_USUARIO : NIVEL.NAO_VALIDADO,
+    config_embalagem: "caixa_padrao",
     origem,
-    detalhe_origem: detalheOrigem || null,
+    // Sem ID de anúncio nem dado da conta no detalhe.
+    detalhe_origem: String(detalheOrigem || "").replace(/MLB\d+/gi, "").trim() || null,
     updated_at: agora,
   }));
 

@@ -52,6 +52,10 @@ const aplicacoes = (l) =>
   [...new Set((Array.isArray(l) ? l : []).map((a) =>
     [a?.montadora, a?.modelo, a?.motor, a?.versao, a?.anoInicio ?? a?.ano_inicio, a?.anoFim ?? a?.ano_fim].map((x) => chaveModelo(x)).join("|")
   ))].sort();
+const condicao = (v) => {
+  const t = semAcento(String(v ?? "")).trim().toLowerCase();
+  return ["novo", "nova", "new"].includes(t) ? "novo" : ["usado", "usada", "used"].includes(t) ? "usado" : t;
+};
 const tipoVeiculo = (v) => chaveModelo(typeof v === "object" && v ? v.value_name || v.nome || v.value_id || "" : v).replace(/\s*\/\s*/g, "/");
 
 /**
@@ -74,6 +78,9 @@ export const CAMPOS_RELEVANTES = [
   ["aplicacoesDetalhadas", "aplicações", (a) => aplicacoes(a?.aplicacoesDetalhadas)],
   ["logistica", "peso/medidas", (a) => medida(a?.logistica?.medida)],
   ["quantidade", "quantidade", (a) => qtd(a?.quantidade)],
+  // Novos no fim (06/10/2026, após o MLB5342409793 sair "novo" com ficha "usado"):
+  ["condicao", "condição", (a) => condicao(a?.condicao)],
+  ["semCompatibilidadeConfirmada", "publicar sem compatibilidade", (a) => (a?.semCompatibilidadeConfirmada === true ? "sim" : "")],
 ];
 
 /**
@@ -135,7 +142,10 @@ export function conferirFichaPersistida({ tela, envio, base }) {
       categoriaId: envio.categoria_id,
       tipoAnuncio: envio.tipoAnuncio,
       quantidade: envio.quantidade,
+      condicao: envio.condicao,
       logistica: envio.embalagem ? { medida: envio.embalagem } : undefined,
+      // Tipo de veículo que vai ao ML (VEHICLE_TYPE) = o confirmado na ficha.
+      tipoVeiculo: envio.tipo_veiculo,
     };
     // Título no ML: até 60 caracteres (a Publicação corta igual).
     const persistidoEnvio = { ...persistido, titulo: String(persistido.titulo || "").slice(0, 60), codigo: persistido.sku || persistido.codigo || persistido.oem };
@@ -246,4 +256,50 @@ export function conflitoDeVersao({ versaoEsperada, versaoNaBase }) {
   const naBase = String(versaoNaBase || "");
   if (!esperada || !naBase) return false; // ficha nova ou antiga sem versão
   return esperada !== naBase;
+}
+
+// ---------------------------------------------------------------
+// Compatibilidade estruturada persistida na ficha (06/10/2026)
+// ---------------------------------------------------------------
+/**
+ * Registro gravado em dados_conferencia.compatibilidades_ml: aplicações
+ * aprovadas + versões do catálogo do ML que as confirmam (IDs MLB...).
+ */
+export function montarCompatibilidadesPersistidas({ aplicacoes = [], compat = null, agora = new Date().toISOString() } = {}) {
+  const veiculos = (Array.isArray(compat?.veiculos) ? compat.veiculos : [])
+    .filter((v) => /^MLB\d+$/.test(String(v?.id || "")))
+    .map((v) => ({ id: String(v.id), nome: String(v.nome || ""), aplicacao: String(v.aplicacao || "") }));
+  return {
+    dominio: compat?.dominio || "MLB-CARS_AND_VANS",
+    gerado_em: agora,
+    aplicacoes: (Array.isArray(aplicacoes) ? aplicacoes : []).map((a) => ({
+      montadora: a?.montadora || "", modelo: a?.modelo || "", motor: a?.motor || "",
+      anoInicio: a?.anoInicio ?? null, anoFim: a?.anoFim ?? null,
+    })),
+    veiculos,
+    total: veiculos.length,
+    descartados: Array.isArray(compat?.descartados) ? compat.descartados.length : 0,
+    sem_catalogo: Array.isArray(compat?.semCatalogo) ? compat.semCatalogo.map((s) => `${s.aplicacao}: ${s.motivo}`) : [],
+  };
+}
+
+/** IDs persistidos na ficha (linha de paiia_anuncios), ordenados. */
+export function idsCompatPersistidos(anuncioBase) {
+  const l = anuncioBase?.dados_conferencia?.compatibilidades_ml?.veiculos;
+  return Array.isArray(l) ? [...new Set(l.map((v) => String(v?.id || "")).filter(Boolean))].sort() : null;
+}
+
+/**
+ * Antes de PUBLICAR: os IDs que serão enviados ao ML precisam ser os mesmos
+ * gravados na ficha. { ok, motivo }.
+ */
+export function conferirCompatPersistida({ idsEnvio = [], base }) {
+  const persistidos = idsCompatPersistidos(base);
+  const envio = [...new Set((idsEnvio || []).map(String))].sort();
+  if (!envio.length) return { ok: true, motivo: "" };
+  if (!persistidos) return { ok: false, motivo: "As versões do catálogo do Mercado Livre não estão gravadas na ficha. Reconsulte o catálogo antes de publicar." };
+  if (JSON.stringify(persistidos) !== JSON.stringify(envio)) {
+    return { ok: false, motivo: `As compatibilidades na tela (${envio.length}) estão diferentes das gravadas na ficha (${persistidos.length}). Reconsulte o catálogo antes de publicar.` };
+  }
+  return { ok: true, motivo: "" };
 }

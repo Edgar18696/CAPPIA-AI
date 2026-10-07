@@ -15,23 +15,28 @@ import {
   skuOficial,
   pendenciaPublicacao,
   publicacaoExiste,
+  salvarCompatibilidadesML,
   registrarMLBPublicado,
   salvarRegistroIntegracaoBling,
 } from "../services/anuncioPublicacaoService";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
+import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
   lerAplicacoesAprovadas,
   resolverCompatibilidades,
-  valorTipoVeiculo,
   marcaInvalida,
   descricaoAfirmaOriginal,
   conferirPublicacao,
   separarAplicacoesParaML,
+  normalizarCondicao,
+  situacaoCompatibilidade,
+  TEXTO_SEM_APLICACAO,
+  TEXTO_VEICULOS_SO_NA_DESCRICAO,
 } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, decidirCriacaoBling, conferirProdutoCriado } from "../services/estoqueBlingPAIIA";
-import { conferirFichaPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
+import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
  * PUBLICAÇÃO no Mercado Livre — etapa que vem DEPOIS da Conferência PAIIA.
@@ -84,8 +89,21 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
+function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false }) {
   const itens = [];
+
+  // Condição: a APROVADA na ficha (novo/usado). Nunca assume "novo".
+  if (!condicaoEnvio) itens.push({ item: "Condição", nivel: "erro", texto: "Condição não confirmada na Conferência (novo ou usado). O PAIIA não assume nenhum valor." });
+  else itens.push({ item: "Condição", nivel: "ok", texto: condicaoEnvio === "usado" ? "Usado (vai ao Mercado Livre como used)." : "Novo (vai ao Mercado Livre como new)." });
+
+  // Sem aplicação estruturada = anúncio SEM compatibilidade no ML: bloqueia,
+  // salvo confirmação explícita "publicar sem compatibilidade" na Conferência.
+  const sitCompat = situacaoCompatibilidade({ aplicacoes, descricao, semCompatibilidadeConfirmada: semCompatConfirmada });
+  if (sitCompat.bloqueia) {
+    itens.push({ item: "Compatibilidades", nivel: "erro", texto: `${sitCompat.soNaDescricao ? TEXTO_VEICULOS_SO_NA_DESCRICAO : TEXTO_SEM_APLICACAO} Volte à Conferência para cadastrar as aplicações (ou marcar "Publicar sem compatibilidade").` });
+  } else if (sitCompat.semAplicacao) {
+    itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `Publicação SEM compatibilidade, confirmada explicitamente na Conferência.${sitCompat.soNaDescricao ? " Atenção: a descrição cita veículos." : ""}` });
+  }
 
   // Ficha do anúncio na base PAIIA: a conta de destino precisa estar gravada.
   if (!ficha?.disponivel) itens.push({ item: "Ficha do anúncio", nivel: "erro", texto: ficha?.erro || "Base PAIIA indisponível: a conta de destino não pôde ser gravada." });
@@ -128,13 +146,14 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
   // O PAIIA não altera a descrição sozinho e não inventa ano/motor/aplicação.
   const faltamModelos = modelosFaltandoNaDescricao({ modelos: modelosConfirmados({ aplicacoes, modelosSemDetalhes }), descricao: desc });
   if (desc && faltamModelos.length) {
-    itens.push({ item: "Modelos na descrição", nivel: "erro", texto: `${TEXTO_MODELOS_FALTANDO} Faltando: ${faltamModelos.join(", ")}. Revise a descrição na Conferência ("Editar / revisar a Conferência").` });
+    itens.push({ item: "Modelos na descrição", nivel: "erro", texto: `${TEXTO_MODELOS_FALTANDO} Faltando: ${faltamModelos.join(", ")}. Revise a descrição na Conferência ("← Voltar à Conferência").` });
   }
 
-  // Tipo de veículo: vem da Conferência; categoria que exige e sem valor = erro.
-  if (tipoVeiculoExigido) {
-    if (tipoVeiculoEnvio) itens.push({ item: "Tipo de veículo", nivel: "ok", texto: `${tipoVeiculoEnvio} (aprovado na Conferência; pode revisar abaixo).` });
-    else itens.push({ item: "Tipo de veículo", nivel: "erro", texto: "A categoria exige Tipo de veículo e ele não está confirmado. Escolha abaixo (o PAIIA não adivinha)." });
+  // Tipo de veículo: SÓ o confirmado na ficha (⑤). A Publicação não troca;
+  // categoria que não aceita o tipo da ficha = erro (o usuário ajusta).
+  if (tipoVeiculoPub && tipoVeiculoPub.texto) {
+    const nivel = tipoVeiculoPub.estado === "ok" || tipoVeiculoPub.estado === "nao_se_aplica" ? "ok" : "erro";
+    itens.push({ item: "Tipo de veículo", nivel, texto: tipoVeiculoPub.texto });
   }
 
   // Compatibilidades aprovadas → veículos do catálogo do Mercado Livre.
@@ -202,7 +221,7 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
   itens.push({
     item: "Peso e embalagem",
     nivel: log.nivel,
-    texto: log.nivel === "ok" ? log.texto : `${log.texto} (vem da Conferência: use "Editar / revisar a Conferência").`,
+    texto: log.nivel === "ok" ? log.texto : `${log.texto} (vem da Conferência: use "← Voltar à Conferência").`,
   });
 
   // Frete
@@ -246,7 +265,7 @@ async function chamar(acao, extra = {}, contaML = "") {
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
 
-export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada }) {
+export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "" }) {
   const [conexao, setConexao] = useState(null);
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
@@ -406,6 +425,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }));
   // Atributos obrigatórios da categoria que o usuário escolhe aqui.
   const [extras, setExtras] = useState({});
+  // Tipo de veículo: vai EXATAMENTE o confirmado na ficha (⑤ da Conferência),
+  // como valor da categoria no ML. Não é escolhido aqui.
+  const attrTipoVeiculo = (preparo?.obrigatorios || []).find((a) => a.id === "VEHICLE_TYPE") || null;
+  const tipoVeiculoPub = tipoVeiculoParaPublicacao(anuncio?.tipoVeiculo, attrTipoVeiculo);
+  const tipoVeiculoEnvio = tipoVeiculoPub.estado === "ok" ? tipoVeiculoPub.nome : "";
 
   const dadosAnuncio = useMemo(
     () => ({
@@ -416,6 +440,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       // SKU oficial vai ao ML como atributo SELLER_SKU.
       sku: skuEnvio,
       descricao: anuncio?.descricao || "",
+      // Condição APROVADA na ficha (novo/usado): a função recusa se vier vazia.
+      condicao: normalizarCondicao(anuncio?.condicao),
       fotos: fotosUrls,
       // Padrões fixos aprovados na Conferência (a função reaplica no servidor).
       padroes_ml: anuncio?.padroesML || padroesEsperadosConferencia(),
@@ -424,11 +450,16 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         logistica?.medida && logistica.confirmado
           ? { ...logistica.medida, nivel: logistica.nivel, origem: logistica.nivel, config_embalagem: logistica.config_embalagem, modalidade: logistica.modalidade }
           : null,
-      atributos_extras: Object.entries(extras)
-        .filter(([, v]) => v && (v.value_id || v.value_name))
-        .map(([id, v]) => ({ id, ...(v.value_id ? { value_id: v.value_id } : { value_name: v.value_name }) })),
+      atributos_extras: [
+        ...Object.entries(extras)
+          .filter(([id, v]) => id !== "VEHICLE_TYPE" && v && (v.value_id || v.value_name))
+          .map(([id, v]) => ({ id, ...(v.value_id ? { value_id: v.value_id } : { value_name: v.value_name }) })),
+        ...(tipoVeiculoPub.extra ? [tipoVeiculoPub.extra] : []),
+      ],
+      // Conferência (não vai ao ML): tipo enviado = tipo da ficha.
+      tipo_veiculo: tipoVeiculoPub.extra ? tipoVeiculoPub.nome : undefined,
     }),
-    [campos, anuncio, fotosUrls, extras, logistica, skuEnvio, quantidadeConfirmada]
+    [campos, anuncio, fotosUrls, extras, logistica, skuEnvio, quantidadeConfirmada, tipoVeiculoPub.extra?.value_id, tipoVeiculoPub.nome]
   );
 
   function alterarExtra(id, valor) {
@@ -800,6 +831,21 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       setOcupado("");
       return;
     }
+    // Compatibilidade estruturada GRAVADA na ficha antes de publicar: as
+    // aplicações aprovadas e as versões do catálogo ML que serão enviadas.
+    // Relida da base; se não bater com a tela, nada é publicado.
+    if (aplicacoes.length) {
+      const idsTela = (compatML?.veiculos || []).map((v) => v.id);
+      const sv = await salvarCompatibilidadesML({ anuncioId: ficha.anuncioId, aplicacoes, compat: compatML });
+      const relida = sv.ok ? await obterAnuncio(ficha.anuncioId) : null;
+      const cp = sv.ok ? conferirCompatPersistida({ idsEnvio: idsTela, base: relida?.ok ? relida.anuncio : null }) : { ok: false, motivo: `as compatibilidades não puderam ser gravadas na ficha (${sv.erro || "erro"})` };
+      if (!cp.ok) {
+        setResultado({ ok: false, erro: `Publicação BLOQUEADA: ${cp.motivo}` });
+        setArmado(false);
+        setOcupado("");
+        return;
+      }
+    }
     // Proteção dupla, conferida de novo NA HORA do clique (sem cache).
     const base = await consultarDuplicidadeBase(contaEscolhida);
     setDuplicidadeBase(base);
@@ -884,6 +930,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           tipoVeiculo: tipoVeiculoEnvio,
           compatibilidades: idsCompat,
           compatibilidadesAprovadas: aplicacoes.length,
+          condicao: dadosAnuncio.condicao,
         },
         item,
         compat,
@@ -942,26 +989,13 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contaOk, contaEscolhida]);
 
-  // Tipo de veículo aprovado na Conferência → valor do atributo VEHICLE_TYPE
-  // da categoria (pré-preenchido; o usuário pode revisar). Sem valor
-  // correspondente: fica em branco e o PAIIA pede a escolha.
-  const attrTipoVeiculo = (preparo?.obrigatorios || []).find((a) => a.id === "VEHICLE_TYPE") || null;
-  useEffect(() => {
-    if (!attrTipoVeiculo?.valores?.length || extras.VEHICLE_TYPE) return;
-    const v = valorTipoVeiculo(attrTipoVeiculo.valores, anuncio?.tipoVeiculo);
-    if (v) setExtras((e) => (e.VEHICLE_TYPE ? e : { ...e, VEHICLE_TYPE: { value_id: String(v.id), sugerido: true } }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preparo]);
-  const tipoVeiculoEnvio = (() => {
-    const e = extras.VEHICLE_TYPE;
-    if (!e) return "";
-    if (e.value_name) return e.value_name;
-    return (attrTipoVeiculo?.valores || []).find((v) => String(v.id) === String(e.value_id))?.nome || "";
-  })();
   const conferencia = conferir({
     campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
-    descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoEnvio, tipoVeiculoExigido: Boolean(attrTipoVeiculo && !attrTipoVeiculo.preenchido), compatTexto: anuncio?.compatibilidades,
+    descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoPub, compatTexto: anuncio?.compatibilidades,
+    condicaoEnvio: dadosAnuncio.condicao, semCompatConfirmada: anuncio?.semCompatibilidadeConfirmada === true,
   });
+  // Ficha não salva / conflito de versões / Conferência invalidada: bloqueia.
+  if (bloqueioFicha) conferencia.unshift({ item: "Ficha salva na base", nivel: "erro", texto: bloqueioFicha });
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
   // Ordem do fluxo: quantidade confirmada e produto no Bling ANTES de validar no ML.
   const blingPronto = Boolean(estoque?.encontrado && !estoque?.ambiguo);
@@ -982,7 +1016,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     GTIN: campos.gtin.trim(),
   };
   const faltando = (preparo?.obrigatorios || []).filter(
-    (a) => !a.preenchido && !cobertosPelosCampos[a.id]
+    (a) => !a.preenchido && !cobertosPelosCampos[a.id] && a.id !== "VEHICLE_TYPE"
   );
   const faltandoSemValor = faltando.filter((a) => !(extras[a.id]?.value_id || extras[a.id]?.value_name));
 
@@ -990,8 +1024,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     <section data-paiia-revisao-ml style={painel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <h3 style={{ color: "#fde047", margin: 0 }}>🚀 Publicação no Mercado Livre</h3>
-        <button type="button" onClick={onFechar} style={botaoCinza}>✏️ Editar / revisar a Conferência</button>
+        <button type="button" data-paiia-navegacao onClick={onFechar} style={botaoCinza}>← Voltar à Conferência</button>
       </div>
+      {bloqueioFicha && (
+        <p data-paiia-bloqueio-ficha style={{ ...erro, fontSize: 14, fontWeight: "bold" }}>⛔ Publicação bloqueada: {bloqueioFicha}</p>
+      )}
 
       {/* Anúncio NOVO já publicado: etapa "trazer este MLB para o Bling" (também após F5). */}
       {integracao?.registro && (
@@ -1298,8 +1335,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             {(preparo?.avisos || []).map((a) => (
               <p key={a} style={aviso}>⚠ {a}</p>
             ))}
-            {extras.VEHICLE_TYPE?.sugerido && (
-              <p style={info} data-paiia-tipo-veiculo-sugerido>Tipo de veículo preenchido com o aprovado na Conferência ({tipoVeiculoEnvio}). Pode revisar acima.</p>
+            {attrTipoVeiculo && (
+              <p style={tipoVeiculoPub.estado === "ok" ? info : erro} data-paiia-tipo-veiculo-publicacao={tipoVeiculoPub.estado}>
+                Tipo de veículo: {tipoVeiculoPub.estado === "ok" ? <b>{tipoVeiculoPub.nome}</b> : null} {tipoVeiculoPub.estado === "ok" ? "— confirmado na ficha. Para trocar, use \"← Voltar à Conferência\" (⑤ Características principais)." : tipoVeiculoPub.texto}
+              </p>
             )}
             {aplicacoes.length > 0 && (
               <div data-paiia-compat-ml style={{ marginTop: 10, color: "#e2e8f0", fontSize: 13 }}>
@@ -1367,7 +1406,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                     <button type="button" data-paiia-recarregar-ficha onClick={recarregarFicha} style={botaoCinza}>
                       🔄 Recarregar a ficha gravada
                     </button>{" "}
-                    <span style={{ color: "#cbd5e1" }}>Depois confira os dados (ou use "Editar / revisar a Conferência").</span>
+                    <span style={{ color: "#cbd5e1" }}>Depois confira os dados (ou use "← Voltar à Conferência").</span>
                   </div>
                 )}
               </div>

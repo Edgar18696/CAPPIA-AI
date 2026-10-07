@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Button from "./ui/Button";
 import { supabase } from "../supabase";
+import PainelFichasCentral from "./PainelFichasCentral";
+import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 
 function formatarMoeda(valor) {
   if (
@@ -531,6 +533,9 @@ export default function CentralPublicacao({
 
       status:
         "rascunho_teste",
+      // MESMA ficha da base (criada no Novo Anúncio).
+      fichaIdPAIIA:
+        anuncio?.fichaIdPAIIA || "",
     };
 
     localStorage.setItem(
@@ -631,6 +636,9 @@ export default function CentralPublicacao({
 
       status:
         "rascunho_teste",
+      // MESMA ficha da base (criada no Novo Anúncio).
+      fichaIdPAIIA:
+        anuncio?.fichaIdPAIIA || "",
     };
 
     try {
@@ -682,6 +690,8 @@ export default function CentralPublicacao({
               aplicacoes.length,
             status:
               "rascunho_teste",
+            fichaIdPAIIA:
+              anuncio?.fichaIdPAIIA || "",
           })
         );
       } catch (erroStorageMinimo) {
@@ -741,6 +751,11 @@ export default function CentralPublicacao({
           Array.isArray(anuncio?.clips)
             ? anuncio.clips
             : [],
+        // Volta para a MESMA ficha da base.
+        fichaIdPAIIA:
+          anuncio?.fichaIdPAIIA || "",
+        // Mais recente que o rascunho anterior: o Novo Anúncio abre com ele.
+        salvoEm: Date.now(),
       };
 
       localStorage.setItem(
@@ -752,6 +767,8 @@ export default function CentralPublicacao({
         "rascunhoNovoAnuncioTemp",
         JSON.stringify(dadosRetorno)
       );
+      // Voltar ao Anúncio não é criação nova: abre com estes dados.
+      consumirNovaCriacaoMidia();
     }
 
     setScreen?.(
@@ -990,8 +1007,8 @@ export default function CentralPublicacao({
                 "20px",
             }}
           >
-            Nenhum anúncio pronto para
-            publicação foi encontrado.
+            Nenhum anúncio novo aguardando aqui. Suas fichas
+            (em andamento, aprovadas e publicadas) estão na lista abaixo.
           </p>
 
           <Button
@@ -999,9 +1016,12 @@ export default function CentralPublicacao({
             variant="gray"
             onClick={voltarAnuncio}
           >
-            ⬅ Voltar ao Anúncio
+            ← Voltar ao Anúncio
           </Button>
         </section>
+        <div style={{ marginTop: "16px" }}>
+          <PainelFichasCentral setScreen={setScreen} />
+        </div>
       </div>
     );
   }
@@ -1014,6 +1034,7 @@ export default function CentralPublicacao({
         margin: "30px auto 0",
       }}
     >
+      <PainelFichasCentral setScreen={setScreen} />
       <section
         style={{
           ...cardStyle,
@@ -1290,7 +1311,7 @@ export default function CentralPublicacao({
             variant="gray"
             onClick={voltarAnuncio}
           >
-            ⬅ Voltar ao Anúncio
+            ← Voltar ao Anúncio
           </Button>
 
           <button

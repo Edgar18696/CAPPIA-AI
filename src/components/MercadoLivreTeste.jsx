@@ -6,14 +6,25 @@ import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
 import {
   lerAplicacoesAprovadas,
   inferirTipoVeiculo,
-  valorTipoVeiculo,
   tipoVeiculoDaCategoria,
-  tipoVeiculoParaFicha,
   marcaInvalida,
   descricaoAfirmaOriginal,
   montarDescricaoPadrao,
+  situacaoCompatibilidade,
+  TEXTO_SEM_APLICACAO,
+  TEXTO_VEICULOS_SO_NA_DESCRICAO,
 } from "../services/compatibilidadeML";
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
+import {
+  OPCOES_TIPO_VEICULO,
+  ORIGEM_MANUAL,
+  ORIGEM_SUGESTAO,
+  normalizarTipoVeiculo,
+  sugerirTipoVeiculo,
+  aplicarSugestaoTipoVeiculo,
+  escolherTipoVeiculo,
+  tipoVeiculoNaCategoria,
+} from "../services/tipoVeiculoAnuncio";
 import { GARANTIA_ML, LINHAS_FIXAS, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import {
   obterAnuncio,
@@ -21,9 +32,21 @@ import {
   salvarRascunhoFicha,
   registrarDecisaoBase,
   publicacaoExiste,
-  pendenciaPublicacao,
 } from "../services/anuncioPublicacaoService";
 import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
+import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
+import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
+import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import {
+  tipoAnuncioDaFicha,
+  compararVersoesFicha,
+  decidirAberturaFicha,
+  camposQueInvalidam,
+  motivoBloqueioPublicacao,
+  ESTADO_GRAVACAO,
+  TEXTO_GRAVACAO,
+  TEXTO_CAMPO_ALTERADO,
+} from "../services/persistenciaFicha";
 import { divergenciasAnuncio, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO, estadoBasePAIIA, podeGravarNaBase } from "../services/publicacaoSegura";
 import {
   separarModelos,
@@ -977,9 +1000,15 @@ function ConferenciaPAIIA({
 
   // Ficha persistente deste anúncio (por código). Ver CHAVE_CONFERENCIA.
   const chaveConferencia = chaveProduto(anuncio?.codigo || anuncio?.oem);
-  const [fichaSalva] = useState(() =>
-    chaveConferencia ? lerMapaLocal(CHAVE_CONFERENCIA)[chaveConferencia] || null : null
-  );
+  // Ficha criada já no NOVO ANÚNCIO: a Conferência continua NELA (mesmo ID).
+  const fichaIdDoAnuncio = idFichaValido(anuncio?.fichaIdPAIIA) ? String(anuncio.fichaIdPAIIA) : "";
+  const [fichaSalva] = useState(() => {
+    const local = chaveConferencia ? lerMapaLocal(CHAVE_CONFERENCIA)[chaveConferencia] || null : null;
+    // Cópia local de OUTRA ficha do mesmo código não é usada nesta.
+    const idLocal = String(local?.campos?.anuncioIdPAIIA || "");
+    if (fichaIdDoAnuncio && idLocal && idLocal !== fichaIdDoAnuncio) return null;
+    return local;
+  });
   // Versão (dados_conferencia.salvo_em) da ficha da base que esta tela leu ou
   // gravou por último. Toda gravação confere: se a base estiver em outra
   // versão (outra aba/computador gravou depois), NADA é gravado — uma cópia
@@ -990,6 +1019,51 @@ function ConferenciaPAIIA({
   });
   const versaoEsperadaPara = (id) => (id && versaoFichaRef.current.id === id ? versaoFichaRef.current.versao : "");
   const conflitoFichaRef = useRef(false);
+  // EDIÇÃO REAL DO USUÁRIO. Abrir, F5, Voltar, Central ou ?ficha= são
+  // LEITURA: só uma edição real (ou ação explícita do fluxo, como aprovar)
+  // grava a ficha ou derruba a aprovação. Carregar, normalizar, sugerir
+  // ou preencher automaticamente NÃO conta como edição.
+  const usuarioEditouRef = useRef(false);
+  function marcarInteracao(e) {
+    if (!e || !e.isTrusted) return;
+    const alvo = e.target && e.target.closest ? e.target : null;
+    if (alvo && alvo.closest("[data-paiia-navegacao]")) return;
+    if (e.type === "click" && !(alvo && alvo.closest("button,[role=button],input,select,textarea,label"))) return;
+    usuarioEditouRef.current = true;
+  }
+  const propsInteracao = { onInputCapture: marcarInteracao, onChangeCapture: marcarInteracao, onClickCapture: marcarInteracao };
+  // Primeira gravação da Conferência numa ficha que ainda não tem a
+  // Conferência salva (abrir a Conferência deste anúncio é a ação explícita).
+  const gravacaoInicialPermitidaRef = useRef(!fichaSalva);
+  // Conflito de versões: NUNCA resolvido sozinho; as duas versões ficam.
+  const [conflito, setConflito] = useState(null);
+  const [resolvendoConflito, setResolvendoConflito] = useState("");
+  // Indicador: salvando | salvo | nao_salvo | conflito.
+  const [gravacao, setGravacao] = useState(() => ({ estado: fichaSalva?.versaoBase ? ESTADO_GRAVACAO.SALVO : "", erro: "" }));
+  const [gravacaoPendente, setGravacaoPendente] = useState(false);
+  // Aviso quando uma edição real invalida a Conferência.
+  const [avisoAprovacao, setAvisoAprovacao] = useState("");
+  // Campos que já estavam diferentes da aprovação ao carregar (formato,
+  // normalização, sugestão): nunca derrubam a aprovação.
+  const divergentesNoCarregamentoRef = useRef([]);
+  // Assinatura da Conferência como estava antes da 1ª edição real.
+  const assinaturaCarregadaRef = useRef("");
+  // Depois de CADA gravação confirmada, a cópia local passa a partir da
+  // versão devolvida pela base: a própria aba nunca conflita consigo mesma.
+  function atualizarVersaoLocal(id, versao) {
+    if (!chaveConferencia || !versao) return;
+    try {
+      const mapa = lerMapaLocal(CHAVE_CONFERENCIA);
+      const atual = mapa[chaveConferencia];
+      if (!atual) return;
+      const idLocal = String(atual?.campos?.anuncioIdPAIIA || "");
+      if (id && idLocal && idLocal !== String(id)) return;
+      mapa[chaveConferencia] = { ...atual, versaoBase: String(versao) };
+      localStorage.setItem(CHAVE_CONFERENCIA, JSON.stringify(mapa));
+    } catch {
+      // sem espaço: a versão fica na memória desta tela
+    }
+  }
   // Gravações da ficha (rascunho e ficha aprovada) uma de cada vez: a versão
   // lida por uma é a gravada pela anterior.
   const filaGravacaoRef = useRef(Promise.resolve());
@@ -1758,7 +1832,7 @@ function moverFoto(
   // ID da ficha deste anúncio na base PAIIA (paiia_anuncios). A conta de
   // destino verdadeira é lida/gravada lá; aqui fica só o cache do ID.
   const [anuncioIdPAIIA, setAnuncioIdPAIIA] = useState(() =>
-    String(fichaSalva?.campos?.anuncioIdPAIIA || "")
+    String(fichaSalva?.campos?.anuncioIdPAIIA || fichaIdDoAnuncio || "")
   );
   // Ficha aprovada gravada na base PAIIA (fonte da recuperação no F5).
   const [fichaBase, setFichaBase] = useState({ pronta: false, erro: "" });
@@ -1944,19 +2018,42 @@ function moverFoto(
   const [gtin, setGtin] =
     useState(() => inicial("gtin", ""));
 
+  // TIPO DE VEÍCULO (⑤): o PAIIA SUGERE (categoria + aplicações), o usuário
+  // pode trocar SEMPRE. Escolha manual (origem "manual") fica salva na ficha
+  // e nenhuma sugestão a sobrescreve depois.
+  const [
+    tipoVeiculoOrigem,
+    setTipoVeiculoOrigem,
+  ] = useState(() => {
+    const salva = fichaSalva?.campos?.tipoVeiculoOrigem;
+    if (salva === ORIGEM_MANUAL || salva === ORIGEM_SUGESTAO) return salva;
+    return fichaSalva?.campos?.tipoVeiculo ? ORIGEM_SUGESTAO : "";
+  });
   const [
     tipoVeiculo,
     setTipoVeiculo,
-  ] = useState(() =>
-    // Sugerido pelas aplicações aprovadas (todas de automóvel/caminhonete).
-    // Na dúvida fica em branco e a Conferência pede a confirmação.
-    inicial(
+  ] = useState(() => {
+    // Escolha manual salva: vale ela, mesmo que as aplicações mudem.
+    if (fichaSalva?.campos?.tipoVeiculoOrigem === ORIGEM_MANUAL && fichaSalva?.campos?.tipoVeiculo) {
+      origemConferenciaRef.current.tipoVeiculo = fichaSalva.campos.tipoVeiculo;
+      return fichaSalva.campos.tipoVeiculo;
+    }
+    // Sugestão inicial pelas aplicações aprovadas; na dúvida fica em branco
+    // e a Conferência pede a escolha.
+    return inicial(
       "tipoVeiculo",
-      inferirTipoVeiculo(
-        lerAplicacoesAprovadas({ aplicacoes: anuncio?.aplicacoes, texto: anuncio?.compatibilidades })
+      normalizarTipoVeiculo(
+        inferirTipoVeiculo(
+          lerAplicacoesAprovadas({ aplicacoes: anuncio?.aplicacoes, texto: anuncio?.compatibilidades })
+        )
       )
-    )
-  );
+    );
+  });
+  function escolherTipoVeiculoManual(valor) {
+    const e = escolherTipoVeiculo(valor);
+    setTipoVeiculo(e.valor);
+    setTipoVeiculoOrigem(e.origem);
+  }
 
   const [
   compatibilidades,
@@ -2231,17 +2328,19 @@ useEffect(() => {
     );
   });
 
+  // TIPO DE ANÚNCIO (Clássico/Premium) PERTENCE À FICHA: vem dela. A
+  // preferência do navegador só sugere o tipo de uma ficha NOVA sem tipo.
   const [
     modalidade,
     setModalidade,
   ] = useState(() => {
-    return (
-      localStorage.getItem(
-        "tipoAnuncioAppia"
-      ) ||
-      anuncio?.tipoAnuncio ||
-      "classico"
-    );
+    let preferencia = "";
+    try {
+      preferencia = localStorage.getItem("tipoAnuncioAppia") || "";
+    } catch {
+      preferencia = "";
+    }
+    return tipoAnuncioDaFicha({ fichaSalva, anuncio, preferencia });
   });
 
   useEffect(() => {
@@ -2250,22 +2349,12 @@ useEffect(() => {
         "canalVendaAppia"
       );
 
-    const modalidadeSalva =
-      localStorage.getItem(
-        "tipoAnuncioAppia"
-      );
-
     if (canalSalvo) {
       setCanalVendaPublicacao(
         canalSalvo
       );
     }
-
-    if (modalidadeSalva) {
-      setModalidade(
-        modalidadeSalva
-      );
-    }
+    // (O tipo de anúncio NÃO é mais trocado pela preferência do navegador.)
   }, []);
 
   const [
@@ -2334,6 +2423,13 @@ useEffect(() => {
     condicao,
     setCondicao,
   ] = useState(() => inicial("condicao", "novo"));
+
+  // "Publicar sem compatibilidade": só com marcação EXPLÍCITA do usuário
+  // (sem aplicação estruturada, a aprovação/publicação fica bloqueada).
+  const [
+    semCompatConfirmado,
+    setSemCompatConfirmado,
+  ] = useState(() => inicial("semCompatibilidadeConfirmada", false) === true);
 
   // Garantia FIXA de todo anúncio novo: 3 meses, garantia do vendedor
   // (padrão PAIIA; nunca sem garantia, nunca garantia de fábrica).
@@ -2423,13 +2519,26 @@ useEffect(() => {
   })();
   return () => { ativo = false; };
 }, [categoriaId, contaSimulacaoML]);
-// Categoria com UM só valor (fixo pelo ML): seleciona e SALVA esse valor.
-// Com vários: só ajusta a grafia do valor escolhido para a do ML.
+// SUGESTÃO do Tipo de veículo (categoria ML + aplicações confirmadas).
+// Só preenche enquanto o usuário não escolheu à mão; nunca trava o campo.
+const sugestaoTipoVeiculo = useMemo(
+  () => sugerirTipoVeiculo({
+    infoCategoria: tipoVeiculoML.estado === "ok" ? tipoVeiculoML : null,
+    aplicacoes: aplicacoesConfirmadas,
+  }),
+  [tipoVeiculoML, aplicacoesConfirmadas]
+);
 useEffect(() => {
-  if (tipoVeiculoML.estado !== "ok" || !tipoVeiculoML.existe) return;
-  const novo = tipoVeiculoParaFicha(tipoVeiculoML, tipoVeiculo);
-  if (novo !== tipoVeiculo) setTipoVeiculo(novo);
-}, [tipoVeiculoML]); // eslint-disable-line react-hooks/exhaustive-deps
+  const r = aplicarSugestaoTipoVeiculo({ atual: tipoVeiculo, origem: tipoVeiculoOrigem, sugestao: sugestaoTipoVeiculo.valor });
+  if (!r.mudou) return;
+  setTipoVeiculo(r.valor);
+  setTipoVeiculoOrigem(r.origem);
+}, [sugestaoTipoVeiculo.valor]); // eslint-disable-line react-hooks/exhaustive-deps
+// O tipo escolhido cabe na categoria do ML? (não troca nada sozinho)
+const tipoVeiculoCategoria = tipoVeiculoNaCategoria(
+  tipoVeiculo,
+  tipoVeiculoML.estado === "ok" ? tipoVeiculoML : null
+);
 const [motivoCategoria, setMotivoCategoria] = useState("");
 // Conflito: fonte superior (Base/cadastro/nome da peça) × título.
 const [conflitoProduto, setConflitoProduto] = useState(null);
@@ -2517,6 +2626,8 @@ const [
       modelosSemDetalhes,
       dadosTecnicos: { funcao: funcaoPeca, fonteFuncao, especificacao: especificacaoTecnica, termoComercial },
       condicao,
+      // Só true quando o usuário marcou "publicar sem compatibilidade".
+      semCompatibilidadeConfirmada: semCompatConfirmado === true,
       logistica: logisticaConferencia,
       // Padrões fixos: vão para a ficha e para a Publicação.
       padroesML: padroesEsperadosConferencia(),
@@ -2558,6 +2669,8 @@ const [
     tipoVeiculo,
     gtin,
     modalidade,
+    condicao,
+    semCompatConfirmado === true,
   ]);
 
   // A aprovação compara o CONTEÚDO (não o formato): abrir/revisar, F5,
@@ -2565,6 +2678,7 @@ const [
   // aprovação. Só uma alteração real em campo relevante exige validar de
   // novo — e, se o usuário desfizer, a aprovação guardada volta.
   useEffect(() => {
+    if (!usuarioEditouRef.current) assinaturaCarregadaRef.current = assinaturaConferencia;
     const aprovada = assinaturaAprovadaRef.current;
     if (aprovada && anuncioConferido) {
       if (mesmaAprovacao(aprovada, assinaturaConferencia)) {
@@ -2591,6 +2705,24 @@ const [
         }
         mudou = divergentes;
       }
+      // Carregamento / normalização / sugestão automática: a aprovação
+      // fica. Só a edição REAL do usuário invalida — e só nos campos que
+      // ele mudou (os que já vieram diferentes ao carregar não contam).
+      if (!usuarioEditouRef.current) {
+        divergentesNoCarregamentoRef.current = [...new Set([...divergentesNoCarregamentoRef.current, ...mudou])];
+        if (typeof window !== "undefined") window.__paiiaDivergenciasCarregamento = divergentesNoCarregamentoRef.current;
+        return;
+      }
+      let desdeCarga = [];
+      try {
+        desdeCarga = assinaturaCarregadaRef.current ? diferencasAssinatura(assinaturaCarregadaRef.current, assinaturaConferencia) : [];
+      } catch {
+        desdeCarga = [];
+      }
+      const invalidam = camposQueInvalidam({ usuarioEditou: true, mudou, divergentesNoCarregamento: divergentesNoCarregamentoRef.current, mudaramDesdeCarregamento: desdeCarga });
+      if (!invalidam.length) return;
+      mudou = invalidam;
+      setAvisoAprovacao(`${TEXTO_CAMPO_ALTERADO} (${mudou.join(", ")})`);
       if (typeof window !== "undefined") window.__paiiaDiferencasAprovacao = mudou;
       // Dado aprovado mudou de verdade: a aprovação é invalidada (nova
       // Conferência). Se o usuário desfizer, a aprovação guardada volta.
@@ -2605,6 +2737,7 @@ const [
     if (guardada && mesmaAprovacao(guardada.assinatura, assinaturaConferencia)) {
       aprovacaoGuardadaRef.current = null;
       assinaturaAprovadaRef.current = guardada.assinatura;
+      setAvisoAprovacao("");
       setAnuncioConferido(guardada.anuncioConferido);
       setPayloadTeste(guardada.payloadTeste || null);
       setValidado(Boolean(guardada.payloadTeste));
@@ -3412,6 +3545,9 @@ useEffect(() => {
     numeroPeca,
     gtin,
     tipoVeiculo,
+    tipoVeiculoOrigem,
+    // Tipo de anúncio salvo NA FICHA (não na preferência do navegador).
+    tipoAnuncio: modalidade,
     nomePeca,
     categoriaML: categoriaId || categoria ? { id: categoriaId, caminho: categoria, origem: origemCategoria } : null,
     compatibilidades,
@@ -3435,6 +3571,7 @@ useEffect(() => {
     comprimentoEnvio,
     pesoEnvio,
     condicao,
+    semCompatibilidadeConfirmada: semCompatConfirmado,
     tipoGarantia,
     mesesGarantia,
     limiteVenda,
@@ -3469,6 +3606,16 @@ useEffect(() => {
     if (etapaFluxo !== "publicacao" || !anuncioConferido || !assinaturaAprovadaRef.current) return;
     const chaveGravacao = `${anuncioIdPAIIA}|${assinaturaAprovadaRef.current}`;
     if (fichaBaseGravadaRef.current === chaveGravacao && fichaBase.pronta) return;
+    // Abrir uma ficha já aprovada (F5, ?ficha=, Central, Voltar) é LEITURA:
+    // a ficha aprovada só é gravada por ação explícita (aprovar/finalizar).
+    if (!usuarioEditouRef.current && !gravacaoInicialPermitidaRef.current) {
+      if (!fichaBase.pronta) setFichaBase({ pronta: true, erro: "" });
+      return;
+    }
+    if (conflitoFichaRef.current) {
+      if (!fichaBase.pronta) setFichaBase({ pronta: true, erro: "" });
+      return;
+    }
     if (gravandoFichaRef.current) return;
     gravandoFichaRef.current = true;
     (async () => {
@@ -3497,9 +3644,10 @@ useEffect(() => {
       const idRascunho = anuncioIdPAIIA || (criandoFichaPorCodigo.has(chaveConferencia) ? await criandoFichaPorCodigo.get(chaveConferencia).catch(() => "") : "") || idFichaRef.current || "";
       if (conflitoFichaRef.current) {
         gravandoFichaRef.current = false;
-        if (montadoRef.current) setFichaBase({ pronta: true, erro: "Esta ficha foi alterada em outra aba ou computador: recarregue a ficha (F5) antes de continuar." });
+        if (montadoRef.current) setFichaBase({ pronta: true, erro: "" });
         return;
       }
+      if (montadoRef.current) setGravacao({ estado: ESTADO_GRAVACAO.SALVANDO, erro: "" });
       const r = await naFilaDeGravacao(() =>
         salvarFichaAprovada({
           anuncioId: idRascunho,
@@ -3510,16 +3658,29 @@ useEffect(() => {
         })
       );
       gravandoFichaRef.current = false;
-      if (r.ok && r.versao) versaoFichaRef.current = { id: r.anuncioId, versao: r.versao };
-      if (r.conflito) conflitoFichaRef.current = true;
+      if (r.ok && r.versao) {
+        versaoFichaRef.current = { id: r.anuncioId, versao: r.versao };
+        atualizarVersaoLocal(r.anuncioId, r.versao);
+      }
+      if (r.ok) gravacaoInicialPermitidaRef.current = false;
+      if (r.conflito) {
+        conflitoFichaRef.current = true;
+        if (montadoRef.current) {
+          setFichaBase({ pronta: true, erro: "" });
+          abrirConflitoRef.current?.();
+        }
+        return;
+      }
       // O ID criado nunca é descartado (mesmo se o efeito foi refeito).
       if (r.ok) {
         fichaBaseGravadaRef.current = `${r.anuncioId}|${assinaturaAprovadaRef.current}`;
         if (!montadoRef.current) return;
         if (r.anuncioId !== anuncioIdPAIIA) setAnuncioIdPAIIA(r.anuncioId);
         setFichaBase({ pronta: true, erro: "" });
+        setGravacao({ estado: ESTADO_GRAVACAO.SALVO, erro: "" });
       } else if (montadoRef.current) {
         setFichaBase({ pronta: true, erro: r.erro || "Não foi possível gravar a ficha na base PAIIA." });
+        setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: r.erro || "" });
       }
     })();
   }, [etapaFluxo, anuncioConferido, anuncioIdPAIIA]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3574,18 +3735,23 @@ useEffect(() => {
   async function gravarRascunhoNaBase() {
     const st = rascunhoRef.current;
     st.timer = 0;
-    if (!chaveConferencia || !anuncio) return;
-    if (st.gravando) { st.pendente = true; return; }
+    if (montadoRef.current) setGravacaoPendente(false);
+    if (!chaveConferencia || !anuncio) return { ok: true };
+    // Sem edição real e sem ação explícita: abrir/navegar não grava nada.
+    if (!usuarioEditouRef.current && !gravacaoInicialPermitidaRef.current) return { ok: true, semEdicao: true };
+    if (st.gravando) { st.pendente = true; return { ok: true, emAndamento: true }; }
     const assinatura = assinaturaRascunhoRef.current;
-    if (assinatura === st.ultima && idFichaRef.current) return;
+    if (assinatura === st.ultima && idFichaRef.current) return { ok: true };
     st.gravando = true;
     try {
       let id = idFichaRef.current || "";
       if (!id && criandoFichaPorCodigo.has(chaveConferencia)) {
         id = (await criandoFichaPorCodigo.get(chaveConferencia).catch(() => "")) || "";
       }
-      if (id && st.fechada === id) return; // ficha publicada/cancelada: nunca é regravada
-      if (conflitoFichaRef.current) return; // outra aba gravou depois: não sobrescreve
+      if (id && st.fechada === id) return { ok: true, fechada: true }; // ficha publicada/cancelada: nunca é regravada
+      // Conflito aberto: nenhuma versão sobrescreve a outra até o usuário escolher.
+      if (conflitoFichaRef.current) return { ok: false, conflito: true, erro: "Esta ficha possui duas versões diferentes." };
+      if (montadoRef.current) setGravacao({ estado: ESTADO_GRAVACAO.SALVANDO, erro: "" });
       const dados = montarDadosRef.current();
       const pedido = naFilaDeGravacao(() =>
         salvarRascunhoFicha({
@@ -3605,11 +3771,17 @@ useEffect(() => {
       }
       const r = await pedido;
       if (!id) criandoFichaPorCodigo.delete(chaveConferencia);
-      if (r.ok && r.versao) versaoFichaRef.current = { id: r.anuncioId, versao: r.versao };
+      if (r.ok && r.versao) {
+        versaoFichaRef.current = { id: r.anuncioId, versao: r.versao };
+        atualizarVersaoLocal(r.anuncioId, r.versao);
+      }
       if (r.conflito) {
         conflitoFichaRef.current = true;
-        if (montadoRef.current) setAvisoRascunho(r.erro);
+        if (montadoRef.current) abrirConflitoRef.current?.();
+        return { ok: false, conflito: true, erro: "Esta ficha possui duas versões diferentes." };
       } else if (r.ok) {
+        gravacaoInicialPermitidaRef.current = false;
+        if (montadoRef.current) setGravacao({ estado: ESTADO_GRAVACAO.SALVO, erro: "" });
         st.ultima = assinatura;
         st.confirmadoNestaTela = true;
         idFichaRef.current = r.anuncioId;
@@ -3621,9 +3793,18 @@ useEffect(() => {
       } else if (r.fechada) {
         st.fechada = id;
         if (montadoRef.current) setAvisoRascunho("Esta ficha já foi publicada: alterações aqui não são gravadas nela.");
-      } else if (montadoRef.current) {
-        setAvisoRascunho(r.erro || "Não foi possível gravar o rascunho na base PAIIA.");
+        return { ok: true, fechada: true };
+      } else {
+        if (montadoRef.current) {
+          setAvisoRascunho(r.erro || "Não foi possível gravar o rascunho na base PAIIA.");
+          setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: r.erro || "" });
+        }
+        return { ok: false, erro: r.erro || "Não foi possível gravar o rascunho na base PAIIA." };
       }
+      return { ok: true };
+    } catch (erro) {
+      if (montadoRef.current) setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: String(erro?.message || erro || "") });
+      return { ok: false, erro: String(erro?.message || erro || "falha ao gravar") };
     } finally {
       st.gravando = false;
       if (st.pendente) {
@@ -3638,11 +3819,238 @@ useEffect(() => {
   // Cada alteração grava na MESMA ficha (pequena espera para juntar a digitação).
   useEffect(() => {
     if (!chaveConferencia || !anuncio) return undefined;
+    // Só grava depois de edição real (ou na 1ª abertura da Conferência).
+    if (!usuarioEditouRef.current && !gravacaoInicialPermitidaRef.current) return undefined;
     const st = rascunhoRef.current;
     window.clearTimeout(st.timer);
+    setGravacaoPendente(true);
     st.timer = window.setTimeout(() => gravarRascunhoRef.current(), st.ultima ? 800 : 0);
     return undefined;
   }, [assinaturaRascunho]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // =====================================================
+  // CONFLITO DE VERSÕES — nunca escolhido sozinho, nada é descartado.
+  // =====================================================
+  function fichaDestaTela() {
+    const local = chaveConferencia ? lerMapaLocal(CHAVE_CONFERENCIA)[chaveConferencia] || null : null;
+    return {
+      campos: { ...camposFicha, fotos: fotosFicha },
+      anuncioConferido: anuncioConferido && assinaturaAprovadaRef.current ? anuncioConferido : null,
+      assinaturaAprovada: anuncioConferido ? assinaturaAprovadaRef.current : "",
+      salvoEm: String(local?.salvoEm || ""),
+    };
+  }
+  async function abrirConflito(baseLida) {
+    const id = idFichaRef.current || anuncioIdPAIIA;
+    if (!id) return;
+    let base = baseLida || null;
+    if (!base) {
+      const r = await obterAnuncio(id);
+      if (!r.ok) {
+        if (montadoRef.current) setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: r.erro || "" });
+        return;
+      }
+      base = r.anuncio;
+    }
+    conflitoFichaRef.current = true;
+    const local = fichaDestaTela();
+    if (!montadoRef.current) return;
+    setConflito({
+      id,
+      versaoTela: local.salvoEm,
+      versaoBase: String(base?.dados_conferencia?.salvo_em || base?.updated_at || ""),
+      diferencas: compararVersoesFicha(local, base?.dados_conferencia?.ficha || {}),
+      base,
+    });
+    setGravacao({ estado: ESTADO_GRAVACAO.CONFLITO, erro: "" });
+  }
+  const abrirConflitoRef = useRef(null);
+  abrirConflitoRef.current = abrirConflito;
+
+  // Manter a versão DESTA TELA: grava por cima da versão da base que o
+  // usuário viu (se a base mudar de novo, o conflito reaparece). A versão
+  // da base substituída fica guardada na própria ficha (versoes_substituidas).
+  async function manterVersaoDaTela() {
+    const c = conflito;
+    if (!c || resolvendoConflito) return;
+    setResolvendoConflito("tela");
+    const dadosBase = c.base?.dados_conferencia || {};
+    const dados = montarDadosRef.current();
+    dados.versoes_substituidas = [
+      ...(Array.isArray(dadosBase.versoes_substituidas) ? dadosBase.versoes_substituidas.slice(-2) : []),
+      copiaLeve({ substituida_em: new Date().toISOString(), salvo_em: dadosBase.salvo_em || "", ficha: dadosBase.ficha || null, anuncio: dadosBase.anuncio || null }, 250000) || { substituida_em: new Date().toISOString(), salvo_em: dadosBase.salvo_em || "" },
+    ];
+    const r = await naFilaDeGravacao(() =>
+      salvarRascunhoFicha({
+        anuncioId: c.id,
+        codigo: anuncio?.codigo || anuncio?.oem || codigo,
+        titulo: tituloAnuncio,
+        dadosConferencia: dados,
+        aprovada: aprovadoRef.current,
+        criarSeFechada: false,
+        versaoEsperada: String(dadosBase.salvo_em || ""),
+      })
+    );
+    if (!montadoRef.current) return;
+    setResolvendoConflito("");
+    if (r.ok) {
+      conflitoFichaRef.current = false;
+      versaoFichaRef.current = { id: c.id, versao: r.versao };
+      atualizarVersaoLocal(c.id, r.versao);
+      rascunhoRef.current.ultima = assinaturaRascunhoRef.current;
+      fichaBaseGravadaRef.current = `${c.id}|${assinaturaAprovadaRef.current}`;
+      gravacaoInicialPermitidaRef.current = false;
+      setConflito(null);
+      setFichaConfirmada(true);
+      setFichaBase({ pronta: true, erro: "" });
+      setGravacao({ estado: ESTADO_GRAVACAO.SALVO, erro: "" });
+    } else if (r.conflito) {
+      abrirConflito();
+    } else {
+      setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: r.erro || "" });
+    }
+  }
+  // Usar a versão da BASE: a cópia desta tela é guardada no navegador
+  // (paiiaVersaoDescartada:<ID>) antes de a tela ser remontada pela base.
+  function usarVersaoDaBase() {
+    const c = conflito;
+    if (!c || resolvendoConflito) return;
+    setResolvendoConflito("base");
+    try {
+      const mapa = lerMapaLocal(CHAVE_CONFERENCIA);
+      localStorage.setItem(`paiiaVersaoDescartada:${c.id}`, JSON.stringify({ guardada_em: new Date().toISOString(), copia: mapa[chaveConferencia] || null }));
+      const rec = montarRecuperacaoDaFicha(c.base, null);
+      if (!rec.ok) {
+        setResolvendoConflito("");
+        setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: rec.erro });
+        return;
+      }
+      mapa[rec.chave] = rec.fichaConferencia;
+      localStorage.setItem(CHAVE_CONFERENCIA, JSON.stringify(mapa));
+      localStorage.setItem("mlAnuncioTeste", JSON.stringify({ ...rec.anuncio, fichaIdPAIIA: c.id }));
+      window.__paiiaAnuncioSimulador = null;
+      window.__paiiaFotosPublicacao = rec.fotos;
+      window.__paiiaFichaRecuperada = rec.id;
+      const url = new URL(window.location.href);
+      url.searchParams.set("ficha", c.id);
+      url.searchParams.set("tela", "mercadoLivreTeste");
+      window.location.replace(url.toString());
+    } catch (erro) {
+      setResolvendoConflito("");
+      setGravacao({ estado: ESTADO_GRAVACAO.NAO_SALVO, erro: String(erro?.message || erro) });
+    }
+  }
+
+  // Ao abrir: compara (só LEITURA) a versão desta tela com a da base.
+  // Mesma versão → segue. Versões diferentes com o mesmo conteúdo → adota a
+  // versão (cura o falso conflito). Conteúdo diferente → conflito visível.
+  useEffect(() => {
+    const id = anuncioIdPAIIA;
+    if (!id) return undefined;
+    let ativo = true;
+    const inicial = typeof window !== "undefined" ? window.__paiiaConflitoInicial : null;
+    if (inicial && inicial.id === id) {
+      window.__paiiaConflitoInicial = null;
+      abrirConflito(inicial.base);
+      return undefined;
+    }
+    if (window.__paiiaFichaRecuperada === id) {
+      setGravacao({ estado: ESTADO_GRAVACAO.SALVO, erro: "" });
+      return undefined;
+    }
+    if (!fichaSalva) return undefined;
+    (async () => {
+      const r = await obterAnuncio(id);
+      if (!ativo || !r.ok || publicacaoExiste(r.anuncio.publicacao)) return;
+      const d = r.anuncio.dados_conferencia || {};
+      if (!d.ficha) return; // base ainda sem Conferência: nada a comparar
+      const local = chaveConferencia ? lerMapaLocal(CHAVE_CONFERENCIA)[chaveConferencia] || null : null;
+      const dec = decidirAberturaFicha({ id, local, baseDados: d, baseAtualizadaEm: r.anuncio.updated_at });
+      if (dec.acao === "mesma_versao") {
+        setGravacao({ estado: ESTADO_GRAVACAO.SALVO, erro: "" });
+        setFichaConfirmada(true);
+        return;
+      }
+      if (dec.acao === "conteudo_igual") {
+        versaoFichaRef.current = { id, versao: String(d.salvo_em || "") };
+        atualizarVersaoLocal(id, d.salvo_em);
+        setGravacao({ estado: ESTADO_GRAVACAO.SALVO, erro: "" });
+        setFichaConfirmada(true);
+        return;
+      }
+      if (dec.diferencas.length) abrirConflito(r.anuncio);
+    })();
+    return () => { ativo = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pendenteDeGravar = gravacaoPendente || gravacao.estado === ESTADO_GRAVACAO.SALVANDO;
+  const estadoIndicador = conflito ? ESTADO_GRAVACAO.CONFLITO : pendenteDeGravar ? ESTADO_GRAVACAO.SALVANDO : gravacao.estado;
+  const indicadorGravacao = estadoIndicador ? (
+    <div
+      data-paiia-indicador-gravacao={estadoIndicador}
+      style={{
+        display: "inline-block",
+        margin: "8px 0 0",
+        padding: "4px 12px",
+        borderRadius: "999px",
+        fontSize: "13px",
+        fontWeight: "bold",
+        background: estadoIndicador === ESTADO_GRAVACAO.SALVO ? "#14532d" : estadoIndicador === ESTADO_GRAVACAO.SALVANDO ? "#1e3a8a" : "#7f1d1d",
+        color: estadoIndicador === ESTADO_GRAVACAO.SALVO ? "#bbf7d0" : estadoIndicador === ESTADO_GRAVACAO.SALVANDO ? "#bfdbfe" : "#fecaca",
+      }}
+    >
+      {TEXTO_GRAVACAO[estadoIndicador]}
+      {estadoIndicador === ESTADO_GRAVACAO.NAO_SALVO && gravacao.erro ? ` — ${gravacao.erro}` : ""}
+    </div>
+  ) : null;
+  const horario = (v) => {
+    const d = new Date(v);
+    return v && !Number.isNaN(d.getTime()) ? d.toLocaleString("pt-BR") : "—";
+  };
+  const painelConflito = conflito ? (
+    <section data-paiia-conflito-versoes style={{ ...bloco, border: "2px solid #f87171", background: "#450a0a" }}>
+      <h3 style={{ color: "#fecaca", margin: "0 0 8px" }}>⚠ Esta ficha possui duas versões diferentes.</h3>
+      <p style={{ color: "#fecaca", margin: "0 0 4px" }}>
+        Versão desta tela: <b data-paiia-conflito-versao-tela>{horario(conflito.versaoTela)}</b> · Versão da base: <b data-paiia-conflito-versao-base>{horario(conflito.versaoBase)}</b>
+      </p>
+      <p style={{ ...textoAuxiliar, color: "#fca5a5" }}>
+        Nenhuma das duas foi descartada. Enquanto você não escolher, nada é gravado e a publicação fica bloqueada.
+      </p>
+      {conflito.diferencas.length ? (
+        <table data-paiia-conflito-diferencas style={{ width: "100%", borderCollapse: "collapse", margin: "8px 0", color: "#fee2e2", fontSize: "13px" }}>
+          <thead>
+            <tr><th style={{ textAlign: "left" }}>Campo</th><th style={{ textAlign: "left" }}>Nesta tela</th><th style={{ textAlign: "left" }}>Na base</th></tr>
+          </thead>
+          <tbody>
+            {conflito.diferencas.map((d) => (
+              <tr key={d.campo} data-paiia-conflito-campo={d.campo}>
+                <td style={{ padding: "4px 6px", borderTop: "1px solid #7f1d1d" }}>{d.rotulo}</td>
+                <td style={{ padding: "4px 6px", borderTop: "1px solid #7f1d1d" }}>{String(d.tela || "—").slice(0, 120)}</td>
+                <td style={{ padding: "4px 6px", borderTop: "1px solid #7f1d1d" }}>{String(d.base || "—").slice(0, 120)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p style={{ ...textoAuxiliar, color: "#fca5a5" }}>As versões têm horários diferentes.</p>
+      )}
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <button type="button" data-paiia-navegacao data-paiia-manter-versao-tela onClick={manterVersaoDaTela} disabled={Boolean(resolvendoConflito)} style={{ ...botaoPrincipal, padding: "10px 16px" }}>
+          {resolvendoConflito === "tela" ? "⏳ Gravando..." : "Manter versão desta tela"}
+        </button>
+        <button type="button" data-paiia-navegacao data-paiia-usar-versao-base onClick={usarVersaoDaBase} disabled={Boolean(resolvendoConflito)} style={botaoSecundario}>
+          {resolvendoConflito === "base" ? "⏳ Abrindo..." : "Usar versão da base"}
+        </button>
+      </div>
+    </section>
+  ) : null;
+  const motivoBloqueioFicha = motivoBloqueioPublicacao({
+    conflito: Boolean(conflito),
+    gravacao: gravacao.estado,
+    pendente: gravacaoPendente,
+    erroFicha: fichaBase.erro || "",
+    aprovada: Boolean(anuncioConferido),
+  });
 
   // Saindo da tela com gravação pendente: grava na hora.
   useEffect(() => () => {
@@ -3667,6 +4075,65 @@ useEffect(() => {
       // sem acesso ao endereço: segue sem o atalho do F5
     }
   }, [anuncioIdPAIIA, fichaConfirmada, fichaBase]);
+
+  // =====================================================
+  // VOLTAR = SÓ NAVEGAR. Antes de sair desta tela a ficha é gravada na
+  // base PAIIA (mesma ficha, mesmo ID). Se a gravação falhar, a tela NÃO é
+  // abandonada em silêncio: o aviso fica aqui com "Tentar de novo" ou
+  // "Sair mesmo assim". Nada é apagado, recriado ou publicado ao voltar.
+  // =====================================================
+  const [saida, setSaida] = useState({ salvando: false, tela: "", erro: "" });
+  async function salvarFichaAntesDeSair() {
+    try {
+      salvarEstadoAtualDoTeste();
+    } catch {
+      // cópia do navegador é só conveniência
+    }
+    const st = rascunhoRef.current;
+    if (st.timer) {
+      window.clearTimeout(st.timer);
+      st.timer = 0;
+    }
+    // Gravação em andamento: espera terminar (até ~10 s).
+    for (let i = 0; i < 40 && st.gravando; i++) {
+      await new Promise((ok) => setTimeout(ok, 250));
+    }
+    if (!chaveConferencia || !anuncio) return { ok: true };
+    const pendente = assinaturaRascunhoRef.current !== st.ultima || !idFichaRef.current;
+    if (!pendente) return { ok: true };
+    const r = await gravarRascunhoRef.current();
+    return r || { ok: true };
+  }
+  async function sairPara(tela, { semSalvar = false } = {}) {
+    if (saida.salvando) return;
+    if (!semSalvar) {
+      setSaida({ salvando: true, tela, erro: "" });
+      const r = await salvarFichaAntesDeSair();
+      if (!r.ok) {
+        if (montadoRef.current) setSaida({ salvando: false, tela, erro: r.erro || "Não foi possível salvar a ficha na base PAIIA." });
+        return;
+      }
+    }
+    if (montadoRef.current) setSaida({ salvando: false, tela: "", erro: "" });
+    setScreen?.(tela);
+  }
+  const NOME_TELA = { centralPublicacao: "Central de Publicação", novoAnuncio: "Anúncio" };
+  const avisoSaida = saida.erro ? (
+    <section data-paiia-erro-ao-sair style={{ ...bloco, border: "1px solid #f87171", color: "#fecaca" }}>
+      <p style={{ margin: "0 0 8px" }}>
+        ❌ A ficha NÃO foi salva na base PAIIA: {saida.erro} Os dados continuam nesta tela e na cópia deste navegador.
+      </p>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <button type="button" onClick={() => sairPara(saida.tela)} style={botaoSecundario}>🔁 Tentar salvar de novo</button>
+        <button type="button" onClick={() => setSaida({ salvando: false, tela: "", erro: "" })} style={botaoSecundario}>Ficar nesta tela</button>
+        <button type="button" data-paiia-sair-sem-salvar onClick={() => sairPara(saida.tela, { semSalvar: true })} style={botaoSecundario}>
+          Sair mesmo assim para {NOME_TELA[saida.tela] || "a outra tela"}
+        </button>
+      </div>
+    </section>
+  ) : saida.salvando ? (
+    <p data-paiia-salvando-ao-sair style={{ ...textoAuxiliar, color: "#bfdbfe" }}>⏳ Salvando a ficha antes de sair...</p>
+  ) : null;
 
   function salvarEstadoAtualDoTeste() {
   try {
@@ -3787,11 +4254,7 @@ useEffect(() => {
   }
 
   function irParaCentralPublicacao() {
-    salvarEstadoAtualDoTeste();
-
-    setScreen?.(
-      "centralPublicacao"
-    );
+    sairPara("centralPublicacao");
   }
 
   async function validarAnuncio() {
@@ -3947,10 +4410,17 @@ useEffect(() => {
     // foi possível conferir); categoria sem o campo não pede nada.
     if (
       !(tipoVeiculoML.estado === "ok" && tipoVeiculoML.existe === false) &&
-      !tipoVeiculo.trim()
+      !normalizarTipoVeiculo(tipoVeiculo)
     ) {
       faltando.push(
         "Tipo de veículo"
+      );
+    }
+    // Tipo escolhido que a categoria do ML não aceita: o PAIIA não troca
+    // sozinho; o usuário ajusta a categoria ou o tipo.
+    if (tipoVeiculoCategoria.estado === "incompativel") {
+      faltando.push(
+        "Tipo de veículo compatível com a categoria ML"
       );
     }
 
@@ -3970,6 +4440,20 @@ useEffect(() => {
     if (!condicao) {
       faltando.push(
         "Condição"
+      );
+    }
+
+    // Compatibilidade: sem aplicação estruturada o anúncio sairia SEM
+    // compatibilidade no ML. Bloqueia, salvo confirmação explícita.
+    const situacaoCompat = situacaoCompatibilidade({
+      aplicacoes: aplicacoesConfirmadas,
+      modelosSemDetalhes,
+      descricao,
+      semCompatibilidadeConfirmada: semCompatConfirmado,
+    });
+    if (situacaoCompat.bloqueia) {
+      faltando.push(
+        `Compatibilidade — ${situacaoCompat.soNaDescricao ? TEXTO_VEICULOS_SO_NA_DESCRICAO : TEXTO_SEM_APLICACAO} Cadastre as aplicações no bloco ⑨ ou marque "Publicar sem compatibilidade" se for intencional.`
       );
     }
 
@@ -4174,6 +4658,8 @@ useEffect(() => {
     setPendenciasRevisao([]);
     assinaturaAprovadaRef.current = assinaturaConferencia;
     aprovacaoGuardadaRef.current = null;
+    divergentesNoCarregamentoRef.current = [];
+    setAvisoAprovacao("");
 
     // Fotos do produto na ordem aprovada (banner e vídeo ficam separados).
     setAnuncioConferido(montarAnuncioConferidoAtual());
@@ -4229,7 +4715,7 @@ useEffect(() => {
             }
             style={botaoSecundario}
           >
-            ⬅ Voltar
+            ← Voltar à Central de Publicação
           </button>
         </section>
       </div>
@@ -4242,6 +4728,9 @@ useEffect(() => {
     return (
       <div
         data-paiia-etapa-publicacao
+        {...propsInteracao}
+        data-paiia-tipo-anuncio={modalidade}
+        data-paiia-aprovada={anuncioConferido ? "sim" : "nao"}
         style={{
           width: "100%",
           maxWidth: "1180px",
@@ -4255,16 +4744,19 @@ useEffect(() => {
           <p style={{ color: "#bfdbfe", margin: 0 }}>
             {anuncioConferido.titulo} · Código {anuncioConferido.codigo}
           </p>
+          {indicadorGravacao}
           <button
             type="button"
             data-paiia-editar-conferencia
+            data-paiia-navegacao
             onClick={() => setRevisandoPublicacaoML(false)}
             style={{ ...botaoSecundario, marginTop: "12px" }}
           >
-            ✏️ Editar / revisar a Conferência
+            ← Voltar à Conferência (editar)
           </button>
         </section>
 
+        {painelConflito}
         {!fichaBase.pronta ? (
           <section style={{ ...bloco, color: "#94a3b8" }} data-paiia-gravando-ficha>
             ⏳ Gravando a ficha aprovada deste anúncio na base PAIIA...
@@ -4291,6 +4783,7 @@ useEffect(() => {
               anuncioId={anuncioIdPAIIA}
               onAnuncioId={setAnuncioIdPAIIA}
               onFechar={() => setRevisandoPublicacaoML(false)}
+              bloqueioFicha={motivoBloqueioFicha}
               quantidadeFicha={quantidadeEstoque}
               onQuantidadeConfirmada={(q) => {
                 // Mesma quantidade na ficha: campo Estoque + anúncio aprovado.
@@ -4301,13 +4794,17 @@ useEffect(() => {
           </>
         )}
 
+        {avisoSaida}
         <div style={acoes}>
           <button
             type="button"
-            onClick={() => setScreen?.("centralPublicacao")}
+            data-paiia-voltar-central
+            data-paiia-navegacao
+            onClick={() => sairPara("centralPublicacao")}
+            disabled={saida.salvando}
             style={botaoSecundario}
           >
-            ⬅ Central de Publicação
+            ← Voltar à Central de Publicação
           </button>
         </div>
       </div>
@@ -4316,13 +4813,24 @@ useEffect(() => {
 
   return (
     <div
+      {...propsInteracao}
+      data-paiia-tela-conferencia
+      data-paiia-tipo-anuncio={modalidade}
+      data-paiia-aprovada={anuncioConferido ? "sim" : "nao"}
       style={{
         width: "100%",
         maxWidth: "1180px",
         margin: "30px auto",
       }}
     >
+      {painelConflito}
+      {avisoAprovacao && (
+        <section data-paiia-aviso-aprovacao style={{ ...bloco, border: "2px solid #f59e0b", color: "#fde68a" }}>
+          ⚠ {avisoAprovacao}
+        </section>
+      )}
       <section style={cabecalho} data-paiia-conferencia-paiia>
+        {indicadorGravacao}
         <div
           style={{
             fontSize: "42px",
@@ -5451,53 +5959,52 @@ useEffect(() => {
             placeholder="Opcional"
           />
 
-          {tipoVeiculoML.estado === "ok" && tipoVeiculoML.existe ? (
-            <label style={labelStyle}>
-              Tipo de veículo
-              <select
-                data-paiia-tipo-veiculo
-                value={(valorTipoVeiculo(tipoVeiculoML.valores, tipoVeiculo) || {}).nome || ""}
-                onChange={(e) => setTipoVeiculo(e.target.value)}
-                disabled={tipoVeiculoML.fixo}
-                style={campo}
+          <label style={labelStyle}>
+            Tipo de veículo
+            <select
+              data-paiia-tipo-veiculo
+              data-paiia-tipo-veiculo-origem={tipoVeiculoOrigem || "vazio"}
+              value={normalizarTipoVeiculo(tipoVeiculo)}
+              onChange={(e) => escolherTipoVeiculoManual(e.target.value)}
+              style={campo}
+            >
+              {!normalizarTipoVeiculo(tipoVeiculo) && <option value="">Selecione...</option>}
+              {OPCOES_TIPO_VEICULO.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+            <span data-paiia-tipo-veiculo-ajuda style={{ ...textoAuxiliar, fontWeight: "normal" }}>
+              {tipoVeiculoOrigem === ORIGEM_MANUAL && normalizarTipoVeiculo(tipoVeiculo)
+                ? "Escolhido por você — salvo na ficha; o PAIIA não troca mais."
+                : normalizarTipoVeiculo(tipoVeiculo)
+                  ? `Sugerido pelo PAIIA${sugestaoTipoVeiculo.origem === "categoria" ? " pela categoria do Mercado Livre" : sugestaoTipoVeiculo.origem === "aplicacoes" ? " pelas aplicações confirmadas" : ""}. Pode trocar.`
+                  : tipoVeiculo && !normalizarTipoVeiculo(tipoVeiculo)
+                    ? `Valor antigo "${tipoVeiculo}" não é uma das opções: escolha Carro/Caminhonete ou Linha Pesada.`
+                    : "Escolha Carro/Caminhonete ou Linha Pesada."}
+              {tipoVeiculoML.estado === "carregando"
+                ? " Lendo a categoria no Mercado Livre..."
+                : tipoVeiculoML.estado === "sem_categoria"
+                  ? " (Defina a Categoria ML no bloco ⑮ para o PAIIA conferir.)"
+                  : tipoVeiculoML.estado === "sem_conta"
+                    ? " (Sem conta Mercado Livre conectada: categoria não conferida.)"
+                    : tipoVeiculoML.estado === "erro"
+                      ? " (Não foi possível ler a categoria no Mercado Livre agora.)"
+                      : ""}
+            </span>
+            {sugestaoTipoVeiculo.divergencia && tipoVeiculoOrigem !== ORIGEM_MANUAL && (
+              <span data-paiia-tipo-veiculo-divergencia style={{ ...textoAuxiliar, fontWeight: "normal", color: "#fbbf24" }}>
+                ⚠ As aplicações confirmadas indicam {sugestaoTipoVeiculo.aplicacoes}, mas a categoria é de {sugestaoTipoVeiculo.valor}. Confira a categoria.
+              </span>
+            )}
+            {(tipoVeiculoCategoria.estado === "incompativel" || tipoVeiculoCategoria.estado === "nao_se_aplica") && (
+              <span
+                data-paiia-tipo-veiculo-categoria={tipoVeiculoCategoria.estado}
+                style={{ ...textoAuxiliar, fontWeight: "normal", color: tipoVeiculoCategoria.estado === "incompativel" ? "#f87171" : "#94a3b8" }}
               >
-                {!tipoVeiculoML.fixo && <option value="">Selecione (valores do Mercado Livre)</option>}
-                {tipoVeiculoML.valores.map((v) => (
-                  <option key={v.id} value={v.nome}>{v.nome}</option>
-                ))}
-              </select>
-              <span style={{ ...textoAuxiliar, fontWeight: "normal" }}>
-                {tipoVeiculoML.fixo
-                  ? "Definido pela categoria no Mercado Livre (valor único) — selecionado e salvo na ficha."
-                  : "Valores oferecidos pelo Mercado Livre para esta categoria."}
+                {tipoVeiculoCategoria.estado === "incompativel" ? "⚠ " : ""}{tipoVeiculoCategoria.texto}
               </span>
-            </label>
-          ) : tipoVeiculoML.estado === "ok" && tipoVeiculoML.existe === false ? (
-            <label style={labelStyle}>
-              Tipo de veículo
-              <div data-paiia-tipo-veiculo-nao-se-aplica style={{ ...campo, display: "flex", alignItems: "center", color: "#94a3b8" }}>
-                Não se aplica — esta categoria do Mercado Livre não tem esse campo
-              </div>
-            </label>
-          ) : (
-            <div style={labelStyle}>
-              <Campo
-                label="Tipo de veículo"
-                value={tipoVeiculo}
-                onChange={setTipoVeiculo}
-                placeholder="Não informado (ex.: Carro/Caminhonete)"
-              />
-              <span style={{ ...textoAuxiliar, fontWeight: "normal" }}>
-                {tipoVeiculoML.estado === "carregando"
-                  ? "Lendo o Tipo de veículo da categoria no Mercado Livre..."
-                  : tipoVeiculoML.estado === "sem_categoria"
-                    ? "Defina a Categoria ML (bloco ⑮) para o PAIIA ler os valores do Mercado Livre."
-                    : tipoVeiculoML.estado === "sem_conta"
-                      ? "Sem conta Mercado Livre conectada: confirme o tipo manualmente."
-                      : "Não foi possível ler a categoria no Mercado Livre agora: confirme o tipo manualmente."}
-              </span>
-            </div>
-          )}
+            )}
+          </label>
         </div>
       </section>
 
@@ -5771,6 +6278,18 @@ useEffect(() => {
     ) : (
       <div style={{ ...linhaAplicacao, color: modelosSemDetalhes.length ? "#94a3b8" : "#fbbf24", fontWeight: "bold" }}>
         {modelosSemDetalhes.length ? "Nenhuma aplicação detalhada (há modelos confirmados acima)." : "⚠ PENDENTE — sem aplicação confirmada"}
+      </div>
+    )}
+    {!aplicacoesConfirmadas.length && (
+      <div data-paiia-sem-aplicacao style={{ marginTop: "8px", padding: "10px", borderRadius: "8px", border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: "12px" }}>
+        <div style={{ fontWeight: "bold" }}>⚠ {TEXTO_SEM_APLICACAO}</div>
+        {situacaoCompatibilidade({ aplicacoes: aplicacoesConfirmadas, modelosSemDetalhes, descricao }).soNaDescricao && (
+          <div data-paiia-veiculos-so-na-descricao style={{ marginTop: "6px" }}>{TEXTO_VEICULOS_SO_NA_DESCRICAO}</div>
+        )}
+        <label style={{ display: "flex", gap: "6px", alignItems: "center", marginTop: "8px", cursor: "pointer" }}>
+          <input type="checkbox" data-paiia-publicar-sem-compat checked={semCompatConfirmado} onChange={(e) => setSemCompatConfirmado(e.target.checked)} />
+          Publicar sem compatibilidade (confirmo que este anúncio não terá veículos vinculados no Mercado Livre)
+        </label>
       </div>
     )}
     {aplicacoesBaseExcluidas.length > 0 && (
@@ -6332,7 +6851,7 @@ useEffect(() => {
             </span>
 
             <span>
-              {tipoVeiculo.trim()
+              {normalizarTipoVeiculo(tipoVeiculo) && tipoVeiculoCategoria.estado !== "incompativel"
                 ? "✅"
                 : "❌"}{" "}
               Tipo de veículo
@@ -6436,10 +6955,11 @@ useEffect(() => {
               <button
                 type="button"
                 data-paiia-voltar-conferencia
+                data-paiia-navegacao
                 onClick={() => window.scrollTo?.({ top: 0, behavior: "smooth" })}
                 style={{ ...botaoSecundario, width: "100%", padding: "14px" }}
               >
-                ← Voltar
+                ↑ Voltar ao início da Conferência
               </button>
               <button
                 type="button"
@@ -6474,17 +6994,17 @@ useEffect(() => {
           </section>
         )}
 
+      {avisoSaida}
       <div style={acoes}>
         <button
           type="button"
-          onClick={() =>
-            setScreen?.(
-              "centralPublicacao"
-            )
-          }
+          data-paiia-voltar-central
+          data-paiia-navegacao
+          onClick={() => sairPara("centralPublicacao")}
+          disabled={saida.salvando}
           style={botaoSecundario}
         >
-          ⬅ Voltar
+          ← Voltar à Central de Publicação
         </button>
 
         <button
@@ -6801,7 +7321,7 @@ function lerFichaDoEndereco() {
 
 export default function MercadoLivreTeste(props) {
   const [fichaUrl] = useState(lerFichaDoEndereco);
-  const [estado, setEstado] = useState(() => ({ pronto: !fichaUrl, erro: "" }));
+  const [estado, setEstado] = useState(() => ({ pronto: !fichaUrl, erro: "", publicada: null }));
 
   useEffect(() => {
     if (!fichaUrl) return undefined;
@@ -6814,20 +7334,75 @@ export default function MercadoLivreTeste(props) {
         return;
       }
       if (publicacaoExiste(r.anuncio.publicacao)) {
-        // O MLB já existe (com ou sem pendência): nunca reabre para publicar de novo.
-        const pend = pendenciaPublicacao(r.anuncio.publicacao);
-        setEstado({ pronto: false, erro: `Este anúncio já foi publicado (${r.anuncio.publicacao.mlb_id || "MLB"})${pend ? ` e está COM PENDÊNCIA: ${pend.replace(/^PENDÊNCIA — /, "")} A correção é feita no mesmo MLB, sem publicar de novo.` : "."}` });
+        // O MLB já existe (com ou sem pendência): nunca reabre para publicar
+        // de novo. Abre a ficha PUBLICADA (MLB, conta e etapa do Bling).
+        setEstado({ pronto: false, erro: "", publicada: r.anuncio });
         return;
       }
       if (r.anuncio.status_fluxo === "cancelado") {
         setEstado({ pronto: false, erro: "Esta ficha foi cancelada (o anúncio continuou em outra ficha)." });
         return;
       }
+      // Ficha ainda no NOVO ANÚNCIO: volta para ele com os dados da base
+      // (mesma ficha). Nada é criado, publicado ou apagado.
+      if (fichaSoNoNovoAnuncio(r.anuncio)) {
+        const rasc = rascunhoDaFicha(r.anuncio);
+        if (!rasc) {
+          setEstado({ pronto: false, erro: "A ficha existe, mas ainda não tem dados do Novo Anúncio para recuperar." });
+          return;
+        }
+        try {
+          const texto = JSON.stringify({ ...rasc, fichaIdPAIIA: rasc.fichaId, fotosDaFicha: true, salvoEm: Date.now() });
+          localStorage.setItem("novoAnuncioTemporario", texto);
+          localStorage.setItem("rascunhoNovoAnuncioTemp", texto);
+          consumirNovaCriacaoMidia();
+          const url = new URL(window.location.href);
+          url.searchParams.set("tela", "novoAnuncio");
+          url.searchParams.set("ficha", rasc.fichaId);
+          window.history.replaceState(window.history.state, "", url.toString());
+        } catch (erro) {
+          setEstado({ pronto: false, erro: `Não foi possível preparar o Novo Anúncio: ${erro?.name || erro}` });
+          return;
+        }
+        props.setScreen?.("novoAnuncio");
+        return;
+      }
       // A base é a fonte: a cópia do navegador é refeita a partir dela.
       try {
         const chaveLocal = String(r.anuncio.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
         const mapa = JSON.parse(localStorage.getItem("paiiaConferenciaPorCodigo") || "{}");
-        const rec = montarRecuperacaoDaFicha(r.anuncio, mapa[chaveLocal] || null);
+        const local = mapa[chaveLocal] || null;
+        const decisao = decidirAberturaFicha({ id: r.anuncio.id, local, baseDados: r.anuncio.dados_conferencia || {}, baseAtualizadaEm: r.anuncio.updated_at });
+        if (decisao.acao === "conflito") {
+          // A cópia DESTE navegador é mais nova e diferente da base: NÃO é
+          // descartada. A tela abre com ela e mostra o conflito para escolha.
+          const recBase = montarRecuperacaoDaFicha(r.anuncio, null);
+          let atual = null;
+          try {
+            atual = JSON.parse(localStorage.getItem("mlAnuncioTeste") || "null");
+          } catch {
+            atual = null;
+          }
+          if (!atual || String(atual.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== chaveLocal) {
+            localStorage.setItem("mlAnuncioTeste", JSON.stringify({ ...(recBase.ok ? recBase.anuncio : {}), fichaIdPAIIA: r.anuncio.id }));
+          }
+          const fotosLocais = (local?.campos?.fotos?.length ? local.campos.fotos : local?.anuncioConferido?.fotos) || [];
+          window.__paiiaAnuncioSimulador = null;
+          window.__paiiaFichaRecuperada = null;
+          window.__paiiaFotosPublicacao = fotosLocais.length ? fotosLocais : recBase.ok ? recBase.fotos : [];
+          window.__paiiaConflitoInicial = { id: r.anuncio.id, base: r.anuncio };
+          setEstado({ pronto: true, erro: "" });
+          return;
+        }
+        if (local && decisao.acao === "usar_base" && decisao.diferencas.length) {
+          // Cópia local MAIS ANTIGA e diferente: a base vale, mas a cópia é guardada.
+          try {
+            localStorage.setItem(`paiiaVersaoDescartada:${r.anuncio.id}`, JSON.stringify({ guardada_em: new Date().toISOString(), copia: local }));
+          } catch {
+            // sem espaço
+          }
+        }
+        const rec = montarRecuperacaoDaFicha(r.anuncio, local);
         if (!rec.ok) {
           setEstado({ pronto: false, erro: rec.erro });
           return;
@@ -6853,11 +7428,12 @@ export default function MercadoLivreTeste(props) {
     return () => { ativo = false; };
   }, [fichaUrl]);
 
-  // Saiu da Conferência/Publicação: o endereço deixa de apontar a ficha.
+  // Saiu da Conferência/Publicação: o endereço deixa de apontar a ficha
+  // (exceto quando a própria ficha volta para o Novo Anúncio).
   useEffect(() => () => {
     try {
       const url = new URL(window.location.href);
-      if (url.searchParams.has("ficha")) {
+      if (url.searchParams.has("ficha") && url.searchParams.get("tela") !== "novoAnuncio") {
         url.searchParams.delete("ficha");
         window.history.replaceState(window.history.state, "", url.toString());
       }
@@ -6866,6 +7442,9 @@ export default function MercadoLivreTeste(props) {
     }
   }, []);
 
+  if (estado.publicada) {
+    return <FichaPublicadaPAIIA ficha={estado.publicada} setScreen={props.setScreen} />;
+  }
   if (!estado.pronto) {
     return (
       <div data-paiia-recuperando-ficha style={{ width: "100%", maxWidth: "1180px", margin: "30px auto" }}>
@@ -6874,7 +7453,7 @@ export default function MercadoLivreTeste(props) {
             <>
               <p style={{ color: "#fca5a5" }}>❌ {estado.erro}</p>
               <button type="button" onClick={() => props.setScreen?.("centralPublicacao")} style={botaoSecundario}>
-                ⬅ Central de Publicação
+                ← Voltar à Central de Publicação
               </button>
             </>
           ) : (

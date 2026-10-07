@@ -217,16 +217,20 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
     // 3) veículos (versões/anos) desse modelo
     const produtos = [];
     for (let offset = 0; offset < 2000; offset += 50) {
-      const rp = await consultar("/catalog_compatibilities/products_search/chunks", "POST", {
+      // Paginação na QUERY STRING: o ML ignora offset/limit no corpo e
+      // devolvia sempre os mesmos 50 primeiros (verificado em 06/10/2026:
+      // Classe A tem 108 versões; só 50 eram avaliadas e 22 de 31 sumiam).
+      const rp = await consultar(`/catalog_compatibilities/products_search/chunks?offset=${offset}&limit=50`, "POST", {
         domain_id: DOMINIO_CARROS,
         site_id: "MLB",
         known_attributes: [{ id: "BRAND", value_ids: [String(marca.id)] }, { id: "MODEL", value_ids: [String(modelo.id)] }],
-        offset,
-        limit: 50,
       });
       if (!rp?.ok) return { erro: rp?.erro || "busca de veículos indisponível" };
       const lote = Array.isArray(rp.dados?.results) ? rp.dados.results : [];
-      produtos.push(...lote);
+      // Defesa: página repetida (paginação ignorada) não pode passar calada.
+      const novos = lote.filter((p) => !produtos.some((x) => x?.id === p?.id));
+      if (lote.length && !novos.length) return { erro: "o catálogo de veículos do Mercado Livre repetiu a mesma página (paginação ignorada); lista incompleta não é usada" };
+      produtos.push(...novos);
       const total = Number(rp.dados?.total) || 0;
       if (!lote.length || produtos.length >= total || lote.length < 50) break;
     }
@@ -361,6 +365,10 @@ export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
   add("Quantidade", Number(esperado.quantidade), item.available_quantity, Number(item.available_quantity) === Number(esperado.quantidade));
   const tipoEsp = esperado.tipoAnuncio === "premium" ? "gold_pro" : "gold_special";
   add("Tipo de anúncio", tipoEsp, item.listing_type_id, item.listing_type_id === tipoEsp);
+  if (esperado.condicao !== undefined) {
+    const condEsp = condicaoParaML(esperado.condicao);
+    add("Condição", condEsp ? (condEsp === "used" ? "usado" : "novo") : "não confirmada", item.condition === "used" ? "usado" : item.condition === "new" ? "novo" : String(item.condition || "nenhuma"), Boolean(condEsp) && item.condition === condEsp);
+  }
   const nFotos = (item.pictures || []).length;
   add("Fotos", Number(esperado.fotos) || 0, nFotos, nFotos >= 1 && nFotos >= (Number(esperado.fotos) || 0));
   if (esperado.marca) {
@@ -384,4 +392,51 @@ export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
   }
   const pendencias = itens.filter((i) => i.obrigatorio && !i.ok).map((i) => `${i.item}: esperado ${i.esperado}, recebido ${i.recebido}.`);
   return { itens, pendencias };
+}
+
+// ---------- Condição (novo/usado) ----------
+
+/** "usado" | "novo" | "" a partir do valor da ficha. Nunca assume. */
+export function normalizarCondicao(v) {
+  const t = semAcento(v);
+  if (["novo", "nova", "new"].includes(t)) return "novo";
+  if (["usado", "usada", "used"].includes(t)) return "usado";
+  return "";
+}
+/** condition do Mercado Livre para a condição da ficha ("new"/"used"/""). */
+export function condicaoParaML(v) {
+  const c = normalizarCondicao(v);
+  return c === "usado" ? "used" : c === "novo" ? "new" : "";
+}
+
+// ---------- Veículos citados na descrição × aplicações estruturadas ----------
+
+export const TEXTO_SEM_APLICACAO =
+  "Nenhuma aplicação estruturada (montadora / modelo / motor / período) foi cadastrada: o anúncio sairia SEM compatibilidade no Mercado Livre.";
+export const TEXTO_VEICULOS_SO_NA_DESCRICAO =
+  "A descrição cita veículos/anos, mas nenhuma aplicação estruturada foi cadastrada. Escrever os veículos só na descrição NÃO gera compatibilidade no Mercado Livre: cadastre cada aplicação no bloco de aplicações da Conferência.";
+
+/**
+ * A descrição parece listar veículos? (heurística conservadora: seção de
+ * aplicação/compatibilidade, ou faixa de anos 19xx/20xx). Só serve para
+ * AVISAR — nunca cria aplicação a partir do texto.
+ */
+export function descricaoCitaVeiculos(texto) {
+  const t = semAcento(texto);
+  if (!t) return false;
+  const faixaAnos = /\b(19[5-9]\d|20[0-4]\d)\s*(a|à|ate|até|-|–|—|\/)\s*(19[5-9]\d|20[0-4]\d)\b/.test(t);
+  const secao = /(compativel com|aplicacao|aplicacoes|serve (no|na|nos|nas|para))\s*:?/.test(t);
+  return faixaAnos || secao;
+}
+
+/**
+ * Situação das compatibilidades antes de aprovar/publicar.
+ * semAplicacao: nenhuma aplicação detalhada nem modelo confirmado.
+ * soNaDescricao: além disso, a descrição cita veículos.
+ * bloqueia: sem aplicação e SEM a confirmação explícita "publicar sem compatibilidade".
+ */
+export function situacaoCompatibilidade({ aplicacoes = [], modelosSemDetalhes = [], descricao = "", semCompatibilidadeConfirmada = false } = {}) {
+  const semAplicacao = !aplicacoes.length && !modelosSemDetalhes.length;
+  const soNaDescricao = semAplicacao && descricaoCitaVeiculos(descricao);
+  return { semAplicacao, soNaDescricao, bloqueia: semAplicacao && semCompatibilidadeConfirmada !== true };
 }
