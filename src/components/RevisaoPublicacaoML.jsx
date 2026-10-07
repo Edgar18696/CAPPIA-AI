@@ -15,7 +15,11 @@ import {
   skuOficial,
   pendenciaPublicacao,
   publicacaoExiste,
+  registrarMLBPublicado,
+  salvarRegistroIntegracaoBling,
 } from "../services/anuncioPublicacaoService";
+import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
+import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import {
   lerAplicacoesAprovadas,
   resolverCompatibilidades,
@@ -80,7 +84,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
+function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoEnvio, tipoVeiculoExigido, compatTexto }) {
   const itens = [];
 
   // Ficha do anúncio na base PAIIA: a conta de destino precisa estar gravada.
@@ -90,7 +94,7 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
   if (duplicado) itens.push({ item: "Duplicidade", nivel: "erro", texto: `Este código já está publicado nesta conta (${duplicado}). Publicar de novo criaria anúncio duplicado.` });
   // SKU oficial (SKU específico ou o próprio código da peça).
   if (!skuEnvio) itens.push({ item: "SKU", nivel: "erro", texto: "Sem SKU: o anúncio precisa sair com SKU (o código da peça)." });
-  else itens.push({ item: "SKU", nivel: "ok", texto: `SKU enviado ao Mercado Livre: ${skuEnvio}.` });
+  else itens.push({ item: "SKU", nivel: "ok", texto: `SKU enviado ao Mercado Livre (igual ao produto do Bling): ${skuEnvio}.${codigoPesquisado && codigoPesquisado !== skuEnvio ? ` Código pesquisado na ficha: ${codigoPesquisado}.` : ""}` });
   // Proteção A: base PAIIA (código/SKU normalizado + conta + MLB + status).
   if (duplicidadeBase?.carregando) itens.push({ item: "Duplicidade na base PAIIA", nivel: "aviso", texto: "Conferindo na base PAIIA..." });
   else if (duplicidadeBase?.erro) itens.push({ item: "Duplicidade na base PAIIA", nivel: "erro", texto: `Não foi possível conferir a base PAIIA (${duplicidadeBase.erro}). Sem essa conferência a publicação fica bloqueada.` });
@@ -289,7 +293,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         // Ficha já publicada: este é outro anúncio do mesmo código (nova ficha).
         if (r.ok && publicacaoExiste(r.anuncio.publicacao)) {
           onAnuncioId?.("");
-          setFicha({ carregando: false, disponivel: true, gravada: false, anuncioId: "", erro: "", outros: [{ ...r.anuncio }, ...outros] });
+          // (com o registro da integração Bling, para voltar direto à etapa
+          //  "falta trazer este MLB para o Bling" depois de um F5)
+          setFicha({ carregando: false, disponivel: true, gravada: false, anuncioId: "", erro: "", outros: [{ ...r.anuncio, integracao_bling: r.anuncio.dados_conferencia?.integracao_bling || null }, ...outros] });
           return;
         }
         if (r.ok) {
@@ -375,7 +381,13 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   );
 
   // SKU oficial deste anúncio (SKU específico ou o código da peça).
-  const skuEnvio = skuOficial({ sku: anuncio?.sku, codigo: anuncio?.codigo || anuncio?.oem });
+  // SKU OFICIAL = `codigo` do produto no Bling, exatamente como está lá
+  // (hífen, zeros, letras, maiúsculas/minúsculas). Enquanto o Bling não foi
+  // lido, só para conferências de duplicidade, vale o código da ficha; a
+  // publicação exige o produto Bling (blingPronto) e então sai com o do Bling.
+  const codigoPesquisado = String(anuncio?.codigo || anuncio?.oem || "");
+  const skuBling = skuOficialBling(estoque);
+  const skuEnvio = skuBling || skuOficial({ sku: anuncio?.sku, codigo: anuncio?.codigo || anuncio?.oem });
 
   // Quantidade: a CONFIRMADA na ficha (nunca 1 por padrão).
   const qtdInicial = quantidadeDaFicha(anuncio, quantidadeFicha);
@@ -618,8 +630,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   // no Mercado Livre, só com clique/autorização (nunca automática).
   const [criacaoBling, setCriacaoBling] = useState(null);
   const [painelBling, setPainelBling] = useState(false);
-  async function lerBling() {
-    const sku = String(anuncio?.codigo || "").trim();
+  async function lerBling(skuBling = "") {
+    const sku = String(skuBling || anuncio?.codigo || "").trim();
     if (!sku) return { ok: false, encontrado: false };
     try {
       const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } });
@@ -655,8 +667,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       return;
     }
     // 3) Releitura depois: confere ID, SKU e estoque; vincula à ficha.
+    //    Se o SKU já existia escrito de outro jeito (ex.: com hífen), relê
+    //    pela escrita do Bling: usa ESSE cadastro, nada é criado.
     setCriacaoBling({ ocupado: true, etapa: "Relendo o produto no Bling..." });
-    const depois = await lerBling();
+    const depois = await lerBling(r.ja_existia ? r.produto?.codigo : "");
     setEstoque(depois);
     const conf = r.ja_existia ? { ok: true, problemas: [] } : conferirProdutoCriado({ enviado, criado: r, releitura: depois });
     const idBling = r.produto?.id || depois?.produto?.id;
@@ -715,6 +729,50 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setOcupado("");
   }
 
+  // INTEGRAÇÃO COM A GESTÃO DE ANÚNCIOS DO BLING (anúncio novo do PAIIA).
+  // Depois do MLB: o usuário traz SOMENTE este MLB pelo Bling; o PAIIA só
+  // CONFERE (leitura anuncios_consultar). Nunca grava no Bling, nunca
+  // republica, nunca cria produto. /produtos/lojas não faz parte do fluxo ML.
+  const [integracao, setIntegracao] = useState(null); // { anuncioId, registro }
+  const [verificandoBling, setVerificandoBling] = useState("");
+  async function consultarBling(corpo) {
+    const { data, error } = await supabase.functions.invoke("bling-integracao", { body: corpo });
+    if (error) return { ok: false, erro: error.message || "Falha ao falar com o servidor." };
+    return data || { ok: false, erro: "Resposta vazia do servidor." };
+  }
+  async function verificarIntegracao(alvo, completa) {
+    if (!alvo?.anuncioId || !precisaConferir(alvo.registro)) return;
+    setVerificandoBling(alvo.anuncioId);
+    const { registro: novo } = await conferirIntegracao({ registro: alvo.registro, consultar: consultarBling, completa });
+    setVerificandoBling("");
+    const mudou = novo.estado !== alvo.registro.estado || novo.bling_anuncio_id !== alvo.registro.bling_anuncio_id;
+    if (mudou || completa) await salvarRegistroIntegracaoBling({ anuncioId: alvo.anuncioId, registro: novo });
+    setIntegracao((atual) => (atual?.anuncioId === alvo.anuncioId ? { ...atual, registro: novo } : atual));
+  }
+  // Recuperação após F5: a ficha publicada com integração pendente volta
+  // direto para esta etapa (só fichas deste fluxo novo têm o registro).
+  useEffect(() => {
+    if (integracao) return;
+    const pendente = (ficha.outros || []).find((a) => {
+      const reg = registroDaFicha({ integracao_bling: a.integracao_bling });
+      return publicacaoExiste(a.publicacao) && reg && reg.estado !== ESTADO_BLING.INTEGRADO;
+    });
+    if (pendente) setIntegracao({ anuncioId: pendente.id, registro: registroDaFicha({ integracao_bling: pendente.integracao_bling }) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ficha.outros]);
+  // Conferência automática leve (só leitura) a cada 30 s, por até 30 min.
+  useEffect(() => {
+    if (!integracao || !precisaConferir(integracao.registro) || integracao.registro.estado !== ESTADO_BLING.AGUARDANDO) return;
+    let n = 0;
+    const t = setInterval(() => {
+      n += 1;
+      if (n > 60) return clearInterval(t);
+      if (!verificandoBling) verificarIntegracao(integracao, false);
+    }, 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [integracao?.anuncioId, integracao?.registro?.estado]);
+
   async function publicar() {
     if (!autorizado || !validacao?.valido || bloqueios.length > 0) return;
     if (!armado) {
@@ -770,7 +828,27 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       confirmacao: "PUBLICAR",
     }, contaEscolhida);
     let verificacao = null;
+    let registroBling = null;
     if (r?.ok && r.publicado && r.item_id) {
+      // 1º: salva NA HORA (antes de qualquer outra etapa; resiste a F5/erro):
+      // MLB, SKU oficial, código pesquisado, produto Bling, conta, loja Bling,
+      // preço e data/hora. Estado: aguardando_importacao.
+      registroBling = registroPublicado({
+        mlb: r.item_id,
+        contaId: contaEscolhida,
+        contaNome: contaInfo?.nickname || "",
+        skuOficial: skuEnvio,
+        codigoPesquisado,
+        produtoBlingId: estoque?.encontrado && !estoque?.ambiguo ? estoque?.produto?.id : "",
+        preco: campos.preco,
+      });
+      if (ficha.anuncioId) {
+        setIntegracao({ anuncioId: ficha.anuncioId, registro: registroBling });
+        await registrarMLBPublicado({
+          anuncioId: ficha.anuncioId, contaId: contaEscolhida, mlb: r.item_id, link: r.link, sku: skuEnvio,
+          blingProdutoId: registroBling.bling_produto_id, registro: registroBling,
+        });
+      }
       // Compatibilidades: só os veículos do catálogo que confirmam as
       // aplicações aprovadas (lista mostrada antes da publicação).
       const idsCompat = (compatML?.veiculos || []).map((v) => v.id);
@@ -786,6 +864,13 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       }
       // Verificação pós-publicação: relê o MLB e compara com o enviado.
       const { item, compat } = await relerPublicado(r.item_id, contaEscolhida);
+      // Preço EFETIVAMENTE publicado (relido no MLB), se o ML devolveu.
+      const precoLido = Number(item?.price);
+      if (registroBling && ficha.anuncioId && Number.isFinite(precoLido) && precoLido > 0 && precoLido !== registroBling.preco_publicado) {
+        registroBling = { ...registroBling, preco_publicado: Math.round(precoLido * 100) / 100 };
+        setIntegracao({ anuncioId: ficha.anuncioId, registro: registroBling });
+        await salvarRegistroIntegracaoBling({ anuncioId: ficha.anuncioId, registro: { preco_publicado: registroBling.preco_publicado } });
+      }
       verificacao = conferirPublicacao({
         itemId: r.item_id,
         esperado: {
@@ -838,6 +923,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     if (ficha.anuncioId) {
       const g = await registrarResultadoPublicacao({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, resultado: r, bling: estoque, sku: skuEnvio, verificacao });
       setFicha((f) => ({ ...f, resultadoGravado: g.ok, erroResultado: g.ok ? "" : g.erro, modoGravacao: g.modo }));
+      // Integração com o Bling: o usuário traz SOMENTE este MLB pelo Bling
+      // (painel abaixo) e o PAIIA confere por leitura. Nada é gravado aqui.
     }
     setOcupado("");
   }
@@ -872,7 +959,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     return (attrTipoVeiculo?.valores || []).find((v) => String(v.id) === String(e.value_id))?.nome || "";
   })();
   const conferencia = conferir({
-    campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio,
+    campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
     descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoEnvio, tipoVeiculoExigido: Boolean(attrTipoVeiculo && !attrTipoVeiculo.preenchido), compatTexto: anuncio?.compatibilidades,
   });
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
@@ -905,6 +992,15 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         <h3 style={{ color: "#fde047", margin: 0 }}>🚀 Publicação no Mercado Livre</h3>
         <button type="button" onClick={onFechar} style={botaoCinza}>✏️ Editar / revisar a Conferência</button>
       </div>
+
+      {/* Anúncio NOVO já publicado: etapa "trazer este MLB para o Bling" (também após F5). */}
+      {integracao?.registro && (
+        <PainelIntegracaoBling
+          registro={integracao.registro}
+          verificando={verificandoBling === integracao.anuncioId}
+          onVerificar={() => verificarIntegracao(integracao, true)}
+        />
+      )}
 
       <p style={{ color: "#94a3b8", fontSize: 13, margin: "8px 0 16px" }}>
         A Conferência PAIIA já foi aprovada: os dados abaixo são os aprovados. Escolha a conta, valide e só então confirme. Nada é publicado automaticamente.
@@ -961,6 +1057,16 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                     <button type="button" data-paiia-continuar-ficha onClick={() => continuarFicha(a)} style={{ ...botaoCinza, marginLeft: 8, padding: "4px 10px" }}>
                       Continuar esta ficha
                     </button>
+                  )}
+                  {publicado && registroDaFicha({ integracao_bling: a.integracao_bling }) && (
+                    <span data-paiia-integracao-bling-outro={a.integracao_bling.estado} style={{ marginLeft: 8, color: a.integracao_bling.estado === ESTADO_BLING.INTEGRADO ? "#86efac" : "#fde68a" }}>
+                      · {a.integracao_bling.estado === ESTADO_BLING.INTEGRADO ? "integrado ao Bling" : "falta trazer para o Bling"}
+                      {integracao?.anuncioId !== a.id && (
+                        <button type="button" data-paiia-ver-integracao onClick={() => setIntegracao({ anuncioId: a.id, registro: registroDaFicha({ integracao_bling: a.integracao_bling }) })} style={{ ...botaoCinza, marginLeft: 8, padding: "4px 10px" }}>
+                          Ver
+                        </button>
+                      )}
+                    </span>
                   )}
                 </div>
               );

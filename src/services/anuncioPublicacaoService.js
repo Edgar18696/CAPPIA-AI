@@ -83,7 +83,7 @@ export async function listarAnunciosDoCodigo(codigo) {
   if (!cod) return { ok: true, disponivel: true, anuncios: [] };
   const { data, error } = await supabase
     .from(T_ANUNCIOS)
-    .select(`id, codigo, titulo, conta_destino_ml_user_id, conta_destino_nome, status_fluxo, updated_at, ${T_PUBLICACOES}(id, ml_user_id, conta_nome, mlb_id, status_publicacao, publicado_em, status_bling, bling_produto_id, sku, erro_publicacao)`)
+    .select(`id, codigo, titulo, conta_destino_ml_user_id, conta_destino_nome, status_fluxo, updated_at, integracao_bling:dados_conferencia->integracao_bling, ${T_PUBLICACOES}(id, ml_user_id, conta_nome, mlb_id, status_publicacao, publicado_em, status_bling, bling_produto_id, sku, erro_publicacao)`)
     .eq("codigo_normalizado", cod)
     .neq("status_fluxo", "cancelado")
     .order("updated_at", { ascending: false })
@@ -458,4 +458,53 @@ export async function registrarProdutoBlingCriado({ anuncioId, blingProdutoId })
     .eq("marketplace", MARKETPLACE_ML);
   if (error) return falha(error);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------
+// INTEGRAÇÃO COM A GESTÃO DE ANÚNCIOS DO BLING (anúncios novos do PAIIA)
+// O registro fica em paiia_anuncios.dados_conferencia.integracao_bling
+// (coluna jsonb que já existe: nenhuma migração). Só fichas publicadas a
+// partir desta versão têm esse registro — anúncios anteriores não são
+// tocados nem listados. Nada aqui grava no Bling ou no Mercado Livre.
+// ---------------------------------------------------------------
+
+/** Mescla o registro da integração Bling na ficha (lê → mescla → grava). */
+export async function salvarRegistroIntegracaoBling({ anuncioId, registro }) {
+  if (!anuncioId || !registro) return { ok: false, erro: "Sem ficha ou sem registro da integração." };
+  const { data, error: erroLer } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
+  if (erroLer) return falha(erroLer);
+  const dados = data?.dados_conferencia || {};
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, integracao_bling: { ...(dados.integracao_bling || {}), ...registro } }, updated_at: new Date().toISOString() })
+    .eq("id", anuncioId);
+  if (error) return falha(error);
+  return { ok: true };
+}
+
+/**
+ * Salva NA HORA, assim que o Mercado Livre devolve o MLB (antes de reler o
+ * anúncio, gravar compatibilidades ou conferir o Bling): MLB, SKU oficial,
+ * código pesquisado, ID do produto Bling, conta, loja Bling, preço e data.
+ * Garante que o MLB não se perde (F5/erro) e que a ficha já conta como
+ * publicada (bloqueia republicar).
+ */
+export async function registrarMLBPublicado({ anuncioId, contaId, mlb, link, sku, blingProdutoId, registro }) {
+  if (!anuncioId || !mlb) return { ok: false, erro: "Sem ficha ou sem MLB." };
+  const agora = new Date().toISOString();
+  const pub = {
+    ml_user_id: String(contaId || ""),
+    mlb_id: mlb,
+    mlb_link: link || null,
+    publicado_em: agora,
+    status_publicacao: "publicado",
+    erro_publicacao: null,
+    ...(sku ? { sku, sku_normalizado: normalizarCodigo(sku) } : {}),
+    ...(blingProdutoId ? { bling_produto_id: blingProdutoId } : {}),
+    updated_at: agora,
+  };
+  const { error } = await supabase.from(T_PUBLICACOES).update(pub).eq("anuncio_id", anuncioId).eq("marketplace", MARKETPLACE_ML);
+  const r2 = await salvarRegistroIntegracaoBling({ anuncioId, registro });
+  if (error) return { ...falha(error), registroIntegracao: r2.ok };
+  return { ok: r2.ok, erro: r2.ok ? "" : r2.erro };
 }
