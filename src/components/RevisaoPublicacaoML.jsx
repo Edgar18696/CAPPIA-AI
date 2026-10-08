@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
 import { conferirLogistica } from "../services/logistica/logisticaMercadoLivre";
-import { verificarDuplicidadeML, nomeDaLoja } from "../services/duplicidadeML";
+import { verificarDuplicidadeML, nomeDaLoja, situacaoMLBRegistrado, avaliarRegistrosBase } from "../services/duplicidadeML";
 import {
   listarAnunciosDoCodigo,
   obterAnuncio,
@@ -20,6 +20,7 @@ import {
   registrarMLBPublicado,
   salvarRegistroIntegracaoBling,
   garantirRegistroIntegracaoBling,
+  registrarMLBsAnteriores,
 } from "../services/anuncioPublicacaoService";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
@@ -91,7 +92,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
+function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
   const itens = [];
 
   // Condição: a APROVADA na ficha (novo/usado). Nunca assume "novo".
@@ -115,21 +116,30 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
   if (!ficha?.disponivel) itens.push({ item: "Ficha do anúncio", nivel: "erro", texto: ficha?.erro || "Base PAIIA indisponível: a conta de destino não pôde ser gravada." });
   else if (!ficha?.gravada) itens.push({ item: "Ficha do anúncio", nivel: "erro", texto: "Escolha a conta: ela é gravada na ficha deste anúncio antes de publicar." });
   else itens.push({ item: "Ficha do anúncio", nivel: "ok", texto: `Conta gravada na base PAIIA (anúncio ${String(ficha.anuncioId).slice(0, 8)}).` });
-  if (duplicado) itens.push({ item: "Duplicidade", nivel: "erro", texto: `Este código já está publicado nesta conta (${duplicado}). Publicar de novo criaria anúncio duplicado.` });
+  // (O MLB de OUTRA ficha deste código nesta conta é conferido abaixo, na
+  //  "Duplicidade na base PAIIA", pela situação REAL no Mercado Livre.)
   // SKU oficial (SKU específico ou o próprio código da peça).
   if (!skuEnvio) itens.push({ item: "SKU", nivel: "erro", texto: "Sem SKU: o anúncio precisa sair com SKU (o código da peça)." });
   else itens.push({ item: "SKU", nivel: "ok", texto: `SKU enviado ao Mercado Livre (igual ao produto do Bling): ${skuEnvio}.${codigoPesquisado && codigoPesquisado !== skuEnvio ? ` Código pesquisado na ficha: ${codigoPesquisado}.` : ""}` });
   // Proteção A: base PAIIA (código/SKU normalizado + conta + MLB + status).
   if (duplicidadeBase?.carregando) itens.push({ item: "Duplicidade na base PAIIA", nivel: "aviso", texto: "Conferindo na base PAIIA..." });
   else if (duplicidadeBase?.erro) itens.push({ item: "Duplicidade na base PAIIA", nivel: "erro", texto: `Não foi possível conferir a base PAIIA (${duplicidadeBase.erro}). Sem essa conferência a publicação fica bloqueada.` });
-  else if (duplicidadeBase?.registros?.length) itens.push({ item: "Duplicidade na base PAIIA", nivel: "erro", texto: `A base PAIIA já registra este código publicado nesta conta: ${duplicidadeBase.registros.map((p) => `${p.mlb_id || "sem MLB"} (${p.status_publicacao})`).join(", ")}. Publicação bloqueada.` });
+  else if (duplicidadeBase?.registros?.length) {
+    // MLB registrado na base só deixa de bloquear quando o Mercado Livre
+    // CONFIRMA, nesta conta, que foi excluído/encerrado. Sem confirmação
+    // (conferindo, erro, não encontrado, vendedor diferente...) = bloqueia.
+    const av = avaliarRegistrosBase({ registros: duplicidadeBase.registros, ml: duplicidadeML });
+    if (av.estado === "conferindo") itens.push({ item: "Duplicidade na base PAIIA", nivel: "erro", texto: `A base PAIIA registra este código nesta conta (${av.mlbs.join(", ")}). Conferindo a situação real no Mercado Livre — publicação bloqueada até confirmar.` });
+    else if (av.estado === "bloqueia") itens.push({ item: "Duplicidade na base PAIIA", nivel: "erro", texto: `A base PAIIA registra este código publicado nesta conta e o Mercado Livre NÃO confirmou exclusão/encerramento: ${av.pendentes.map((p) => `${p.mlb} — ${p.motivo}`).join("; ")}. Publicação bloqueada.` });
+    else itens.push({ item: "Duplicidade na base PAIIA", nivel: "ok", texto: av.anteriores.map((a) => a.texto).join(" ") });
+  }
   else if (duplicidadeBase?.verificado) itens.push({ item: "Duplicidade na base PAIIA", nivel: "ok", texto: "A base PAIIA não registra este código publicado nesta conta." });
   // Mesmo SKU + MESMA conta + anúncio já existente no Mercado Livre = bloqueia.
   // (O mesmo SKU em OUTRA conta é permitido: cada conta tem o seu MLB.)
   if (duplicidadeML?.carregando) itens.push({ item: "Duplicidade na conta", nivel: "aviso", texto: "Conferindo no Mercado Livre se este SKU/código já está anunciado nesta conta (maiúsculas, minúsculas, espaços e anúncios antigos)..." });
   else if (duplicidadeML?.erro) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Não foi possível conferir anúncios deste SKU/código nesta conta (${duplicidadeML.erro}). Sem essa conferência a publicação fica bloqueada.` });
   else if (duplicidadeML?.duplicados?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Este SKU/código já tem anúncio nesta conta: ${duplicidadeML.duplicados.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Publicar de novo criaria duplicidade (em outra conta é permitido).` });
-  else if (duplicidadeML?.ativosBase?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `O anúncio registrado na base ainda existe no Mercado Livre nesta conta: ${duplicidadeML.ativosBase.join(", ")}.` });
+  else if (duplicidadeML?.ativosBase?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `MLB registrado na base sem confirmação de exclusão/encerramento no Mercado Livre nesta conta: ${duplicidadeML.ativosBase.join(", ")}. Publicação bloqueada.` });
   else if (duplicidadeML?.possiveis?.length && !possivelConfirmado) itens.push({ item: "Possível duplicidade na conta", nivel: "erro", texto: `Anúncio desta conta com o mesmo código, mas SKU diferente/vazio: ${duplicidadeML.possiveis.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Confira no Mercado Livre; só publique se NÃO for o mesmo produto (marque a confirmação abaixo).` });
   else if (duplicidadeML?.possiveis?.length) itens.push({ item: "Possível duplicidade na conta", nivel: "aviso", texto: `Você confirmou que ${duplicidadeML.possiveis.map((d) => d.id).join(", ")} NÃO é o mesmo produto.` });
   else if (duplicidadeML?.verificado) itens.push({ item: "Duplicidade na conta", nivel: "ok", texto: `Nenhum anúncio deste SKU/código nesta conta (${duplicidadeML.buscas} buscas, ${duplicidadeML.candidatos} anúncios conferidos). O mesmo SKU em outras contas não bloqueia.` });
@@ -346,14 +356,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setContaEscolhidaLocal(conta);
     onContaDestino?.(conta);
     if (!ficha.disponivel) return;
-    // Mesmo código já publicado nesta conta: não cria ficha duplicada.
-    const jaPublicado = (ficha.outros || []).find(
-      (a) => publicacaoExiste(a.publicacao) && String(a.publicacao?.ml_user_id) === conta
-    );
-    if (jaPublicado) {
-      setFicha((f) => ({ ...f, gravada: false, erro: `Este código já está publicado em ${nome || "esta conta"} (${jaPublicado.publicacao.mlb_id || "MLB"}). Escolha outra conta.` }));
-      return;
-    }
+    // Mesmo código já publicado nesta conta por OUTRA ficha: a conta pode
+    // ser gravada nesta ficha; a publicação continua bloqueada pelas
+    // conferências de duplicidade (base PAIIA × situação real no ML).
     setGravandoConta(true);
     const r = await salvarContaDestino({
       anuncioId: ficha.anuncioId,
@@ -559,13 +564,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mesmo código já PUBLICADO nesta conta por outra ficha → duplicidade.
-  const duplicado = (() => {
-    const p = (ficha.outros || []).find(
-      (a) => publicacaoExiste(a.publicacao) && String(a.publicacao?.ml_user_id) === contaEscolhida
-    );
-    return p ? p.publicacao.mlb_id || "já publicado" : "";
-  })();
+  // Mesmo código já publicado nesta conta por OUTRA ficha: não bloqueia
+  // aqui pelo dado guardado; a "Duplicidade na base PAIIA" confere a
+  // situação real desse MLB no Mercado Livre (só libera se excluído).
 
   // Cadastro que SERÁ criado no Bling se o produto não existir: só dados
   // confirmados da ficha (nada inventado). Estoque inicial = quantidade
@@ -600,16 +601,25 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       return { erro: e?.message || "falha na consulta" };
     }
     if (r.erro) return r;
-    const ativosBase = [];
-    const jaListados = new Set([...r.duplicados, ...r.possiveis].map((d) => d.id));
+    // Cada MLB registrado na base (outra ficha deste código, nesta conta) é
+    // conferido NO MERCADO LIVRE, nesta conta. Só "excluído/encerrado"
+    // confirmado (status closed ou sub_status deleted, mesmo vendedor)
+    // libera; qualquer dúvida bloqueia.
+    const conferidosBase = [];
+    const jaListados = new Set([...r.duplicados, ...r.possiveis].map((d) => String(d.id).toUpperCase()));
     for (const p of registrosBase) {
-      if (!/^MLB\d+$/.test(String(p?.mlb_id || "")) || jaListados.has(p.mlb_id)) continue;
-      const it = await consultar(`/items/${p.mlb_id}`);
-      if (!it?.ok) return { erro: it?.erro || `não foi possível consultar ${p.mlb_id}` };
-      const d = it.dados || {};
-      if (String(d.seller_id || "") === String(conta) && d.status !== "closed") ativosBase.push(`${p.mlb_id} (${d.status})`);
+      const mlb = String(p?.mlb_id || "").trim().toUpperCase();
+      if (mlb && jaListados.has(mlb)) continue; // já bloqueado como duplicado/possível acima
+      const resp = /^MLB\d+$/.test(mlb) ? await consultar(`/items/${mlb}`) : null;
+      conferidosBase.push({ ...situacaoMLBRegistrado({ mlb, conta, resp }), mlb: mlb || "sem MLB", ficha_origem: p?.anuncio_id || "" });
     }
-    return { ...r, ativosBase };
+    const ativosBase = conferidosBase.filter((c) => !c.libera).map((c) => `${c.mlb} (${c.motivo})`);
+    const anterioresEncerrados = conferidosBase.filter((c) => c.libera);
+    // Histórico na ficha NOVA (auditoria): MLB anterior excluído/encerrado.
+    if (anterioresEncerrados.length && ficha.anuncioId) {
+      await registrarMLBsAnteriores({ anuncioId: ficha.anuncioId, registros: anterioresEncerrados });
+    }
+    return { ...r, ativosBase, conferidosBase, anterioresEncerrados };
   }
   // Possível duplicidade (mesmo código no título/número da peça, SKU
   // diferente): só libera com confirmação explícita, valendo para ESSES MLBs.
@@ -861,10 +871,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setDuplicidadeBase(base);
     const noML = base.erro ? null : await consultarDuplicidadeML(contaEscolhida, base.registros || []);
     if (noML) setDuplicidadeML(noML);
+    const avBase = base.erro ? null : avaliarRegistrosBase({ registros: base.registros || [], ml: noML });
     const motivo = base.erro
       ? `Base PAIIA não conferida (${base.erro}).`
-      : base.registros.length
-        ? `A base PAIIA já registra este código publicado nesta conta (${base.registros.map((p) => p.mlb_id || p.status_publicacao).join(", ")}).`
+      : avBase && avBase.estado !== "ok"
+        ? `A base PAIIA registra este código publicado nesta conta e o Mercado Livre não confirmou exclusão/encerramento (${(avBase.pendentes.length ? avBase.pendentes.map((p) => `${p.mlb}: ${p.motivo}`) : avBase.mlbs).join("; ")}).`
         : noML?.erro
           ? `Mercado Livre não conferido (${noML.erro}).`
           : noML?.duplicados?.length || noML?.ativosBase?.length
@@ -1004,7 +1015,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }, [contaOk, contaEscolhida]);
 
   const conferencia = conferir({
-    campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
+    campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
     descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoPub, compatTexto: anuncio?.compatibilidades,
     condicaoEnvio: dadosAnuncio.condicao, semCompatConfirmada: anuncio?.semCompatibilidadeConfirmada === true,
     semCompatAutorizadaPublicacao: semCompatAut.autorizado,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ESTADO, TEXTO_ESTADO, PASSOS_BLING, AVISO_AUTOMATICA, URL_BLING_TRAZER } from "../services/vinculoBlingPublicacao";
+import { ESTADO, TEXTO_ESTADO, passosBling, AVISO_VINCULO_MANUAL, URL_BLING_TRAZER } from "../services/vinculoBlingPublicacao";
 
 /*
  * Etapa visual "trazer este MLB para o Bling" (anúncio NOVO do PAIIA).
@@ -32,6 +32,7 @@ export default function PainelIntegracaoBling({ registro, verificando = false, o
 
   return (
     <div data-paiia-integracao-bling={estado} style={caixa}>
+      <div data-paiia-vinculo-manual style={destaqueManual}>⚠ {AVISO_VINCULO_MANUAL}</div>
       <div style={{ ...linha, color: "#86efac" }}>✅ Publicado no Mercado Livre</div>
       <div style={linha}>
         MLB: <b data-paiia-mlb style={{ fontFamily: "monospace", fontSize: 15 }}>{registro.mlb}</b>
@@ -69,10 +70,10 @@ export default function PainelIntegracaoBling({ registro, verificando = false, o
           </div>
           {estado === ESTADO.AGUARDANDO && (
             <ol data-paiia-passos-bling style={passos}>
-              {PASSOS_BLING.map((p) => <li key={p}>{p}</li>)}
+              {passosBling({ lojaNome: registro.bling_loja_nome, sku: registro.sku_oficial }).map((p) => <li key={p}>{p}</li>)}
             </ol>
           )}
-          <div data-paiia-aviso-automatica style={aviso}>⚠ {AVISO_AUTOMATICA}</div>
+          <div data-paiia-aviso-automatica style={aviso}>O PAIIA só confere depois, por leitura. Quem confirma o vínculo é você, no Bling.</div>
         </>
       )}
     </div>
@@ -85,3 +86,4 @@ const sub = { color: "#94a3b8", fontSize: 12, lineHeight: 1.6 };
 const botao = { padding: "6px 12px", borderRadius: 8, border: "1px solid #475569", background: "#334155", color: "#e2e8f0", cursor: "pointer", fontSize: 13 };
 const passos = { color: "#cbd5e1", fontSize: 12, lineHeight: 1.7, margin: "10px 0 0 18px", padding: 0 };
 const aviso = { marginTop: 8, color: "#fca5a5", fontSize: 12, fontWeight: 700 };
+const destaqueManual = { marginBottom: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #f87171", background: "#450a0a", color: "#fecaca", fontSize: 13, fontWeight: 800 };

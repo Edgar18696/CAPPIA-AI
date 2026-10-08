@@ -3,6 +3,7 @@ import { supabase } from "../supabase";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { registroDaFichaOuPublicacao, conferirIntegracao, precisaConferir, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import { salvarRegistroIntegracaoBling, pendenciaPublicacao } from "../services/anuncioPublicacaoService";
+import { lerSituacaoMLBAtual } from "../services/situacaoMLBAtual";
 
 /*
  * TELA FINAL DA FICHA (ficha já publicada — aberta logo depois de publicar,
@@ -49,6 +50,21 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
     return () => { ativo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sku]);
+
+  // Situação ATUAL do MLB no Mercado Livre (somente leitura, na conta da
+  // publicação). Não altera o histórico gravado na ficha.
+  const [situacaoML, setSituacaoML] = useState({ carregando: true });
+  const mlbFicha = String(pub.mlb_id || registro?.mlb || "");
+  const contaFicha = String(pub.ml_user_id || registro?.ml_user_id || "");
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      const r = await lerSituacaoMLBAtual({ mlb: mlbFicha, conta: contaFicha });
+      if (ativo) setSituacaoML({ carregando: false, excluido: Boolean(r.excluido), texto: r.texto || "" });
+    })();
+    return () => { ativo = false; };
+  }, [mlbFicha, contaFicha]);
+  const mlbsAnteriores = Array.isArray(ficha?.dados_conferencia?.mlbs_anteriores) ? ficha.dados_conferencia.mlbs_anteriores : [];
 
   async function verificar(completa) {
     if (!ficha?.id || !precisaConferir(registro) || verificando) return;
@@ -135,6 +151,19 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
             <tr><td style={td}>Situação do vínculo no Bling</td><td style={td} data-paiia-final-vinculo>{situacaoBling}</td></tr>
           </tbody>
         </table>
+        {mlbFicha && (
+          <div data-paiia-situacao-ml-atual style={{ fontSize: 13, lineHeight: 1.7, margin: "4px 0 8px", color: "#cbd5e1" }}>
+            <div>Histórico da ficha: {publicadoOk ? "publicado" : "—"}{integrado ? "/integrado" : ""}.</div>
+            <div style={{ color: situacaoML.excluido ? "#fca5a5" : "#cbd5e1" }}>
+              Situação atual no Mercado Livre: {situacaoML.carregando ? "⏳ lendo..." : situacaoML.texto || "—"}.
+            </div>
+          </div>
+        )}
+        {mlbsAnteriores.length > 0 && (
+          <div data-paiia-mlbs-anteriores style={{ fontSize: 13, lineHeight: 1.7, margin: "4px 0 8px", color: "#94a3b8" }}>
+            {mlbsAnteriores.map((m) => <div key={`${m.mlb}-${m.conta}`}>{m.texto || `MLB anterior: ${m.mlb} — excluído/encerrado no Mercado Livre — não bloqueia nova publicação.`}</div>)}
+          </div>
+        )}
         <div data-paiia-checklist-final style={{ fontSize: 14, lineHeight: 1.9 }}>
           <div style={{ color: publicadoOk ? "#86efac" : "#fca5a5" }}>{publicadoOk ? "✅" : "⚠"} Mercado Livre publicado</div>
           <div style={{ color: produtoBling ? "#86efac" : "#fca5a5" }}>{produtoBling ? "✅" : "⚠"} Produto Bling localizado/criado</div>

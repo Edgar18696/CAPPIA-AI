@@ -46,12 +46,27 @@ export function lojaBlingDaConta(mlUserId) {
 
 /** Tela oficial do Bling para trazer anúncios da própria conta. */
 export const URL_BLING_TRAZER = "https://novo.bling.com.br/ads/list/import?option=my";
-export const PASSOS_BLING = Object.freeze([
-  "Trazer dados do canal → Trazer anúncios novos da minha conta → LojaOnlineSP → Pelo MLB ou link → cole este MLB.",
-  "Vínculo automático → Mesmo código SKU → Criar produto novo: NÃO.",
-  "Estoque → Sincronizar estoque do Bling para o Marketplace.",
-]);
-export const AVISO_AUTOMATICA = "IMPORTAÇÃO AUTOMÁTICA DA LOJA DEVE CONTINUAR DESLIGADA.";
+/**
+ * Vínculo Mercado Livre → Bling: SEMPRE MANUAL (confirmação humana).
+ * O PAIIA só orienta e depois CONFERE por leitura ("Já trouxe — verificar
+ * agora"). Nunca ativa importação automática nem escolhe/vincula produto.
+ */
+export const AVISO_VINCULO_MANUAL = "VÍNCULO MANUAL NO BLING — NÃO USAR IMPORTAÇÃO/VÍNCULO AUTOMÁTICO.";
+export function passosBling({ lojaNome = "", sku = "" } = {}) {
+  const t = (v) => String(v ?? "").trim();
+  const loja = t(lojaNome) || "a loja correta desta conta";
+  return [
+    "No PAIIA: copie o MLB (📋 Copiar MLB).",
+    `Abra o Bling → Trazer dados do canal → Trazer anúncios novos da minha conta → escolha a loja correta (${loja}).`,
+    "Escolha \"Pelo MLB ou link\" e cole este MLB.",
+    `O Bling localiza/sugere o produto EXISTENTE pelo mesmo SKU${t(sku) ? ` (${t(sku)})` : ""}: confira se é o produto certo. Não crie produto novo.`,
+    "Você confirma manualmente o relacionamento do anúncio com esse produto (nada é vinculado sozinho).",
+    "Volte ao PAIIA e clique em \"🔎 Já trouxe — verificar agora\".",
+  ];
+}
+export const PASSOS_BLING = Object.freeze(passosBling({ lojaNome: "LojaOnlineSP" }));
+// Compatibilidade com quem importava o aviso antigo: agora é o aviso do vínculo manual.
+export const AVISO_AUTOMATICA = AVISO_VINCULO_MANUAL;
 
 const txt = (v) => String(v ?? "").trim();
 export function normalizarMLB(v) {

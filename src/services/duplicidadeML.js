@@ -15,10 +15,87 @@
  *  3) abre CADA anúncio candidato e compara pela forma NORMALIZADA
  *     (só letras e números, maiúsculas) o SKU do anúncio, o SKU das variações,
  *     o seller_custom_field, o número da peça (PART_NUMBER) e o título.
- * Anúncio encerrado (closed) não bloqueia. Qualquer consulta que falhe →
- * erro (quem chama BLOQUEIA). O código original nunca é alterado: a
- * normalização serve só para comparar.
+ * Anúncio encerrado/excluído (status "closed" ou sub_status com "deleted")
+ * não bloqueia. Qualquer consulta que falhe → erro (quem chama BLOQUEIA). O
+ * código original nunca é alterado: a normalização serve só para comparar.
  */
+
+/**
+ * Anúncio do Mercado Livre comprovadamente encerrado/excluído:
+ * status "closed" OU sub_status contendo "deleted" (ex.: excluído pelo
+ * vendedor: status "inactive", sub_status ["forbidden","deleted"]).
+ * "inactive" sem "deleted", "paused", "under_review", "active" = NÃO encerrado.
+ */
+export function anuncioEncerradoML(item) {
+  if (!item || typeof item !== "object") return false;
+  const sub = Array.isArray(item.sub_status) ? item.sub_status.map((s) => String(s).toLowerCase()) : [];
+  return String(item.status || "").toLowerCase() === "closed" || sub.includes("deleted");
+}
+
+/**
+ * MLB registrado na base PAIIA (ou em outra ficha) × situação REAL no
+ * Mercado Livre, na conta da publicação. Só LIBERA com confirmação segura:
+ * resposta ok, mesmo MLB, mesmo vendedor (= conta) e anúncio encerrado/
+ * excluído. Erro, token, timeout, "não encontrado", resposta ambígua ou
+ * vendedor diferente = BLOQUEIA ("não foi possível confirmar").
+ * resp = retorno de ml_consulta GET /items/<MLB> ({ ok, status, dados, erro }).
+ * Devolve { libera, mlb, conta, status, sub_status, motivo }.
+ */
+export function situacaoMLBRegistrado({ mlb, conta, resp }) {
+  const id = String(mlb || "").trim().toUpperCase();
+  const contaTxt = String(conta || "");
+  const base = { libera: false, mlb: id, conta: contaTxt, status: "", sub_status: [] };
+  if (!/^MLB\d+$/.test(id)) return { ...base, motivo: "registro sem MLB válido: não foi possível confirmar no Mercado Livre" };
+  if (!contaTxt) return { ...base, motivo: "sem conta para conferir" };
+  if (!resp?.ok) {
+    const http = Number(resp?.status) || 0;
+    const nao = http === 404 || /not.?found|não encontrad/i.test(String(resp?.erro || ""));
+    return { ...base, motivo: nao ? "o Mercado Livre não encontrou este MLB (não é tratado como excluído)" : `não foi possível confirmar no Mercado Livre (${String(resp?.erro || "erro na consulta").slice(0, 120)})` };
+  }
+  const it = resp.dados;
+  if (!it || typeof it !== "object" || String(it.id || "").toUpperCase() !== id) return { ...base, motivo: "resposta ambígua do Mercado Livre" };
+  const sub = Array.isArray(it.sub_status) ? it.sub_status.map(String) : [];
+  const info = { ...base, status: String(it.status || ""), sub_status: sub };
+  if (String(it.seller_id ?? "") !== contaTxt) return { ...info, motivo: `vendedor diferente no Mercado Livre (${it.seller_id ?? "—"})` };
+  if (!info.status) return { ...info, motivo: "resposta ambígua do Mercado Livre (sem status)" };
+  if (anuncioEncerradoML(it)) return { ...info, libera: true, motivo: "excluído/encerrado no Mercado Livre" };
+  return { ...info, motivo: `ainda existe no Mercado Livre nesta conta (${info.status}${sub.length ? ` / ${sub.join(", ")}` : ""})` };
+}
+
+/**
+ * Registros da base PAIIA (publicações deste código NESTA conta) × conferência
+ * no Mercado Livre (resultado de consultarDuplicidadeML: conferidosBase,
+ * duplicados, possiveis, erro). Só "ok" quando TODOS os MLBs registrados
+ * foram confirmados como excluídos/encerrados no ML.
+ * estado: "ok" | "conferindo" | "bloqueia".
+ */
+export function avaliarRegistrosBase({ registros, ml }) {
+  const regs = (Array.isArray(registros) ? registros : []).map((p) => ({
+    mlb: String(p?.mlb_id || "").trim().toUpperCase() || "sem MLB",
+    status: String(p?.status_publicacao || ""),
+  }));
+  const mlbs = regs.map((r) => `${r.mlb} (${r.status || "—"})`);
+  if (!regs.length) return { estado: "ok", mlbs, pendentes: [], anteriores: [] };
+  if (!ml || ml.carregando) return { estado: "conferindo", mlbs, pendentes: [], anteriores: [] };
+  if (ml.erro) {
+    return { estado: "bloqueia", mlbs, anteriores: [], pendentes: regs.map((r) => ({ mlb: r.mlb, motivo: `não foi possível confirmar no Mercado Livre (${ml.erro})` })) };
+  }
+  const conferidos = new Map((ml.conferidosBase || []).map((c) => [String(c.mlb).toUpperCase(), c]));
+  const listados = new Set([...(ml.duplicados || []), ...(ml.possiveis || [])].map((d) => String(d.id).toUpperCase()));
+  const pendentes = [];
+  const anteriores = [];
+  for (const r of regs) {
+    const c = conferidos.get(r.mlb);
+    if (c?.libera) anteriores.push({ ...c, texto: textoMLBAnterior(c) });
+    else pendentes.push({ mlb: r.mlb, motivo: c ? c.motivo : listados.has(r.mlb) ? "anúncio deste SKU existe nesta conta no Mercado Livre" : "não conferido no Mercado Livre" });
+  }
+  return { estado: pendentes.length ? "bloqueia" : "ok", mlbs, pendentes, anteriores };
+}
+
+/** Texto do histórico: "MLB anterior: MLB… — excluído/encerrado no Mercado Livre — não bloqueia nova publicação." */
+export function textoMLBAnterior(reg) {
+  return `MLB anterior: ${reg?.mlb || "—"} — excluído/encerrado no Mercado Livre — não bloqueia nova publicação.`;
+}
 
 /** Forma de comparação: só letras e números, em maiúsculas ("497207698 r" → "497207698R"). */
 export function normalizarCodigoComparacao(v) {
@@ -137,7 +214,7 @@ export async function verificarDuplicidadeML({ conta, codigos = [], consultar, l
     if (!r?.ok || !r.dados?.id) return { erro: r?.erro || `não foi possível abrir ${id}` };
     const it = r.dados;
     if (String(it.seller_id || "") !== contaId) continue; // segurança: só a própria conta
-    if (it.status === "closed") continue; // encerrado não bloqueia
+    if (anuncioEncerradoML(it)) continue; // encerrado/excluído não bloqueia
     const c = compararAnuncio(it, codigoNorm);
     if (!c) continue;
     const reg = { id: it.id, status: it.status, titulo: String(it.title || "").slice(0, 80), motivo: c.motivo };

@@ -375,7 +375,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -538,6 +538,49 @@ export async function registrarProdutoBlingCriado({ anuncioId, blingProdutoId })
 // ---------------------------------------------------------------
 
 /** Mescla o registro da integração Bling na ficha (lê → mescla → grava). */
+/**
+ * Histórico: MLBs anteriores deste código/conta que o Mercado Livre CONFIRMOU
+ * como excluídos/encerrados (não bloqueiam a nova publicação). Fica gravado
+ * na ficha NOVA (dados_conferencia.mlbs_anteriores) para auditoria; a ficha
+ * antiga e a linha de publicação dela NÃO são alteradas. Só acrescenta
+ * (nunca apaga); grava apenas quando aparece um MLB novo na lista.
+ */
+export function mesclarMLBsAnteriores(lista, novos, agora = new Date().toISOString()) {
+  const out = Array.isArray(lista) ? lista.map((x) => ({ ...x })) : [];
+  let mudou = false;
+  for (const n of novos || []) {
+    if (!n?.mlb || !n?.conta) continue;
+    const i = out.findIndex((x) => x.mlb === n.mlb && String(x.conta) === String(n.conta));
+    if (i >= 0) continue;
+    out.push({
+      mlb: n.mlb,
+      conta: String(n.conta),
+      status_ml: n.status || "",
+      sub_status_ml: Array.isArray(n.sub_status) ? n.sub_status : [],
+      situacao: "excluido_encerrado_no_ml",
+      texto: `MLB anterior: ${n.mlb} — excluído/encerrado no Mercado Livre — não bloqueia nova publicação.`,
+      ficha_origem: n.ficha_origem || "",
+      conferido_em: agora,
+    });
+    mudou = true;
+  }
+  return { lista: out, mudou };
+}
+export async function registrarMLBsAnteriores({ anuncioId, registros }) {
+  if (!anuncioId || !Array.isArray(registros) || !registros.length) return { ok: true, gravado: false };
+  const { data, error: erroLer } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
+  if (erroLer) return falha(erroLer);
+  const dados = data?.dados_conferencia || {};
+  const { lista, mudou } = mesclarMLBsAnteriores(dados.mlbs_anteriores, registros);
+  if (!mudou) return { ok: true, gravado: false, lista };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, mlbs_anteriores: lista }, updated_at: new Date().toISOString() })
+    .eq("id", anuncioId);
+  if (error) return falha(error);
+  return { ok: true, gravado: true, lista };
+}
+
 export async function salvarRegistroIntegracaoBling({ anuncioId, registro }) {
   if (!anuncioId || !registro) return { ok: false, erro: "Sem ficha ou sem registro da integração." };
   const { data, error: erroLer } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
