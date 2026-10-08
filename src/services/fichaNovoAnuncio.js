@@ -83,6 +83,8 @@ export function montarNovoAnuncioParaFicha(estado, fichaId = "") {
   const tipoVeiculo = normalizarTipoVeiculo(e.tipoVeiculo);
   const medida = medidaDoNovoAnuncio(e.embalagem);
   const edicoes = e.edicoes && typeof e.edicoes === "object" ? { ...e.edicoes } : {};
+  // Registro ÚNICO de frete × precificação (cotação ML da conta): segue a ficha até o fim.
+  const freteML = e.freteML && typeof e.freteML === "object" ? JSON.parse(JSON.stringify(e.freteML)) : null;
   const anuncio = {
     codigo: txt(e.codigo), oem: txt(e.oem), titulo: txt(e.titulo), descricao: String(e.descricao ?? ""),
     preco: txt(e.preco), tipoAnuncio: txt(e.tipoAnuncio) || "classico",
@@ -91,6 +93,7 @@ export function montarNovoAnuncioParaFicha(estado, fichaId = "") {
     ...(tipoVeiculo ? { tipoVeiculo } : {}),
     ...(medida ? { embalagem: medida } : {}),
     ...(Object.keys(edicoes).length ? { edicoes } : {}),
+    ...(freteML ? { freteML } : {}),
     ...(idFichaValido(fichaId) ? { fichaIdPAIIA: txt(fichaId) } : {}),
   };
   return {
@@ -105,6 +108,7 @@ export function montarNovoAnuncioParaFicha(estado, fichaId = "") {
       tipoVeiculo,
       medida,
       edicoes,
+      freteML,
       completa: fichaCompleta({ ...anuncio, fotos }),
     },
   };
@@ -147,10 +151,15 @@ export function rascunhoDaFicha(row) {
   const fonte = na || a;
   if (!fonte || (!txt(fonte.codigo) && !txt(fonte.oem) && !txt(row?.codigo))) return null;
   const fotos = (Array.isArray(fonte.fotos) ? fonte.fotos : Array.isArray(a.fotos) ? a.fotos : []).map(urlFoto).filter(Boolean);
+  // Preço: se a Conferência gravou DEPOIS do Novo Anúncio, vale o preço dela
+  // (ao voltar para recalcular frete × precificação, é o preço atual).
+  const camposConf = d?.ficha?.campos || {};
+  const precoConfNum = Number(String(camposConf.preco ?? "").replace(",", "."));
+  const precoConf = Boolean(d?.ficha) && txt(d?.salvo_em) > txt(na?.salvo_em) && precoConfNum > 0 ? precoConfNum.toFixed(2).replace(".", ",") : "";
   return {
     fichaId: txt(row?.id),
     codigo: txt(fonte.codigo) || txt(row?.codigo), oem: txt(fonte.oem), titulo: txt(fonte.titulo) || txt(row?.titulo),
-    descricao: String(fonte.descricao ?? ""), preco: txt(fonte.preco), tipoAnuncio: txt(fonte.tipoAnuncio) || "classico",
+    descricao: String(fonte.descricao ?? ""), preco: precoConf || txt(fonte.preco), tipoAnuncio: txt(fonte.tipoAnuncio) || "classico",
     pecaEncontrada: fonte.pecaEncontrada || a.pecaEncontrada || null,
     fotos: fotos.map((u, i) => ({ imagem_processada: u, imagem_original: "", ordem: i, capa: i === 0 })),
     clip: txt(fonte.clip),
@@ -181,6 +190,7 @@ export function dadosTecnicosDaFicha(d) {
     tipoVeiculo: tipoVeiculoDaFicha(tipo),
     ...(medida ? camposNovoAnuncioDaMedida(medida) : {}),
     edicoes: na.edicoes && typeof na.edicoes === "object" ? { ...na.edicoes } : {},
+    ...(na.freteML && typeof na.freteML === "object" ? { freteML: na.freteML } : {}),
   };
 }
 

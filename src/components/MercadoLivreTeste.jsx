@@ -1069,6 +1069,14 @@ function ConferenciaPAIIA({
   // peso/medidas. Ficha sem Conferência: só preenche. Com Conferência: o que
   // foi editado lá DEPOIS é edição real (avisa e pede reconferência).
   const [edicoesNA] = useState(() => edicoesDoNovoAnuncio({ anuncio, fichaSalva }));
+  // Registro ÚNICO de frete × precificação (Novo Anúncio): a Conferência
+  // usa ESTE (não calcula outro frete); vale o mais recente da mesma ficha.
+  const [registroFreteConf] = useState(() => {
+    const a = anuncio?.freteML && typeof anuncio.freteML === "object" ? anuncio.freteML : null;
+    const f = fichaSalva?.campos?.freteML && typeof fichaSalva.campos.freteML === "object" ? fichaSalva.campos.freteML : null;
+    if (a && f) return String(a.calculado_em || "") >= String(f.calculado_em || "") ? a : f;
+    return a || f || null;
+  });
   const camposEditadosNoNovoAnuncioRef = useRef(
     edicoesNA.campos.flatMap((c) => CAMPOS_ASSINATURA_TECNICOS[c] || [])
   );
@@ -2702,6 +2710,8 @@ const [
       // Só true quando o usuário marcou "publicar sem compatibilidade".
       semCompatibilidadeConfirmada: semCompatConfirmado === true,
       logistica: logisticaConferencia,
+      // Frete × precificação (registro único; a Publicação confere de novo).
+      freteML: registroFreteConf,
       // Padrões fixos: vão para a ficha e para a Publicação.
       padroesML: padroesEsperadosConferencia(),
     };
@@ -3631,6 +3641,7 @@ useEffect(() => {
     tipoVeiculoOrigem,
     // Tipo de anúncio salvo NA FICHA (não na preferência do navegador).
     tipoAnuncio: modalidade,
+    freteML: registroFreteConf,
     nomePeca,
     categoriaML: categoriaId || categoria ? { id: categoriaId, caminho: categoria, origem: origemCategoria } : null,
     compatibilidades,
@@ -4942,7 +4953,7 @@ useEffect(() => {
               nomePeca={nomePeca}
             />
             <RevisaoPublicacaoML
-              anuncio={anuncioConferido}
+              anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
               titulo={anuncioConferido.titulo}
               contaDestino={contaDestinoML}
               onContaDestino={setContaDestinoML}
@@ -6209,6 +6220,7 @@ useEffect(() => {
               contaML={contaSimulacaoML}
               onChange={setLogisticaConferencia}
               valorInicial={logisticaInicial}
+              registroFrete={registroFreteConf}
               semTitulo
             />
           ) : (

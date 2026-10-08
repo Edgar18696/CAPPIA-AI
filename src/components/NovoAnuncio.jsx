@@ -4,7 +4,18 @@ import {
   useState,
 } from "react";
 import { supabase } from "../supabase";
-import { idContaMLAtivaOpcional } from "../services/contaMLAtiva";
+import { idContaMLAtivaOpcional, useContasML, contasMLConectadas } from "../services/contaMLAtiva";
+import { consultorML, modalidadesDaConta } from "../services/consultaMLLeitura";
+import {
+  calcularFreteEPrecos,
+  situacaoFrete,
+  parametrosCotacao,
+  baseDePrecificacao,
+  prontoParaCotar,
+  linhasTabela,
+  reais as reaisFrete,
+  ORIGEM_FRETE,
+} from "../services/fretePrecificacao";
 import {
   buscarDimensoesProduto,
   salvarDimensoesProduto,
@@ -857,6 +868,11 @@ const [larguraFreteML, setLarguraFreteML] =
 const [comprimentoFreteML, setComprimentoFreteML] =
   useState("");
 
+// FRETE ML × PRECIFICAÇÃO: UM registro (cotação oficial do ML da conta
+// ativa) que segue a ficha até a Conferência, a Publicação e o Bling.
+const [registroFreteML, setRegistroFreteML] =
+  useState(null);
+
 // DADOS TÉCNICOS (uma fonte só): tipo de veículo da ficha (anúncio novo =
 // Carro/Caminhonete) e o MESMO peso/medidas do cálculo de frete.
 const [tipoVeiculoNA, setTipoVeiculoNA] =
@@ -877,6 +893,7 @@ function alterarDadoTecnico(campo, valor) {
   setEdicoesDadosTecnicos((e) => ({ ...e, embalagem: agora }));
 }
 function zerarDadosTecnicos() {
+  setRegistroFreteML(null);
   setTipoVeiculoNA(TIPO_CARRO);
   setEdicoesDadosTecnicos({});
   setPesoFreteML("");
@@ -945,6 +962,11 @@ function numeroPrecificacao(valor) {
 function calcularPrecoComMargem(
   margemLiquida
 ) {
+  // Mercado Livre: preços CONVERGIDOS com o frete cotado na faixa de cada
+  // preço (Conservador/Recomendado/Ideal), do registro único de frete.
+  const chaveMargemFrete = { 10: "conservador", 15: "recomendado", 20: "ideal" }[margemLiquida];
+  const margemFrete = canalVenda === "mercado_livre" && chaveMargemFrete ? registroFreteML?.margens?.[chaveMargemFrete] : null;
+  if (margemFrete && margemFrete.preco > 0) return margemFrete.preco;
   const custoMercadoria =
     numeroPrecificacao(custo);
 
@@ -1573,6 +1595,70 @@ function formatarPrecoAppia(
    * Estimativa por categoria é só sugestão e nunca calcula sozinha.
    * ============================================
    */
+  // ===== FRETE ML × PRECIFICAÇÃO (ordem: CONTA → PESO/EMBALAGEM → COTAÇÃO
+  // ML → PRECIFICAÇÃO). Cotação oficial da conta ativa; sem cotação real,
+  // ESTIMATIVA PAIIA identificada (publicação bloqueada). =====
+  const estadoContasNA = useContasML();
+  const contaAtivaNA = contasMLConectadas(estadoContasNA).find((c) => c.ativa) || null;
+  const contaFreteId = String(contaAtivaNA?.ml_user_id || "");
+  const [modalidadesFrete, setModalidadesFrete] = useState({ carregando: false, lista: [], erro: "" });
+  const [modalidadeFreteML, setModalidadeFreteML] = useState("");
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      if (canalVenda !== "mercado_livre" || !contaFreteId) {
+        if (ativo) setModalidadesFrete({ carregando: false, lista: [], erro: "" });
+        return;
+      }
+      if (ativo) setModalidadesFrete((m) => ({ ...m, carregando: true, erro: "" }));
+      const r = await modalidadesDaConta(contaFreteId);
+      if (!ativo) return;
+      setModalidadesFrete({ carregando: false, lista: r.modalidades || [], erro: r.ok ? "" : r.erro });
+      setModalidadeFreteML((atual) => (atual && (r.modalidades || []).some((x) => x.tipo === atual) ? atual : r.modalidades?.[0]?.tipo || ""));
+    })();
+    return () => { ativo = false; };
+  }, [contaFreteId, canalVenda]);
+  const medidaFreteNA = medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML });
+  const paramsFreteNA = parametrosCotacao({
+    conta: contaFreteId,
+    medida: medidaFreteNA,
+    modalidade: modalidadeFreteML,
+    categoria: pecaEncontrada?.categoria_id || diagnostico?.categoria_id || "",
+    tipoAnuncio,
+  });
+  const baseFreteNA = baseDePrecificacao({ custo, despesas: despesasPrecificacao, comissao: comissaoPrecificacao, imposto: impostoPrecificacao });
+  const situacaoFreteNA = situacaoFrete({ registro: registroFreteML, atual: { ...paramsFreteNA, preco, base: baseFreteNA } });
+  const [cotacaoFrete, setCotacaoFrete] = useState({ ocupado: false, erro: "" });
+  async function cotarFreteEPrecos() {
+    const falta = prontoParaCotar(paramsFreteNA);
+    if (falta.length) {
+      setCotacaoFrete({ ocupado: false, erro: `Antes de cotar o frete: ${falta.join(", ")}.` });
+      return;
+    }
+    if (!(baseFreteNA.custo > 0)) {
+      setCotacaoFrete({ ocupado: false, erro: "Informe o custo da mercadoria para calcular os preços." });
+      return;
+    }
+    setCotacaoFrete({ ocupado: true, erro: "" });
+    const r = await calcularFreteEPrecos({ params: paramsFreteNA, base: baseFreteNA, precoFinal: numeroPrecificacao(preco), consultar: consultorML(contaFreteId) });
+    if (!r.ok) {
+      setCotacaoFrete({ ocupado: false, erro: r.erro });
+      return;
+    }
+    setRegistroFreteML(r.registro);
+    const ref = r.registro.final ? r.registro.final.custo_vendedor : r.registro.margens.recomendado.frete;
+    setFretePrecificacao(Number(ref).toFixed(2).replace(".", ","));
+    setCotacaoFrete({ ocupado: false, erro: "" });
+  }
+  // Primeira cotação automática quando conta, peso/medidas, modalidade e custo estão prontos.
+  useEffect(() => {
+    if (canalVenda !== "mercado_livre" || registroFreteML || cotacaoFrete.ocupado) return undefined;
+    if (prontoParaCotar(paramsFreteNA).length || !(baseFreteNA.custo > 0)) return undefined;
+    const t = setTimeout(() => { cotarFreteEPrecos(); }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canalVenda, registroFreteML, contaFreteId, modalidadeFreteML, JSON.stringify(paramsFreteNA.medida), baseFreteNA.custo]);
+
   const [dimensoesFrete, setDimensoesFrete] = useState(null);
   const [statusFreteAuto, setStatusFreteAuto] = useState("idle");
   const [freteAutoInfo, setFreteAutoInfo] = useState(null);
@@ -1824,9 +1910,11 @@ function formatarPrecoAppia(
     }
   }
 
-  /* 2) Dados confiáveis + custo informado → calcula o frete sozinho. */
+  /* 2) (Substituído no Mercado Livre pela cotação ÚNICA frete × preço:
+   *     o cálculo antigo não roda mais — evita dois fretes diferentes.) */
   useEffect(() => {
     if (!dimensoesFrete?.confiavel) return undefined;
+    if (canalVenda === "mercado_livre") return undefined;
     if (canalVenda !== "mercado_livre") return undefined;
 
     if (numeroPrecificacao(custo) <= 0 && numeroPrecificacao(preco) <= 0) {
@@ -2066,6 +2154,7 @@ setVeioDaCentralTecnica(true);
       embalagem: { pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML },
       tipoVeiculo: tipoVeiculoNA,
       edicoes: edicoesDadosTecnicos,
+      freteML: registroFreteML,
     },
   });
 
@@ -2094,6 +2183,7 @@ setVeioDaCentralTecnica(true);
     comprimentoFreteML,
     tipoVeiculo: tipoVeiculoNA,
     edicoesDadosTecnicos,
+    freteML: registroFreteML,
     mostrarAplicacoes,
   };
 
@@ -2129,6 +2219,13 @@ setVeioDaCentralTecnica(true);
     setTipoVeiculoNA(normalizarTipoVeiculo(dados.tipoVeiculo) || TIPO_CARRO);
     const ed = dados.edicoesDadosTecnicos || dados.edicoes;
     setEdicoesDadosTecnicos(ed && typeof ed === "object" ? { ...ed } : {});
+    // Registro de frete × precificação DESTA ficha (nunca de outro anúncio).
+    if (dados.freteML && typeof dados.freteML === "object") {
+      setRegistroFreteML(dados.freteML);
+      if (dados.freteML.modalidade) setModalidadeFreteML(String(dados.freteML.modalidade));
+    } else {
+      setRegistroFreteML(null);
+    }
 
     if (dados.mostrarCustoDetalhado === true) {
       setMostrarCustoDetalhado(true);
@@ -4725,6 +4822,8 @@ marcarAnuncioPronto({
           ? { embalagem: medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML }) }
           : {}),
         edicoes: edicoesDadosTecnicos,
+        // Registro único de frete × precificação (segue até a Publicação).
+        ...(registroFreteML ? { freteML: registroFreteML } : {}),
         // MESMA ficha da base: a Conferência continua nela (não cria outra).
         fichaIdPAIIA: fichaIdAtual,
       })
@@ -5220,6 +5319,94 @@ marcarAnuncioPronto({
   </p>
 </section>
 
+        {canalVenda === "mercado_livre" && (
+        <section id="na-etapa-frete-ml" data-paiia-frete-ml-painel data-paiia-frete-estado={situacaoFreteNA.estado} style={{ ...secaoStyle, border: "1px solid #38bdf8" }}>
+          <h3 style={{ color: "#bae6fd", margin: "0 0 6px" }}>🚚 Frete Mercado Livre — antes da precificação</h3>
+          <p style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 10px" }}>
+            Ordem: conta → peso/embalagem → cotação oficial do Mercado Livre → preço. O frete entra sozinho na precificação (não é digitado).
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8, fontSize: 13, color: "#e2e8f0" }}>
+            <div data-paiia-frete-conta>Conta: <b>{contaAtivaNA ? `${contaAtivaNA.nome || contaAtivaNA.nickname || ""} (ID ${contaAtivaNA.ml_user_id})` : "⚠ nenhuma conta ativa (Contas Marketplace)"}</b></div>
+            <div data-paiia-frete-medida>Peso informado / medidas: <b>{medidaFreteNA ? textoMedida(medidaFreteNA) : "⚠ informe peso e as 3 medidas em Dados técnicos"}</b></div>
+            <label style={{ color: "#e2e8f0" }}>
+              Modalidade:{" "}
+              <select data-paiia-frete-modalidade value={modalidadeFreteML} onChange={(e) => setModalidadeFreteML(e.target.value)} disabled={!modalidadesFrete.lista.length} style={{ ...campoPrecificacaoAppia, width: "auto", padding: "4px 8px", marginTop: 0 }}>
+                {!modalidadesFrete.lista.length && <option value="">{modalidadesFrete.carregando ? "lendo..." : "—"}</option>}
+                {modalidadesFrete.lista.map((m) => (
+                  <option key={m.tipo} value={m.tipo}>{ROTULO_MODALIDADE_FRETE[m.tipo] || m.tipo}{m.padrao ? " (padrão da conta)" : ""}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {modalidadesFrete.erro && <p style={{ color: "#fca5a5", fontSize: 12 }}>⚠ {modalidadesFrete.erro}</p>}
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "10px 0" }}>
+            <button type="button" data-paiia-cotar-frete onClick={cotarFreteEPrecos} disabled={cotacaoFrete.ocupado} style={{ ...botaoFreteML, border: "1px solid #38bdf8", color: "#bae6fd" }}>
+              {cotacaoFrete.ocupado ? "⏳ Cotando no Mercado Livre..." : registroFreteML ? "🔄 Recalcular frete e preços" : "🚚 Cotar frete no Mercado Livre e calcular preços"}
+            </button>
+          </div>
+          {cotacaoFrete.erro && <p data-paiia-frete-erro style={{ color: "#fca5a5", fontSize: 13 }}>⚠ {cotacaoFrete.erro}</p>}
+
+          {situacaoFreteNA.estado === "desatualizado" && registroFreteML && (
+            <div data-paiia-frete-desatualizado style={{ border: "1px solid #f87171", background: "#450a0a", color: "#fecaca", borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 8 }}>
+              <b>⚠ FRETE/PRECIFICAÇÃO DESATUALIZADOS</b> — {situacaoFreteNA.motivos.join("; ")}. Clique em “Recalcular frete e preços”. A publicação fica bloqueada até uma nova cotação real.
+            </div>
+          )}
+          {situacaoFreteNA.estado === "estimativa" && (
+            <div data-paiia-frete-estimativa style={{ border: "1px solid #f59e0b", background: "#422006", color: "#fde68a", borderRadius: 10, padding: 10, fontSize: 13, marginBottom: 8 }}>
+              <b>⚠ ESTIMATIVA PAIIA — não é valor do Mercado Livre.</b> Serve só para analisar o produto; a publicação fica bloqueada até haver cotação real do Mercado Livre.
+            </div>
+          )}
+
+          {registroFreteML && (
+            <>
+              {(() => {
+                const d = registroFreteML.final || registroFreteML.margens?.recomendado || {};
+                const custoPago = d.custo_vendedor ?? d.frete;
+                return (
+                  <div data-paiia-frete-detalhe style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 6, fontSize: 13, color: "#cbd5e1", marginBottom: 8 }}>
+                    <div>Peso considerado pelo ML: <b data-paiia-frete-peso-ml>{d.peso_cobrado_g ? `${d.peso_cobrado_g} g` : "—"}</b></div>
+                    <div>Preço/faixa da cotação: <b>{d.preco_cotado ? reaisFrete(d.preco_cotado) : reaisFrete(d.preco)} · {d.faixa_rotulo}</b></div>
+                    <div>Frete cheio: <b>{d.frete_cheio != null ? reaisFrete(d.frete_cheio) : "—"}</b></div>
+                    <div>Desconto da conta: <b>{d.desconto_pct != null ? `${d.desconto_pct}%` : "—"}</b></div>
+                    <div>Frete pago pelo vendedor: <b data-paiia-frete-pago>{reaisFrete(custoPago)}</b></div>
+                    <div>Origem: <b data-paiia-frete-origem>{registroFreteML.origem === ORIGEM_FRETE.ML ? `Mercado Livre (cotação da conta ${registroFreteML.conta})` : "ESTIMATIVA PAIIA"}</b>{d.cotado_em ? ` · ${new Date(d.cotado_em).toLocaleString("pt-BR")}` : ""}</div>
+                  </div>
+                );
+              })()}
+              <table data-paiia-frete-tabela style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, color: "#e2e8f0" }}>
+                <thead>
+                  <tr style={{ color: "#94a3b8", textAlign: "left" }}>
+                    <th style={{ padding: 4 }}></th><th style={{ padding: 4 }}>Preço</th><th style={{ padding: 4 }}>Frete ML</th><th style={{ padding: 4 }}>Comissão/custos</th><th style={{ padding: 4 }}>Resultado/margem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linhasTabela(registroFreteML).map((l) => (
+                    <tr key={l.rotulo} data-paiia-frete-linha={l.rotulo} style={{ borderTop: "1px solid #1e293b" }}>
+                      <td style={{ padding: 4 }}>{l.rotulo}</td>
+                      <td style={{ padding: 4 }}><b>{reaisFrete(l.preco)}</b></td>
+                      <td style={{ padding: 4 }}>{reaisFrete(l.frete)}{l.origem === ORIGEM_FRETE.ESTIMATIVA ? " (estimativa)" : ""}</td>
+                      <td style={{ padding: 4 }}>{reaisFrete(l.custosSemFrete)}</td>
+                      <td style={{ padding: 4, color: l.resultado >= 0 ? "#86efac" : "#fca5a5" }}>{reaisFrete(l.resultado)} ({String(l.margemPct).replace(".", ",")}%)</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {registroFreteML.sugestao && (
+                <div data-paiia-frete-sugestao style={{ marginTop: 8, fontSize: 13, color: registroFreteML.sugestao.vantajosa ? "#fde68a" : "#94a3b8" }}>
+                  💡 Perto do limite de {reaisFrete(registroFreteML.sugestao.limite)}: {registroFreteML.sugestao.texto}
+                  {registroFreteML.sugestao.vantajosa && (
+                    <button type="button" data-paiia-usar-sugestao onClick={() => aplicarPrecoSugerido(registroFreteML.sugestao.alternativa.preco)} style={{ ...botaoFreteML, marginLeft: 8, padding: "4px 10px" }}>
+                      Usar {reaisFrete(registroFreteML.sugestao.alternativa.preco)} (depois recalcule)
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </section>
+        )}
+
         <section id="na-etapa-preco-frete" style={centralInteligenciaAnuncioStyle}>
           <BotaoVoltarEtapaNA alvo="na-etapa-dados-tecnicos">← Voltar aos Dados técnicos</BotaoVoltarEtapaNA>
           <div style={centralInteligenciaCabecalho}>
@@ -5462,6 +5649,8 @@ marcarAnuncioPronto({
 
   <button
     type="button"
+    data-paiia-frete-manual-antigo
+    hidden={canalVenda === "mercado_livre"}
     onClick={() =>
       setMostrarCalculoFreteML(
         (atual) => !atual
@@ -5490,7 +5679,7 @@ marcarAnuncioPronto({
       : "Quero calcular meu frete Mercado Livre"}
   </button>
 
-  {mostrarCalculoFreteML && (
+  {mostrarCalculoFreteML && canalVenda !== "mercado_livre" && (
     <div
       style={{
         width: "100%",
@@ -5645,14 +5834,18 @@ marcarAnuncioPronto({
   Frete
 
   <input
+    data-paiia-frete-precificacao
     value={fretePrecificacao}
-    onChange={(e) =>
+    readOnly={canalVenda === "mercado_livre"}
+    title={canalVenda === "mercado_livre" ? "Frete da cotação do Mercado Livre (bloco 🚚 acima). Não é digitado." : ""}
+    onChange={(e) => {
+      if (canalVenda === "mercado_livre") return;
       setFretePrecificacao(
         e.target.value
-      )
-    }
+      );
+    }}
     placeholder="0,00"
-    style={campoPrecificacaoAppia}
+    style={canalVenda === "mercado_livre" ? { ...campoPrecificacaoAppia, opacity: 0.8, cursor: "not-allowed" } : campoPrecificacaoAppia}
   />
 </label>
 
@@ -8225,4 +8418,6 @@ function BotaoVoltarEtapaNA({ alvo, children }) {
     </button>
   );
 }
+const botaoFreteML = { padding: "8px 14px", borderRadius: "10px", border: "1px solid #475569", background: "#0f172a", color: "#e2e8f0", cursor: "pointer", fontSize: "13px", fontWeight: 700 };
+const ROTULO_MODALIDADE_FRETE = { xd_drop_off: "Agências Mercado Livre", drop_off: "Correios", cross_docking: "Coleta", self_service: "Flex", fulfillment: "Full" };
 const botaoEtapaNA = { padding: "5px 10px", borderRadius: "8px", border: "1px solid #475569", background: "transparent", color: "#cbd5e1", cursor: "pointer", fontSize: "12px" };

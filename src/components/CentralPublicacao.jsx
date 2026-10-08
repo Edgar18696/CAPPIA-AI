@@ -538,7 +538,7 @@ export default function CentralPublicacao({
       // Dados técnicos (uma fonte): tipo de veículo e peso/medidas da ficha.
       tipoVeiculo: anuncio?.tipoVeiculo || "",
       ...(anuncio?.embalagem ? { embalagem: anuncio.embalagem } : {}),
-      ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}),
+      ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}), ...(anuncio?.freteML ? { freteML: anuncio.freteML } : {}),
       fichaIdPAIIA:
         anuncio?.fichaIdPAIIA || "",
     };
@@ -645,7 +645,7 @@ export default function CentralPublicacao({
       // Dados técnicos (uma fonte): tipo de veículo e peso/medidas da ficha.
       tipoVeiculo: anuncio?.tipoVeiculo || "",
       ...(anuncio?.embalagem ? { embalagem: anuncio.embalagem } : {}),
-      ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}),
+      ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}), ...(anuncio?.freteML ? { freteML: anuncio.freteML } : {}),
       fichaIdPAIIA:
         anuncio?.fichaIdPAIIA || "",
     };
@@ -702,7 +702,7 @@ export default function CentralPublicacao({
             // Dados técnicos (uma fonte): tipo de veículo e peso/medidas da ficha.
             tipoVeiculo: anuncio?.tipoVeiculo || "",
             ...(anuncio?.embalagem ? { embalagem: anuncio.embalagem } : {}),
-            ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}),
+            ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}), ...(anuncio?.freteML ? { freteML: anuncio.freteML } : {}),
             fichaIdPAIIA:
               anuncio?.fichaIdPAIIA || "",
           })
@@ -768,6 +768,7 @@ export default function CentralPublicacao({
         // Dados técnicos da MESMA ficha voltam para o Novo Anúncio.
         tipoVeiculo: anuncio?.tipoVeiculo || "",
         edicoesDadosTecnicos: anuncio?.edicoes || {},
+        ...(anuncio?.freteML ? { freteML: anuncio.freteML } : {}),
         ...(camposNovoAnuncioDaMedida(anuncio?.embalagem) || {}),
         fichaIdPAIIA:
           anuncio?.fichaIdPAIIA || "",

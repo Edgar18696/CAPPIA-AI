@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
+import { conferirCotacao, faixaDoPreco, reais as reaisFrete } from "../services/fretePrecificacao";
 import {
   AVISO_FORA_DO_LIMITE,
   AVISO_PERMANENTE,
@@ -79,7 +80,7 @@ function medidaDoBling(p) {
 
 const VAZIO = { peso_g: "", comprimento_cm: "", largura_cm: "", altura_cm: "" };
 
-export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, onChange, contaML, semTitulo = false, valorInicial = null }) {
+export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, onChange, contaML, semTitulo = false, valorInicial = null, registroFrete = null }) {
   // Estado já conferido nesta Conferência (ficha persistente): ao voltar da
   // Central/atualizar a tela, os campos e a confirmação continuam como estavam.
   const inicialCompleto = medidaCompleta(valorInicial?.medida);
@@ -97,7 +98,8 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
   const [bling, setBling] = useState(null);
   const [config, setConfig] = useState((inicialCompleto && valorInicial?.config_embalagem) || CONFIG_EMBALAGEM_PADRAO);
   const [form, setForm] = useState(formInicial);
-  const [modalidade, setModalidade] = useState((inicialCompleto && valorInicial?.modalidade) || "");
+  // Modalidade: a da cotação da precificação (registro único) quando houver.
+  const [modalidade, setModalidade] = useState((inicialCompleto && valorInicial?.modalidade) || registroFrete?.modalidade || "");
   const [simulacao, setSimulacao] = useState(null);
   const [confirmacao, setConfirmacao] = useState(() =>
     inicialCompleto && valorInicial?.confirmacao?.ok ? valorInicial.confirmacao : null
@@ -336,6 +338,17 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
   const valorPesoML = sim ? formatarPeso(sim.peso_considerado_g) : calculando ? "calculando..." : "—";
   const valorFrete = sim ? `${formatarReais(sim.custo_vendedor)} por envio` : calculando ? "calculando..." : simulacaoFalhou ? "não disponível" : "—";
   const podeConfirmar = completa && simulacaoValida && !ocupado && limites?.dentro !== false && !confirmadoAtual;
+  // Conferência ⑥ NÃO é outro cálculo: o frete é o da PRECIFICAÇÃO
+  // (registro único). A leitura do ML aqui só confere se continua igual.
+  const freteRegistro = registroFrete?.final || null;
+  const conferenciaFrete = (() => {
+    if (!registroFrete) return { estado: "sem_registro", texto: "Sem cotação de frete da precificação: volte ao Novo Anúncio (🚚 Frete Mercado Livre) e cote." };
+    if (!freteRegistro) return { estado: "sem_final", texto: "A precificação ainda não cotou o preço final: volte ao Novo Anúncio e recalcule." };
+    if (!sim) return { estado: "aguardando", texto: "" };
+    if (faixaDoPreco(preco) !== faixaDoPreco(freteRegistro.preco_cotado)) return { estado: "diferente", texto: "O preço desta Conferência está em outra faixa de frete: volte ao Novo Anúncio e recalcule a precificação." };
+    const c = conferirCotacao({ registro: registroFrete, nova: { ok: true, custo_vendedor: sim.custo_vendedor, peso_cobrado_g: sim.peso_considerado_g } });
+    return c.ok ? { estado: "igual", texto: "✔ Mercado Livre conferido agora: igual ao frete da precificação." } : { estado: "diferente", texto: `⚠ ${c.motivo}` };
+  })();
 
   return (
     <div data-paiia-peso-embalagem style={bloco}>
@@ -376,7 +389,13 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
 
       <div data-paiia-resumo-envio style={resumoEnvio}>
         <div style={linhaResumo}><span>Peso considerado pelo ML</span><b data-paiia-peso-ml>{valorPesoML}</b></div>
-        <div style={linhaResumo}><span>Frete estimado</span><b data-paiia-frete-estimado>{valorFrete}</b></div>
+        <div style={linhaResumo}><span>Frete da precificação</span><b data-paiia-frete-precificacao-conf>{freteRegistro ? `${reaisFrete(freteRegistro.custo_vendedor)} por envio (${freteRegistro.origem === "mercado_livre" ? "cotação ML" : "ESTIMATIVA PAIIA"}, ${freteRegistro.faixa_rotulo})` : "—"}</b></div>
+        <div style={linhaResumo}><span>Conferência do ML agora</span><b data-paiia-frete-estimado>{valorFrete}</b></div>
+        {conferenciaFrete.texto && (
+          <div data-paiia-frete-conferencia={conferenciaFrete.estado} style={{ ...linhaResumo, color: conferenciaFrete.estado === "igual" ? "#86efac" : "#fca5a5", fontWeight: 700 }}>
+            {conferenciaFrete.texto}
+          </div>
+        )}
       </div>
 
       {limites?.dentro === false && (

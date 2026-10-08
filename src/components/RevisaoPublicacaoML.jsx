@@ -24,6 +24,7 @@ import {
 } from "../services/anuncioPublicacaoService";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
+import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, reais as reaisFrete } from "../services/fretePrecificacao";
 import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
   lerAplicacoesAprovadas,
@@ -92,7 +93,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
+function conferir({ freteConf = null, campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
   const itens = [];
 
   // Condição: a APROVADA na ficha (novo/usado). Nunca assume "novo".
@@ -116,6 +117,12 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
   if (!ficha?.disponivel) itens.push({ item: "Ficha do anúncio", nivel: "erro", texto: ficha?.erro || "Base PAIIA indisponível: a conta de destino não pôde ser gravada." });
   else if (!ficha?.gravada) itens.push({ item: "Ficha do anúncio", nivel: "erro", texto: "Escolha a conta: ela é gravada na ficha deste anúncio antes de publicar." });
   else itens.push({ item: "Ficha do anúncio", nivel: "ok", texto: `Conta gravada na base PAIIA (anúncio ${String(ficha.anuncioId).slice(0, 8)}).` });
+  // Frete × precificação: só publica com cotação REAL do ML, atual e
+  // conferida de novo agora (mesma conta, peso, medidas, modalidade, tipo,
+  // categoria e faixa de preço). Desatualizado/estimativa/erro = bloqueia.
+  if (!freteConf || freteConf.carregando) itens.push({ item: "Frete/precificação", nivel: "erro", texto: "Conferindo no Mercado Livre o frete usado na precificação..." });
+  else if (!freteConf.ok) itens.push({ item: "Frete/precificação", nivel: "erro", texto: `FRETE/PRECIFICAÇÃO: ${freteConf.motivo} Volte ao Novo Anúncio (🚚 Frete Mercado Livre) e recalcule; a publicação fica bloqueada até nova cotação real.` });
+  else itens.push({ item: "Frete/precificação", nivel: "ok", texto: freteConf.texto });
   // (O MLB de OUTRA ficha deste código nesta conta é conferido abaixo, na
   //  "Duplicidade na base PAIIA", pela situação REAL no Mercado Livre.)
   // SKU oficial (SKU específico ou o próprio código da peça).
@@ -866,6 +873,15 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         return;
       }
     }
+    // Frete × precificação: conferido de novo NA HORA do clique.
+    const freteAgora = await conferirFretePublicacao();
+    setFreteConf(freteAgora);
+    if (!freteAgora.ok) {
+      setResultado({ ok: false, erro: `Publicação BLOQUEADA: frete/precificação — ${freteAgora.motivo}` });
+      setArmado(false);
+      setOcupado("");
+      return;
+    }
     // Proteção dupla, conferida de novo NA HORA do clique (sem cache).
     const base = await consultarDuplicidadeBase(contaEscolhida);
     setDuplicidadeBase(base);
@@ -1002,6 +1018,41 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }
 
   const contaOk = Boolean(contaEscolhida) && conexao?.ok && conexao.conectado && conexao.pertence_ao_usuario && String(conexao.ml_user_id) === String(contaEscolhida);
+  // FRETE × PRECIFICAÇÃO: o registro único da ficha (freteML) precisa valer
+  // para ESTA conta, peso, medidas, modalidade, tipo, categoria e faixa de
+  // preço; e o ML, consultado de novo agora, precisa cotar igual.
+  const [freteConf, setFreteConf] = useState(null);
+  async function conferirFretePublicacao() {
+    const registro = anuncio?.freteML || null;
+    const s = situacaoFrete({
+      registro,
+      atual: {
+        conta: contaEscolhida,
+        medida: logistica?.medida,
+        modalidade: logistica?.modalidade || registro?.modalidade,
+        categoria: campos.categoria_id,
+        tipoAnuncio: campos.tipoAnuncio,
+        preco: campos.preco,
+      },
+    });
+    if (s.estado !== "ok") return { ok: false, motivo: s.motivos.join("; ").replace(/\.*$/, ".") };
+    const params = parametrosCotacao({ ...registro, conta: contaEscolhida, categoria: campos.categoria_id || registro.categoria });
+    const nova = await cotarNoPreco({ params, preco: campos.preco, consultar: (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, contaEscolhida) });
+    const c = conferirCotacao({ registro, nova });
+    if (!c.ok) return { ok: false, motivo: c.motivo };
+    return { ok: true, texto: `Frete conferido agora no Mercado Livre: ${reaisFrete(nova.custo_vendedor)} (peso considerado ${nova.peso_cobrado_g} g, ${registro.final.faixa_rotulo}) — igual ao usado na precificação.` };
+  }
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      if (ativo) setFreteConf({ carregando: true });
+      if (!contaOk) return;
+      const r = await conferirFretePublicacao();
+      if (ativo) setFreteConf(r);
+    })();
+    return () => { ativo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contaOk, contaEscolhida, campos.preco, campos.tipoAnuncio, campos.categoria_id]);
   useEffect(() => {
     setDuplicidadeML(null);
     setDuplicidadeBase(null);
@@ -1015,7 +1066,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }, [contaOk, contaEscolhida]);
 
   const conferencia = conferir({
-    campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
+    freteConf, campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
     descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoPub, compatTexto: anuncio?.compatibilidades,
     condicaoEnvio: dadosAnuncio.condicao, semCompatConfirmada: anuncio?.semCompatibilidadeConfirmada === true,
     semCompatAutorizadaPublicacao: semCompatAut.autorizado,
