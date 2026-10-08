@@ -327,12 +327,14 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
       const decisaoBase = atual.anuncio.dados_conferencia?.base_paiia || null;
       // Dados do Novo Anúncio (mesma ficha) também nunca se perdem.
       const novoAnuncio = atual.anuncio.dados_conferencia?.novo_anuncio || null;
+      // Autorização "publicar sem compatibilidade" (dada na Publicação) também fica.
+      const semCompat = atual.anuncio.dados_conferencia?.publicacao_sem_compatibilidade || null;
       const { error } = await supabase
         .from(T_ANUNCIOS)
         .update({
           titulo: titulo || null,
           status_fluxo: "conferencia_aprovada",
-          dados_conferencia: { ...dadosComVersao, ...(decisaoBase ? { base_paiia: decisaoBase } : {}), ...(novoAnuncio ? { novo_anuncio: novoAnuncio } : {}) },
+          dados_conferencia: { ...dadosComVersao, ...(decisaoBase ? { base_paiia: decisaoBase } : {}), ...(novoAnuncio ? { novo_anuncio: novoAnuncio } : {}), ...(semCompat ? { publicacao_sem_compatibilidade: semCompat } : {}) },
           updated_at: agora,
         })
         .eq("id", anuncioId);
@@ -391,7 +393,7 @@ export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConf
           status_fluxo: aprovada ? "conferencia_aprovada" : "rascunho",
           // Decisão da Base PAIIA (gravada à parte) e os dados do Novo
           // Anúncio (mesma ficha) nunca são perdidos.
-          dados_conferencia: { ...(dadosConferencia || {}), ...(antigos.base_paiia ? { base_paiia: antigos.base_paiia } : {}), ...(antigos.novo_anuncio ? { novo_anuncio: antigos.novo_anuncio } : {}) },
+          dados_conferencia: { ...(dadosConferencia || {}), ...(antigos.base_paiia ? { base_paiia: antigos.base_paiia } : {}), ...(antigos.novo_anuncio ? { novo_anuncio: antigos.novo_anuncio } : {}), ...(antigos.publicacao_sem_compatibilidade ? { publicacao_sem_compatibilidade: antigos.publicacao_sem_compatibilidade } : {}) },
           updated_at: agora,
         })
         .eq("id", anuncioId);
@@ -472,6 +474,34 @@ export async function salvarCompatibilidadesML({ anuncioId, aplicacoes = [], com
     .eq("id", anuncioId);
   if (error) return falha(error);
   return { ok: true, compatibilidades_ml };
+}
+
+/**
+ * "Publicar sem compatibilidade — vou cadastrar manualmente depois":
+ * autorização EXPLÍCITA do usuário, gravada na ficha (sobrevive a F5/Voltar).
+ * Grava SÓ a chave publicacao_sem_compatibilidade: não toca nos dados da
+ * Conferência, na aprovação, nas compatibilidades nem na versão (salvo_em).
+ * Ficha já publicada não é alterada.
+ */
+export async function registrarPublicacaoSemCompatibilidade({ anuncioId, autorizado }) {
+  if (!anuncioId) return { ok: false, erro: "Sem a ficha gravada na base PAIIA." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  if (publicacaoExiste(atual.anuncio.publicacao)) return { ok: false, erro: "Esta ficha já foi publicada: não é alterada." };
+  const dados = atual.anuncio.dados_conferencia || {};
+  const registro = autorizado
+    ? { autorizado: true, autorizado_em: new Date().toISOString(), motivo: "cadastro manual da compatibilidade no Mercado Livre depois da publicação" }
+    : { autorizado: false, revogado_em: new Date().toISOString() };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, publicacao_sem_compatibilidade: registro } })
+    .eq("id", anuncioId)
+    .eq("updated_at", atual.anuncio.updated_at);
+  if (error) return falha(error);
+  const relida = await obterAnuncio(anuncioId);
+  const gravado = relida.ok ? relida.anuncio.dados_conferencia?.publicacao_sem_compatibilidade : null;
+  if (!gravado || gravado.autorizado !== Boolean(autorizado)) return { ok: false, erro: "A ficha mudou ao mesmo tempo: a autorização não foi gravada. Tente de novo." };
+  return { ok: true, registro: gravado };
 }
 
 /** Vínculo com o produto criado no Bling (após a criação autorizada). */

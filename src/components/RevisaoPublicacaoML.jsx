@@ -16,6 +16,7 @@ import {
   pendenciaPublicacao,
   publicacaoExiste,
   salvarCompatibilidadesML,
+  registrarPublicacaoSemCompatibilidade,
   registrarMLBPublicado,
   salvarRegistroIntegracaoBling,
 } from "../services/anuncioPublicacaoService";
@@ -89,7 +90,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false }) {
+function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
   const itens = [];
 
   // Condição: a APROVADA na ficha (novo/usado). Nunca assume "novo".
@@ -98,9 +99,13 @@ function conferir({ campos, quantidadeConfirmada = false, preparo, validacao, es
 
   // Sem aplicação estruturada = anúncio SEM compatibilidade no ML: bloqueia,
   // salvo confirmação explícita "publicar sem compatibilidade" na Conferência.
-  const sitCompat = situacaoCompatibilidade({ aplicacoes, descricao, semCompatibilidadeConfirmada: semCompatConfirmada });
+  const sitCompat = situacaoCompatibilidade({ aplicacoes, descricao, semCompatibilidadeConfirmada: semCompatConfirmada || semCompatAutorizadaPublicacao });
   if (sitCompat.bloqueia) {
-    itens.push({ item: "Compatibilidades", nivel: "erro", texto: `${sitCompat.soNaDescricao ? TEXTO_VEICULOS_SO_NA_DESCRICAO : TEXTO_SEM_APLICACAO} Volte à Conferência para cadastrar as aplicações (ou marcar "Publicar sem compatibilidade").` });
+    // semCompatOpcao: este é o ÚNICO bloqueio que a opção "Publicar sem
+    // compatibilidade — vou cadastrar manualmente depois" pode liberar.
+    itens.push({ item: "Compatibilidades", nivel: "erro", semCompatOpcao: true, texto: `${sitCompat.soNaDescricao ? TEXTO_VEICULOS_SO_NA_DESCRICAO : TEXTO_SEM_APLICACAO} Volte à Conferência para cadastrar as aplicações (ou marcar "Publicar sem compatibilidade").` });
+  } else if (sitCompat.semAplicacao && semCompatAutorizadaPublicacao && !semCompatConfirmada) {
+    itens.push({ item: "Compatibilidades", nivel: "aviso", texto: "Publicação SEM compatibilidade, autorizada por você na Publicação (cadastro manual no Mercado Livre depois). Nenhum veículo será vinculado agora." });
   } else if (sitCompat.semAplicacao) {
     itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `Publicação SEM compatibilidade, confirmada explicitamente na Conferência.${sitCompat.soNaDescricao ? " Atenção: a descrição cita veículos." : ""}` });
   }
@@ -290,6 +295,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   const [contaEscolhida, setContaEscolhidaLocal] = useState("");
   const [ficha, setFicha] = useState({ carregando: true, disponivel: true, gravada: false, anuncioId: anuncioId || "", erro: "", outros: [] });
   const [gravandoConta, setGravandoConta] = useState(false);
+  // "Publicar sem compatibilidade — vou cadastrar manualmente depois":
+  // autorização gravada NA FICHA (lida da base: F5/Voltar não volta a bloquear).
+  const [semCompatAut, setSemCompatAut] = useState({ autorizado: false, gravando: false, erro: "" });
 
   // Abre a ficha: pelo ID do anúncio (este computador já a conhece) ou lista
   // as fichas existentes deste código para o usuário continuar a certa.
@@ -318,6 +326,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           return;
         }
         if (r.ok) {
+          setSemCompatAut((s) => ({ ...s, autorizado: r.anuncio.dados_conferencia?.publicacao_sem_compatibilidade?.autorizado === true }));
           const conta = String(r.anuncio.conta_destino_ml_user_id || "");
           setContaEscolhidaLocal(conta);
           onContaDestino?.(conta);
@@ -993,10 +1002,22 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicado, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
     descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoPub, compatTexto: anuncio?.compatibilidades,
     condicaoEnvio: dadosAnuncio.condicao, semCompatConfirmada: anuncio?.semCompatibilidadeConfirmada === true,
+    semCompatAutorizadaPublicacao: semCompatAut.autorizado,
   });
   // Ficha não salva / conflito de versões / Conferência invalidada: bloqueia.
   if (bloqueioFicha) conferencia.unshift({ item: "Ficha salva na base", nivel: "erro", texto: bloqueioFicha });
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
+  // A opção só aparece quando Compatibilidades (sem aplicação) é o ÚNICO
+  // bloqueio. Ela libera exclusivamente esse item; nada mais é aprovado.
+  const soCompatPendente = bloqueios.length > 0 && bloqueios.every((b) => b.semCompatOpcao);
+  const mostrarOpcaoSemCompat = Boolean(ficha.anuncioId) && !resultado?.publicado && (soCompatPendente || semCompatAut.autorizado);
+  async function alterarSemCompat(autorizado) {
+    if (!ficha.anuncioId || semCompatAut.gravando) return;
+    setSemCompatAut((s) => ({ ...s, gravando: true, erro: "" }));
+    setArmado(false);
+    const r = await registrarPublicacaoSemCompatibilidade({ anuncioId: ficha.anuncioId, autorizado });
+    setSemCompatAut((s) => (r.ok ? { autorizado: r.registro.autorizado === true, gravando: false, erro: "" } : { ...s, gravando: false, erro: r.erro || "Não foi possível gravar na ficha." }));
+  }
   // Ordem do fluxo: quantidade confirmada e produto no Bling ANTES de validar no ML.
   const blingPronto = Boolean(estoque?.encontrado && !estoque?.ambiguo);
   const modelosForaDescricao = conferencia.find((c) => c.item === "Modelos na descrição");
@@ -1470,6 +1491,25 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                   ? "⚠ Clique de novo para CONFIRMAR a publicação"
                   : "🚀 Publicar no Mercado Livre"}
             </button>
+            {mostrarOpcaoSemCompat && (
+              <div data-paiia-opcao-sem-compat style={{ margin: "10px 0", padding: "10px", borderRadius: 8, border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: 13 }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", fontWeight: "bold" }}>
+                  <input
+                    type="checkbox"
+                    data-paiia-autorizar-sem-compat
+                    checked={semCompatAut.autorizado}
+                    disabled={semCompatAut.gravando}
+                    onChange={(e) => alterarSemCompat(e.target.checked)}
+                  />
+                  Publicar sem compatibilidade — vou cadastrar manualmente depois
+                </label>
+                <div style={{ marginTop: 4 }}>
+                  O anúncio sai SEM veículos vinculados no Mercado Livre. As compatibilidades da ficha não são alteradas e nenhum outro item é liberado por esta opção.
+                  {semCompatAut.gravando ? " ⏳ Gravando na ficha..." : semCompatAut.autorizado ? " ✓ Autorização gravada na ficha." : ""}
+                </div>
+                {semCompatAut.erro && <div style={{ color: "#fca5a5", marginTop: 4 }}>❌ {semCompatAut.erro}</div>}
+              </div>
+            )}
             {bloqueios.length > 0 && <p style={erro}>Corrija antes de publicar: {bloqueios.map((b) => b.item).join(", ")}.</p>}
             {!validacao?.valido && <p style={info}>Valide os dados antes de publicar.</p>}
             {resultado?.ok && resultado.publicado && (() => {
