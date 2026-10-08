@@ -40,7 +40,7 @@ export default function PainelIntegracaoBling({ registro, verificando = false, o
 
       <div data-paiia-estado-bling style={{ ...linha, color: COR[estado] || "#e2e8f0", fontWeight: 700 }}>
         {integrado ? "✅ " : estado === ESTADO.AGUARDANDO ? "⏳ " : "⚠ "}
-        {estado === ESTADO.AGUARDANDO ? "Falta trazer este anúncio para o Bling" : TEXTO_ESTADO[estado]}
+        {estado === ESTADO.AGUARDANDO ? "Falta vincular o anúncio ao produto no Bling (trazer este MLB para o Bling)" : TEXTO_ESTADO[estado]}
       </div>
       {estado === ESTADO.PRODUTO_INCORRETO && (
         <div style={{ ...sub, color: "#fca5a5" }}>

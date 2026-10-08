@@ -27,6 +27,8 @@ import useNovoAnuncio, {
 } from "../hooks/useNovoAnuncio";
 import { deveIniciarNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 import useFichaNovoAnuncio from "../hooks/useFichaNovoAnuncio";
+import { OPCOES_TIPO_VEICULO, TIPO_CARRO, normalizarTipoVeiculo } from "../services/tipoVeiculoAnuncio";
+import { kgParaG, medidaDoNovoAnuncio, textoMedida } from "../services/dadosTecnicosAnuncio";
 import {
   gerarAnuncioV2,
 } from "../services/inteligencia";
@@ -855,6 +857,34 @@ const [larguraFreteML, setLarguraFreteML] =
 const [comprimentoFreteML, setComprimentoFreteML] =
   useState("");
 
+// DADOS TÉCNICOS (uma fonte só): tipo de veículo da ficha (anúncio novo =
+// Carro/Caminhonete) e o MESMO peso/medidas do cálculo de frete.
+const [tipoVeiculoNA, setTipoVeiculoNA] =
+  useState(TIPO_CARRO);
+// Quando o usuário editou cada dado técnico aqui (a Conferência usa isso
+// para saber que houve edição real depois dela).
+const [edicoesDadosTecnicos, setEdicoesDadosTecnicos] =
+  useState({});
+function alterarDadoTecnico(campo, valor) {
+  const agora = new Date().toISOString();
+  if (campo === "tipoVeiculo") {
+    setTipoVeiculoNA(normalizarTipoVeiculo(valor) || TIPO_CARRO);
+    setEdicoesDadosTecnicos((e) => ({ ...e, tipoVeiculo: agora }));
+    return;
+  }
+  const setters = { pesoFreteML: setPesoFreteML, alturaFreteML: setAlturaFreteML, larguraFreteML: setLarguraFreteML, comprimentoFreteML: setComprimentoFreteML };
+  setters[campo]?.(valor);
+  setEdicoesDadosTecnicos((e) => ({ ...e, embalagem: agora }));
+}
+function zerarDadosTecnicos() {
+  setTipoVeiculoNA(TIPO_CARRO);
+  setEdicoesDadosTecnicos({});
+  setPesoFreteML("");
+  setAlturaFreteML("");
+  setLarguraFreteML("");
+  setComprimentoFreteML("");
+}
+
 /*
  * A modalidade do anúncio agora faz parte da precificação.
  * Usamos uma comissão-base sugerida e mantemos o campo
@@ -1553,6 +1583,10 @@ function formatarPrecoAppia(
   const [dimensoesManuaisDeEstimativa, setDimensoesManuaisDeEstimativa] =
     useState(null);
   const ultimoFreteAutoRef = useRef("");
+  const inputFotosComputadorRef = useRef(null);
+  const [envioFotosPC, setEnvioFotosPC] = useState({ ocupado: false, texto: "", notas: [], erros: [] });
+  // Salvar a ficha antes de sair do Novo Anúncio pela seta "Voltar".
+  const [saidaNA, setSaidaNA] = useState({ salvando: false, erro: "" });
   const [avisoGravacaoFrete, setAvisoGravacaoFrete] = useState("");
 
   function conferirGravacaoFrete(resultadoGravacao) {
@@ -1648,18 +1682,19 @@ function formatarPrecoAppia(
           setDimensoesFrete(resultado);
           setStatusFreteAuto("dimensoes_ok");
 
-          // Deixa os dados à vista no cálculo manual, para correção.
-          setPesoFreteML(
-            formatarNumeroFrete(resultado.peso_g / 1000, 3)
+          // Deixa os dados à vista no cálculo manual, para correção — SÓ em
+          // campo vazio: o que a ficha/usuário já tem nunca é sobrescrito.
+          setPesoFreteML((atual) =>
+            String(atual || "").trim() ? atual : formatarNumeroFrete(resultado.peso_g / 1000, 3)
           );
-          setComprimentoFreteML(
-            String(resultado.comprimento_cm).replace(".", ",")
+          setComprimentoFreteML((atual) =>
+            String(atual || "").trim() ? atual : String(resultado.comprimento_cm).replace(".", ",")
           );
-          setLarguraFreteML(
-            String(resultado.largura_cm).replace(".", ",")
+          setLarguraFreteML((atual) =>
+            String(atual || "").trim() ? atual : String(resultado.largura_cm).replace(".", ",")
           );
-          setAlturaFreteML(
-            String(resultado.altura_cm).replace(".", ",")
+          setAlturaFreteML((atual) =>
+            String(atual || "").trim() ? atual : String(resultado.altura_cm).replace(".", ",")
           );
 
           // Só a medida própria do usuário chega aqui: nada é gravado
@@ -1819,6 +1854,7 @@ function formatarPrecoAppia(
     setComprimentoFreteML(valores.comprimento);
     setLarguraFreteML(valores.largura);
     setAlturaFreteML(valores.altura);
+    setEdicoesDadosTecnicos((e) => ({ ...e, embalagem: new Date().toISOString() }));
     setDimensoesManuaisDeEstimativa(valores);
     setMostrarCalculoFreteML(true);
   }
@@ -2028,6 +2064,8 @@ setVeioDaCentralTecnica(true);
         vendasMediasMes, outrosCustosDetalhados,
       },
       embalagem: { pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML },
+      tipoVeiculo: tipoVeiculoNA,
+      edicoes: edicoesDadosTecnicos,
     },
   });
 
@@ -2054,6 +2092,8 @@ setVeioDaCentralTecnica(true);
     alturaFreteML,
     larguraFreteML,
     comprimentoFreteML,
+    tipoVeiculo: tipoVeiculoNA,
+    edicoesDadosTecnicos,
     mostrarAplicacoes,
   };
 
@@ -2085,6 +2125,10 @@ setVeioDaCentralTecnica(true);
     texto("alturaFreteML", setAlturaFreteML);
     texto("larguraFreteML", setLarguraFreteML);
     texto("comprimentoFreteML", setComprimentoFreteML);
+    // Tipo de veículo DESTA ficha (nunca de outro anúncio); sem valor = padrão.
+    setTipoVeiculoNA(normalizarTipoVeiculo(dados.tipoVeiculo) || TIPO_CARRO);
+    const ed = dados.edicoesDadosTecnicos || dados.edicoes;
+    setEdicoesDadosTecnicos(ed && typeof ed === "object" ? { ...ed } : {});
 
     if (dados.mostrarCustoDetalhado === true) {
       setMostrarCustoDetalhado(true);
@@ -2704,6 +2748,8 @@ async function buscarEMontarAnuncio() {
   // anterior continua salva na base e aparece na Central).
   if (!fichaNovo.fichaServeParaCodigo(codigoFinal)) {
     fichaNovo.novaFicha();
+    // Outro anúncio: nada técnico do anterior (tipo, peso, medidas) passa.
+    zerarDadosTecnicos();
   }
 
   setOem("");
@@ -3941,6 +3987,129 @@ Deseja publicar mesmo assim?`
     "centralPrecificacao"
   );
 }
+  // =====================================================
+  // 📁 FOTO PRONTA DO COMPUTADOR (Área de Trabalho, pastas...)
+  // Foto já em 1200×1200: enviada SEM alteração. Outro tamanho: ajustada para
+  // 1200×1200 (padrão do Mercado Livre) sem cortar, centralizada em fundo
+  // branco. O endereço público entra na MESMA lista de fotos e, com ela, na
+  // MESMA ficha da base (nenhuma ficha nova é criada pelo envio).
+  // =====================================================
+  async function prepararFotoPronta(arquivo) {
+    const endereco = URL.createObjectURL(arquivo);
+    try {
+      const img = await new Promise((ok, falha) => {
+        const i = new Image();
+        i.onload = () => ok(i);
+        i.onerror = () => falha(new Error("arquivo não é uma imagem válida"));
+        i.src = endereco;
+      });
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w === 1200 && h === 1200) {
+        return { blob: arquivo, tipo: arquivo.type || "image/jpeg", ajustada: false, w, h };
+      }
+      const tela = document.createElement("canvas");
+      tela.width = 1200;
+      tela.height = 1200;
+      const ctx = tela.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, 1200, 1200);
+      const escala = Math.min(1200 / w, 1200 / h);
+      const dw = Math.round(w * escala);
+      const dh = Math.round(h * escala);
+      ctx.drawImage(img, Math.round((1200 - dw) / 2), Math.round((1200 - dh) / 2), dw, dh);
+      const blob = await new Promise((ok) => tela.toBlob(ok, "image/jpeg", 0.92));
+      if (!blob) throw new Error("não foi possível preparar a imagem");
+      return { blob, tipo: "image/jpeg", ajustada: true, w, h };
+    } finally {
+      URL.revokeObjectURL(endereco);
+    }
+  }
+
+  // Navegação entre as etapas da MESMA página: só rola até o bloco (e guarda
+  // a etapa no endereço, para o F5 voltar a ela). Não grava, não limpa nada.
+  function irParaEtapaNA(alvo) {
+    try {
+      const url = new URL(window.location.href);
+      url.hash = alvo;
+      window.history.replaceState(window.history.state, "", url.toString());
+      document.getElementById(alvo)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {
+      // sem rolagem
+    }
+  }
+  // ← Voltar à Central: termina o salvamento da MESMA ficha antes de sair.
+  // Se não salvar, avisa e fica na tela (nada é perdido).
+  async function voltarCentralDoNovoAnuncio() {
+    if (saidaNA.salvando) return;
+    setSaidaNA({ salvando: true, erro: "" });
+    const r = await fichaNovo.salvarAgora();
+    if (!r.ok && !r.vazio && !r.fechada) {
+      setSaidaNA({ salvando: false, erro: r.erro || "falha ao salvar" });
+      return;
+    }
+    setSaidaNA({ salvando: false, erro: "" });
+    setScreen?.("centralPublicacao");
+  }
+  // F5 / reabertura: volta para a etapa em que estava (#na-etapa-...).
+  useEffect(() => {
+    const alvo = String(window.location.hash || "").replace(/^#/, "");
+    if (!/^(na-etapa-|secao-fotos-anuncio)/.test(alvo)) return undefined;
+    const t = setTimeout(() => {
+      try {
+        document.getElementById(alvo)?.scrollIntoView({ block: "start" });
+      } catch {
+        // sem rolagem
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, []);
+
+  async function buscarFotosNoComputador(lista) {
+    const arquivos = Array.from(lista || []).filter((a) => /^image\/(jpeg|png|webp)$/i.test(a.type || ""));
+    const recusados = Array.from(lista || []).length - arquivos.length;
+    if (!arquivos.length) {
+      setEnvioFotosPC({ ocupado: false, texto: recusados ? "Escolha imagens JPG, PNG ou WEBP." : "", erros: [] });
+      return;
+    }
+    if (!usuario?.id) {
+      setEnvioFotosPC({ ocupado: false, texto: "Entre no PAIIA para enviar fotos.", erros: [] });
+      return;
+    }
+    const novas = [];
+    const erros = [];
+    const notas = [];
+    for (let i = 0; i < arquivos.length; i++) {
+      const arq = arquivos[i];
+      setEnvioFotosPC({ ocupado: true, texto: `⏳ Enviando ${i + 1} de ${arquivos.length}: ${arq.name}`, erros });
+      try {
+        const p = await prepararFotoPronta(arq);
+        const ext = p.tipo === "image/png" ? "png" : p.tipo === "image/webp" ? "webp" : "jpg";
+        const caminho = `${usuario.id}/prontas/1200x1200-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error } = await supabase.storage.from("imagens").upload(caminho, p.blob, { upsert: false, contentType: p.tipo });
+        if (error) throw new Error(error.message || "falha no envio");
+        const { data } = supabase.storage.from("imagens").getPublicUrl(caminho);
+        if (!data?.publicUrl) throw new Error("sem endereço público");
+        novas.push({ imagem_processada: data.publicUrl, imagem_original: data.publicUrl, origem: "computador", nome_arquivo: arq.name, created_at: new Date().toISOString() });
+        notas.push(p.ajustada ? `${arq.name}: ${p.w}×${p.h} → ajustada para 1200×1200 (sem cortar)` : `${arq.name}: já em 1200×1200 — enviada sem alteração`);
+      } catch (erro) {
+        erros.push(`${arq.name}: ${erro?.message || erro}`);
+      }
+    }
+    if (novas.length) {
+      setFotosAnuncio((atuais) => {
+        const lista = Array.isArray(atuais) ? atuais : [];
+        return [...lista, ...novas].map((f, ordem) => ({ ...f, ordem, capa: ordem === 0 }));
+      });
+    }
+    setEnvioFotosPC({
+      ocupado: false,
+      texto: `${novas.length} foto(s) do computador adicionada(s)${recusados ? ` · ${recusados} arquivo(s) ignorado(s) (não é imagem JPG/PNG/WEBP)` : ""}.`,
+      notas,
+      erros,
+    });
+  }
+
   function escolherFotosGaleria() {
   // =====================================================
   // PRESERVA AS FOTOS EM MEMÓRIA
@@ -4550,6 +4719,12 @@ marcarAnuncioPronto({
           auditoria ||
           dadosSalvos?.auditoria ||
           null,
+        // Dados técnicos (uma fonte): tipo de veículo e peso/medidas em g/cm.
+        tipoVeiculo: tipoVeiculoNA,
+        ...(medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML })
+          ? { embalagem: medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML }) }
+          : {}),
+        edicoes: edicoesDadosTecnicos,
         // MESMA ficha da base: a Conferência continua nela (não cria outra).
         fichaIdPAIIA: fichaIdAtual,
       })
@@ -4604,6 +4779,7 @@ marcarAnuncioPronto({
   function limparAnuncio() {
     // Anúncio novo: a ficha anterior continua salva na base (Central).
     fichaNovo.novaFicha();
+    zerarDadosTecnicos();
     setCodigo("");
     setOem("");
     setTitulo("");
@@ -4803,6 +4979,26 @@ marcarAnuncioPronto({
                   ? `💾 Ficha salva na base PAIIA (ID ${fichaNovo.fichaId.slice(0, 8)})${fichaNovo.status.em ? ` · ${new Date(fichaNovo.status.em).toLocaleTimeString("pt-BR")}` : ""}`
                   : "A ficha é criada na base PAIIA assim que houver o código da peça e algum dado do anúncio."}
         </p>
+        <nav data-paiia-etapas-novo-anuncio style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", margin: "0 0 12px" }}>
+          <button type="button" data-paiia-navegacao data-paiia-voltar-central-na onClick={voltarCentralDoNovoAnuncio} disabled={saidaNA.salvando} style={botaoEtapaNA}>
+            ← Voltar à Central de Publicação
+          </button>
+          <span style={{ color: "#64748b", fontSize: 12 }}>Ir para:</span>
+          {[["na-etapa-dados", "Dados da peça"], ["secao-fotos-anuncio", "Fotos"], ["na-etapa-dados-tecnicos", "Dados técnicos"], ["na-etapa-preco-frete", "Preço e frete"], ["na-etapa-finalizar", "Finalizar"]].map(([alvo, nome]) => (
+            <button key={alvo} type="button" data-paiia-navegacao data-paiia-ir-etapa={alvo} onClick={() => irParaEtapaNA(alvo)} style={botaoEtapaNA}>
+              {nome}
+            </button>
+          ))}
+        </nav>
+        {saidaNA.salvando && <p data-paiia-salvando-ao-sair style={{ color: "#bfdbfe", fontSize: 12 }}>⏳ Salvando a ficha antes de sair...</p>}
+        {saidaNA.erro && (
+          <p data-paiia-erro-ao-sair style={{ color: "#fca5a5", fontSize: 13 }}>
+            ❌ A ficha NÃO foi salva na base PAIIA: {saidaNA.erro} Os dados continuam nesta tela.{" "}
+            <button type="button" data-paiia-navegacao onClick={voltarCentralDoNovoAnuncio} style={botaoEtapaNA}>🔁 Tentar salvar de novo</button>{" "}
+            <button type="button" data-paiia-navegacao onClick={() => setSaidaNA({ salvando: false, erro: "" })} style={botaoEtapaNA}>Ficar nesta tela</button>
+          </p>
+        )}
+        <div id="na-etapa-dados">
         <DadosPeca
   codigo={codigo}
   setCodigo={setCodigo}
@@ -4827,6 +5023,7 @@ marcarAnuncioPronto({
       : ""
   }
 />
+        </div>
 
 <section
   id="secao-fotos-anuncio"
@@ -4840,6 +5037,7 @@ marcarAnuncioPronto({
     justifyContent: "flex-start",
   }}
 >
+  <BotaoVoltarEtapaNA alvo="na-etapa-dados">← Voltar aos Dados da peça</BotaoVoltarEtapaNA>
   <h3
     style={{
       ...tituloSecao,
@@ -4886,7 +5084,44 @@ marcarAnuncioPronto({
   >
     🎨 Escolher Banner
   </button>
+
+  <button
+    type="button"
+    data-paiia-buscar-foto-computador
+    onClick={() => inputFotosComputadorRef.current?.click()}
+    disabled={envioFotosPC.ocupado}
+    style={{
+      ...botaoEscuro,
+      minWidth: "310px",
+      padding: "16px 24px",
+      fontSize: "15px",
+      fontWeight: "bold",
+      border: "1px solid #22c55e",
+    }}
+  >
+    {envioFotosPC.ocupado ? "⏳ Enviando fotos..." : "📁 Buscar foto pronta no computador"}
+  </button>
+  <input
+    ref={inputFotosComputadorRef}
+    data-paiia-input-foto-computador
+    type="file"
+    accept="image/jpeg,image/png,image/webp"
+    multiple
+    style={{ display: "none" }}
+    onChange={(e) => {
+      const lista = e.target.files;
+      buscarFotosNoComputador(lista);
+      e.target.value = "";
+    }}
+  />
 </div>
+{(envioFotosPC.texto || envioFotosPC.erros?.length > 0) && (
+  <div data-paiia-envio-fotos-computador style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 12, textAlign: "center" }}>
+    <div>{envioFotosPC.texto}</div>
+    {(envioFotosPC.notas || []).map((n) => <div key={n} style={{ color: "#94a3b8", fontSize: 12 }}>{n}</div>)}
+    {(envioFotosPC.erros || []).map((n) => <div key={n} style={{ color: "#fca5a5", fontSize: 12 }}>❌ {n}</div>)}
+  </div>
+)}
 
   <div
     style={{
@@ -4943,7 +5178,50 @@ marcarAnuncioPronto({
   )}
 </section>
 
-        <section style={centralInteligenciaAnuncioStyle}>
+<section id="na-etapa-dados-tecnicos" data-paiia-dados-tecnicos style={{ ...secaoStyle, border: "1px solid #0ea5e9" }}>
+  <BotaoVoltarEtapaNA alvo="secao-fotos-anuncio">← Voltar às Fotos</BotaoVoltarEtapaNA>
+  <h3 style={tituloSecao}>🔩 Dados técnicos — tipo de veículo, peso e medidas</h3>
+  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "10px", width: "100%" }}>
+    <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+      Tipo de veículo
+      <select
+        data-paiia-na-tipo-veiculo
+        value={tipoVeiculoNA}
+        onChange={(e) => alterarDadoTecnico("tipoVeiculo", e.target.value)}
+        style={campoPrecificacaoAppia}
+      >
+        {OPCOES_TIPO_VEICULO.map((v) => (
+          <option key={v} value={v}>{v}</option>
+        ))}
+      </select>
+    </label>
+    <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+      Peso (kg){kgParaG(pesoFreteML) ? ` = ${kgParaG(pesoFreteML)} g` : ""}
+      <input data-paiia-na-peso value={pesoFreteML} onChange={(e) => alterarDadoTecnico("pesoFreteML", e.target.value)} placeholder="Ex.: 0,350" style={campoPrecificacaoAppia} />
+    </label>
+    <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+      Comprimento (cm)
+      <input data-paiia-na-comprimento value={comprimentoFreteML} onChange={(e) => alterarDadoTecnico("comprimentoFreteML", e.target.value)} placeholder="Ex.: 20" style={campoPrecificacaoAppia} />
+    </label>
+    <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+      Largura (cm)
+      <input data-paiia-na-largura value={larguraFreteML} onChange={(e) => alterarDadoTecnico("larguraFreteML", e.target.value)} placeholder="Ex.: 15" style={campoPrecificacaoAppia} />
+    </label>
+    <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
+      Altura (cm)
+      <input data-paiia-na-altura value={alturaFreteML} onChange={(e) => alterarDadoTecnico("alturaFreteML", e.target.value)} placeholder="Ex.: 8" style={campoPrecificacaoAppia} />
+    </label>
+  </div>
+  <p data-paiia-na-medida-resumo style={{ color: "#94a3b8", fontSize: 12, margin: "8px 0 0" }}>
+    {medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML })
+      ? `Embalagem: ${textoMedida(medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML }))}. `
+      : "Peso e medidas da embalagem ainda incompletos. "}
+    São os MESMOS valores do cálculo de frete (um só lugar): ficam na ficha e vão para a Conferência (⑥ Peso e Embalagem), o Mercado Livre e o Bling. Peso em kg aqui; na Conferência aparece em g.
+  </p>
+</section>
+
+        <section id="na-etapa-preco-frete" style={centralInteligenciaAnuncioStyle}>
+          <BotaoVoltarEtapaNA alvo="na-etapa-dados-tecnicos">← Voltar aos Dados técnicos</BotaoVoltarEtapaNA>
           <div style={centralInteligenciaCabecalho}>
             <div>
               <h3 style={centralInteligenciaTitulo}>
@@ -5245,11 +5523,12 @@ marcarAnuncioPronto({
         }}
       >
         <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
-          Peso (kg)
+          Peso (kg){kgParaG(pesoFreteML) ? ` = ${kgParaG(pesoFreteML)} g` : ""}
           <input
+            data-paiia-frete-peso
             value={pesoFreteML}
             onChange={(e) =>
-              setPesoFreteML(e.target.value)
+              alterarDadoTecnico("pesoFreteML", e.target.value)
             }
             placeholder="Ex.: 0,350"
             style={campoPrecificacaoAppia}
@@ -5259,9 +5538,10 @@ marcarAnuncioPronto({
         <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
           Altura (cm)
           <input
+            data-paiia-frete-altura
             value={alturaFreteML}
             onChange={(e) =>
-              setAlturaFreteML(e.target.value)
+              alterarDadoTecnico("alturaFreteML", e.target.value)
             }
             placeholder="Ex.: 8"
             style={campoPrecificacaoAppia}
@@ -5271,9 +5551,10 @@ marcarAnuncioPronto({
         <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
           Largura (cm)
           <input
+            data-paiia-frete-largura
             value={larguraFreteML}
             onChange={(e) =>
-              setLarguraFreteML(e.target.value)
+              alterarDadoTecnico("larguraFreteML", e.target.value)
             }
             placeholder="Ex.: 15"
             style={campoPrecificacaoAppia}
@@ -5283,9 +5564,10 @@ marcarAnuncioPronto({
         <label style={{ color: "#cbd5e1", fontSize: "12px" }}>
           Comprimento (cm)
           <input
+            data-paiia-frete-comprimento
             value={comprimentoFreteML}
             onChange={(e) =>
-              setComprimentoFreteML(e.target.value)
+              alterarDadoTecnico("comprimentoFreteML", e.target.value)
             }
             placeholder="Ex.: 20"
             style={campoPrecificacaoAppia}
@@ -7159,7 +7441,7 @@ const custoTotalVenda =
 })()}
         {diagnostico && (
           <section
-  id="secao-fotos-anuncio"
+  id="secao-diagnostico"
   style={secaoStyle}
 >
             <h3 style={tituloSecao}>
@@ -7282,7 +7564,8 @@ const custoTotalVenda =
         </div>
 
 
-        <section style={secaoStyle}>
+        <section id="na-etapa-finalizar" style={secaoStyle}>
+          <BotaoVoltarEtapaNA alvo="na-etapa-preco-frete">← Voltar ao Preço e frete</BotaoVoltarEtapaNA>
           <h3 style={tituloSecao}>
             ⑤ 📋 Finalizar
           </h3>
@@ -7918,3 +8201,28 @@ const resultadoPrecoAppia = {
   gap: "5px",
   textAlign: "center",
 };
+
+// Seta "← Voltar" entre as etapas do Novo Anúncio: só rola até a anterior.
+function BotaoVoltarEtapaNA({ alvo, children }) {
+  return (
+    <button
+      type="button"
+      data-paiia-navegacao
+      data-paiia-voltar-etapa={alvo}
+      onClick={() => {
+        try {
+          const url = new URL(window.location.href);
+          url.hash = alvo;
+          window.history.replaceState(window.history.state, "", url.toString());
+          document.getElementById(alvo)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch {
+          // sem rolagem
+        }
+      }}
+      style={{ ...botaoEtapaNA, display: "block", marginBottom: "10px" }}
+    >
+      {children}
+    </button>
+  );
+}
+const botaoEtapaNA = { padding: "5px 10px", borderRadius: "8px", border: "1px solid #475569", background: "transparent", color: "#cbd5e1", cursor: "pointer", fontSize: "12px" };

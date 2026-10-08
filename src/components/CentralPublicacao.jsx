@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Button from "./ui/Button";
 import { supabase } from "../supabase";
 import PainelFichasCentral from "./PainelFichasCentral";
+import { camposNovoAnuncioDaMedida } from "../services/dadosTecnicosAnuncio";
 import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 
 function formatarMoeda(valor) {
@@ -534,6 +535,10 @@ export default function CentralPublicacao({
       status:
         "rascunho_teste",
       // MESMA ficha da base (criada no Novo Anúncio).
+      // Dados técnicos (uma fonte): tipo de veículo e peso/medidas da ficha.
+      tipoVeiculo: anuncio?.tipoVeiculo || "",
+      ...(anuncio?.embalagem ? { embalagem: anuncio.embalagem } : {}),
+      ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}),
       fichaIdPAIIA:
         anuncio?.fichaIdPAIIA || "",
     };
@@ -637,6 +642,10 @@ export default function CentralPublicacao({
       status:
         "rascunho_teste",
       // MESMA ficha da base (criada no Novo Anúncio).
+      // Dados técnicos (uma fonte): tipo de veículo e peso/medidas da ficha.
+      tipoVeiculo: anuncio?.tipoVeiculo || "",
+      ...(anuncio?.embalagem ? { embalagem: anuncio.embalagem } : {}),
+      ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}),
       fichaIdPAIIA:
         anuncio?.fichaIdPAIIA || "",
     };
@@ -690,6 +699,10 @@ export default function CentralPublicacao({
               aplicacoes.length,
             status:
               "rascunho_teste",
+            // Dados técnicos (uma fonte): tipo de veículo e peso/medidas da ficha.
+            tipoVeiculo: anuncio?.tipoVeiculo || "",
+            ...(anuncio?.embalagem ? { embalagem: anuncio.embalagem } : {}),
+            ...(anuncio?.edicoes ? { edicoes: anuncio.edicoes } : {}),
             fichaIdPAIIA:
               anuncio?.fichaIdPAIIA || "",
           })
@@ -752,6 +765,10 @@ export default function CentralPublicacao({
             ? anuncio.clips
             : [],
         // Volta para a MESMA ficha da base.
+        // Dados técnicos da MESMA ficha voltam para o Novo Anúncio.
+        tipoVeiculo: anuncio?.tipoVeiculo || "",
+        edicoesDadosTecnicos: anuncio?.edicoes || {},
+        ...(camposNovoAnuncioDaMedida(anuncio?.embalagem) || {}),
         fichaIdPAIIA:
           anuncio?.fichaIdPAIIA || "",
         // Mais recente que o rascunho anterior: o Novo Anúncio abre com ele.

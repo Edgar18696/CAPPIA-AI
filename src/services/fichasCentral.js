@@ -8,6 +8,8 @@
 // ainda não estão prontas), cada uma com o seu estado.
 // =============================================================
 
+import { lojaBlingDaConta } from "./vinculoBlingPublicacao.js";
+
 export const ESTADO_CENTRAL = Object.freeze({
   EM_ANDAMENTO: "em_andamento",
   AGUARDANDO_CONFERENCIA: "aguardando_conferencia",
@@ -23,9 +25,9 @@ export const TEXTO_ESTADO_CENTRAL = Object.freeze({
   [ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA]: "Aguardando Conferência",
   [ESTADO_CENTRAL.CONFERENCIA_APROVADA]: "Conferência aprovada",
   [ESTADO_CENTRAL.PRONTO_PUBLICAR]: "Pronto para publicar",
-  [ESTADO_CENTRAL.PUBLICADO]: "Publicado",
-  [ESTADO_CENTRAL.AGUARDANDO_BLING]: "Aguardando integração Bling",
-  [ESTADO_CENTRAL.INTEGRADO_BLING]: "Integrado ao Bling",
+  [ESTADO_CENTRAL.PUBLICADO]: "Publicado no Mercado Livre",
+  [ESTADO_CENTRAL.AGUARDANDO_BLING]: "Aguardando Bling",
+  [ESTADO_CENTRAL.INTEGRADO_BLING]: "Integrado ao Bling · Fluxo concluído",
 });
 
 export const COR_ESTADO_CENTRAL = Object.freeze({
@@ -57,6 +59,10 @@ export function estadoFichaCentral(row) {
     const est = r.integracao_bling?.estado || "";
     if (est === "integrado") return ESTADO_CENTRAL.INTEGRADO_BLING;
     if (est && txt(r.integracao_bling?.mlb)) return ESTADO_CENTRAL.AGUARDANDO_BLING;
+    // Registro do Bling não gravado, mas a publicação tem MLB + produto Bling
+    // + loja Bling da conta: o fluxo NÃO terminou (falta o Bling).
+    const pub = r.publicacao || {};
+    if (txt(pub.mlb_id) && txt(pub.bling_produto_id) && lojaBlingDaConta(pub.ml_user_id)) return ESTADO_CENTRAL.AGUARDANDO_BLING;
     return ESTADO_CENTRAL.PUBLICADO;
   }
   switch (r.status_fluxo) {
@@ -224,6 +230,8 @@ export function enderecoComTela(href, tela) {
   const url = new URL(href);
   if (TELAS_DO_FLUXO.includes(tela)) url.searchParams.set("tela", tela);
   else url.searchParams.delete("tela");
+  // #na-etapa-... só vale no Novo Anúncio (etapa em que estava).
+  if (tela !== "novoAnuncio") url.hash = "";
   return url.toString();
 }
 
@@ -232,5 +240,6 @@ export function enderecoDaFicha(href, id) {
   const url = new URL(href);
   if (/^[0-9a-f-]{36}$/i.test(String(id || ""))) url.searchParams.set("ficha", id);
   url.searchParams.set("tela", "mercadoLivreTeste");
+  url.hash = "";
   return url.toString();
 }

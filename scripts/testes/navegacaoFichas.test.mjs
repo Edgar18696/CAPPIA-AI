@@ -152,7 +152,8 @@ test("6) MLB recebido → F5 → o MLB permanece", () => {
   // Mesmo se a linha de publicação ainda não chegou, o registro do fluxo novo guarda o MLB.
   assert.equal(resumoFichaCentral({ id: ID, status_fluxo: "publicado", publicacao: null, integracao_bling: REG }).mlb, "MLB7755979208");
   const fp = ler("src/components/FichaPublicadaPAIIA.jsx");
-  assert.ok(fp.includes("registroDaFicha(ficha?.dados_conferencia)"));
+  // registro da ficha OU refeito da publicação gravada (MLB nunca some da tela)
+  assert.ok(fp.includes("registroDaFichaOuPublicacao(ficha?.dados_conferencia, pub)"));
   assert.ok(fp.includes("pub.mlb_id || registro?.mlb"));
 });
 
@@ -186,7 +187,7 @@ test("9) Central diferencia os 7 estados e não esconde ficha que não está pro
     [{ status_fluxo: "publicado", publicacao: PUB, integracao_bling: { ...REG, estado: "integrado" } }, ESTADO_CENTRAL.INTEGRADO_BLING],
   ];
   for (const [row, esp] of casos) assert.equal(estadoFichaCentral(row), esp, JSON.stringify(row));
-  assert.deepEqual(Object.values(TEXTO_ESTADO_CENTRAL), ["Em andamento", "Aguardando Conferência", "Conferência aprovada", "Pronto para publicar", "Publicado", "Aguardando integração Bling", "Integrado ao Bling"]);
+  assert.deepEqual(Object.values(TEXTO_ESTADO_CENTRAL), ["Em andamento", "Aguardando Conferência", "Conferência aprovada", "Pronto para publicar", "Publicado no Mercado Livre", "Aguardando Bling", "Integrado ao Bling · Fluxo concluído"]);
   const lista = ordenarFichasCentral([
     resumoFichaCentral({ id: "a", status_fluxo: "publicado", publicacao: PUB, updated_at: "3" }),
     resumoFichaCentral({ id: "b", status_fluxo: "rascunho", updated_at: "1" }),
@@ -211,7 +212,7 @@ test("10) Voltar da Conferência/Publicação grava ANTES de sair; falha = avisa
   assert.ok(antes.includes("st.gravando"), "espera gravação em andamento");
   // Os botões de voltar usam sairPara e dizem o destino.
   const voltas = mlt.match(/data-paiia-voltar-central[\s\S]{0,200}?← Voltar à Central de Publicação/g) || [];
-  assert.equal(voltas.length, 2, "Conferência e Publicação");
+  assert.equal(voltas.length, 3, "Conferência (topo e rodapé) e Publicação");
   for (const v of voltas) assert.ok(v.includes('sairPara("centralPublicacao")'));
   assert.ok(mlt.includes("← Voltar à Conferência (editar)"));
   assert.ok(mlt.includes("↑ Voltar ao início da Conferência"));

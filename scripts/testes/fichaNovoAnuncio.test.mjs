@@ -131,7 +131,8 @@ test("3) fechar/reabrir pelo ?ficha= em outro navegador → recupera", async () 
   const rasc = rascunhoDaFicha(base.anuncio);
   assert.equal(rasc.descricao, COMPLETO.descricao);
   assert.equal(rasc.fotos[0].imagem_processada, "https://x/foto1.png");
-  assert.equal(rasc.pesoFreteML, "0.2", "peso/medidas voltam");
+  // peso volta em kg com vírgula (0,2 kg = 200 g), a partir da medida da ficha
+  assert.equal(rasc.pesoFreteML, "0,2", "peso/medidas voltam");
   assert.equal(rasc.custo, "60");
   const mlt = ler("src/components/MercadoLivreTeste.jsx");
   assert.ok(/fichaSoNoNovoAnuncio\(r\.anuncio\)[\s\S]{0,1600}props\.setScreen\?\.\("novoAnuncio"\)/.test(mlt), "wrapper devolve ao Novo Anúncio");

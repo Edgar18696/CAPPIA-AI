@@ -19,6 +19,7 @@ import {
   registrarPublicacaoSemCompatibilidade,
   registrarMLBPublicado,
   salvarRegistroIntegracaoBling,
+  garantirRegistroIntegracaoBling,
 } from "../services/anuncioPublicacaoService";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
@@ -270,7 +271,7 @@ async function chamar(acao, extra = {}, contaML = "") {
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
 
-export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "" }) {
+export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades }) {
   const [conexao, setConexao] = useState(null);
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
@@ -978,7 +979,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // Salva o resultado na ficha: MLB, data/hora, SKU, verificação, Bling.
     if (ficha.anuncioId) {
       const g = await registrarResultadoPublicacao({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, resultado: r, bling: estoque, sku: skuEnvio, verificacao });
-      setFicha((f) => ({ ...f, resultadoGravado: g.ok, erroResultado: g.ok ? "" : g.erro, modoGravacao: g.modo }));
+      // O registro do MLB para o Bling tem de ESTAR na ficha (relido e,
+      // se preciso, gravado de novo): é ele que leva à etapa do Bling.
+      const gr = registroBling ? await garantirRegistroIntegracaoBling({ anuncioId: ficha.anuncioId, registro: registroBling }) : { ok: true };
+      setFicha((f) => ({ ...f, resultadoGravado: g.ok && gr.ok, erroResultado: !g.ok ? g.erro : gr.ok ? "" : gr.erro, modoGravacao: g.modo }));
+      if (r?.ok && r.publicado && r.item_id) onPublicado?.(ficha.anuncioId);
       // Integração com o Bling: o usuário traz SOMENTE este MLB pelo Bling
       // (painel abaixo) e o PAIIA confere por leitura. Nada é gravado aqui.
     }
@@ -1065,7 +1070,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       </p>
 
       {/* 1. Conexão */}
-      <div style={bloco}>
+      <div style={bloco} id="pub-etapa-conta">
         <strong style={subtitulo}>1. PUBLICAR ESTE ANÚNCIO EM:</strong>
         <div data-paiia-conta-ml-publicacao role="radiogroup" style={{ display: "grid", gap: 6, margin: "8px 0" }}>
           {opcoesConta.map((o) => (
@@ -1158,7 +1163,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       </div>
 
       {/* Bling — produto e estoque (leitura; criação só com clique) */}
-      <div data-paiia-bling-publicacao style={bloco}>
+      <div data-paiia-bling-publicacao style={bloco} id="pub-etapa-bling">
+        <button type="button" data-paiia-navegacao data-paiia-voltar-etapa="pub-etapa-conta" onClick={() => rolarPara("pub-etapa-conta")} style={botaoVoltarEtapa}>← Voltar à escolha da conta</button>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <strong style={subtitulo}>Bling — produto e estoque</strong>
           <button type="button" data-paiia-reler-bling onClick={relerBling} disabled={estoque === null} style={{ ...botaoCinza, padding: "4px 10px" }}>
@@ -1245,7 +1251,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       {contaOk && (
         <>
           {/* 2. Dados */}
-          <div style={bloco}>
+          <div style={bloco} id="pub-etapa-dados">
+            <button type="button" data-paiia-navegacao data-paiia-voltar-etapa="pub-etapa-bling" onClick={() => rolarPara("pub-etapa-bling")} style={botaoVoltarEtapa}>← Voltar ao Bling (produto e estoque)</button>
             <strong style={subtitulo}>2. Dados que serão enviados</strong>
             <div style={grade}>
               <Campo rotulo="Título (aprovado)">
@@ -1407,7 +1414,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           </div>
 
           {/* 3. Validação */}
-          <div style={bloco}>
+          <div style={bloco} id="pub-etapa-validar">
+            <button type="button" data-paiia-navegacao data-paiia-voltar-etapa="pub-etapa-dados" onClick={() => rolarPara("pub-etapa-dados")} style={botaoVoltarEtapa}>← Voltar aos dados que serão enviados</button>
             <strong style={subtitulo}>3. Validar no Mercado Livre (não publica)</strong>
             <button
               type="button"
@@ -1451,7 +1459,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           </div>
 
           {/* 4. Confirmação */}
-          <div style={bloco}>
+          <div style={bloco} id="pub-etapa-publicar">
+            <button type="button" data-paiia-navegacao data-paiia-voltar-etapa="pub-etapa-validar" onClick={() => rolarPara("pub-etapa-validar")} style={botaoVoltarEtapa}>← Voltar à validação no Mercado Livre</button>
             <strong style={subtitulo}>4. Confirmar publicação real</strong>
             {duplicidadeML?.possiveis?.length > 0 && !duplicidadeML?.duplicados?.length && (
               <label data-paiia-possivel-duplicidade style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#fde047", fontSize: 14, margin: "8px 0" }}>
@@ -1508,9 +1517,19 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                   {semCompatAut.gravando ? " ⏳ Gravando na ficha..." : semCompatAut.autorizado ? " ✓ Autorização gravada na ficha." : ""}
                 </div>
                 {semCompatAut.erro && <div style={{ color: "#fca5a5", marginTop: 4 }}>❌ {semCompatAut.erro}</div>}
+                {onVoltarCompatibilidades && (
+                  <button type="button" data-paiia-navegacao data-paiia-voltar-compat onClick={() => onVoltarCompatibilidades()} style={{ ...botaoVoltarEtapa, marginTop: 8 }}>
+                    ← Voltar às Compatibilidades (⑨ da Conferência) para cadastrar as aplicações
+                  </button>
+                )}
               </div>
             )}
             {bloqueios.length > 0 && <p style={erro}>Corrija antes de publicar: {bloqueios.map((b) => b.item).join(", ")}.</p>}
+            {!mostrarOpcaoSemCompat && bloqueios.some((b) => b.item === "Compatibilidades") && onVoltarCompatibilidades && (
+              <button type="button" data-paiia-navegacao data-paiia-voltar-compat onClick={() => onVoltarCompatibilidades()} style={botaoVoltarEtapa}>
+                ← Voltar às Compatibilidades (⑨ da Conferência)
+              </button>
+            )}
             {!validacao?.valido && <p style={info}>Valide os dados antes de publicar.</p>}
             {resultado?.ok && resultado.publicado && (() => {
               const v = resultado.verificacao;
@@ -1553,6 +1572,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             })()}
             {resultado && !resultado.ok && <p style={erro}>❌ {resultado.erro}</p>}
             {resultado && ficha.resultadoGravado && <p style={{ ...info, color: "#86efac" }}>💾 Resultado salvo na ficha do anúncio (MLB, data/hora, Bling e estoque).</p>}
+            {resultado?.ok && resultado.publicado && ficha.anuncioId && (
+              <button type="button" data-paiia-navegacao data-paiia-abrir-tela-final onClick={() => onAbrirTelaFinal?.(ficha.anuncioId)} style={{ ...botaoVerde, marginTop: 8 }}>
+                ➡ Continuar: vincular no Bling e concluir (tela final da ficha)
+              </button>
+            )}
             {resultado && ficha.erroResultado && <p style={erro}>⚠ O resultado não foi salvo na ficha: {ficha.erroResultado}</p>}
           </div>
         </>
@@ -1560,6 +1584,17 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     </section>
   );
 }
+
+// Seta "← Voltar" dentro da Publicação: só ROLA até a etapa anterior
+// (navegação pura: não grava, não valida, não publica, não chama o Bling).
+function rolarPara(id) {
+  try {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch {
+    // sem rolagem
+  }
+}
+const botaoVoltarEtapa = { display: "block", marginBottom: 8, padding: "4px 10px", borderRadius: 8, border: "1px solid #475569", background: "transparent", color: "#cbd5e1", cursor: "pointer", fontSize: 12 };
 
 function Campo({ rotulo, children }) {
   return (

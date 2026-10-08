@@ -107,6 +107,34 @@ export function registroDaFicha(dadosConferencia) {
 }
 
 /**
+ * Registro do Bling de uma ficha PUBLICADA. Se o registro não ficou gravado
+ * na ficha (caso do MLB5351282473), ele é refeito a partir da publicação
+ * gravada (MLB, conta, produto Bling, SKU) — sem inventar nada: sem MLB,
+ * sem loja Bling da conta ou sem produto Bling, não há registro.
+ * O estado refeito é sempre "aguardando" até a leitura no Bling confirmar.
+ */
+export function registroDaFichaOuPublicacao(dadosConferencia, publicacao) {
+  const salvo = registroDaFicha(dadosConferencia);
+  if (salvo) return salvo;
+  const p = publicacao || {};
+  const mlb = normalizarMLB(p.mlb_id);
+  const loja = lojaBlingDaConta(p.ml_user_id);
+  if (!mlb || !loja || !txt(p.bling_produto_id)) return null;
+  return {
+    ...registroPublicado({
+      mlb,
+      contaId: p.ml_user_id,
+      contaNome: p.conta_nome || "",
+      skuOficial: p.sku || "",
+      produtoBlingId: p.bling_produto_id,
+      preco: null,
+      agora: p.publicado_em || new Date().toISOString(),
+    }),
+    refeito_da_publicacao: true,
+  };
+}
+
+/**
  * Regra de integração (pura): na resposta de anuncios_consultar filtrada por
  * loja + produto esperado, tem de existir EXATAMENTE UM anúncio com o MLB
  * publicado e com produto.id = produto esperado.

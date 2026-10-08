@@ -104,7 +104,7 @@ export async function obterAnuncio(anuncioId) {
   if (!anuncioId) return { ok: false, disponivel: true, erro: "Sem ID do anúncio." };
   const { data, error } = await supabase
     .from(T_ANUNCIOS)
-    .select(`id, codigo, titulo, conta_destino_ml_user_id, conta_destino_nome, status_fluxo, dados_conferencia, updated_at, ${T_PUBLICACOES}(id, ml_user_id, conta_nome, mlb_id, mlb_link, status_publicacao, publicado_em, status_bling, bling_produto_id, estoque)`)
+    .select(`id, codigo, titulo, conta_destino_ml_user_id, conta_destino_nome, status_fluxo, dados_conferencia, updated_at, ${T_PUBLICACOES}(id, ml_user_id, conta_nome, mlb_id, mlb_link, status_publicacao, publicado_em, status_bling, bling_produto_id, estoque, sku, erro_publicacao)`)
     .eq("id", anuncioId)
     .maybeSingle();
   if (error) return falha(error);
@@ -324,17 +324,14 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
       if (conflitoDeVersao({ versaoEsperada, versaoNaBase: atual.anuncio.dados_conferencia?.salvo_em })) {
         return { ok: false, disponivel: true, conflito: true, erro: ERRO_CONFLITO };
       }
-      const decisaoBase = atual.anuncio.dados_conferencia?.base_paiia || null;
-      // Dados do Novo Anúncio (mesma ficha) também nunca se perdem.
-      const novoAnuncio = atual.anuncio.dados_conferencia?.novo_anuncio || null;
-      // Autorização "publicar sem compatibilidade" (dada na Publicação) também fica.
-      const semCompat = atual.anuncio.dados_conferencia?.publicacao_sem_compatibilidade || null;
       const { error } = await supabase
         .from(T_ANUNCIOS)
         .update({
           titulo: titulo || null,
           status_fluxo: "conferencia_aprovada",
-          dados_conferencia: { ...dadosComVersao, ...(decisaoBase ? { base_paiia: decisaoBase } : {}), ...(novoAnuncio ? { novo_anuncio: novoAnuncio } : {}), ...(semCompat ? { publicacao_sem_compatibilidade: semCompat } : {}) },
+          // Base PAIIA, Novo Anúncio, sem-compatibilidade, compatibilidades,
+          // registro do Bling e versões substituídas nunca se perdem.
+          dados_conferencia: preservarChavesDaFicha(atual.anuncio.dados_conferencia, dadosComVersao),
           updated_at: agora,
         })
         .eq("id", anuncioId);
@@ -372,6 +369,22 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
  * A conta de destino (conta_destino_*) não é tocada aqui.
  */
 const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendencia", "cancelado"];
+/**
+ * Partes da ficha que NÃO são da Conferência e nunca podem se perder quando a
+ * Conferência regrava dados_conferencia inteiro: decisão da Base PAIIA, dados
+ * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
+ * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
+ */
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas"]);
+export function preservarChavesDaFicha(antigos, novos) {
+  const a = antigos && typeof antigos === "object" ? antigos : {};
+  const n = novos && typeof novos === "object" ? novos : {};
+  const out = { ...n };
+  for (const k of CHAVES_PRESERVADAS_FICHA) {
+    if (a[k] !== undefined && a[k] !== null && n[k] === undefined) out[k] = a[k];
+  }
+  return out;
+}
 export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConferencia, aprovada = false, criarSeFechada = false, versaoEsperada = "" }) {
   const usuarioId = await usuarioAtual();
   if (!usuarioId) return { ok: false, disponivel: true, erro: "Sessão expirada: entre de novo no PAIIA." };
@@ -393,7 +406,7 @@ export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConf
           status_fluxo: aprovada ? "conferencia_aprovada" : "rascunho",
           // Decisão da Base PAIIA (gravada à parte) e os dados do Novo
           // Anúncio (mesma ficha) nunca são perdidos.
-          dados_conferencia: { ...(dadosConferencia || {}), ...(antigos.base_paiia ? { base_paiia: antigos.base_paiia } : {}), ...(antigos.novo_anuncio ? { novo_anuncio: antigos.novo_anuncio } : {}), ...(antigos.publicacao_sem_compatibilidade ? { publicacao_sem_compatibilidade: antigos.publicacao_sem_compatibilidade } : {}) },
+          dados_conferencia: preservarChavesDaFicha(antigos, dadosConferencia),
           updated_at: agora,
         })
         .eq("id", anuncioId);
@@ -560,7 +573,24 @@ export async function registrarMLBPublicado({ anuncioId, contaId, mlb, link, sku
     updated_at: agora,
   };
   const { error } = await supabase.from(T_PUBLICACOES).update(pub).eq("anuncio_id", anuncioId).eq("marketplace", MARKETPLACE_ML);
-  const r2 = await salvarRegistroIntegracaoBling({ anuncioId, registro });
+  const r2 = await garantirRegistroIntegracaoBling({ anuncioId, registro });
   if (error) return { ...falha(error), registroIntegracao: r2.ok };
   return { ok: r2.ok, erro: r2.ok ? "" : r2.erro };
+}
+
+/**
+ * Grava o registro do Bling (MLB) e CONFERE relendo a ficha; se não ficou
+ * gravado (gravação concorrente), grava de novo (até 3 vezes). Nunca toca no
+ * Bling nem no Mercado Livre: só a ficha do PAIIA.
+ */
+export async function garantirRegistroIntegracaoBling({ anuncioId, registro }) {
+  if (!anuncioId || !registro?.mlb) return { ok: false, erro: "Sem ficha ou sem registro do MLB." };
+  let ultimo = { ok: false, erro: "" };
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    ultimo = await salvarRegistroIntegracaoBling({ anuncioId, registro });
+    const { data } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
+    const gravado = data?.dados_conferencia?.integracao_bling;
+    if (ultimo.ok && gravado && String(gravado.mlb || "") === String(registro.mlb)) return { ok: true, registro: gravado };
+  }
+  return { ok: false, erro: ultimo.erro || "O registro do MLB não ficou gravado na ficha." };
 }

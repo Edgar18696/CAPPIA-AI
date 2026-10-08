@@ -63,6 +63,11 @@ export default function PainelFichasCentral({ setScreen }) {
   }
 
   const mostrarLocal = local && !rascunhoLocalJaNaBase(local, estado.fichas);
+  // Código que JÁ tem anúncio publicado: outra ficha do mesmo código é
+  // sinalizada (uma ficha publicada nunca volta a parecer anúncio novo).
+  const publicadosPorCodigo = new Map(
+    estado.fichas.filter((f) => f.publicado).map((f) => [String(f.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, ""), f.mlb || "MLB"])
+  );
   const fichas = mostrarTodas ? estado.fichas : estado.fichas.slice(0, 12);
   const contagem = estado.fichas.reduce((m, f) => ({ ...m, [f.estado]: (m[f.estado] || 0) + 1 }), {});
 
@@ -110,10 +115,15 @@ export default function PainelFichasCentral({ setScreen }) {
             {f.conta ? <span style={sub}> · {f.conta}</span> : null}
             {f.pendencia ? <span style={{ ...sub, color: "#fca5a5" }}> · {f.pendencia}</span> : null}
             {f.noNovoAnuncio ? <span style={sub}> · Novo Anúncio · {f.completa ? "ficha completa" : "ficha parcial"}</span> : null}
+            {!f.publicado && publicadosPorCodigo.has(String(f.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "")) ? (
+              <span data-paiia-codigo-ja-publicado style={{ ...sub, color: "#fbbf24" }}> · ⚠ Este código já tem anúncio publicado ({publicadosPorCodigo.get(String(f.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, ""))}) — esta é OUTRA ficha</span>
+            ) : null}
           </span>
           <button type="button" data-paiia-abrir-ficha={f.id} onClick={() => abrirFicha(f.id)} style={botao}>
             {f.publicado
-              ? "👁 Ver anúncio publicado"
+              ? f.estado === ESTADO_CENTRAL.AGUARDANDO_BLING
+                ? "🔗 Concluir Bling desta ficha"
+                : "👁 Ver ficha publicada"
               : f.noNovoAnuncio
                 ? "✏️ Continuar no Novo Anúncio"
                 : f.estado === ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA

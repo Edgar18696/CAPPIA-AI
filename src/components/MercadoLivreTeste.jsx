@@ -5,7 +5,6 @@ import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
 import {
   lerAplicacoesAprovadas,
-  inferirTipoVeiculo,
   tipoVeiculoDaCategoria,
   marcaInvalida,
   descricaoAfirmaOriginal,
@@ -17,6 +16,7 @@ import {
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
 import {
   OPCOES_TIPO_VEICULO,
+  TIPO_CARRO,
   ORIGEM_MANUAL,
   ORIGEM_SUGESTAO,
   normalizarTipoVeiculo,
@@ -37,6 +37,13 @@ import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAss
 import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
 import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
 import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import {
+  edicoesDoNovoAnuncio,
+  medidaCompletaFicha,
+  gParaKgTexto,
+  CAMPOS_ASSINATURA_TECNICOS,
+} from "../services/dadosTecnicosAnuncio";
+import { rascunhoDaFicha as rascunhoNovoAnuncioDaFicha } from "../services/fichaNovoAnuncio";
 import {
   tipoAnuncioDaFicha,
   compararVersoesFicha,
@@ -197,6 +204,55 @@ function valorPreservado(ficha, campo, doAnuncio) {
     return doAnuncio; // a origem mudou de verdade depois da conferência
   }
   return salvo;
+}
+
+// Seta "← Voltar" entre blocos da Conferência: só ROLA até o bloco anterior.
+function BotaoVoltarBloco({ alvo, children }) {
+  return (
+    <button
+      type="button"
+      data-paiia-navegacao
+      data-paiia-voltar-bloco={alvo}
+      onClick={() => {
+        try {
+          document.getElementById(alvo)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch {
+          // sem rolagem
+        }
+      }}
+      style={{ display: "block", marginBottom: "8px", padding: "4px 10px", borderRadius: "8px", border: "1px solid #475569", background: "transparent", color: "#cbd5e1", cursor: "pointer", fontSize: "12px" }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Depois de PUBLICAR: o que este navegador guardava para levar esta ficha ao
+// Novo Anúncio/Central/Conferência é limpo (a ficha publicada continua na
+// base e abre pela Central). Rascunhos de OUTRAS fichas não são tocados.
+function limparEstadoLocalDaFichaPublicada(id, chave) {
+  const daFicha = (texto) => {
+    try {
+      const o = JSON.parse(texto || "null");
+      return Boolean(o && id && String(o.fichaIdPAIIA || o.fichaId || "") === String(id));
+    } catch {
+      return false;
+    }
+  };
+  try {
+    for (const k of ["mlAnuncioTeste", "anuncioProntoPublicacao", "novoAnuncioTemporario", "rascunhoNovoAnuncioTemp", "paiiaAnuncioEmAndamento"]) {
+      if (daFicha(localStorage.getItem(k))) localStorage.removeItem(k);
+    }
+    if (chave) {
+      const mapa = JSON.parse(localStorage.getItem(CHAVE_CONFERENCIA) || "{}");
+      if (mapa[chave] && String(mapa[chave]?.campos?.anuncioIdPAIIA || "") === String(id)) {
+        delete mapa[chave];
+        localStorage.setItem(CHAVE_CONFERENCIA, JSON.stringify(mapa));
+      }
+    }
+  } catch {
+    // sem acesso ao navegador
+  }
 }
 
 function gravarFichaConferencia(chave, ficha) {
@@ -1009,6 +1065,13 @@ function ConferenciaPAIIA({
     if (fichaIdDoAnuncio && idLocal && idLocal !== fichaIdDoAnuncio) return null;
     return local;
   });
+  // Dados técnicos editados no NOVO ANÚNCIO (mesma ficha): tipo de veículo e
+  // peso/medidas. Ficha sem Conferência: só preenche. Com Conferência: o que
+  // foi editado lá DEPOIS é edição real (avisa e pede reconferência).
+  const [edicoesNA] = useState(() => edicoesDoNovoAnuncio({ anuncio, fichaSalva }));
+  const camposEditadosNoNovoAnuncioRef = useRef(
+    edicoesNA.campos.flatMap((c) => CAMPOS_ASSINATURA_TECNICOS[c] || [])
+  );
   // Versão (dados_conferencia.salvo_em) da ficha da base que esta tela leu ou
   // gravou por último. Toda gravação confere: se a base estiver em outra
   // versão (outra aba/computador gravou depois), NADA é gravado — uma cópia
@@ -1864,7 +1927,16 @@ function moverFoto(
   const [
     logisticaConferencia,
     setLogisticaConferencia,
-  ] = useState(() => fichaSalva?.campos?.logistica || null);
+  ] = useState(() => {
+    // Peso/medidas digitados no Novo Anúncio (mesma ficha) entram aqui como
+    // ponto de partida (a confirmar). O valor da ficha vale, salvo edição
+    // feita no Novo Anúncio depois dela.
+    if (edicoesNA.medida && medidaCompletaFicha(edicoesNA.medida)) {
+      return { medida: { ...edicoesNA.medida }, origem: "NOVO_ANUNCIO", confirmado: false, confirmacao: null, config_embalagem: fichaSalva?.campos?.logistica?.config_embalagem || "caixa_padrao", modalidade: fichaSalva?.campos?.logistica?.modalidade || "" };
+    }
+    return fichaSalva?.campos?.logistica || null;
+  });
+  const [logisticaInicial] = useState(() => logisticaConferencia);
 
   // Anúncio exatamente como foi aprovado na conferência.
   const [
@@ -2025,29 +2097,29 @@ function moverFoto(
     tipoVeiculoOrigem,
     setTipoVeiculoOrigem,
   ] = useState(() => {
+    if (edicoesNA.tipoVeiculo) return ORIGEM_MANUAL; // escolhido no Novo Anúncio
     const salva = fichaSalva?.campos?.tipoVeiculoOrigem;
-    if (salva === ORIGEM_MANUAL || salva === ORIGEM_SUGESTAO) return salva;
-    return fichaSalva?.campos?.tipoVeiculo ? ORIGEM_SUGESTAO : "";
+    if (salva === ORIGEM_MANUAL || salva === ORIGEM_SUGESTAO || salva === "padrao") return salva;
+    return fichaSalva?.campos?.tipoVeiculo ? ORIGEM_SUGESTAO : "padrao";
   });
   const [
     tipoVeiculo,
     setTipoVeiculo,
   ] = useState(() => {
-    // Escolha manual salva: vale ela, mesmo que as aplicações mudem.
-    if (fichaSalva?.campos?.tipoVeiculoOrigem === ORIGEM_MANUAL && fichaSalva?.campos?.tipoVeiculo) {
-      origemConferenciaRef.current.tipoVeiculo = fichaSalva.campos.tipoVeiculo;
-      return fichaSalva.campos.tipoVeiculo;
+    // 1º o valor SALVO na ficha; 2º o escolhido no Novo Anúncio (mesma
+    // ficha); sem nenhum = padrão "Carro/Caminhonete". Nunca vem de outro
+    // anúncio e nunca é trocado sozinho por sugestão.
+    if (edicoesNA.tipoVeiculo) {
+      origemConferenciaRef.current.tipoVeiculo = edicoesNA.tipoVeiculo;
+      return edicoesNA.tipoVeiculo;
     }
-    // Sugestão inicial pelas aplicações aprovadas; na dúvida fica em branco
-    // e a Conferência pede a escolha.
-    return inicial(
-      "tipoVeiculo",
-      normalizarTipoVeiculo(
-        inferirTipoVeiculo(
-          lerAplicacoesAprovadas({ aplicacoes: anuncio?.aplicacoes, texto: anuncio?.compatibilidades })
-        )
-      )
-    );
+    const salvo = normalizarTipoVeiculo(fichaSalva?.campos?.tipoVeiculo);
+    if (salvo) {
+      origemConferenciaRef.current.tipoVeiculo = salvo;
+      return salvo;
+    }
+    origemConferenciaRef.current.tipoVeiculo = TIPO_CARRO;
+    return TIPO_CARRO;
   });
   function escolherTipoVeiculoManual(valor) {
     const e = escolherTipoVeiculo(valor);
@@ -2402,22 +2474,22 @@ useEffect(() => {
   const [
     larguraEnvio,
     setLarguraEnvio,
-  ] = useState(() => inicial("larguraEnvio", ""));
+  ] = useState(() => inicial("larguraEnvio", edicoesNA.medida ? String(edicoesNA.medida.largura_cm).replace(".", ",") : ""));
 
   const [
     alturaEnvio,
     setAlturaEnvio,
-  ] = useState(() => inicial("alturaEnvio", ""));
+  ] = useState(() => inicial("alturaEnvio", edicoesNA.medida ? String(edicoesNA.medida.altura_cm).replace(".", ",") : ""));
 
   const [
     comprimentoEnvio,
     setComprimentoEnvio,
-  ] = useState(() => inicial("comprimentoEnvio", ""));
+  ] = useState(() => inicial("comprimentoEnvio", edicoesNA.medida ? String(edicoesNA.medida.comprimento_cm).replace(".", ",") : ""));
 
   const [
     pesoEnvio,
     setPesoEnvio,
-  ] = useState(() => inicial("pesoEnvio", ""));
+  ] = useState(() => inicial("pesoEnvio", edicoesNA.medida ? gParaKgTexto(edicoesNA.medida.peso_g) : ""));
 
   const [
     condicao,
@@ -2528,12 +2600,13 @@ const sugestaoTipoVeiculo = useMemo(
   }),
   [tipoVeiculoML, aplicacoesConfirmadas]
 );
-useEffect(() => {
-  const r = aplicarSugestaoTipoVeiculo({ atual: tipoVeiculo, origem: tipoVeiculoOrigem, sugestao: sugestaoTipoVeiculo.valor });
-  if (!r.mudou) return;
-  setTipoVeiculo(r.valor);
-  setTipoVeiculoOrigem(r.origem);
-}, [sugestaoTipoVeiculo.valor]); // eslint-disable-line react-hooks/exhaustive-deps
+// (08/10/2026) A sugestão NÃO troca mais o valor sozinha: a ficha nova nasce
+// com "Carro/Caminhonete" e só o usuário troca. A sugestão vira só um aviso.
+const sugestaoDiferente = Boolean(
+  normalizarTipoVeiculo(sugestaoTipoVeiculo.valor) &&
+  normalizarTipoVeiculo(sugestaoTipoVeiculo.valor) !== normalizarTipoVeiculo(tipoVeiculo) &&
+  aplicarSugestaoTipoVeiculo
+)
 // O tipo escolhido cabe na categoria do ML? (não troca nada sozinho)
 const tipoVeiculoCategoria = tipoVeiculoNaCategoria(
   tipoVeiculo,
@@ -2708,7 +2781,10 @@ const [
       // Carregamento / normalização / sugestão automática: a aprovação
       // fica. Só a edição REAL do usuário invalida — e só nos campos que
       // ele mudou (os que já vieram diferentes ao carregar não contam).
-      if (!usuarioEditouRef.current) {
+      // Edição feita no NOVO ANÚNCIO depois da Conferência (tipo de veículo,
+      // peso/medidas) é edição real: invalida SÓ esses campos, com aviso.
+      const externos = mudou.filter((c) => camposEditadosNoNovoAnuncioRef.current.includes(c));
+      if (!usuarioEditouRef.current && !externos.length) {
         divergentesNoCarregamentoRef.current = [...new Set([...divergentesNoCarregamentoRef.current, ...mudou])];
         if (typeof window !== "undefined") window.__paiiaDivergenciasCarregamento = divergentesNoCarregamentoRef.current;
         return;
@@ -2719,10 +2795,17 @@ const [
       } catch {
         desdeCarga = [];
       }
-      const invalidam = camposQueInvalidam({ usuarioEditou: true, mudou, divergentesNoCarregamento: divergentesNoCarregamentoRef.current, mudaramDesdeCarregamento: desdeCarga });
+      let invalidam = usuarioEditouRef.current
+        ? camposQueInvalidam({ usuarioEditou: true, mudou, divergentesNoCarregamento: divergentesNoCarregamentoRef.current, mudaramDesdeCarregamento: desdeCarga })
+        : [];
+      invalidam = [...new Set([...invalidam, ...externos])];
+      if (!usuarioEditouRef.current) {
+        divergentesNoCarregamentoRef.current = [...new Set([...divergentesNoCarregamentoRef.current, ...mudou.filter((c) => !externos.includes(c))])];
+      }
+      camposEditadosNoNovoAnuncioRef.current = [];
       if (!invalidam.length) return;
       mudou = invalidam;
-      setAvisoAprovacao(`${TEXTO_CAMPO_ALTERADO} (${mudou.join(", ")})`);
+      setAvisoAprovacao(`${TEXTO_CAMPO_ALTERADO} (${mudou.join(", ")})${externos.length ? " — alterado no Novo Anúncio." : ""}`);
       if (typeof window !== "undefined") window.__paiiaDiferencasAprovacao = mudou;
       // Dado aprovado mudou de verdade: a aprovação é invalidada (nova
       // Conferência). Se o usuário desfizer, a aprovação guardada volta.
@@ -3580,6 +3663,8 @@ useEffect(() => {
     logistica: copiaLeve(logisticaConferencia, 60000),
     contaDestinoML,
     anuncioIdPAIIA,
+    // Até quando as edições do Novo Anúncio já foram trazidas para cá.
+    edicoesNovoAnuncio: edicoesNA.marcas,
   };
   const assinaturaFicha = JSON.stringify([camposFicha, Boolean(anuncioConferido), validado, etapaFluxo]);
   useEffect(() => {
@@ -3762,7 +3847,9 @@ useEffect(() => {
           aprovada: aprovadoRef.current,
           // Ficha antiga (já publicada) guardada para este código: só nesta
           // abertura da Conferência vira um anúncio NOVO; depois, nunca.
-          criarSeFechada: !st.confirmadoNestaTela,
+          // Ficha CONHECIDA (veio do Novo Anúncio, da base ou já gravada aqui)
+          // nunca vira outra ficha: publicada = não grava mais nada.
+          criarSeFechada: !st.confirmadoNestaTela && !fichaIdDoAnuncio && !String(fichaSalva?.campos?.anuncioIdPAIIA || "") && !window.__paiiaFichaRecuperada && !st.publicadaNestaTela,
           versaoEsperada: versaoEsperadaPara(id),
         })
       );
@@ -3934,6 +4021,7 @@ useEffect(() => {
       const url = new URL(window.location.href);
       url.searchParams.set("ficha", c.id);
       url.searchParams.set("tela", "mercadoLivreTeste");
+      url.hash = ""; // sem #: senão o navegador só rola e não recarrega
       window.location.replace(url.toString());
     } catch (erro) {
       setResolvendoConflito("");
@@ -4118,6 +4206,84 @@ useEffect(() => {
     setScreen?.(tela);
   }
   const NOME_TELA = { centralPublicacao: "Central de Publicação", novoAnuncio: "Anúncio" };
+
+  // ← Voltar ao Anúncio: só NAVEGA. Termina o salvamento da MESMA ficha,
+  // relê a ficha na base e abre o Novo Anúncio com os dados DELA (fotos,
+  // preço, frete, tipo de veículo, peso/medidas). Não cria ficha, não limpa
+  // nada, não derruba aprovação.
+  async function voltarAoNovoAnuncio() {
+    if (saida.salvando) return;
+    setSaida({ salvando: true, tela: "novoAnuncio", erro: "" });
+    const r = await salvarFichaAntesDeSair();
+    if (!r.ok) {
+      if (montadoRef.current) setSaida({ salvando: false, tela: "novoAnuncio", erro: r.erro || "Não foi possível salvar a ficha na base PAIIA." });
+      return;
+    }
+    const id = idFichaRef.current || anuncioIdPAIIA;
+    try {
+      const lida = id ? await obterAnuncio(id) : null;
+      const rasc = lida?.ok ? rascunhoNovoAnuncioDaFicha(lida.anuncio) : null;
+      if (rasc) {
+        const texto = JSON.stringify({ ...rasc, fichaIdPAIIA: rasc.fichaId, fotosDaFicha: true, salvoEm: Date.now() });
+        localStorage.setItem("novoAnuncioTemporario", texto);
+        localStorage.setItem("rascunhoNovoAnuncioTemp", texto);
+        consumirNovaCriacaoMidia();
+        const url = new URL(window.location.href);
+        url.searchParams.set("tela", "novoAnuncio");
+        url.searchParams.set("ficha", rasc.fichaId);
+        window.history.replaceState(window.history.state, "", url.toString());
+      }
+    } catch {
+      // sem a releitura: o Novo Anúncio abre com o rascunho deste navegador
+    }
+    if (montadoRef.current) setSaida({ salvando: false, tela: "", erro: "" });
+    setScreen?.("novoAnuncio");
+  }
+
+  // Volta da Publicação para um bloco da Conferência (ex.: ⑨) e rola até ele.
+  const [rolarParaBloco, setRolarParaBloco] = useState("");
+  function voltarParaBloco(id) {
+    setRevisandoPublicacaoML(false);
+    setRolarParaBloco(id);
+  }
+  useEffect(() => {
+    if (!rolarParaBloco || etapaFluxo === "publicacao") return undefined;
+    const t = setTimeout(() => {
+      try {
+        document.getElementById(rolarParaBloco)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {
+        // sem rolagem
+      }
+      setRolarParaBloco("");
+    }, 150);
+    return () => clearTimeout(t);
+  }, [rolarParaBloco, etapaFluxo]);
+
+  // Publicado: esta ficha está FECHADA (nunca regravada, nunca vira outra
+  // ficha) e o estado do Novo Anúncio/Central deste navegador que apontava
+  // para ela é limpo — um anúncio publicado não volta a parecer novo.
+  function marcarPublicada(id) {
+    rascunhoRef.current.fechada = id || idFichaRef.current || anuncioIdPAIIA;
+    rascunhoRef.current.publicadaNestaTela = true;
+    window.clearTimeout(rascunhoRef.current.timer);
+    setGravacaoPendente(false);
+    limparEstadoLocalDaFichaPublicada(id || anuncioIdPAIIA, chaveConferencia);
+  }
+  function abrirTelaFinal(id) {
+    const alvo = id || idFichaRef.current || anuncioIdPAIIA;
+    if (!alvo) return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("ficha", alvo);
+      url.searchParams.set("tela", "mercadoLivreTeste");
+      // Sem # (ex.: #na-etapa-... do Novo Anúncio): com o mesmo endereço + #
+      // o navegador só rola a página e a tela final não abre.
+      url.hash = "";
+      window.location.assign(url.toString());
+    } catch {
+      setScreen?.("centralPublicacao");
+    }
+  }
   const avisoSaida = saida.erro ? (
     <section data-paiia-erro-ao-sair style={{ ...bloco, border: "1px solid #f87171", color: "#fecaca" }}>
       <p style={{ margin: "0 0 8px" }}>
@@ -4783,6 +4949,9 @@ useEffect(() => {
               anuncioId={anuncioIdPAIIA}
               onAnuncioId={setAnuncioIdPAIIA}
               onFechar={() => setRevisandoPublicacaoML(false)}
+              onVoltarCompatibilidades={() => voltarParaBloco("conf-bloco-9")}
+              onPublicado={marcarPublicada}
+              onAbrirTelaFinal={abrirTelaFinal}
               bloqueioFicha={motivoBloqueioFicha}
               quantidadeFicha={quantidadeEstoque}
               onQuantidadeConfirmada={(q) => {
@@ -4871,10 +5040,19 @@ useEffect(() => {
               : "⏳ Criando a ficha deste anúncio na base PAIIA..."}
           {fotosForaDaFicha > 0 && ` ${fotosForaDaFicha} foto(s) sem endereço público (imagem embutida) não vão para a ficha: use fotos da Galeria.`}
         </p>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "center", marginTop: "10px" }}>
+          <button type="button" data-paiia-navegacao data-paiia-voltar-novo-anuncio onClick={voltarAoNovoAnuncio} disabled={saida.salvando} style={botaoSecundario}>
+            ← Voltar ao Anúncio (fotos, preço, frete, dados técnicos)
+          </button>
+          <button type="button" data-paiia-navegacao data-paiia-voltar-central onClick={() => sairPara("centralPublicacao")} disabled={saida.salvando} style={botaoSecundario}>
+            ← Voltar à Central de Publicação
+          </button>
+        </div>
+        {avisoSaida}
       </section>
 
       {/* 1 - DADOS DO ANÚNCIO */}
-      <section style={bloco}>
+      <section style={bloco} id="conf-bloco-1">
         <h3 style={titulo}>
           ① Dados do anúncio
         </h3>
@@ -5333,7 +5511,8 @@ useEffect(() => {
       </section>
 
       {/* 4 - FOTOS E MÍDIAS OPCIONAIS */}
-      <section style={bloco}>
+      <section style={bloco} id="conf-bloco-4">
+        <BotaoVoltarBloco alvo="conf-bloco-1">← Voltar aos Dados do anúncio (①)</BotaoVoltarBloco>
         <h3 style={titulo}>
           ④ Fotos do anúncio
         </h3>
@@ -5975,12 +6154,17 @@ useEffect(() => {
             </select>
             <span data-paiia-tipo-veiculo-ajuda style={{ ...textoAuxiliar, fontWeight: "normal" }}>
               {tipoVeiculoOrigem === ORIGEM_MANUAL && normalizarTipoVeiculo(tipoVeiculo)
-                ? "Escolhido por você — salvo na ficha; o PAIIA não troca mais."
-                : normalizarTipoVeiculo(tipoVeiculo)
-                  ? `Sugerido pelo PAIIA${sugestaoTipoVeiculo.origem === "categoria" ? " pela categoria do Mercado Livre" : sugestaoTipoVeiculo.origem === "aplicacoes" ? " pelas aplicações confirmadas" : ""}. Pode trocar.`
-                  : tipoVeiculo && !normalizarTipoVeiculo(tipoVeiculo)
-                    ? `Valor antigo "${tipoVeiculo}" não é uma das opções: escolha Carro/Caminhonete ou Linha Pesada.`
-                    : "Escolha Carro/Caminhonete ou Linha Pesada."}
+                ? "Escolhido por você — salvo na ficha; o PAIIA não troca."
+                : tipoVeiculoOrigem === "padrao" && normalizarTipoVeiculo(tipoVeiculo)
+                  ? "Padrão de ficha nova (Carro/Caminhonete). Pode trocar na seta."
+                  : normalizarTipoVeiculo(tipoVeiculo)
+                    ? "Salvo na ficha. Pode trocar na seta."
+                    : tipoVeiculo && !normalizarTipoVeiculo(tipoVeiculo)
+                      ? `Valor antigo "${tipoVeiculo}" não é uma das opções: escolha Carro/Caminhonete ou Linha Pesada.`
+                      : "Escolha Carro/Caminhonete ou Linha Pesada."}
+              {sugestaoDiferente && (
+                <span data-paiia-tipo-veiculo-sugestao> O PAIIA sugere {sugestaoTipoVeiculo.valor}{sugestaoTipoVeiculo.origem === "categoria" ? " pela categoria do Mercado Livre" : sugestaoTipoVeiculo.origem === "aplicacoes" ? " pelas aplicações confirmadas" : ""} — troque só se for o caso (nada é trocado sozinho).</span>
+              )}
               {tipoVeiculoML.estado === "carregando"
                 ? " Lendo a categoria no Mercado Livre..."
                 : tipoVeiculoML.estado === "sem_categoria"
@@ -6009,7 +6193,8 @@ useEffect(() => {
       </section>
 
       {/* 6 - EMBALAGEM */}
-      <section style={bloco}>
+      <section style={bloco} id="conf-bloco-6">
+        <BotaoVoltarBloco alvo="conf-bloco-4">← Voltar às Fotos (④)</BotaoVoltarBloco>
         <h3 style={titulo}>
           ⑥ Peso e Embalagem
         </h3>
@@ -6023,7 +6208,7 @@ useEffect(() => {
               tipoAnuncio={modalidade}
               contaML={contaSimulacaoML}
               onChange={setLogisticaConferencia}
-              valorInicial={fichaSalva?.campos?.logistica || null}
+              valorInicial={logisticaInicial}
               semTitulo
             />
           ) : (
@@ -6158,12 +6343,14 @@ useEffect(() => {
 
       {/* 9 - COMPATIBILIDADE */}
       <section
+  id="conf-bloco-9"
   style={{
     ...bloco,
     border:
       "1px solid #2563eb",
   }}
 >
+  <BotaoVoltarBloco alvo="conf-bloco-6">← Voltar ao Peso e Embalagem (⑥)</BotaoVoltarBloco>
   <h3 style={titulo}>
     ⑨ Compatibilidades
   </h3>
@@ -6691,6 +6878,7 @@ useEffect(() => {
 
       {/* 16 - REVISÃO FINAL */}
       <section
+        id="conf-bloco-16"
         style={{
           ...bloco,
           border: validado
@@ -6698,6 +6886,7 @@ useEffect(() => {
             : "1px solid #334155",
         }}
       >
+        <BotaoVoltarBloco alvo="conf-bloco-9">← Voltar às Compatibilidades (⑨)</BotaoVoltarBloco>
         <h3 style={titulo}>
           ⑯ Revisão final
         </h3>
@@ -7321,7 +7510,34 @@ function lerFichaDoEndereco() {
 
 export default function MercadoLivreTeste(props) {
   const [fichaUrl] = useState(lerFichaDoEndereco);
-  const [estado, setEstado] = useState(() => ({ pronto: !fichaUrl, erro: "", publicada: null }));
+  // Sem ?ficha=: o anúncio levado à Conferência pode apontar uma ficha que
+  // JÁ FOI PUBLICADA (cópia antiga deste navegador). Ela abre como ficha
+  // publicada — nunca vira um anúncio novo nem cria outra ficha.
+  const [fichaDoAnuncio] = useState(() => {
+    if (fichaUrl) return "";
+    try {
+      const a = JSON.parse(localStorage.getItem("mlAnuncioTeste") || "null");
+      return idFichaValido(a?.fichaIdPAIIA) ? String(a.fichaIdPAIIA) : "";
+    } catch {
+      return "";
+    }
+  });
+  const [estado, setEstado] = useState(() => ({ pronto: !fichaUrl && !fichaDoAnuncio, erro: "", publicada: null }));
+
+  useEffect(() => {
+    if (!fichaDoAnuncio) return undefined;
+    let ativo = true;
+    (async () => {
+      const r = await obterAnuncio(fichaDoAnuncio);
+      if (!ativo) return;
+      if (r.ok && publicacaoExiste(r.anuncio.publicacao)) {
+        setEstado({ pronto: false, erro: "", publicada: r.anuncio });
+        return;
+      }
+      setEstado({ pronto: true, erro: "", publicada: null });
+    })();
+    return () => { ativo = false; };
+  }, [fichaDoAnuncio]);
 
   useEffect(() => {
     if (!fichaUrl) return undefined;

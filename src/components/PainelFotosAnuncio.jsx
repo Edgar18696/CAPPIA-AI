@@ -14,6 +14,15 @@ export default function PainelFotosAnuncio({
     setFotosAnuncio(novas);
   }
 
+  // Capa = 1ª foto. "Tornar capa" só muda a ORDEM (nenhuma foto é alterada).
+  function tornarCapa(index) {
+    if (index <= 0) return;
+    const novas = [...fotosAnuncio];
+    const [foto] = novas.splice(index, 1);
+    novas.unshift(foto);
+    setFotosAnuncio(novas);
+  }
+
   function removerFoto(index) {
     setFotosAnuncio(fotosAnuncio.filter((_, i) => i !== index));
   }
@@ -39,6 +48,7 @@ export default function PainelFotosAnuncio({
         {fotosAnuncio.map((foto, index) => (
           <div
             key={foto.created_at || foto.id || index}
+            data-paiia-foto-url={foto.imagem_processada || foto.imagem_original}
             style={{
               width: "130px",
               background: "#0f172a",
@@ -71,6 +81,8 @@ export default function PainelFotosAnuncio({
             )}
 
             <button
+              type="button"
+              data-paiia-remover-foto={index}
               onClick={() => removerFoto(index)}
               style={{
                 position: "absolute",
@@ -110,6 +122,7 @@ export default function PainelFotosAnuncio({
               }}
             >
               <button
+                type="button"
                 disabled={index === 0}
                 onClick={() => moverFoto(index, -1)}
                 style={botaoSeta}
@@ -118,6 +131,7 @@ export default function PainelFotosAnuncio({
               </button>
 
               <button
+                type="button"
                 disabled={index === fotosAnuncio.length - 1}
                 onClick={() => moverFoto(index, 1)}
                 style={botaoSeta}
@@ -125,6 +139,16 @@ export default function PainelFotosAnuncio({
                 ➡️
               </button>
             </div>
+            {index > 0 && (
+              <button
+                type="button"
+                data-paiia-tornar-capa={index}
+                onClick={() => tornarCapa(index)}
+                style={{ ...botaoSeta, width: "100%", marginTop: "6px", background: "#15803d", fontSize: "12px" }}
+              >
+                ⭐ Tornar capa
+              </button>
+            )}
           </div>
         ))}
       </div>

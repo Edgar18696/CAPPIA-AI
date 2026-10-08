@@ -154,8 +154,11 @@ test("I) tela: dropdown sempre editável com as 2 opções; Publicação não de
   // escolha manual salva na ficha
   const campos = mlt.slice(mlt.indexOf("const camposFicha = {"), mlt.indexOf("};", mlt.indexOf("const camposFicha = {")));
   assert.ok(/tipoVeiculo,\s*\n\s*tipoVeiculoOrigem,/.test(campos));
-  // a sugestão passa por aplicarSugestaoTipoVeiculo (respeita "manual")
-  assert.ok(mlt.includes("aplicarSugestaoTipoVeiculo({ atual: tipoVeiculo, origem: tipoVeiculoOrigem"));
+  // (08/10/2026) a sugestão NÃO troca mais o valor sozinha: ficha nova nasce
+  // com Carro/Caminhonete e só o usuário troca; a sugestão vira aviso.
+  assert.equal(mlt.includes("aplicarSugestaoTipoVeiculo({ atual: tipoVeiculo, origem: tipoVeiculoOrigem"), false);
+  assert.ok(mlt.includes("return TIPO_CARRO;"), "padrão de ficha nova");
+  assert.ok(mlt.includes("data-paiia-tipo-veiculo-sugestao"), "sugestão só como aviso");
   assert.equal(mlt.includes("tipoVeiculoParaFicha("), false, "não força mais o valor da categoria");
 
   const rev = ler("src/components/RevisaoPublicacaoML.jsx");

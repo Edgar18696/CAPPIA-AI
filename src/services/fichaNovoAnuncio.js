@@ -13,6 +13,9 @@
 //   registro na base de conhecimento.
 // =============================================================
 
+import { medidaDoNovoAnuncio, camposNovoAnuncioDaMedida, medidaCompletaFicha, tipoVeiculoDaFicha } from "./dadosTecnicosAnuncio.js";
+import { normalizarTipoVeiculo } from "./tipoVeiculoAnuncio.js";
+
 export const CHAVE_FICHA_NOVO_ANUNCIO = "paiiaFichaNovoAnuncio";
 export const ETAPA_NOVO_ANUNCIO = "novo_anuncio";
 const RE_ID = /^[0-9a-f-]{36}$/i;
@@ -76,11 +79,18 @@ export function montarNovoAnuncioParaFicha(estado, fichaId = "") {
   const e = estado || {};
   const fotos = (Array.isArray(e.fotos) ? e.fotos : []).map(urlFoto).filter(Boolean);
   const peca = pecaLeve(e.pecaEncontrada);
+  // Dados técnicos (UMA fonte): tipo de veículo e peso/medidas em g/cm.
+  const tipoVeiculo = normalizarTipoVeiculo(e.tipoVeiculo);
+  const medida = medidaDoNovoAnuncio(e.embalagem);
+  const edicoes = e.edicoes && typeof e.edicoes === "object" ? { ...e.edicoes } : {};
   const anuncio = {
     codigo: txt(e.codigo), oem: txt(e.oem), titulo: txt(e.titulo), descricao: String(e.descricao ?? ""),
     preco: txt(e.preco), tipoAnuncio: txt(e.tipoAnuncio) || "classico",
     pecaEncontrada: peca, fabricante: peca?.fabricante || "", marca: peca?.marca || "",
     aplicacoes: peca?.aplicacoes || [], fotos, imagens: fotos, clip: urlFoto(e.clip) || "",
+    ...(tipoVeiculo ? { tipoVeiculo } : {}),
+    ...(medida ? { embalagem: medida } : {}),
+    ...(Object.keys(edicoes).length ? { edicoes } : {}),
     ...(idFichaValido(fichaId) ? { fichaIdPAIIA: txt(fichaId) } : {}),
   };
   return {
@@ -92,6 +102,9 @@ export function montarNovoAnuncioParaFicha(estado, fichaId = "") {
       canalVenda: txt(e.canalVenda), categoriaConcorrencia: txt(e.categoriaConcorrencia),
       precificacao: e.precificacao && typeof e.precificacao === "object" ? { ...e.precificacao } : null,
       embalagem: e.embalagem && typeof e.embalagem === "object" ? { ...e.embalagem } : null,
+      tipoVeiculo,
+      medida,
+      edicoes,
       completa: fichaCompleta({ ...anuncio, fotos }),
     },
   };
@@ -143,8 +156,31 @@ export function rascunhoDaFicha(row) {
     clip: txt(fonte.clip),
     canalVenda: txt(na?.canalVenda), categoriaConcorrencia: txt(na?.categoriaConcorrencia),
     ...(na?.precificacao || {}), ...(na?.embalagem || {}),
+    ...dadosTecnicosDaFicha(d),
     rascunhoLeve: 1,
     salvoNaBaseEm: txt(na?.salvo_em || row?.updated_at),
+  };
+}
+
+/**
+ * Tipo de veículo e peso/medidas que o Novo Anúncio mostra ao reabrir:
+ * o valor MAIS RECENTE da MESMA ficha (Conferência gravada depois do Novo
+ * Anúncio vence; senão o do Novo Anúncio). Ficha sem tipo = Carro/Caminhonete.
+ */
+export function dadosTecnicosDaFicha(d) {
+  const na = d?.novo_anuncio || {};
+  const campos = d?.ficha?.campos || {};
+  const conferenciaDepois = Boolean(d?.ficha) && txt(d?.salvo_em) > txt(na.salvo_em);
+  const tipoConf = normalizarTipoVeiculo(campos.tipoVeiculo);
+  const tipoNA = normalizarTipoVeiculo(na.tipoVeiculo);
+  const tipo = (conferenciaDepois ? tipoConf || tipoNA : tipoNA || tipoConf) || "";
+  const medidaConf = medidaCompletaFicha(campos.logistica?.medida) ? campos.logistica.medida : null;
+  const medidaNA = medidaCompletaFicha(na.medida) ? na.medida : medidaDoNovoAnuncio(na.embalagem);
+  const medida = conferenciaDepois ? medidaConf || medidaNA : medidaNA || medidaConf;
+  return {
+    tipoVeiculo: tipoVeiculoDaFicha(tipo),
+    ...(medida ? camposNovoAnuncioDaMedida(medida) : {}),
+    edicoes: na.edicoes && typeof na.edicoes === "object" ? { ...na.edicoes } : {},
   };
 }
 
