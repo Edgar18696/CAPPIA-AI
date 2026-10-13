@@ -95,9 +95,10 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
 // Ordem da assinatura (MercadoLivreTeste): [titulo, preco, descricao, fotos,
 // categoria, categoriaId, marca, numeroPeca, compatibilidades, pesoEnvio,
 // comprimentoEnvio, larguraEnvio, alturaEnvio, medida, quantidade?,
-// tipoVeiculo?, gtin?, tipoAnuncio?] — campos novos no fim: aprovação antiga não cai.
+// tipoVeiculo?, gtin?, tipoAnuncio?, condicao?, semCompat?, categoriaConfirmada?, motivoSemGtin?]
+// — campos novos no fim: aprovação antiga não cai.
 // ---------------------------------------------------------------
-const CAMPOS_ASSINATURA = ["título", "preço", "descrição", "fotos", "categoria", "categoria (ID)", "marca", "número da peça", "compatibilidades", "peso de envio", "comprimento de envio", "largura de envio", "altura de envio", "peso e medidas confirmados", "quantidade", "tipo de veículo", "GTIN", "tipo de anúncio", "condição", "publicar sem compatibilidade"];
+const CAMPOS_ASSINATURA = ["título", "preço", "descrição", "fotos", "categoria", "categoria (ID)", "marca", "número da peça", "compatibilidades", "peso de envio", "comprimento de envio", "largura de envio", "altura de envio", "peso e medidas confirmados", "quantidade", "tipo de veículo", "GTIN", "tipo de anúncio", "condição", "publicar sem compatibilidade", "categoria confirmada", "motivo sem GTIN"];
 const txt = (v) => String(v ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
 const num = (v) => {
   const t = String(v ?? "").trim();

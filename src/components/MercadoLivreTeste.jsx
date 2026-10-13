@@ -26,7 +26,13 @@ import {
   tipoVeiculoNaCategoria,
 } from "../services/tipoVeiculoAnuncio";
 import { GARANTIA_ML, LINHAS_FIXAS, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
+import PainelCategoriaML from "./PainelCategoriaML";
+import { avaliarCategorias, registrarConfirmacao, desfazerConfirmacao, conferirCategoriaParaPublicar, mesclarRejeicoes, rejeicaoManual, ORIGEM_CATEGORIA } from "../services/categoriaML";
+import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
+import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import {
+  listarAnunciosDoCodigo,
+  registrarCategoriasRejeitadas,
   obterAnuncio,
   salvarFichaAprovada,
   salvarRascunhoFicha,
@@ -312,20 +318,10 @@ function lerCategoriaDefinida(anuncio) {
   return null;
 }
 
-const ROTULO_ORIGEM_CATEGORIA_AUTO = "encontrada automaticamente no Mercado Livre — confira";
-const ROTULO_ORIGEM_CATEGORIA = {
-  automatica: ROTULO_ORIGEM_CATEGORIA_AUTO,
-  base: "definida pelo PAIIA para este produto",
-  escolhida: "escolhida por você para este código",
-  agora: "escolhida agora",
-};
-
 // =====================================================
-// CATEGORIA MERCADO LIVRE AUTOMÁTICA (sem suposição)
-// Consulta o próprio Mercado Livre (domain_discovery) pelo NOME DA PEÇA
-// e pelo título; aplicação serve só de contexto. Só escolhe sozinho
-// quando há UMA categoria real (com ID) do ramo do veículo que bate com
-// o tipo da peça. Se houver dúvida, devolve as opções e fica PENDENTE.
+// NOME DA PEÇA → núcleo (usado para detectar conflito Base × título).
+// A categoria do ML é decidida em services/categoriaML.js (09/10/2026):
+// o PAIIA nunca escolhe sozinho.
 // =====================================================
 const PALAVRAS_IGNORADAS_CATEGORIA = new Set([
   "para", "com", "sem", "kit", "peca", "pecas", "original", "novo", "nova",
@@ -544,90 +540,6 @@ function identificarProdutoPrincipal({ anuncio, nomePeca, nomePecaBase, titulo, 
     if (r.principal) return { ...r, fonte };
   }
   return { principal: "", acompanha: [], fonte: "" };
-}
-
-async function lerCaminhoCategoriaML(id, cache) {
-  if (cache[id]) return cache[id];
-  try {
-    const r = await fetch(`https://api.mercadolibre.com/categories/${encodeURIComponent(id)}`);
-    if (!r.ok) return (cache[id] = null);
-    const d = await r.json();
-    const niveis = Array.isArray(d?.path_from_root) ? d.path_from_root.map((n) => n?.name).filter(Boolean) : [];
-    return (cache[id] = { id, nome: d?.name || niveis[niveis.length - 1] || "", niveis, caminho: niveis.join(" > ") });
-  } catch {
-    return (cache[id] = null);
-  }
-}
-
-async function descobrirCategoriaML({ termos, nomePeca, tipoVeiculo, palavrasVeiculo }) {
-  const consultas = [...new Set(termos.map((t) => limparCampoTexto(t)).filter(Boolean))].slice(0, 3);
-  if (!consultas.length) {
-    return { escolhida: null, opcoes: [], motivo: "sem nome da peça nem título para consultar o Mercado Livre." };
-  }
-  const ignorar = new Set(palavrasVeiculo.flatMap((t) => normalizarTexto(t).split(/\s+/)));
-  // Tipo da peça = 1ª palavra significativa do NOME DA PEÇA (ou do título),
-  // ex.: "pressostato", "sonda", "bico". Qualificadores (direção, óleo...)
-  // não bastam sozinhos para escolher a categoria.
-  // Só o PRODUTO PRINCIPAL conta ("Kit", presilhas, filtro... não).
-  const nucleo = nucleoDoProduto(limparCampoTexto(nomePeca) || consultas[0], ignorar);
-  const tipoPeca = new Set(nucleo ? [nucleo, ...(SINONIMOS_TIPO_PECA[nucleo] || [])] : []);
-  if (!tipoPeca.size) {
-    return { escolhida: null, opcoes: [], motivo: "não foi possível identificar o tipo da peça (informe o nome da peça)." };
-  }
-  const cache = {};
-  const ordemPorConsulta = [];
-  const ids = [];
-  for (const q of consultas) {
-    try {
-      const r = await fetch(`https://api.mercadolibre.com/sites/MLB/domain_discovery/search?q=${encodeURIComponent(q)}&limit=8`);
-      if (!r.ok) continue;
-      const lista = await r.json();
-      const ordem = (Array.isArray(lista) ? lista : []).map((it) => it?.category_id).filter(Boolean);
-      ordemPorConsulta.push(ordem);
-      ordem.forEach((id) => { if (!ids.includes(id)) ids.push(id); });
-    } catch {
-      // segue para a próxima consulta
-    }
-  }
-  if (!ordemPorConsulta.length) {
-    return { escolhida: null, opcoes: [], motivo: "o Mercado Livre não respondeu à consulta de categorias." };
-  }
-  const detalhes = (await Promise.all(ids.slice(0, 12).map((id) => lerCaminhoCategoriaML(id, cache)))).filter(Boolean);
-  const porId = Object.fromEntries(detalhes.map((c) => [c.id, c]));
-  // Só categorias de peças de veículo; carro/caminhonete fica no ramo próprio.
-  const ehCarro = /carro|caminhonete/i.test(String(tipoVeiculo || "Carro"));
-  const doVeiculo = detalhes.filter((c) => c.niveis[0] === "Acessórios para Veículos");
-  const noRamo = (c) => c && c.niveis[0] === "Acessórios para Veículos" && (!ehCarro || c.niveis[1] === "Peças de Carros e Caminhonetes");
-  const doRamo = doVeiculo.filter(noRamo);
-  const opcoes = [...doRamo, ...doVeiculo.filter((c) => !doRamo.includes(c))].map((c) => ({ id: c.id, nome: c.nome, caminho: c.caminho }));
-  if (!opcoes.length) {
-    return { escolhida: null, opcoes: [], motivo: "o Mercado Livre não retornou categoria de peça automotiva para esta peça." };
-  }
-  // A categoria precisa conter o TIPO DA PEÇA (ex.: "injetor", "sonda",
-  // "pressostato") no seu caminho — montadora/modelo/motor não contam.
-  const temTipoPeca = (c) => {
-    const doCaminho = new Set(palavrasDaPeca(c.niveis.slice(2).join(" "), new Set()));
-    return [...tipoPeca].some((p) => doCaminho.has(p));
-  };
-  // "Kit" não leva a uma categoria genérica de kits.
-  const ehCategoriaDeKit = (c) => /^kits?\b/i.test(normalizarTexto(c.nome));
-  // Voto de cada consulta = 1ª categoria (na ordem do próprio ML) do ramo
-  // do veículo que contém o tipo da peça. Só escolhe se todos concordam.
-  const votos = ordemPorConsulta
-    .map((ordem) => ordem.find((id) => noRamo(porId[id]) && temTipoPeca(porId[id]) && !ehCategoriaDeKit(porId[id])))
-    .filter(Boolean);
-  const distintos = [...new Set(votos)];
-  if (distintos.length === 1) {
-    const c = porId[distintos[0]];
-    return { escolhida: { id: c.id, nome: c.nome, caminho: c.caminho }, opcoes, motivo: "" };
-  }
-  return {
-    escolhida: null,
-    opcoes,
-    motivo: distintos.length > 1
-      ? "o Mercado Livre indicou mais de uma categoria possível para esta peça. Escolha a correta abaixo."
-      : "nenhuma categoria retornada pelo Mercado Livre corresponde com segurança ao tipo da peça. Escolha abaixo ou ajuste o nome da peça e busque de novo.",
-  };
 }
 
 function formatarCompatibilidadesLegiveis(
@@ -2056,22 +1968,43 @@ function moverFoto(
     inicial("descricao", anuncio?.descricao || "")
   );
 
-  // Categoria já definida para este produto (base PAIIA ou escolhida
-  // antes pelo usuário). Sem categoria definida = PENDENTE: o PAIIA não
-  // preenche categoria por suposição.
+  // Categoria vinda da base PAIIA ou guardada no navegador para o código.
+  // (09/10/2026) NÃO é mais definitiva: entra como candidata HERDADA e passa
+  // pela mesma conferência (services/categoriaML.js).
   const categoriaDefinida = useMemo(
     () => lerCategoriaDefinida(anuncio),
     [anuncio]
   );
 
-  // Categoria (nome + caminho + ID MLB + origem) decidida em conjunto.
-  const [categoriaInicial] = useState(() => {
+  // Categoria só vale CONFIRMADA (registro categoriaDecisao na ficha). A da
+  // ficha sem confirmação, a da base e a do navegador viram candidatas.
+  const [{ categoriaInicial, herdadasCategoria, decisaoInicial }] = useState(() => {
     const doAnuncio = categoriaDefinida
       ? { id: categoriaDefinida.id, caminho: categoriaDefinida.caminho || categoriaDefinida.id, origem: categoriaDefinida.origem }
       : null;
     const escolhida = inicial("categoriaML", doAnuncio);
-    return valorVazio(escolhida) ? null : escolhida;
+    const decisaoSalva = fichaSalva?.campos?.categoriaDecisao && typeof fichaSalva.campos.categoriaDecisao === "object" ? fichaSalva.campos.categoriaDecisao : null;
+    const conf = decisaoSalva?.confirmada;
+    const confirmada = conf?.id && (valorVazio(escolhida) || !escolhida?.id || escolhida.id === conf.id)
+      ? { id: conf.id, caminho: conf.caminho || escolhida?.caminho || conf.id, origem: "confirmada" }
+      : null;
+    const herdadas = [];
+    const juntar = (c, origem) => {
+      if (c?.id && c.id !== confirmada?.id && !herdadas.some((h) => h.id === c.id)) herdadas.push({ id: c.id, caminho: c.caminho || "", origem });
+    };
+    if (!confirmada && escolhida?.id) {
+      const daBase = doAnuncio && escolhida.id === doAnuncio.id;
+      juntar(escolhida, daBase ? (doAnuncio.origem === "base" ? ORIGEM_CATEGORIA.BASE : ORIGEM_CATEGORIA.NAVEGADOR) : ORIGEM_CATEGORIA.FICHA);
+    }
+    if (doAnuncio) juntar(doAnuncio, doAnuncio.origem === "base" ? ORIGEM_CATEGORIA.BASE : ORIGEM_CATEGORIA.NAVEGADOR);
+    const decisao = decisaoSalva ? (confirmada ? decisaoSalva : desfazerConfirmacao(decisaoSalva, "categoria da ficha mudou")) : null;
+    return { categoriaInicial: confirmada, herdadasCategoria: herdadas, decisaoInicial: decisao };
   });
+  // Registro da decisão (rastreabilidade): apresentadas, origem, escolhida,
+  // data/hora, escolha manual, descartadas/rejeitadas, motivo sem GTIN.
+  const [decisaoCategoria, setDecisaoCategoria] = useState(decisaoInicial);
+  const decisaoCategoriaRef = useRef(decisaoInicial);
+  decisaoCategoriaRef.current = decisaoCategoria;
 
   const [
     categoria,
@@ -2620,26 +2553,36 @@ const tipoVeiculoCategoria = tipoVeiculoNaCategoria(
   tipoVeiculo,
   tipoVeiculoML.estado === "ok" ? tipoVeiculoML : null
 );
-const [motivoCategoria, setMotivoCategoria] = useState("");
 // Conflito: fonte superior (Base/cadastro/nome da peça) × título.
 const [conflitoProduto, setConflitoProduto] = useState(null);
 
-// Escolha explícita do usuário fica guardada para este código (só neste
-// navegador). A escolha automática NÃO é guardada como "confirmada":
-// é refeita a cada conferência, até o usuário escolher.
-function escolherCategoria(opcao, origem = "agora", automatica = false) {
-  if (!opcao?.id) return;
-  categoriaIdRef.current = opcao.id;
-  setCategoria(opcao.caminho || opcao.nome || opcao.id);
-  setCategoriaId(opcao.id);
-  setOrigemCategoria(origem);
-  setMotivoCategoria("");
-  if (automatica) return;
-  gravarNoMapaLocal(CHAVE_CATEGORIA_ML, chaveProduto(numeroPeca || codigo), {
-    id: opcao.id,
-    caminho: opcao.caminho || opcao.nome || "",
-    salvoEm: new Date().toISOString(),
-  });
+// CONFIRMAÇÃO da categoria = sempre um clique do usuário (nunca automática).
+// Fica registrada na ficha (categoriaDecisao) com data/hora, origem, o que
+// foi apresentado e o que foi descartado. (09/10/2026: a escolha NÃO é mais
+// gravada no navegador como "categoria do código".)
+function confirmarCategoria(candidata, revisao = null) {
+  if (!candidata?.id) return;
+  const caminho = candidata.caminho || candidata.nome || candidata.id;
+  categoriaIdRef.current = candidata.id;
+  setCategoria(caminho);
+  setCategoriaId(candidata.id);
+  setOrigemCategoria("confirmada");
+  setDecisaoCategoria((d) => registrarConfirmacao(d, { candidata, avaliacao: avaliacaoCategoria, revisao }));
+}
+function trocarCategoria() {
+  setDecisaoCategoria((d) => desfazerConfirmacao(d, "o usuário pediu para trocar a categoria"));
+  categoriaIdRef.current = "";
+  setCategoriaId("");
+  setCategoria("");
+  setOrigemCategoria("");
+}
+// Motivo de não ter GTIN: só valor oficial da categoria, escolhido pelo usuário.
+function escolherMotivoSemGtin(valor) {
+  setDecisaoCategoria((d) => ({
+    ...(d || {}),
+    motivoSemGtin: valor?.id ? { id: String(valor.id), nome: String(valor.nome || "") } : null,
+    historico: [...((d && d.historico) || []), { acao: "motivo_sem_gtin", id: valor?.id || "", data: new Date().toISOString() }].slice(-30),
+  }));
 }
 
 // Categoria com ID mas sem o nome: só consulta o nome no ML (não troca o ID).
@@ -2664,20 +2607,38 @@ useEffect(() => {
   };
 }, [categoriaId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-const [
-  buscandoCategoria,
-  setBuscandoCategoria,
-] = useState(false);
-
-const [
-  opcoesCategoria,
-  setOpcoesCategoria,
-] = useState([]);
-
-const [
-  erroCategoria,
-  setErroCategoria,
-] = useState("");
+const [carregandoCategoria, setCarregandoCategoria] = useState(false);
+const [erroCategoria, setErroCategoria] = useState("");
+const [avaliacaoCategoria, setAvaliacaoCategoria] = useState(null);
+const [evidenciaCategoria, setEvidenciaCategoria] = useState(null);
+const [detalhesCategoria, setDetalhesCategoria] = useState({});
+const [rejeicoesSKU, setRejeicoesSKU] = useState(() => (Array.isArray(decisaoInicial?.rejeitadas) ? decisaoInicial.rejeitadas : []));
+const [restricoesSKU, setRestricoesSKU] = useState(() => (Array.isArray(decisaoInicial?.restricoes) ? decisaoInicial.restricoes : []));
+const cacheDetalhesCategoriaRef = useRef({});
+const termosExtrasCategoriaRef = useRef([]);
+// Obrigatórios/condicionais da categoria selecionada (motivo sem GTIN).
+const exigenciaCategoria = useMemo(() => {
+  const d = categoriaId ? detalhesCategoria[categoriaId] : null;
+  if (!d) return null;
+  return exigenciasAtributos({
+    atributos: d.atributosBrutos,
+    preenchidos: (d.atributos?.obrigatorios || []).map((a) => a.id),
+    gtin,
+    motivoSemGtin: decisaoCategoria?.motivoSemGtin || null,
+  });
+}, [categoriaId, detalhesCategoria, gtin, decisaoCategoria?.motivoSemGtin]);
+const exigenciaGtin = useMemo(() => {
+  // Exigido pelo ML = bloqueia; só condicional (o ML não exigiu) = AVISO opcional.
+  if (!exigenciaCategoria?.motivoExigido && !exigenciaCategoria?.motivoSugerido) return null;
+  const def = (detalhesCategoria[categoriaId]?.atributosBrutos || []).find((a) => a?.id === ATRIBUTO_MOTIVO_SEM_GTIN);
+  return {
+    exigido: true,
+    obrigatorio: Boolean(exigenciaCategoria.motivoExigido),
+    categoriaId,
+    valores: (def?.values || []).map((v) => ({ id: String(v.id), nome: String(v.name) })),
+    escolhido: exigenciaCategoria.motivoSemGtin,
+  };
+}, [exigenciaCategoria, detalhesCategoria, categoriaId]);
 
   // Cópia aprovada montada com os dados ATUAIS da Conferência. É a mesma
   // usada ao aprovar e para conferir, depois, se a aprovação ainda vale.
@@ -2694,6 +2655,9 @@ const [
       fotos: fotos.map(obterUrlFoto).filter(Boolean),
       categoria,
       categoriaId,
+      // Decisão da categoria (confirmação do usuário + rastreabilidade) e
+      // motivo de não ter GTIN: a Publicação confere de novo antes de publicar.
+      categoriaDecisao: copiaLeve(decisaoCategoria, 60000),
       compatibilidades,
       // Tipo de veículo aprovado (vai como VEHICLE_TYPE na Publicação).
       tipoVeiculo,
@@ -2754,6 +2718,9 @@ const [
     modalidade,
     condicao,
     semCompatConfirmado === true,
+    // (09/10/2026) Categoria CONFIRMADA e motivo de não ter GTIN.
+    decisaoCategoria?.confirmada?.id || "",
+    decisaoCategoria?.motivoSemGtin?.id || "",
   ]);
 
   // A aprovação compara o CONTEÚDO (não o formato): abrir/revisar, F5,
@@ -2764,7 +2731,12 @@ const [
     if (!usuarioEditouRef.current) assinaturaCarregadaRef.current = assinaturaConferencia;
     const aprovada = assinaturaAprovadaRef.current;
     if (aprovada && anuncioConferido) {
-      if (mesmaAprovacao(aprovada, assinaturaConferencia)) {
+      // (09/10/2026) Categoria confirmada diferente da que está na cópia
+      // aprovada (inclusive ficha aprovada antes da regra, sem decisão):
+      // edição real → a Conferência precisa ser aprovada de novo.
+      const decisaoMudou = Boolean(usuarioEditouRef.current) &&
+        String(anuncioConferido?.categoriaDecisao?.confirmada?.id || "") !== String(decisaoCategoria?.confirmada?.id || "");
+      if (mesmaAprovacao(aprovada, assinaturaConferencia) && !decisaoMudou) {
         // Diagnóstico: só o FORMATO mudou (antes, isso derrubava a aprovação).
         if (typeof window !== "undefined" && aprovada !== assinaturaConferencia) {
           try {
@@ -2775,6 +2747,7 @@ const [
         return;
       }
       let mudou = diferencasAssinatura(aprovada, assinaturaConferencia);
+      if (decisaoMudou && !mudou.includes("categoria confirmada")) mudou = [...mudou, "categoria confirmada"];
       // Assinatura antiga ilegível, ou etapa PUBLICAÇÃO: a aprovação só é
       // mantida se a CÓPIA APROVADA for igual aos dados atuais, campo a campo
       // (ex.: quantidade confirmada na Publicação, que atualiza as duas).
@@ -3546,86 +3519,154 @@ function palavrasVeiculoConferencia() {
   return aplicacoesConfirmadas.flatMap((a) => [a.montadora, a.modelo, a.motor, a.versao]).filter(Boolean);
 }
 
-async function consultarCategoriaML(termos, automatica, permitirEscolha = true) {
-  setBuscandoCategoria(true);
+// =====================================================
+// CATEGORIA DO MERCADO LIVRE (09/10/2026) — cruza preditor oficial,
+// caminho/domínio, tipo de veículo, anúncios do mesmo código, atributos e
+// categorias REJEITADAS do SKU (services/categoriaML.js). Nunca confirma
+// sozinho; categoria herdada (ficha/base/navegador) só entra como candidata.
+// =====================================================
+async function chamarPublicacaoML(corpo) {
+  const { data, error } = await supabase.functions.invoke("mercadolivre-publicacao", { body: corpo });
+  if (error) return { ok: false, erro: error.message || "Falha ao falar com o servidor." };
+  return data || { ok: false, erro: "Resposta vazia do servidor." };
+}
+function textoPecaCategoria() {
+  return [produtoPrincipal.principal, nomePeca, tituloAnuncio].filter(Boolean).join(" ");
+}
+async function avaliarCategoria() {
+  setCarregandoCategoria(true);
   setErroCategoria("");
   try {
-    const r = await descobrirCategoriaML({
-      termos,
-      nomePeca: automatica ? produtoPrincipal.principal : termos[0],
-      tipoVeiculo,
-      palavrasVeiculo: palavrasVeiculoConferencia(),
-    });
-    setOpcoesCategoria(r.opcoes);
-    // Nunca troca uma categoria já selecionada: só preenche quando vazia
-    // e quando há UMA categoria segura. Senão fica PENDENTE com as opções.
-    if (permitirEscolha && !categoriaIdRef.current && r.escolhida) {
-      escolherCategoria(r.escolhida, automatica ? "automatica" : "agora", automatica);
-      setMotivoCategoria("");
-    } else if (!categoriaIdRef.current) {
-      setMotivoCategoria(r.motivo);
+    const principal = produtoPrincipal.principal;
+    const ignorar = new Set(palavrasVeiculoConferencia().flatMap((t) => normalizarTexto(t).split(/\s+/)));
+    const doTitulo = extrairProdutoPrincipal(tituloAnuncio, produtoPrincipal.contexto).principal;
+    // Base/nome da peça × título indicando peças diferentes: não decide.
+    let conflitoPrincipal = null;
+    if (principal && doTitulo && !/^(título|descrição)/.test(produtoPrincipal.fonte)) {
+      const nb = nucleoDoProduto(principal, ignorar);
+      const nt = nucleoDoProduto(doTitulo, ignorar);
+      const iguais = nb === nt || (SINONIMOS_TIPO_PECA[nb] || []).includes(nt);
+      if (nt && !iguais) conflitoPrincipal = { fonte: produtoPrincipal.fonte, base: principal, titulo: doTitulo };
     }
-    if (!automatica && !r.opcoes.length) {
-      setErroCategoria(r.motivo || "Nenhuma categoria encontrada para esta peça.");
+    setConflitoProduto(conflitoPrincipal);
+    const contexto = aplicacoesConfirmadas[0];
+    const termos = [
+      principal,
+      nomePeca,
+      doTitulo && doTitulo !== principal ? doTitulo : "",
+      contexto && principal ? [principal, contexto.montadora, contexto.modelo].filter(Boolean).join(" ") : "",
+      ...termosExtrasCategoriaRef.current,
+    ];
+    const codigoSku = numeroPeca || codigo;
+    const [consultas, rej, evidencia] = await Promise.all([
+      consultarPreditor(termos),
+      lerRejeicoesDoSKU({
+        codigo: codigoSku,
+        listarFichas: listarAnunciosDoCodigo,
+        lerItem: (mlb, conta) => chamarPublicacaoML({ acao: "ml_consulta", conta_ml: String(conta || contaSimulacaoML || ""), metodo: "GET", caminho: `/items/${mlb}` }),
+      }),
+      lerEvidenciaMesmoCodigo(codigoSku, (c) => chamarPublicacaoML({ ...c, conta_ml: String(contaSimulacaoML || "") })),
+    ]);
+    const rejeicoes = mesclarRejeicoes(decisaoCategoriaRef.current?.rejeitadas || [], rej.lista).lista;
+    setRejeicoesSKU(rejeicoes);
+    // MLB restrito sem motivo comprovado: só histórico (não rejeita categoria).
+    setRestricoesSKU(rej.restricoes || []);
+    // Histórico do SKU gravado na ficha (só acrescenta; nunca apaga).
+    if (anuncioIdPAIIA && rej.lista.length) registrarCategoriasRejeitadas({ anuncioId: anuncioIdPAIIA, rejeicoes: rej.lista }).catch(() => {});
+    const ids = new Set([
+      ...consultas.flatMap((q) => q.sugestoes.map((x) => x.category_id)),
+      ...Object.keys(evidencia.porCategoria || {}),
+      ...herdadasCategoria.map((h) => h.id),
+      ...rejeicoes.map((r) => r.categoria_id),
+      categoriaIdRef.current,
+    ].filter(Boolean));
+    const detalhes = {};
+    await Promise.all([...ids].slice(0, 16).map(async (id) => {
+      detalhes[id] = await lerDetalheCategoria(id, undefined, cacheDetalhesCategoriaRef.current);
+    }));
+    const av = avaliarCategorias({ tipoVeiculo, textoPeca: textoPecaCategoria(), consultas, detalhes, evidencia, rejeicoes, herdadas: herdadasCategoria });
+    if (conflitoPrincipal) {
+      av.conflitos.unshift("Conflito na identificação do produto principal (Base/nome da peça × título): confirme qual é a peça antes de escolher a categoria.");
+      av.sugerida = null;
     }
+    if (!principal) av.alertas.unshift("O PAIIA não identificou a peça principal: informe o nome técnico da peça.");
+    av.restricoes = rej.restricoes || [];
+    setDetalhesCategoria((d) => ({ ...d, ...detalhes }));
+    setEvidenciaCategoria(evidencia);
+    setAvaliacaoCategoria(av);
+    // Confirmada antes e agora REJEITADA para o SKU: desfaz (histórico fica).
+    const conf = decisaoCategoriaRef.current?.confirmada?.id;
+    if (conf && rejeicoes.some((r) => r.categoria_id === conf) && decisaoCategoriaRef.current?.revisao?.categoria_id !== conf) {
+      setDecisaoCategoria((d) => desfazerConfirmacao(d, "categoria rejeitada pelo Mercado Livre para este SKU"));
+      categoriaIdRef.current = "";
+      setCategoriaId("");
+      setCategoria("");
+      setOrigemCategoria("");
+    }
+    if (rej.erros.length) setErroCategoria(`Histórico do SKU lido em parte (${rej.erros.slice(0, 3).join("; ")}).`);
   } catch (erro) {
     console.error("❌ ERRO CATEGORIA MERCADO LIVRE:", erro);
-    if (!categoriaIdRef.current) setMotivoCategoria("não foi possível consultar o Mercado Livre agora.");
-    if (!automatica) setErroCategoria("Não foi possível consultar a categoria no Mercado Livre.");
+    setErroCategoria("Não foi possível conferir a categoria no Mercado Livre agora. Tente de novo.");
   } finally {
-    setBuscandoCategoria(false);
+    setCarregandoCategoria(false);
   }
 }
 
-// Busca manual (ferramenta auxiliar): consulta/troca; nunca apaga a atual.
-async function atualizarCategoria() {
+// Rejeição por DECISÃO MANUAL (com justificativa): fica na ficha e no histórico.
+function rejeitarCategoriaManual(candidata, justificativa) {
+  const r = rejeicaoManual({ categoria_id: candidata?.id, justificativa });
+  if (!r) return;
+  const atual = decisaoCategoriaRef.current || {};
+  const lista = mesclarRejeicoes([...(atual.rejeitadas || []), ...rejeicoesSKU], [r]).lista;
+  let nova = { ...atual, rejeitadas: lista, historico: [...(atual.historico || []), { acao: "rejeitou_manual", id: r.categoria_id, justificativa: r.justificativa, data: r.registrado_em }].slice(-30) };
+  if (nova.confirmada?.id === r.categoria_id) {
+    nova = desfazerConfirmacao(nova, "categoria rejeitada manualmente");
+    categoriaIdRef.current = "";
+    setCategoriaId("");
+    setCategoria("");
+    setOrigemCategoria("");
+  }
+  decisaoCategoriaRef.current = nova;
+  setDecisaoCategoria(nova);
+  setRejeicoesSKU(lista);
+  if (anuncioIdPAIIA) registrarCategoriasRejeitadas({ anuncioId: anuncioIdPAIIA, rejeicoes: [r] }).catch(() => {});
+  avaliarCategoria();
+}
+
+// Busca manual: acrescenta o termo às consultas e confere tudo de novo.
+async function buscarCategoriaManual() {
   const termo = String(termoCategoria || "").trim();
-  if (!termo) {
-    alert("Digite o nome da peça para buscar a categoria.");
-    return;
-  }
-  // Mesmo na busca manual, "Kit" e itens inclusos não definem a categoria.
-  const principal = extrairProdutoPrincipal(termo, produtoPrincipal.contexto).principal || termo;
-  await consultarCategoriaML([...new Set([principal, termo])], false);
+  if (termo) termosExtrasCategoriaRef.current = [...new Set([...termosExtrasCategoriaRef.current, termo])].slice(-3);
+  await avaliarCategoria();
 }
 
-// Automática: ao abrir a Conferência sem categoria definida, consulta o ML
-// pelo nome da peça e pelo título (aplicação só como contexto).
-const categoriaAutoTentadaRef = useRef(false);
+// Ao abrir a Conferência: confere SEMPRE (inclusive a categoria herdada).
+// Trocar o tipo de veículo confere de novo (o ramo da categoria depende dele).
+const categoriaAvaliadaRef = useRef(false);
+const tipoAvaliadoRef = useRef(String(tipoVeiculo || ""));
 useEffect(() => {
-  if (categoriaAutoTentadaRef.current || categoriaIdRef.current) return;
-  categoriaAutoTentadaRef.current = true;
-  const contexto = aplicacoesConfirmadas[0];
-  const principal = produtoPrincipal.principal;
-  if (!principal) {
-    setMotivoCategoria("não foi possível identificar a peça principal (informe o nome da peça).");
-    return;
-  }
-  // Título só entra se a peça principal dele for a mesma; se a base e o
-  // título indicarem peças principais diferentes, não escolhe por suposição.
-  const ignorar = new Set(palavrasVeiculoConferencia().flatMap((t) => normalizarTexto(t).split(/\s+/)));
-  const doTitulo = extrairProdutoPrincipal(tituloAnuncio, produtoPrincipal.contexto).principal;
-  const nucleoBase = nucleoDoProduto(principal, ignorar);
-  const nucleoTitulo = doTitulo ? nucleoDoProduto(doTitulo, ignorar) : "";
-  const tiposIguais = (a, b) => a === b || (SINONIMOS_TIPO_PECA[a] || []).includes(b);
-  const fonteSuperior = !/^(título|descrição)/.test(produtoPrincipal.fonte);
-  if (fonteSuperior && nucleoTitulo && !tiposIguais(nucleoBase, nucleoTitulo)) {
-    // Conflito: não decide sozinho. Só mostra as opções; nada é escolhido.
-    setConflitoProduto({ fonte: produtoPrincipal.fonte, base: principal, titulo: doTitulo });
-    consultarCategoriaML([principal, doTitulo], false, false).then(() => {
-      if (!categoriaIdRef.current) {
-        setMotivoCategoria("confirme qual é o produto principal (corrija o nome da peça se preciso) e só então escolha a categoria abaixo.");
-      }
-    });
-    return;
-  }
-  const termos = [
-    principal,
-    doTitulo && doTitulo !== principal ? doTitulo : "",
-    contexto ? [principal, contexto.montadora, contexto.modelo].filter(Boolean).join(" ") : "",
-  ];
-  consultarCategoriaML(termos, true);
+  if (categoriaAvaliadaRef.current) return;
+  categoriaAvaliadaRef.current = true;
+  avaliarCategoria();
 }, []); // eslint-disable-line react-hooks/exhaustive-deps
+useEffect(() => {
+  if (tipoAvaliadoRef.current === String(tipoVeiculo || "")) return undefined;
+  const t = setTimeout(() => {
+    tipoAvaliadoRef.current = String(tipoVeiculo || "");
+    avaliarCategoria();
+  }, 400);
+  return () => clearTimeout(t);
+}, [tipoVeiculo]); // eslint-disable-line react-hooks/exhaustive-deps
+// Situação da categoria SELECIONADA agora (mostrada no bloco ⑮ e usada na aprovação).
+const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
+  categoriaId,
+  decisao: decisaoCategoria,
+  rejeicoes: rejeicoesSKU,
+  detalhe: categoriaId ? detalhesCategoria[categoriaId] || null : null,
+  tipoVeiculo,
+  textoPeca: textoPecaCategoria(),
+  exigencias: null,
+}), [categoriaId, decisaoCategoria, rejeicoesSKU, detalhesCategoria, tipoVeiculo, produtoPrincipal.principal, nomePeca, tituloAnuncio]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Grava a ficha da conferência a cada alteração (uma por código).
   // Assim nada do que foi conferido some ao navegar ou atualizar a tela.
@@ -3643,7 +3684,16 @@ useEffect(() => {
     tipoAnuncio: modalidade,
     freteML: registroFreteConf,
     nomePeca,
-    categoriaML: categoriaId || categoria ? { id: categoriaId, caminho: categoria, origem: origemCategoria } : null,
+    // Sem confirmação, a categoria que veio da ficha continua guardada como
+    // HERDADA (não confirmada) — nada se perde, e ela segue sem valer sozinha.
+    categoriaML: categoriaId
+      ? { id: categoriaId, caminho: categoria, origem: origemCategoria }
+      : herdadasCategoria.find((h) => h.origem === ORIGEM_CATEGORIA.FICHA)
+        ? { ...herdadasCategoria.find((h) => h.origem === ORIGEM_CATEGORIA.FICHA), origem: "herdada_nao_confirmada" }
+        : null,
+    // Rastreabilidade da categoria (apresentadas, origem, escolhida, data,
+    // manual, descartadas/rejeitadas, motivo sem GTIN).
+    categoriaDecisao: copiaLeve(decisaoCategoria, 60000),
     compatibilidades,
     observacaoCompatibilidade,
     modelosSemDetalhes,
@@ -4535,10 +4585,20 @@ useEffect(() => {
       }
     }
 
-    if (!categoria.trim()) {
-      faltando.push(
-        "Categoria"
-      );
+    // Categoria: confirmada por você, não rejeitada para o SKU, compatível
+    // (caminho/domínio/tipo de veículo) e com o motivo sem GTIN quando exigido.
+    const gtinPendente = (exigenciaCategoria?.pendentes || []).filter((p) => p.id === ATRIBUTO_MOTIVO_SEM_GTIN || p.tipo === "leitura");
+    const confCategoria = conferirCategoriaParaPublicar({
+      categoriaId,
+      decisao: decisaoCategoria,
+      rejeicoes: rejeicoesSKU,
+      detalhe: categoriaId ? detalhesCategoria[categoriaId] || null : null,
+      tipoVeiculo,
+      textoPeca: textoPecaCategoria(),
+      exigencias: exigenciaCategoria ? { ok: gtinPendente.length === 0, pendentes: gtinPendente } : null,
+    });
+    if (!confCategoria.ok) {
+      faltando.push(...confCategoria.motivos.map((m) => `Categoria (bloco ⑮): ${m}`));
     }
 
     if (!marca.trim()) {
@@ -6683,16 +6743,7 @@ useEffect(() => {
   ⑮ Categoria Mercado Livre
 </h3>
 
-<div
-  data-paiia-categoria-definida
-  style={{
-    padding: "14px 16px",
-    borderRadius: "12px",
-    border: categoriaId || categoria.trim() ? "1px solid #22c55e" : "1px solid #f59e0b",
-    background: "#020617",
-    marginBottom: "14px",
-  }}
->
+<div data-paiia-categoria-definida style={{ marginBottom: "10px" }}>
   {conflitoProduto && !categoriaId ? (
     <div data-paiia-conflito-produto style={{ color: "#fde68a", fontSize: "12px", marginBottom: "8px", lineHeight: 1.6 }}>
       <div style={{ color: "#fbbf24", fontWeight: "bold", fontSize: "13px" }}>
@@ -6712,179 +6763,28 @@ useEffect(() => {
       ) : null}
     </div>
   ) : null}
-  {categoriaId || categoria.trim() ? (
-    <>
-      <div style={{ color: "#86efac", fontWeight: "bold", marginBottom: "6px" }}>
-        ✅ Categoria Mercado Livre selecionada
-      </div>
-      <div style={{ color: "#f8fafc", fontWeight: "bold", lineHeight: 1.5 }}>{categoria || categoriaId}</div>
-      <div style={{ marginTop: "6px", color: "#94a3b8", fontSize: "12px" }}>
-        {categoriaId ? <>ID Mercado Livre: <strong>{categoriaId}</strong></> : "sem ID do Mercado Livre — use a busca abaixo para confirmar"}
-        {origemCategoria ? ` · ${ROTULO_ORIGEM_CATEGORIA[origemCategoria] || origemCategoria}` : ""}
-      </div>
-    </>
-  ) : (
-    <>
-      <div style={{ color: "#fbbf24", fontWeight: "bold" }}>
-        {buscandoCategoria ? "⏳ Procurando a categoria no Mercado Livre..." : "Categoria Mercado Livre: PENDENTE"}
-      </div>
-      {!buscandoCategoria && motivoCategoria && (
-        <div data-paiia-motivo-categoria style={{ marginTop: "6px", color: "#fde68a", fontSize: "12px" }}>
-          Motivo: {motivoCategoria}
-        </div>
-      )}
-    </>
-  )}
 </div>
 
-<p style={textoAuxiliar}>
-  {categoriaId || categoria.trim()
-    ? "Busca auxiliar: consulte, confira ou escolha outra categoria. A categoria selecionada só muda se você escolher outra."
-    : "Digite o nome da peça e o PAIIA consulta o Mercado Livre para encontrar a categoria."}
-</p>
-
-<div
-  style={{
-    display: "grid",
-    gridTemplateColumns:
-      "1fr auto",
-    gap: "12px",
-    alignItems: "end",
-    marginBottom: "16px",
-  }}
->
-  <Campo
-    label="Nome da peça"
-    value={termoCategoria}
-    onChange={setTermoCategoria}
-    placeholder="Ex.: Sensor de nível, bomba de combustível, radiador..."
-  />
-
-  <button
-    type="button"
-    onClick={atualizarCategoria}
-    disabled={buscandoCategoria}
-    style={{
-      ...botaoCategoria,
-      opacity:
-        buscandoCategoria
-          ? 0.65
-          : 1,
-      cursor:
-        buscandoCategoria
-          ? "wait"
-          : "pointer",
-    }}
-  >
-    {buscandoCategoria
-      ? "⏳ Buscando..."
-      : "🤖 Buscar Categoria Mercado Livre"}
-  </button>
-</div>
-
-{erroCategoria && (
-  <div
-    style={{
-      padding: "12px",
-      marginBottom: "14px",
-      borderRadius: "10px",
-      border:
-        "1px solid #f59e0b",
-      background:
-        "rgba(245,158,11,0.08)",
-      color: "#fde68a",
-      fontSize: "13px",
-    }}
-  >
-    ⚠️ {erroCategoria}
-  </div>
-)}
-
-{opcoesCategoria.length > 0 && (
-  <div
-    style={{
-      marginBottom: "16px",
-    }}
-  >
-    <div
-      style={{
-        color: "#bfdbfe",
-        fontWeight: "bold",
-        marginBottom: "8px",
-      }}
-    >
-      🔎 Categorias encontradas na busca
-    </div>
-
-    <div
-      style={{
-        display: "grid",
-        gap: "8px",
-      }}
-    >
-      {opcoesCategoria.map(
-        (opcao) => (
-          <button
-            key={opcao.id}
-            type="button"
-            onClick={() =>
-              escolherCategoria(
-                opcao,
-                "agora"
-              )
-            }
-            style={{
-              padding:
-                "12px 14px",
-              borderRadius:
-                "10px",
-              border:
-                opcao.id ===
-                categoriaId
-                  ? "1px solid #22d3ee"
-                  : "1px solid #334155",
-              background:
-                "#0f172a",
-              color:
-                "#e2e8f0",
-              textAlign:
-                "left",
-              cursor:
-                "pointer",
-            }}
-          >
-            {opcao.caminho}
-
-            <span
-              style={{
-                display: "block",
-                marginTop: "4px",
-                color: "#64748b",
-                fontSize: "11px",
-              }}
-            >
-              {opcao.id}
-              {opcao.id === categoriaId
-                ? " · selecionada"
-                : " · clique para usar esta categoria"}
-            </span>
-          </button>
-        )
-      )}
-    </div>
-  </div>
-)}
-
-<details style={{ marginTop: "6px" }}>
-  <summary style={{ color: "#64748b", fontSize: "12px", cursor: "pointer" }}>
-    Editar o nome da categoria manualmente
-  </summary>
-  <AreaTexto
-    value={categoria}
-    onChange={setCategoria}
-    placeholder="Categoria selecionada"
-  />
-</details>
+<PainelCategoriaML
+  carregando={carregandoCategoria}
+  erro={erroCategoria}
+  avaliacao={avaliacaoCategoria}
+  evidencia={evidenciaCategoria}
+  decisao={decisaoCategoria}
+  categoriaId={categoriaId}
+  categoriaCaminho={categoria}
+  rejeicoes={rejeicoesSKU}
+  restricoes={restricoesSKU}
+  onRejeitarManual={rejeitarCategoriaManual}
+  problemasSelecionada={categoriaId && !carregandoCategoria ? categoriaNaTela.motivos : []}
+  exigenciaGtin={exigenciaGtin}
+  onConfirmar={confirmarCategoria}
+  onTrocar={trocarCategoria}
+  onMotivoSemGtin={escolherMotivoSemGtin}
+  termo={termoCategoria}
+  onTermo={setTermoCategoria}
+  onBuscar={buscarCategoriaManual}
+/>
 
 </section>
 
@@ -6914,10 +6814,10 @@ useEffect(() => {
         >
           <span>
             🏷️ Categoria ML:{" "}
-            <strong data-paiia-revisao-categoria style={{ color: categoria.trim() || categoriaId ? "#86efac" : "#fca5a5" }}>
-              {categoria.trim() || categoriaId
-                ? `${categoria || categoriaId}${categoriaId ? ` (${categoriaId})` : " — sem ID do Mercado Livre"}`
-                : "PENDENTE"}
+            <strong data-paiia-revisao-categoria style={{ color: categoriaId && decisaoCategoria?.confirmada?.id === categoriaId ? "#86efac" : "#fca5a5" }}>
+              {categoriaId && decisaoCategoria?.confirmada?.id === categoriaId
+                ? `${categoria || categoriaId} (${categoriaId}) — confirmada por você`
+                : "PENDENTE — confirme a categoria no bloco ⑮"}
             </strong>
           </span>
           <span>
@@ -7466,18 +7366,6 @@ const botaoPrincipal = {
   background:
     "linear-gradient(135deg,#15803d,#22c55e)",
   color: "#ffffff",
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const botaoCategoria = {
-  marginTop: "12px",
-  padding: "11px 16px",
-  borderRadius: "10px",
-  border:
-    "1px solid #38bdf8",
-  background: "#082f49",
-  color: "#bae6fd",
   cursor: "pointer",
   fontWeight: "bold",
 };

@@ -81,6 +81,9 @@ export const CAMPOS_RELEVANTES = [
   // Novos no fim (06/10/2026, após o MLB5342409793 sair "novo" com ficha "usado"):
   ["condicao", "condição", (a) => condicao(a?.condicao)],
   ["semCompatibilidadeConfirmada", "publicar sem compatibilidade", (a) => (a?.semCompatibilidadeConfirmada === true ? "sim" : "")],
+  // (09/10/2026) Categoria CONFIRMADA pelo usuário e motivo de não ter GTIN.
+  ["categoriaDecisao", "categoria confirmada", (a) => (a?.categoriaDecisao === undefined ? undefined : txt(a?.categoriaDecisao?.confirmada?.id).toUpperCase())],
+  ["motivoSemGtin", "motivo sem GTIN", (a) => (a?.categoriaDecisao === undefined ? undefined : txt(a?.categoriaDecisao?.motivoSemGtin?.id))],
 ];
 
 /**
@@ -92,7 +95,7 @@ export function divergenciasAnuncio(atual, aprovado, { somenteCamposDe = null } 
   if (!atual || !aprovado) return ["ficha aprovada ausente"];
   const dif = [];
   for (const [chave, rotulo, canon] of CAMPOS_RELEVANTES) {
-    if (somenteCamposDe && somenteCamposDe[chave] === undefined) continue;
+    if (somenteCamposDe && somenteCamposDe[chave === "motivoSemGtin" ? "categoriaDecisao" : chave] === undefined) continue;
     if (JSON.stringify(canon(atual)) !== JSON.stringify(canon(aprovado))) dif.push(rotulo);
   }
   return dif;
@@ -150,8 +153,6 @@ export function conferirFichaPersistida({ tela, envio, base }) {
     // Título no ML: até 60 caracteres (a Publicação corta igual).
     const persistidoEnvio = { ...persistido, titulo: String(persistido.titulo || "").slice(0, 60), codigo: persistido.sku || persistido.codigo || persistido.oem };
     for (const d of divergenciasAnuncio(doEnvio, persistidoEnvio, { somenteCamposDe: doEnvio })) {
-      // Sem categoria aprovada, a Publicação pode sugerir uma: não é divergência.
-      if (d === "categoria" && !String(persistido.categoriaId || "").trim()) continue;
       // Ficha antiga sem quantidade na cópia aprovada: a quantidade é confirmada na Publicação.
       if (d === "quantidade" && !qtd(persistido.quantidade)) continue;
       if (!divergencias.includes(d)) divergencias.push(d);

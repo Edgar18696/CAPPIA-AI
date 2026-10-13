@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import { conflitoDeVersao, decisaoBaseComGravacao, montarCompatibilidadesPersistidas } from "./publicacaoSegura";
+import { mesclarRejeicoes } from "./categoriaML";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -83,7 +84,7 @@ export async function listarAnunciosDoCodigo(codigo) {
   if (!cod) return { ok: true, disponivel: true, anuncios: [] };
   const { data, error } = await supabase
     .from(T_ANUNCIOS)
-    .select(`id, codigo, titulo, conta_destino_ml_user_id, conta_destino_nome, status_fluxo, updated_at, integracao_bling:dados_conferencia->integracao_bling, ${T_PUBLICACOES}(id, ml_user_id, conta_nome, mlb_id, status_publicacao, publicado_em, status_bling, bling_produto_id, sku, erro_publicacao)`)
+    .select(`id, codigo, titulo, conta_destino_ml_user_id, conta_destino_nome, status_fluxo, updated_at, integracao_bling:dados_conferencia->integracao_bling, mlbs_anteriores:dados_conferencia->mlbs_anteriores, categorias_rejeitadas:dados_conferencia->categorias_rejeitadas, ${T_PUBLICACOES}(id, ml_user_id, conta_nome, mlb_id, status_publicacao, publicado_em, status_bling, bling_produto_id, sku, erro_publicacao)`)
     .eq("codigo_normalizado", cod)
     .neq("status_fluxo", "cancelado")
     .order("updated_at", { ascending: false })
@@ -375,7 +376,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -576,6 +577,27 @@ export async function registrarMLBsAnteriores({ anuncioId, registros }) {
   const { error } = await supabase
     .from(T_ANUNCIOS)
     .update({ dados_conferencia: { ...dados, mlbs_anteriores: lista }, updated_at: new Date().toISOString() })
+    .eq("id", anuncioId);
+  if (error) return falha(error);
+  return { ok: true, gravado: true, lista };
+}
+
+/**
+ * Histórico de CATEGORIAS REJEITADAS pelo Mercado Livre para este SKU
+ * (dados_conferencia.categorias_rejeitadas): só acrescenta, nunca apaga;
+ * grava apenas quando aparece uma rejeição nova (ou um motivo conhecido).
+ */
+export async function registrarCategoriasRejeitadas({ anuncioId, rejeicoes }) {
+  if (!anuncioId || !Array.isArray(rejeicoes) || !rejeicoes.length) return { ok: true, gravado: false };
+  const { data, error: erroLer } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
+  if (erroLer) return falha(erroLer);
+  if (!data) return { ok: false, erro: "Ficha não encontrada." };
+  const dados = data.dados_conferencia || {};
+  const { lista, mudou } = mesclarRejeicoes(dados.categorias_rejeitadas, rejeicoes);
+  if (!mudou) return { ok: true, gravado: false, lista };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, categorias_rejeitadas: lista }, updated_at: new Date().toISOString() })
     .eq("id", anuncioId);
   if (error) return falha(error);
   return { ok: true, gravado: true, lista };

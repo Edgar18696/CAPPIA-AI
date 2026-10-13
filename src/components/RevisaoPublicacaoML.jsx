@@ -21,7 +21,11 @@ import {
   salvarRegistroIntegracaoBling,
   garantirRegistroIntegracaoBling,
   registrarMLBsAnteriores,
+  registrarCategoriasRejeitadas,
 } from "../services/anuncioPublicacaoService";
+import { conferirCategoriaParaPublicar } from "../services/categoriaML";
+import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
+import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, reais as reaisFrete } from "../services/fretePrecificacao";
@@ -452,6 +456,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   const attrTipoVeiculo = (preparo?.obrigatorios || []).find((a) => a.id === "VEHICLE_TYPE") || null;
   const tipoVeiculoPub = tipoVeiculoParaPublicacao(anuncio?.tipoVeiculo, attrTipoVeiculo);
   const tipoVeiculoEnvio = tipoVeiculoPub.estado === "ok" ? tipoVeiculoPub.nome : "";
+  // Categoria: SOMENTE a confirmada na Conferência (09/10/2026).
+  const decisaoCategoria = anuncio?.categoriaDecisao || null;
+  const categoriaConfirmadaFicha = String(decisaoCategoria?.confirmada?.id || "");
+  const motivoSemGtinFicha = decisaoCategoria?.motivoSemGtin?.id ? { id: String(decisaoCategoria.motivoSemGtin.id), nome: String(decisaoCategoria.motivoSemGtin.nome || "") } : null;
 
   const dadosAnuncio = useMemo(
     () => ({
@@ -477,11 +485,16 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           .filter(([id, v]) => id !== "VEHICLE_TYPE" && v && (v.value_id || v.value_name))
           .map(([id, v]) => ({ id, ...(v.value_id ? { value_id: v.value_id } : { value_name: v.value_name }) })),
         ...(tipoVeiculoPub.extra ? [tipoVeiculoPub.extra] : []),
+        // Motivo de não ter GTIN: o escolhido por você na Conferência (sem GTIN).
+        ...(motivoSemGtinFicha && !String(campos.gtin || "").replace(/\D/g, "") ? [{ id: ATRIBUTO_MOTIVO_SEM_GTIN, value_id: motivoSemGtinFicha.id }] : []),
       ],
+      // Categoria CONFIRMADA na Conferência (a função recusa se não bater).
+      categoria_confirmada_id: categoriaConfirmadaFicha,
+      motivo_sem_gtin: motivoSemGtinFicha,
       // Conferência (não vai ao ML): tipo enviado = tipo da ficha.
       tipo_veiculo: tipoVeiculoPub.extra ? tipoVeiculoPub.nome : undefined,
     }),
-    [campos, anuncio, fotosUrls, extras, logistica, skuEnvio, quantidadeConfirmada, tipoVeiculoPub.extra?.value_id, tipoVeiculoPub.nome]
+    [campos, anuncio, fotosUrls, extras, logistica, skuEnvio, quantidadeConfirmada, tipoVeiculoPub.extra?.value_id, tipoVeiculoPub.nome, motivoSemGtinFicha, categoriaConfirmadaFicha]
   );
 
   function alterarExtra(id, valor) {
@@ -517,10 +530,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     const r = await chamar("preparar", {
       anuncio: { ...dadosAnuncio, categoria_id: categoriaId ?? dadosAnuncio.categoria_id },
     }, contaEscolhida);
+    // (09/10/2026) A Publicação NUNCA adota categoria sugerida pelo servidor:
+    // sem categoria confirmada na Conferência, nada é publicado.
     setPreparo(r);
-    if (r?.ok && r.categoria_id && !categoriaId) {
-      setCampos((c) => ({ ...c, categoria_id: r.categoria_id }));
-    }
     setOcupado("");
   }
 
@@ -766,7 +778,46 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     }
   }
 
+  // CATEGORIA conferida de novo NA HORA: confirmada, não rejeitada para o
+  // SKU (histórico relido agora no ML), caminho/domínio compatíveis e
+  // atributos obrigatórios + condicionais (inclusive motivo sem GTIN).
+  async function conferirCategoriaAgora() {
+    const id = String(campos.categoria_id || "");
+    const rej = await lerRejeicoesDoSKU({
+      codigo: codigoPesquisado,
+      listarFichas: listarAnunciosDoCodigo,
+      lerItem: (mlb, conta) => chamar("ml_consulta", { metodo: "GET", caminho: `/items/${mlb}` }, conta || contaEscolhida),
+    });
+    if (ficha.anuncioId && rej.lista.length) registrarCategoriasRejeitadas({ anuncioId: ficha.anuncioId, rejeicoes: rej.lista }).catch(() => {});
+    const detalhe = id ? await lerDetalheCategoria(id) : null;
+    const preenchidos = [
+      ...(detalhe?.atributos?.obrigatorios || []).map((a) => a.id).filter((x) => x !== ATRIBUTO_MOTIVO_SEM_GTIN),
+    ];
+    const exig = detalhe ? exigenciasAtributos({ atributos: detalhe.atributosBrutos, preenchidos, gtin: campos.gtin, motivoSemGtin: motivoSemGtinFicha }) : null;
+    // Condicionais que o servidor (consulta oficial do ML) apontou para este anúncio.
+    const doServidor = (preparo?.exigencias_condicionais?.pendentes || []).filter((p) => !(exig?.pendentes || []).some((x) => x.id === p.id));
+    const exigencias = exig ? { ok: exig.ok && !doServidor.length, pendentes: [...exig.pendentes, ...doServidor] } : null;
+    const r = conferirCategoriaParaPublicar({
+      categoriaId: id,
+      decisao: decisaoCategoria,
+      rejeicoes: rej.lista,
+      detalhe: detalhe?.lido ? detalhe : null,
+      tipoVeiculo: anuncio?.tipoVeiculo || "Carro/Caminhonete",
+      textoPeca: [anuncio?.nomePeca, anuncio?.titulo].filter(Boolean).join(" "),
+      exigencias,
+    });
+    // Avisos (não bloqueiam): ex.: sem GTIN e o ML não exigiu o motivo.
+    const avisos = [...(exig?.avisos || []), ...(preparo?.exigencias_condicionais?.avisos || [])].map((a) => a.texto).filter((t, i, l) => t && l.indexOf(t) === i);
+    return { ...r, detalhe, avisos, rejeicoes: rej.lista, errosHistorico: rej.erros };
+  }
+
   async function validarNoML() {
+    const cat = await conferirCategoriaAgora();
+    setCategoriaConf(cat);
+    if (!cat.ok) {
+      setValidacao({ ok: false, erro: `Validação NÃO executada — categoria: ${cat.motivos.join(" ")}` });
+      return;
+    }
     setOcupado("validar");
     setValidacao(null);
     setArmado(false);
@@ -872,6 +923,15 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         setOcupado("");
         return;
       }
+    }
+    // Categoria + atributos obrigatórios/condicionais: de novo NA HORA do clique.
+    const catAgora = await conferirCategoriaAgora();
+    setCategoriaConf(catAgora);
+    if (!catAgora.ok) {
+      setResultado({ ok: false, erro: `Publicação BLOQUEADA: categoria — ${catAgora.motivos.join(" ")}` });
+      setArmado(false);
+      setOcupado("");
+      return;
     }
     // Frete × precificação: conferido de novo NA HORA do clique.
     const freteAgora = await conferirFretePublicacao();
@@ -1065,6 +1125,18 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contaOk, contaEscolhida]);
 
+  const [categoriaConf, setCategoriaConf] = useState(null);
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      if (ativo) setCategoriaConf({ carregando: true });
+      const r = await conferirCategoriaAgora();
+      if (ativo) setCategoriaConf(r);
+    })();
+    return () => { ativo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contaOk, contaEscolhida, campos.categoria_id, campos.gtin, preparo]);
+
   const conferencia = conferir({
     freteConf, campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
     descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoPub, compatTexto: anuncio?.compatibilidades,
@@ -1073,6 +1145,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   });
   // Ficha não salva / conflito de versões / Conferência invalidada: bloqueia.
   if (bloqueioFicha) conferencia.unshift({ item: "Ficha salva na base", nivel: "erro", texto: bloqueioFicha });
+  // Categoria (09/10/2026): confirmada, não rejeitada, compatível e com obrigatórios/condicionais.
+  conferencia.unshift(
+    !categoriaConf || categoriaConf.carregando
+      ? { item: "Categoria", nivel: "erro", texto: "Conferindo a categoria no Mercado Livre (confirmação, histórico do SKU, caminho/domínio e atributos)…" }
+      : categoriaConf.ok
+        ? { item: "Categoria", nivel: "ok", texto: `${campos.categoria_id} — ${categoriaConf.detalhe?.caminho || ""} (confirmada por você; não rejeitada para este SKU; obrigatórios e condicionais conferidos${motivoSemGtinFicha ? `; motivo sem GTIN: ${motivoSemGtinFicha.nome}` : ""}).${categoriaConf.avisos?.length ? ` ${categoriaConf.avisos.join(" ")}` : ""}` }
+        : { item: "Categoria", nivel: "erro", texto: `${categoriaConf.motivos.join(" ")} Volte à Conferência (bloco ⑮) para confirmar/corrigir.` }
+  );
   const bloqueios = conferencia.filter((c) => c.nivel === "erro");
   // A opção só aparece quando Compatibilidades (sem aplicação) é o ÚNICO
   // bloqueio. Ela libera exclusivamente esse item; nada mais é aprovado.
