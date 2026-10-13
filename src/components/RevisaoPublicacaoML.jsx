@@ -43,7 +43,7 @@ import {
   TEXTO_VEICULOS_SO_NA_DESCRICAO,
 } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
-import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, decidirCriacaoBling, conferirProdutoCriado } from "../services/estoqueBlingPAIIA";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, decidirCriacaoBling, conferirProdutoCriado, conferirCadastroBlingEmBlocos } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
@@ -714,6 +714,21 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setEstoque(null);
     setEstoque(await lerBling());
   }
+  // Conferência do cadastro em blocos: ponto de retomada se o Bling falhar.
+  const [retomadaBling, setRetomadaBling] = useState(null);
+  async function chamarBling(corpo) {
+    const { data, error } = await supabase.functions.invoke("bling-integracao", { body: corpo });
+    return error ? { ok: false, erro: error.message } : data || { ok: false, erro: "Resposta vazia." };
+  }
+  // Usa um cadastro que JÁ existe no Bling (nada é criado): relê e vincula.
+  async function usarCadastroExistente(produto, aviso = "") {
+    const depois = await lerBling(produto?.codigo || "");
+    setEstoque(depois);
+    const idBling = produto?.id || depois?.produto?.id;
+    if (idBling && ficha.anuncioId) await registrarProdutoBlingCriado({ anuncioId: ficha.anuncioId, blingProdutoId: idBling });
+    setCriacaoBling({ ocupado: false, ok: true, criado: false, jaExistia: true, produto: { id: idBling, codigo: produto?.codigo }, problemas: aviso ? [aviso] : [] });
+    setPainelBling(false);
+  }
   async function criarProdutoBling() {
     if (cadastroBling.faltando.length) return;
     const enviado = cadastroBling.produto;
@@ -726,27 +741,72 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       setCriacaoBling({ ocupado: false, ok: false, criado: false, jaExistia: decisao.acao === "ja_existe", erro: decisao.motivo });
       return;
     }
-    // 2) Criação (a função confere o SKU de novo no servidor).
-    setCriacaoBling({ ocupado: true, etapa: "Criando o produto no Bling..." });
-    const { data, error } = await supabase.functions.invoke("bling-integracao", {
-      body: { acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: enviado },
+    // 2) Cadastro inteiro (ativos + inativos; excluídos fora), em blocos.
+    //    Falha temporária do Bling: para e permite CONTINUAR do mesmo ponto.
+    const conf = await conferirCadastroBlingEmBlocos({
+      chamar: chamarBling,
+      sku: enviado.codigo,
+      retomar: retomadaBling?.sku === enviado.codigo ? retomadaBling : null,
+      aoProgresso: ({ nome, pagina }) => setCriacaoBling({ ocupado: true, etapa: `Conferindo o cadastro do Bling (${nome}, página ${pagina})...` }),
     });
-    const r = error ? { ok: false, erro: error.message } : data || { ok: false, erro: "Resposta vazia." };
-    if (!r.ok || (!r.criado && !r.ja_existia)) {
+    if (!conf.ok) {
+      setRetomadaBling(conf.retomar ? { ...conf.retomar, sku: enviado.codigo } : null);
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, podeRetomar: Boolean(conf.retomar), erro: `${conf.falha?.erro || "Conferência do cadastro não concluída."}${conf.retomar ? " Clique de novo para CONTINUAR a conferência deste ponto." : ""}` });
+      return;
+    }
+    setRetomadaBling(null);
+    if (conf.achados.length > 1) {
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, erro: `Mais de um produto no Bling com este SKU (${conf.achados.map((x) => `${x.codigo} ID ${x.id}`).join("; ")}): resolva no Bling antes. Nada foi criado.` });
+      return;
+    }
+    if (conf.achados.length === 1) {
+      const x = conf.achados[0];
+      await usarCadastroExistente(x, `O SKU já existia no Bling escrito como ${x.codigo} (ID ${x.id}${String(x.situacao).toUpperCase() === "I" ? ", INATIVO" : ""}). Nada foi criado.`);
+      return;
+    }
+    // 3) Criação (o servidor confere recibos, trava e busca exata de novo).
+    setCriacaoBling({ ocupado: true, etapa: "Criando o produto no Bling..." });
+    const r = await chamarBling({ acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: enviado, recibos: conf.recibos });
+    if (r.refazer_conferencia) setRetomadaBling(null);
+    if (r.incerto || r.bloqueado) {
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, incerto: true, erro: r.erro || "Resultado da criação incerto: confira antes de tentar de novo." });
+      return;
+    }
+    if (r.ja_existia) {
+      await usarCadastroExistente(r.produto, r.mensagem || "");
+      return;
+    }
+    if (!r.ok || !r.criado) {
       setCriacaoBling({ ocupado: false, ok: false, erro: r.erro || "O Bling não criou o produto." });
       return;
     }
-    // 3) Releitura depois: confere ID, SKU e estoque; vincula à ficha.
-    //    Se o SKU já existia escrito de outro jeito (ex.: com hífen), relê
-    //    pela escrita do Bling: usa ESSE cadastro, nada é criado.
+    await finalizarCriacaoBling(enviado, r);
+  }
+  // Depois de criado: relê, confere ID/SKU/estoque e vincula à ficha.
+  async function finalizarCriacaoBling(enviado, r) {
     setCriacaoBling({ ocupado: true, etapa: "Relendo o produto no Bling..." });
-    const depois = await lerBling(r.ja_existia ? r.produto?.codigo : "");
+    const depois = await lerBling();
     setEstoque(depois);
-    const conf = r.ja_existia ? { ok: true, problemas: [] } : conferirProdutoCriado({ enviado, criado: r, releitura: depois });
+    const confCriado = conferirProdutoCriado({ enviado, criado: r, releitura: depois });
     const idBling = r.produto?.id || depois?.produto?.id;
     if (idBling && ficha.anuncioId) await registrarProdutoBlingCriado({ anuncioId: ficha.anuncioId, blingProdutoId: idBling });
-    setCriacaoBling({ ocupado: false, ok: conf.ok, criado: Boolean(r.criado), jaExistia: Boolean(r.ja_existia), produto: { id: idBling, codigo: enviado.codigo }, problemas: conf.problemas, estoqueInicial: r.estoque_inicial || null });
+    setCriacaoBling({ ocupado: false, ok: confCriado.ok, criado: true, jaExistia: false, produto: { id: idBling, codigo: enviado.codigo }, problemas: confCriado.problemas, estoqueInicial: r.estoque_inicial || null });
     setPainelBling(false);
+  }
+  // Criação com resultado INCERTO: confere no Bling (somente leitura).
+  async function conferirCriacaoIncertaBling() {
+    const enviado = cadastroBling.produto;
+    setCriacaoBling({ ocupado: true, etapa: "Conferindo no Bling se o produto foi criado..." });
+    const r = await chamarBling({ acao: "conferir_criacao_incerta", sku: enviado.codigo });
+    if (r.ok && r.resolvido === "criado") {
+      await finalizarCriacaoBling(enviado, { ok: true, criado: true, produto: r.produto, estoque_inicial: { ok: false, erro: "Criação confirmada só na conferência: o estoque inicial NÃO foi lançado automaticamente. Confira e lance no Bling" } });
+      return;
+    }
+    if (r.ok && (r.resolvido === "nao_criado" || r.pendente === false)) {
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, erro: "Conferido: o produto NÃO foi criado no Bling. Pode tentar criar de novo (o cadastro será conferido outra vez)." });
+      return;
+    }
+    setCriacaoBling({ ocupado: false, ok: false, criado: false, incerto: true, erro: r.erro || "Ainda não foi possível conferir. Tente de novo em instantes." });
   }
 
   // Relê a ficha na base e compara com a tela e com o que vai ao ML.
@@ -1374,7 +1434,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 )}
                 <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   <button type="button" data-paiia-confirmar-criar-bling onClick={criarProdutoBling} disabled={cadastroBling.faltando.length > 0 || criacaoBling?.ocupado} style={botaoAzul}>
-                    {criacaoBling?.ocupado ? `⏳ ${criacaoBling.etapa || "Criando..."}` : "✔ Confirmar e criar no Bling"}
+                    {criacaoBling?.ocupado ? `⏳ ${criacaoBling.etapa || "Criando..."}` : retomadaBling ? "↻ Continuar a conferência e criar no Bling" : "✔ Confirmar e criar no Bling"}
                   </button>
                   <button type="button" onClick={() => setPainelBling(false)} disabled={criacaoBling?.ocupado} style={botaoCinza}>Cancelar</button>
                 </div>
@@ -1383,6 +1443,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             )}
             {criacaoBling && !criacaoBling.ocupado && !criacaoBling.ok && (
               <p data-paiia-bling-criacao="erro" style={erro}>❌ {criacaoBling.erro}</p>
+            )}
+            {criacaoBling && !criacaoBling.ocupado && criacaoBling.incerto && (
+              <button type="button" data-paiia-conferir-criacao-bling onClick={conferirCriacaoIncertaBling} style={botaoAzul}>🔎 Conferir criação no Bling</button>
             )}
           </div>
         ) : (

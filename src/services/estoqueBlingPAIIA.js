@@ -156,3 +156,41 @@ export function conferirProdutoCriado({ enviado, criado, releitura }) {
   if (esperado && fisico == null) problemas.push("Estoque não pôde ser relido no Bling: confira o saldo no Bling.");
   return { ok: problemas.length === 0, problemas };
 }
+
+/**
+ * Conferência do cadastro do Bling ANTES de criar (13/10/2026): ativos e
+ * depois inativos, em blocos de páginas, cada bloco com recibo assinado
+ * pelo servidor. Um erro do Bling (ex.: 504) para SÓ aquele bloco e
+ * devolve `retomar` para continuar do mesmo ponto. Excluídos ficam fora.
+ *  chamar(corpo) → resposta da função bling-integracao
+ * Devolve { ok, completo, recibos[], achados[], falha?, retomar? }.
+ */
+export async function conferirCadastroBlingEmBlocos({ chamar, sku, retomar = null, aoProgresso = () => {}, maxChamadas = 60 }) {
+  const recibos = [...(Array.isArray(retomar?.recibos) ? retomar.recibos : [])];
+  let criterio = retomar?.criterio === 3 ? 3 : 2;
+  let pagina = Number(retomar?.pagina) >= 1 ? Number(retomar.pagina) : 1;
+  const parar = (erro) => ({ ok: false, completo: false, recibos, achados: [], falha: { criterio, pagina, erro }, retomar: { recibos, criterio, pagina } });
+  for (let n = 0; n < maxChamadas; n += 1) {
+    aoProgresso({ criterio, pagina, nome: criterio === 2 ? "ativos" : "inativos" });
+    let r;
+    try {
+      r = await chamar({ acao: "conferir_cadastro_sku", sku, criterio, pagina });
+    } catch (e) {
+      r = { ok: false, erro: e?.message || String(e) };
+    }
+    if (!r?.ok || !r.recibo) return parar(r?.erro || "Sem resposta do servidor.");
+    recibos.push(r.recibo);
+    if (Array.isArray(r.achados) && r.achados.length) return { ok: true, completo: false, recibos, achados: r.achados, retomar: null };
+    if (r.fim) {
+      if (criterio === 2) {
+        criterio = 3;
+        pagina = 1;
+        continue;
+      }
+      return { ok: true, completo: true, recibos, achados: [], retomar: null };
+    }
+    if (!r.proxima) return { ...parar("O cadastro do Bling tem mais páginas do que o limite conferido."), retomar: null };
+    pagina = Number(r.proxima);
+  }
+  return parar("Conferência do cadastro interrompida (muitas chamadas).");
+}
