@@ -1,9 +1,9 @@
-import { useState } from "react";
+import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import { ESTADO, TEXTO_ESTADO, passosBling, AVISO_VINCULO_MANUAL, URL_BLING_TRAZER } from "../services/vinculoBlingPublicacao";
 
 /*
  * Etapa visual "trazer este MLB para o Bling" (anúncio NOVO do PAIIA).
- * Só mostra o estado e oferece: Copiar MLB · Abrir Bling · Já trouxe — verificar.
+ * Só mostra o estado e oferece: Copiar MLB para o Bling · Abrir Bling · Já trouxe — verificar.
  * Não grava nada: a verificação é feita por quem usa o painel (onVerificar),
  * somente com a leitura anuncios_consultar. Nunca republica.
  */
@@ -15,27 +15,17 @@ const COR = {
 };
 
 export default function PainelIntegracaoBling({ registro, verificando = false, onVerificar }) {
-  const [copiado, setCopiado] = useState(false);
   if (!registro?.mlb) return null;
   const estado = registro.estado || ESTADO.AGUARDANDO;
   const integrado = estado === ESTADO.INTEGRADO;
-
-  async function copiar() {
-    try {
-      await navigator.clipboard.writeText(registro.mlb);
-      setCopiado(true);
-      setTimeout(() => setCopiado(false), 2000);
-    } catch {
-      setCopiado(false);
-    }
-  }
 
   return (
     <div data-paiia-integracao-bling={estado} style={caixa}>
       <div data-paiia-vinculo-manual style={destaqueManual}>⚠ {AVISO_VINCULO_MANUAL}</div>
       <div style={{ ...linha, color: "#86efac" }}>✅ Publicado no Mercado Livre</div>
       <div style={linha}>
-        MLB: <b data-paiia-mlb style={{ fontFamily: "monospace", fontSize: 15 }}>{registro.mlb}</b>
+        MLB: <b data-paiia-mlb style={{ fontFamily: "monospace", fontSize: 15 }}>{registro.mlb}</b>{" "}
+        <BotaoCopiarMLB mlb={registro.mlb} />
         {registro.sku_oficial ? <span style={sub}> · SKU {registro.sku_oficial}</span> : null}
       </div>
 
@@ -58,9 +48,6 @@ export default function PainelIntegracaoBling({ registro, verificando = false, o
       {!integrado && (
         <>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-            <button type="button" data-paiia-copiar-mlb onClick={copiar} style={botao}>
-              {copiado ? "✔ Copiado" : "📋 Copiar MLB"}
-            </button>
             <button type="button" data-paiia-abrir-bling onClick={() => window.open(URL_BLING_TRAZER, "_blank", "noopener")} style={botao}>
               ↗ Abrir Bling para trazer anúncio
             </button>

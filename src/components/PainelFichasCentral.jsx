@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listarFichasCentral } from "../services/fichasCentralService";
+import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 import {
   ESTADO_CENTRAL,
@@ -112,6 +113,7 @@ export default function PainelFichasCentral({ setScreen }) {
           <span style={{ flex: 1, minWidth: 180 }}>
             <b>{f.codigo || "Sem código"}</b> · {f.titulo || "Sem título"}
             {f.mlb ? <span style={sub}> · {f.mlb}</span> : null}
+            {f.publicado && f.mlb ? <BotaoCopiarMLB mlb={f.mlb} compacto /> : null}
             {f.conta ? <span style={sub}> · {f.conta}</span> : null}
             {f.pendencia ? <span style={{ ...sub, color: "#fca5a5" }}> · {f.pendencia}</span> : null}
             {f.noNovoAnuncio ? <span style={sub}> · Novo Anúncio · {f.completa ? "ficha completa" : "ficha parcial"}</span> : null}

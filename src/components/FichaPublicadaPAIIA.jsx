@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabase";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
+import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import { registroDaFichaOuPublicacao, conferirIntegracao, precisaConferir, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import { salvarRegistroIntegracaoBling, pendenciaPublicacao } from "../services/anuncioPublicacaoService";
 import { lerSituacaoMLBAtual } from "../services/situacaoMLBAtual";
@@ -138,7 +139,8 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
             <tr>
               <td style={td}>MLB</td>
               <td style={td}>
-                <b data-paiia-mlb-publicado style={{ fontFamily: "monospace" }}>{pub.mlb_id || registro?.mlb || "—"}</b>
+                <b data-paiia-mlb-publicado style={{ fontFamily: "monospace" }}>{pub.mlb_id || registro?.mlb || "—"}</b>{" "}
+                {!registro ? <BotaoCopiarMLB mlb={pub.mlb_id} compacto /> : null}
                 {pub.mlb_link ? (
                   <>
                     {" · "}
