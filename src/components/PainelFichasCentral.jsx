@@ -115,6 +115,7 @@ export default function PainelFichasCentral({ setScreen }) {
             {f.mlb ? <span style={sub}> · {f.mlb}</span> : null}
             {f.publicado && f.mlb ? <BotaoCopiarMLB mlb={f.mlb} compacto /> : null}
             {f.conta ? <span style={sub}> · {f.conta}</span> : null}
+            {f.canais ? <span data-paiia-canais-ficha style={sub}> · Canais: {f.canais}</span> : null}
             {f.pendencia ? <span style={{ ...sub, color: "#fca5a5" }}> · {f.pendencia}</span> : null}
             {f.noNovoAnuncio ? <span style={sub}> · Novo Anúncio · {f.completa ? "ficha completa" : "ficha parcial"}</span> : null}
             {!f.publicado && publicadosPorCodigo.has(String(f.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "")) ? (
@@ -130,7 +131,9 @@ export default function PainelFichasCentral({ setScreen }) {
                 ? "✏️ Continuar no Novo Anúncio"
                 : f.estado === ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA
                   ? "📝 Continuar Conferência"
-                  : "▶ Continuar"}
+                  : f.estado === ESTADO_CENTRAL.AGUARDANDO_INTEGRACAO
+                    ? "🧩 Ver canais escolhidos"
+                    : "▶ Continuar"}
           </button>
         </div>
       ))}

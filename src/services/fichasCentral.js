@@ -9,12 +9,14 @@
 // =============================================================
 
 import { lojaBlingDaConta } from "./vinculoBlingPublicacao.js";
+import { TEXTO_AGUARDANDO_INTEGRACAO, fichaAguardandoIntegracao, selecaoDaFicha, resumoCanais } from "./canaisPublicacao.js";
 
 export const ESTADO_CENTRAL = Object.freeze({
   EM_ANDAMENTO: "em_andamento",
   AGUARDANDO_CONFERENCIA: "aguardando_conferencia",
   CONFERENCIA_APROVADA: "conferencia_aprovada",
   PRONTO_PUBLICAR: "pronto_publicar",
+  AGUARDANDO_INTEGRACAO: "aguardando_integracao",
   PUBLICADO: "publicado",
   AGUARDANDO_BLING: "aguardando_bling",
   INTEGRADO_BLING: "integrado_bling",
@@ -25,6 +27,7 @@ export const TEXTO_ESTADO_CENTRAL = Object.freeze({
   [ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA]: "Aguardando Conferência",
   [ESTADO_CENTRAL.CONFERENCIA_APROVADA]: "Conferência aprovada",
   [ESTADO_CENTRAL.PRONTO_PUBLICAR]: "Pronto para publicar",
+  [ESTADO_CENTRAL.AGUARDANDO_INTEGRACAO]: TEXTO_AGUARDANDO_INTEGRACAO,
   [ESTADO_CENTRAL.PUBLICADO]: "Publicado no Mercado Livre",
   [ESTADO_CENTRAL.AGUARDANDO_BLING]: "Aguardando Bling",
   [ESTADO_CENTRAL.INTEGRADO_BLING]: "Integrado ao Bling · Fluxo concluído",
@@ -35,6 +38,7 @@ export const COR_ESTADO_CENTRAL = Object.freeze({
   [ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA]: { fundo: "#713f12", texto: "#fde68a", icone: "📝" },
   [ESTADO_CENTRAL.CONFERENCIA_APROVADA]: { fundo: "#1e3a8a", texto: "#bfdbfe", icone: "☑️" },
   [ESTADO_CENTRAL.PRONTO_PUBLICAR]: { fundo: "#14532d", texto: "#bbf7d0", icone: "🚀" },
+  [ESTADO_CENTRAL.AGUARDANDO_INTEGRACAO]: { fundo: "#4c1d95", texto: "#ddd6fe", icone: "🧩" },
   [ESTADO_CENTRAL.PUBLICADO]: { fundo: "#065f46", texto: "#a7f3d0", icone: "✅" },
   [ESTADO_CENTRAL.AGUARDANDO_BLING]: { fundo: "#7c2d12", texto: "#fed7aa", icone: "⏳" },
   [ESTADO_CENTRAL.INTEGRADO_BLING]: { fundo: "#166534", texto: "#86efac", icone: "🔗" },
@@ -67,6 +71,9 @@ export function estadoFichaCentral(row) {
   }
   switch (r.status_fluxo) {
     case "conferencia_aprovada":
+      // Só Shopee e/ou WooCommerce escolhidos: não está pronta para o ML.
+      if (fichaAguardandoIntegracao(r.canais)) return ESTADO_CENTRAL.AGUARDANDO_INTEGRACAO;
+      return txt(r.conta_destino_ml_user_id) ? ESTADO_CENTRAL.PRONTO_PUBLICAR : ESTADO_CENTRAL.CONFERENCIA_APROVADA;
     case "erro_publicacao":
     case "publicando":
       return txt(r.conta_destino_ml_user_id) ? ESTADO_CENTRAL.PRONTO_PUBLICAR : ESTADO_CENTRAL.CONFERENCIA_APROVADA;
@@ -100,6 +107,7 @@ export function resumoFichaCentral(row) {
     noNovoAnuncio: !fichaJaPublicada(row) && row?.status_fluxo === "rascunho" && row?.etapa_fluxo === "novo_anuncio" && !row?.etapa_conferencia,
     completa: row?.etapa_fluxo === "novo_anuncio" ? String(row?.na_completa) === "true" : null,
     pendencia: row?.status_fluxo === "erro_publicacao" ? "A última tentativa de publicação deu erro." : "",
+    canais: selecaoDaFicha({ canais_publicacao: row?.canais }) ? resumoCanais(selecaoDaFicha({ canais_publicacao: row?.canais })) : "",
   };
 }
 
@@ -109,6 +117,7 @@ const ORDEM = [
   ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA,
   ESTADO_CENTRAL.CONFERENCIA_APROVADA,
   ESTADO_CENTRAL.PRONTO_PUBLICAR,
+  ESTADO_CENTRAL.AGUARDANDO_INTEGRACAO,
   ESTADO_CENTRAL.AGUARDANDO_BLING,
   ESTADO_CENTRAL.PUBLICADO,
   ESTADO_CENTRAL.INTEGRADO_BLING,

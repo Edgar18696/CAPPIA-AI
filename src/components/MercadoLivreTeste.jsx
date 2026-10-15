@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
+import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
 import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
 import {
   lerAplicacoesAprovadas,
@@ -1893,6 +1894,9 @@ function moverFoto(
       ? "publicacao"
       : "conferencia"
   );
+  // Canais de publicação: a Publicação do ML (a de hoje) só aparece depois
+  // que a tela "Escolher canais de publicação" libera o Mercado Livre.
+  const [mercadoLivreLiberado, setMercadoLivreLiberado] = useState(false);
   function setRevisandoPublicacaoML(abrir) {
     setEtapaFluxo(abrir ? "publicacao" : "conferencia");
     window.scrollTo?.({ top: 0 });
@@ -5012,6 +5016,14 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               aplicacoes={aplicacoesConfirmadas}
               nomePeca={nomePeca}
             />
+            <EscolherCanaisPublicacao
+              key={anuncioIdPAIIA || "sem-ficha"}
+              anuncioId={anuncioIdPAIIA}
+              temContaML={contasMLDisponiveis.length > 0}
+              onLiberarML={setMercadoLivreLiberado}
+              onIrCentral={() => sairPara("centralPublicacao")}
+            />
+            {mercadoLivreLiberado && (
             <RevisaoPublicacaoML
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
               titulo={anuncioConferido.titulo}
@@ -5031,6 +5043,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                 setAnuncioConferido((a) => (a ? { ...a, quantidade: q, quantidadeConfirmada: true } : a));
               }}
             />
+            )}
           </>
         )}
 
@@ -7066,22 +7079,22 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                 type="button"
                 data-paiia-abrir-revisao-ml
                 onClick={() => setRevisandoPublicacaoML(true)}
-                disabled={!anuncioConferido || contasMLDisponiveis.length === 0}
+                disabled={!anuncioConferido}
                 style={{
                   ...botaoPrincipal,
                   width: "100%",
                   padding: "14px",
                   background: "linear-gradient(135deg,#16a34a,#22c55e)",
-                  opacity: !anuncioConferido || contasMLDisponiveis.length === 0 ? 0.5 : 1,
+                  opacity: !anuncioConferido ? 0.5 : 1,
                 }}
               >
-                ✅ Finalizar e escolher conta
+                ✅ Finalizar e escolher canais
               </button>
             </div>
             <p style={{ ...textoAuxiliar, marginTop: "10px", textAlign: "center" }}>
               {contasMLDisponiveis.length
-                ? "Abre a Publicação DESTA ficha (REVELAÇÃO, LOJA ONLINE ou CIEBR). Nada é publicado: lá você confere, valida no Mercado Livre e só publica com autorização explícita."
-                : "Nenhuma conta Mercado Livre conectada: conecte em Contas Marketplace para publicar de verdade."}
+                ? "Abre \"Escolher canais de publicação\" (Mercado Livre, Shopee, Site próprio). No Mercado Livre você escolhe REVELAÇÃO, LOJA ONLINE ou CIEBR, confere, valida e só publica com autorização explícita. Nada é publicado automaticamente."
+                : "Abre \"Escolher canais de publicação\". Nenhuma conta Mercado Livre conectada: para publicar no Mercado Livre, conecte em Contas Marketplace."}
             </p>
             <details style={{ marginTop: "12px" }}>
               <summary style={{ ...textoAuxiliar, cursor: "pointer" }}>Outras opções (fora do caminho principal)</summary>

@@ -174,7 +174,7 @@ test("8) integrado ao Bling → sair/voltar → continua integrado (sem nova con
 });
 
 // ---------------------------------------------------------------
-test("9) Central diferencia os 7 estados e não esconde ficha que não está pronta", () => {
+test("9) Central diferencia os 8 estados e não esconde ficha que não está pronta", () => {
   const casos = [
     [{ status_fluxo: "qualquer" }, ESTADO_CENTRAL.EM_ANDAMENTO],
     [{ status_fluxo: "rascunho" }, ESTADO_CENTRAL.AGUARDANDO_CONFERENCIA],
@@ -187,7 +187,7 @@ test("9) Central diferencia os 7 estados e não esconde ficha que não está pro
     [{ status_fluxo: "publicado", publicacao: PUB, integracao_bling: { ...REG, estado: "integrado" } }, ESTADO_CENTRAL.INTEGRADO_BLING],
   ];
   for (const [row, esp] of casos) assert.equal(estadoFichaCentral(row), esp, JSON.stringify(row));
-  assert.deepEqual(Object.values(TEXTO_ESTADO_CENTRAL), ["Em andamento", "Aguardando Conferência", "Conferência aprovada", "Pronto para publicar", "Publicado no Mercado Livre", "Aguardando Bling", "Integrado ao Bling · Fluxo concluído"]);
+  assert.deepEqual(Object.values(TEXTO_ESTADO_CENTRAL), ["Em andamento", "Aguardando Conferência", "Conferência aprovada", "Pronto para publicar", "Aguardando integração", "Publicado no Mercado Livre", "Aguardando Bling", "Integrado ao Bling · Fluxo concluído"]);
   const lista = ordenarFichasCentral([
     resumoFichaCentral({ id: "a", status_fluxo: "publicado", publicacao: PUB, updated_at: "3" }),
     resumoFichaCentral({ id: "b", status_fluxo: "rascunho", updated_at: "1" }),

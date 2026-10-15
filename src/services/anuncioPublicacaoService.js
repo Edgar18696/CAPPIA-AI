@@ -1,6 +1,7 @@
 import { supabase } from "../supabase";
 import { conflitoDeVersao, decisaoBaseComGravacao, montarCompatibilidadesPersistidas } from "./publicacaoSegura";
 import { mesclarRejeicoes } from "./categoriaML";
+import { CANAL, erroSelecao, montarRegistroCanais, normalizarSelecao, canaisSelecionados } from "./canaisPublicacao";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -376,7 +377,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -515,6 +516,45 @@ export async function registrarPublicacaoSemCompatibilidade({ anuncioId, autoriz
   const relida = await obterAnuncio(anuncioId);
   const gravado = relida.ok ? relida.anuncio.dados_conferencia?.publicacao_sem_compatibilidade : null;
   if (!gravado || gravado.autorizado !== Boolean(autorizado)) return { ok: false, erro: "A ficha mudou ao mesmo tempo: a autorização não foi gravada. Tente de novo." };
+  return { ok: true, registro: gravado };
+}
+
+/**
+ * Grava a ESCOLHA DOS CANAIS de publicação na ficha
+ * (dados_conferencia.canais_publicacao). Só isso: não muda status_fluxo,
+ * conta de destino, publicação, MLB, Bling nem estoque.
+ * - Ficha publicada, publicando ou cancelada: nunca é alterada.
+ * - Tirar o Mercado Livre de uma ficha cuja última publicação deu erro
+ *   é recusado (o resultado no ML precisa ser conferido antes).
+ * - Gravação condicionada à versão lida (updated_at) e relida depois.
+ */
+export async function registrarCanaisPublicacao({ anuncioId, selecao }) {
+  if (!anuncioId) return { ok: false, erro: "A ficha ainda não está gravada na base PAIIA: a escolha dos canais não pode ser salva." };
+  const erroSel = erroSelecao(selecao);
+  if (erroSel) return { ok: false, erro: erroSel };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const a = atual.anuncio;
+  if (publicacaoExiste(a.publicacao) || STATUS_FICHA_FECHADA.includes(a.status_fluxo)) {
+    return { ok: false, fechada: true, erro: "Esta ficha já foi publicada, está publicando ou foi cancelada: os canais não são alterados." };
+  }
+  const s = normalizarSelecao(selecao);
+  if (!s[CANAL.MERCADO_LIVRE] && a.status_fluxo === "erro_publicacao") {
+    return { ok: false, erro: "A última tentativa de publicação no Mercado Livre deu erro. Confira o resultado no Mercado Livre antes de tirar este canal." };
+  }
+  const dados = a.dados_conferencia || {};
+  const registro = montarRegistroCanais(s, dados.canais_publicacao);
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, canais_publicacao: registro }, updated_at: new Date().toISOString() })
+    .eq("id", anuncioId)
+    .eq("updated_at", a.updated_at);
+  if (error) return falha(error);
+  const relida = await obterAnuncio(anuncioId);
+  const gravado = relida.ok ? relida.anuncio.dados_conferencia?.canais_publicacao : null;
+  if (!gravado || JSON.stringify(gravado.selecionados || []) !== JSON.stringify(canaisSelecionados(s))) {
+    return { ok: false, erro: "A ficha mudou ao mesmo tempo: a escolha dos canais não foi gravada. Tente de novo." };
+  }
   return { ok: true, registro: gravado };
 }
 
