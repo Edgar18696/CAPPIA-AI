@@ -4,6 +4,7 @@ import { supabase } from "../supabase";
 import PainelFichasCentral from "./PainelFichasCentral";
 import { camposNovoAnuncioDaMedida } from "../services/dadosTecnicosAnuncio";
 import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import { esquecerFotosDeOutraFicha } from "../services/fotosDaFicha";
 import {
   anuncioProntoEhDoAnuncioEmAndamento,
   CHAVE_ABERTURA_NOVO_ANUNCIO,
@@ -478,6 +479,10 @@ export default function CentralPublicacao({
         : anuncio?.clip
           ? [anuncio.clip]
           : [];
+
+    // As fotos em memória de uma Conferência anterior de OUTRA ficha não
+    // podem passar para este anúncio (as da mesma ficha continuam).
+    esquecerFotosDeOutraFicha(window, anuncio);
 
     /*
      * Mantém o anúncio COMPLETO somente em memória.

@@ -9,6 +9,13 @@
  *    entra nas palavras confirmadas nem nas buscas montadas.
  *  - Nada é inventado: sem ano, motor, versão, função ou medida que não
  *    estejam nos dados. Zero informação é melhor que informação inventada.
+ *  - (16/10/2026) A Inteligência de Busca é AUTOMÁTICA: o usuário não digita
+ *    palavras-chave. Os termos saem do código/SKU/OEM (com e sem espaços,
+ *    pontos e hífens), nome e categoria da peça, sinônimos do dicionário
+ *    PAIIA (só frases equivalentes de verdade), marca/fabricante,
+ *    características técnicas confirmadas e veículos confirmados.
+ *  - Os termos servem à pesquisa e à preparação do anúncio. Título e
+ *    descrição NUNCA são alterados por aqui.
  * Testes: scripts/testes/inteligenciaBusca.test.mjs
  */
 
@@ -149,6 +156,56 @@ export function extrairDadosDescricao(texto) {
 // Inteligência de Busca
 // ---------------------------------------------------------------
 
+/** Código só com letras e números (para comparar): "0 280-158.276" → "0280158276". */
+export function codigoCompacto(valor) {
+  return limpar(valor).toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+/**
+ * Formas de escrever o MESMO código que o comprador digita: como foi
+ * informado, sem separadores e, se o original tinha pontos/hífens, com
+ * espaços. Nunca cria agrupamento novo nem outro código.
+ */
+export function variacoesCodigo(valor) {
+  const original = limpar(valor).toUpperCase();
+  if (!pareceCodigo(original)) return [];
+  const compacto = codigoCompacto(original);
+  const comEspacos = original.replace(/[.\-_/]+/g, " ").replace(/\s+/g, " ").trim();
+  const saida = [];
+  for (const v of [original, compacto, comEspacos]) if (v && !saida.includes(v)) saida.push(v);
+  return saida;
+}
+
+/**
+ * Identificação dos códigos da peça, sem repetir o mesmo código escrito de
+ * outro jeito. papeis: código/SKU do anúncio, número da peça, OEM, OEM da
+ * base, equivalente da base. Só entra o que veio dos dados (nada inventado).
+ * Devolve [{ codigo, compacto, papeis: [..], variacoes: [..] }].
+ */
+export function identificarCodigos({ codigo, numeroPeca, oem, codigoOemBase, equivalentesBase } = {}) {
+  const fontes = [
+    [codigo, "Código / SKU"],
+    [numeroPeca, "Número da peça"],
+    [oem, "OEM"],
+    ...String(codigoOemBase || "").split(/[,;\n]+/).map((c) => [c, "OEM (base PAIIA)"]),
+    ...String(equivalentesBase || "").split(/[,;\n]+/).map((c) => [c, "Equivalente (base PAIIA)"]),
+  ];
+  const porCompacto = new Map();
+  for (const [valor, papel] of fontes) {
+    const t = limpar(valor).toUpperCase();
+    if (!pareceCodigo(t)) continue;
+    const k = codigoCompacto(t);
+    const atual = porCompacto.get(k);
+    if (atual) {
+      if (!atual.papeis.includes(papel)) atual.papeis.push(papel);
+      for (const v of variacoesCodigo(t)) if (!atual.variacoes.includes(v)) atual.variacoes.push(v);
+    } else {
+      porCompacto.set(k, { codigo: t, compacto: k, papeis: [papel], variacoes: variacoesCodigo(t) });
+    }
+  }
+  return [...porCompacto.values()];
+}
+
 function normalizarCodigos(lista) {
   const vistos = new Set();
   const saida = [];
@@ -166,6 +223,94 @@ function normalizarCodigos(lista) {
 function medidaCurta(medida) {
   const partes = limpar(medida).split(/\s*×\s*/);
   return partes.slice(0, 2).join(" ");
+}
+
+// ---------------------------------------------------------------
+// Sinônimos: SÓ frases que nomeiam a MESMA peça (dicionário PAIIA).
+// Cada grupo vale inteiro; palavra solta nunca vira sinônimo (ex.: "botão"
+// sozinho pode ser outra peça). Para ampliar: acrescentar grupos aqui.
+// ---------------------------------------------------------------
+export const SINONIMOS_PECA = Object.freeze([
+  ["sonda lambda", "sensor de oxigênio", "sensor lambda"],
+  ["bico injetor", "injetor de combustível", "válvula injetora"],
+  ["sensor de fase", "sensor de posição do comando", "sensor do comando de válvulas"],
+  ["bobina de ignição", "bobina ignição"],
+  ["corpo de borboleta", "corpo de aceleração", "tbi"],
+  ["atuador de marcha lenta", "motor de passo", "válvula iac"],
+  ["válvula termostática", "termostato"],
+  ["eletroventilador", "ventoinha do radiador"],
+  ["interruptor do eletroventilador", "cebolão da ventoinha", "cebolão do radiador"],
+  ["flauta de combustível", "galeria de combustível", "tubo distribuidor de combustível"],
+  ["coxim do motor", "calço do motor"],
+  ["junta homocinética", "homocinética"],
+  ["mecanismo do limpador", "galhada do limpador", "articulação do limpador"],
+  ["interruptor do teto solar", "botão do teto solar", "chave do teto solar"],
+  ["interruptor do vidro elétrico", "botão do vidro elétrico", "chave do vidro elétrico"],
+  ["interruptor da luz de freio", "interruptor do pedal de freio"],
+]);
+
+// Palavras que não identificam a peça (sozinhas) ou que não podem ser usadas
+// ("original"/"genuína" sem comprovação — regra do usuário).
+const GENERICAS = new Set(["peca", "pecas", "automotiva", "automotivo", "produto", "novo", "nova", "item", "unidade", "qualidade", "kit", "jogo", "conjunto", "acessorio", "acessorios"]);
+const PROIBIDAS = new Set(["original", "originais", "genuina", "genuino", "genuinas", "genuinos", "oem"]);
+
+/** Tira "original"/"genuína" e devolve "" se só sobraram palavras genéricas. */
+export function limparTermoBusca(termo) {
+  const palavras = limpar(termo).split(" ").filter((p) => p && !PROIBIDAS.has(chave(p)));
+  const t = palavras.join(" ");
+  const uteis = palavras.filter((p) => !GENERICAS.has(chave(p)) && !LIGACAO.has(chave(p)));
+  if (!uteis.length || chave(t).length < 3) return "";
+  return t;
+}
+
+// Comparação por palavra: sem acento/caixa, sem "do/da/de" e sem plural
+// simples ("bicos injetores" = "bico injetor").
+const raiz = (p) => (p.length > 4 && /res$/.test(p) ? p.slice(0, -2) : p.length > 3 && /s$/.test(p) ? p.slice(0, -1) : p);
+const palavrasChave = (t) =>
+  chave(t).replace(/[^a-z0-9 ]+/g, " ").split(" ").filter((p) => p && !LIGACAO.has(p)).map(raiz);
+const semLigacao = (t) => palavrasChave(t).join(" ");
+// Peça principal do texto = 1ª palavra que não é número, genérica nem proibida.
+const nucleo = (t) => palavrasChave(t).find((p) => !/^\d/.test(p) && !GENERICAS.has(p) && !PROIBIDAS.has(p)) || "";
+/**
+ * O texto nomeia a peça da frase do dicionário? A frase precisa começar pela
+ * MESMA peça principal do texto e todas as suas palavras precisam estar no
+ * texto. "Interruptor do eletroventilador" NÃO é "eletroventilador".
+ */
+function contemFrase(texto, frase) {
+  const f = palavrasChave(frase);
+  if (!f.length || nucleo(texto) !== f[0]) return false;
+  const doTexto = new Set(palavrasChave(texto));
+  return f.every((p) => doTexto.has(p));
+}
+
+/**
+ * Sinônimos do dicionário para os nomes confirmados da peça.
+ * Ex.: "Interruptor Botão Elétrico Teto Solar" contém "interruptor teto
+ * solar" → "botão do teto solar", "chave do teto solar".
+ * Devolve [{ termo, de }] (de = frase do dicionário encontrada).
+ */
+export function sinonimosDaPeca(...textos) {
+  const saida = [];
+  const vistos = new Set();
+  const fonte = textos.flat().map(limpar).filter(Boolean);
+  for (const grupo of SINONIMOS_PECA) {
+    const achada = grupo.find((frase) => fonte.some((t) => contemFrase(t, frase)));
+    if (!achada) continue;
+    for (const outro of grupo) {
+      if (outro === achada || fonte.some((t) => contemFrase(t, outro))) continue;
+      const k = semLigacao(outro);
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      saida.push({ termo: outro, de: achada });
+    }
+  }
+  return saida;
+}
+
+/** Último nível da categoria do ML ("... > Interruptores" → "Interruptores"). */
+export function nomeCategoria(caminho) {
+  const partes = String(caminho || "").split(/\s*[>›/]\s*/).map(limpar).filter(Boolean);
+  return partes[partes.length - 1] || "";
 }
 
 function anoDaAplicacao(a) {
@@ -194,7 +339,11 @@ export function termosDaFuncao(nomePeca, funcao) {
   if (!base || !palavras.length) return [];
   const minus = (t) => t.toLowerCase();
   const saida = [];
-  if (palavras.length >= 2) saida.push([base, minus(palavras[0]), minus(palavras[palavras.length - 1])].join(" "));
+  // Forma curta (1ª + última palavra) só quando a última é um item à parte
+  // ("... transmissão E motor" → "suporte motor"). "abertura do teto solar"
+  // não vira "comando solar" (termo sem sentido).
+  const ultimaIsolada = /\s(?:e)\s+\S+\s*$/i.test(limpar(funcao));
+  if (palavras.length >= 2 && ultimaIsolada) saida.push([base, minus(palavras[0]), minus(palavras[palavras.length - 1])].join(" "));
   saida.push([base, ...palavras.map(minus)].join(" "));
   const vistos = new Set();
   return saida.filter((t) => {
@@ -222,7 +371,8 @@ function nomesDeBusca(dados) {
  * Ordem (regra do usuário): código/OEM → nome da peça → função/localização →
  * especificação/medida → montadora → modelos confirmados → motor/ano/versão
  * (só confirmados). Concorrentes NUNCA entram aqui.
- * dados: { codigos, nomePeca, termoComercial, funcao, medida, aplicacoes, modelos }
+ * dados: { codigos, nomePeca, termoComercial, funcao, medida, medidas,
+ *   categoria, marca, fabricante, aplicacoes, modelos }
  */
 export function termosConfirmados(dados = {}) {
   const lista = [];
@@ -235,11 +385,19 @@ export function termosConfirmados(dados = {}) {
     vistos.add(k);
     lista.push({ termo: t, origem });
   };
+  const addLimpo = (termo, origem) => add(limparTermoBusca(termo), origem);
   for (const c of normalizarCodigos(dados.codigos)) add(c, "codigo");
-  add(dados.nomePeca, "peca");
-  for (const t of nomesDeBusca(dados)) add(t, "peca");
-  add(dados.funcao, "funcao");
-  add(dados.medida, "medida");
+  // Mesmo código escrito de outro jeito (como veio em cada fonte, sem
+  // espaços/pontos/hífens e com espaços) — nunca outro código.
+  for (const c of dados.codigos || []) for (const v of variacoesCodigo(c)) add(v, "variacao");
+  addLimpo(dados.nomePeca, "peca");
+  for (const t of nomesDeBusca(dados)) addLimpo(t, "peca");
+  addLimpo(nomeCategoria(dados.categoria), "categoria");
+  for (const s of sinonimosDaPeca(dados.nomePeca, dados.termoComercial)) addLimpo(s.termo, "sinonimo");
+  addLimpo(dados.marca, "marca");
+  addLimpo(dados.fabricante, "fabricante");
+  addLimpo(dados.funcao, "funcao");
+  for (const m of [].concat(dados.medida || [], dados.medidas || [])) add(m, "medida");
   const veiculos = [...(dados.modelos || []), ...(dados.aplicacoes || [])];
   for (const a of veiculos) add(a?.montadora, "montadora");
   for (const a of veiculos) add(a?.modelo, "modelo");
@@ -267,9 +425,9 @@ export function gerarIntencoesBusca(dados = {}, limite = 30) {
   const codigos = normalizarCodigos(dados.codigos);
   // Como o comprador chama a peça: digitado pelo usuário, derivado da
   // função/localização confirmada ou, por último, o nome da peça.
-  const nomes = nomesDeBusca(dados);
+  const nomes = nomesDeBusca(dados).map(limparTermoBusca).filter(Boolean);
   const nome = nomes[0] || "";
-  const medida = limpar(dados.medida);
+  const medida = limpar([].concat(dados.medida || [], dados.medidas || [])[0]);
   const aplicacoes = (dados.aplicacoes || []).filter((a) => limpar(a?.modelo));
   const modelos = (dados.modelos || []).filter((m) => limpar(m?.modelo));
 
@@ -301,6 +459,18 @@ export function gerarIntencoesBusca(dados = {}, limite = 30) {
     for (const mt of montadoras) add([outro, mt], "intencao");
     if (!montadoras.length) add([outro], "intencao");
   }
+  // Sinônimos do dicionário (mesma peça): peça + modelo/montadora confirmados.
+  for (const s of sinonimosDaPeca(dados.nomePeca, dados.termoComercial)) {
+    const outro = limparTermoBusca(s.termo);
+    if (!outro) continue;
+    for (const c of codigos.slice(0, 1)) add([outro, c], "sinonimo");
+    for (const a of aplicacoes.slice(0, 4)) add([outro, a.modelo], "sinonimo");
+    for (const m of modelos.slice(0, 4)) add([outro, m.modelo], "sinonimo");
+    if (!aplicacoes.length && !modelos.length) add([outro], "sinonimo");
+  }
+  // Fabricante + código (quem procura pela marca da peça no catálogo).
+  const fabricante = limparTermoBusca(dados.fabricante);
+  if (fabricante) for (const c of codigos.slice(0, 2)) add([fabricante, c], "codigo");
   // 4) Função/localização técnica confirmada (quando diferente do nome)
   const funcao = limpar(dados.funcao);
   if (funcao && !chave(nome).includes(chave(funcao))) add([limpar(dados.nomePeca) || nome, funcao], "funcao");
@@ -326,6 +496,9 @@ export function separarSugestoesConcorrentes(sugeridas = [], confirmados = [], l
     const termo = limpar(s?.termo ?? s);
     const k = chave(termo);
     if (!termo || k.length < 3 || ja.has(k) || vistos.has(k)) continue;
+    // Frase cujas palavras já estão todas nos dados confirmados: repetida.
+    const palavras = k.split(/\s+/).filter((p) => p.length >= 3);
+    if (palavras.length > 1 && palavras.every((p) => ja.has(p))) continue;
     vistos.add(k);
     saida.push({ termo, origem: "concorrencia", confirmado: false });
   }

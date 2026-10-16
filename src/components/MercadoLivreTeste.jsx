@@ -41,6 +41,7 @@ import {
   publicacaoExiste,
 } from "../services/anuncioPublicacaoService";
 import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
+import { fotosIniciaisConferencia, guardarFotosEmMemoria, simuladorEhDoAnuncio, fotosDiferentesDoNovoAnuncio, chaveFotosConferidas, MEMORIA_FOTOS_DONO } from "../services/fotosDaFicha";
 import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
 import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
 import { abrirFichaNoNovoAnuncio } from "../services/aberturaNovoAnuncio";
@@ -71,6 +72,7 @@ import {
   termosConfirmados,
   gerarIntencoesBusca,
   separarSugestoesConcorrentes,
+  identificarCodigos,
 } from "../services/inteligenciaBusca";
 
 function normalizarTexto(valor = "") {
@@ -909,6 +911,16 @@ function ConferenciaPAIIA({
         ? window.__paiiaAnuncioSimulador
         : null;
 
+    // Memória de OUTRA ficha (aba usada antes para outro anúncio) nunca se
+    // mistura com o anúncio levado à Conferência.
+    if (
+      dadosMemoria &&
+      dadosLocal &&
+      !simuladorEhDoAnuncio(dadosMemoria, dadosLocal)
+    ) {
+      return dadosLocal;
+    }
+
     if (
       dadosMemoria &&
       dadosLocal
@@ -1466,21 +1478,13 @@ const [
   fotos,
   setFotos,
 ] = useState(() => {
-  const fotosMemoria =
-    Array.isArray(
-      window.__paiiaFotosPublicacao
-    )
-      ? window.__paiiaFotosPublicacao
-      : [];
-
-  let fotosIniciais =
-    fotosMemoria.length > 0
-      ? [...fotosMemoria]
-      : Array.isArray(
-          anuncio?.fotos
-        )
-        ? [...anuncio.fotos]
-        : [];
+  // Fotos em memória SÓ da MESMA ficha (dono = ID da ficha/código). Memória
+  // de outro anúncio (aba usada antes) é ignorada: valem as fotos DESTE.
+  let fotosIniciais = fotosIniciaisConferencia({
+    memoria: window.__paiiaFotosPublicacao,
+    donoMemoria: window[MEMORIA_FOTOS_DONO],
+    anuncio,
+  }).fotos;
 
   const bannerUrl =
     window.__paiiaBannerParaFotos ||
@@ -1520,8 +1524,7 @@ const [
       "";
   }
 
-  window.__paiiaFotosPublicacao =
-    fotosIniciais;
+  guardarFotosEmMemoria(window, fotosIniciais, anuncio);
 
   return fotosIniciais;
 });
@@ -1539,8 +1542,7 @@ function salvarFotosNoSimulador(
   // FOTOS DA PUBLICAÇÃO
   // Guardamos em memória para não estourar localStorage.
   // =====================================================
-  window.__paiiaFotosPublicacao =
-    lista;
+  guardarFotosEmMemoria(window, lista, anuncio);
 
   try {
     const salvo =
@@ -2174,12 +2176,14 @@ const nomePecaBase = limparCampoTexto(
   anuncio?.pecaEncontrada?.peca || anuncio?.pecaEncontrada?.familia || ""
 );
 const [nomePeca, setNomePeca] = useState(() => inicial("nomePeca", nomePecaBase));
-// Dados técnicos da PEÇA (só confirmados: base, descrição ou fonte técnica).
-const [funcaoPeca, setFuncaoPeca] = useState(() => inicial("funcaoPeca", ""));
-const [fonteFuncao, setFonteFuncao] = useState(() => inicial("fonteFuncao", ""));
-const [especificacaoTecnica, setEspecificacaoTecnica] = useState(() => inicial("especificacaoTecnica", ""));
-// Como o comprador procura a peça (opcional, confirmado pelo usuário).
-const [termoComercial, setTermoComercial] = useState(() => inicial("termoComercial", ""));
+// Dados técnicos ANTIGOS da peça (16/10/2026: os 4 campos manuais saíram da
+// tela). Os valores já registrados em fichas antigas são PRESERVADOS: seguem
+// gravados na ficha, aparecem só para leitura e alimentam a Inteligência de
+// Busca. Nada é apagado.
+const [funcaoPeca] = useState(() => inicial("funcaoPeca", ""));
+const [fonteFuncao] = useState(() => inicial("fonteFuncao", ""));
+const [especificacaoTecnica] = useState(() => inicial("especificacaoTecnica", ""));
+const [termoComercial] = useState(() => inicial("termoComercial", ""));
 
 // Produto principal = o que define a Categoria ML (itens inclusos não).
 const produtoPrincipal = useMemo(() => {
@@ -4081,7 +4085,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
       localStorage.setItem(CHAVE_CONFERENCIA, JSON.stringify(mapa));
       localStorage.setItem("mlAnuncioTeste", JSON.stringify({ ...rec.anuncio, fichaIdPAIIA: c.id }));
       window.__paiiaAnuncioSimulador = null;
-      window.__paiiaFotosPublicacao = rec.fotos;
+      guardarFotosEmMemoria(window, rec.fotos, { fichaIdPAIIA: c.id, codigo: rec.anuncio?.codigo });
       window.__paiiaFichaRecuperada = rec.id;
       const url = new URL(window.location.href);
       url.searchParams.set("ficha", c.id);
@@ -4135,6 +4139,48 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     })();
     return () => { ativo = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fichas JÁ gravadas com fotos de outro anúncio (antes da correção): lê
+  // (só LEITURA) as fotos que o usuário colocou no Novo Anúncio DESTA ficha.
+  // Se as fotos da Conferência não têm nenhuma delas, avisa. Nada é trocado
+  // nem apagado sozinho: o usuário escolhe.
+  const [fotosNovoAnuncioFicha, setFotosNovoAnuncioFicha] = useState(null);
+  const [, setFotosConferidasVersao] = useState(0); // só para redesenhar
+  useEffect(() => {
+    const id = anuncioIdPAIIA;
+    if (!id) return undefined;
+    let ativo = true;
+    (async () => {
+      const r = await obterAnuncio(id).catch(() => null);
+      if (!ativo || !r?.ok) return;
+      setFotosNovoAnuncioFicha(urlsFotosFicha(r.anuncio?.dados_conferencia?.novo_anuncio?.fotos));
+    })();
+    return () => { ativo = false; };
+  }, [anuncioIdPAIIA]);
+  const avisoFotosOutraFicha = (() => {
+    const r = fotosDiferentesDoNovoAnuncio({ fotosConferencia: urlsFotosFicha(fotos), fotosNovoAnuncio: fotosNovoAnuncioFicha });
+    if (!r.suspeita) return null;
+    try {
+      if (localStorage.getItem(chaveFotosConferidas(anuncioIdPAIIA, urlsFotosFicha(fotos))) === "1") return null;
+    } catch {
+      // sem acesso ao navegador: o aviso continua
+    }
+    return r;
+  })();
+  function usarFotosDoNovoAnuncio() {
+    const lista = (fotosNovoAnuncioFicha || []).map((u, i) => ({ imagem_processada: u, imagem_original: u, ordem: i, capa: i === 0 }));
+    if (!lista.length) return;
+    usuarioEditouRef.current = true;
+    salvarFotosNoSimulador(lista);
+  }
+  function manterFotosAtuais() {
+    try {
+      localStorage.setItem(chaveFotosConferidas(anuncioIdPAIIA, urlsFotosFicha(fotos)), "1");
+    } catch {
+      // sem espaço: o aviso volta a aparecer, nada se perde
+    }
+    setFotosConferidasVersao((v) => v + 1);
+  }
 
   const pendenteDeGravar = gravacaoPendente || gravacao.estado === ESTADO_GRAVACAO.SALVANDO;
   const estadoIndicador = conflito ? ESTADO_GRAVACAO.CONFLITO : pendenteDeGravar ? ESTADO_GRAVACAO.SALVANDO : gravacao.estado;
@@ -5215,6 +5261,30 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
           🖼 {fotos.length} foto(s)
           recebida(s) do anúncio.
         </div>
+
+        {avisoFotosOutraFicha && (
+          <div
+            data-paiia-aviso-fotos-outra-ficha
+            style={{ marginTop: "12px", padding: "12px", borderRadius: "10px", border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: "13px", lineHeight: 1.5 }}
+          >
+            <strong>⚠ Confira as fotos desta ficha.</strong> Nenhuma das {fotos.length} foto(s) desta Conferência é uma das{" "}
+            {avisoFotosOutraFicha.fotosNovoAnuncio.length} foto(s) que você colocou no Novo Anúncio deste anúncio. Elas podem ter vindo de
+            outro anúncio aberto antes nesta mesma janela. Nada foi apagado: escolha quais ficam nesta ficha.
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "8px 0" }}>
+              {avisoFotosOutraFicha.fotosNovoAnuncio.slice(0, 6).map((u) => (
+                <img key={u} src={u} alt="Foto do Novo Anúncio" style={{ width: "64px", height: "64px", objectFit: "contain", background: "#fff", borderRadius: "6px" }} />
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <button type="button" data-paiia-usar-fotos-novo-anuncio onClick={usarFotosDoNovoAnuncio} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #fbbf24", background: "#b45309", color: "#fff", fontWeight: "bold", cursor: "pointer" }}>
+                Usar as fotos do Novo Anúncio desta ficha
+              </button>
+              <button type="button" data-paiia-manter-fotos-conferencia onClick={manterFotosAtuais} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #64748b", background: "transparent", color: "#e2e8f0", cursor: "pointer" }}>
+                As fotos atuais estão corretas
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* PEÇA — DADOS TÉCNICOS (só da peça; aplicações ficam no bloco ⑨) */}
@@ -5223,7 +5293,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
           🔩 Peça — dados técnicos
         </h3>
         <p style={{ ...textoAuxiliar, marginTop: 0 }}>
-          Só informações da PEÇA confirmadas (base PAIIA, descrição do anúncio ou fonte técnica). Veículos/aplicações: bloco ⑨ Compatibilidades.
+          Só informações reais da PEÇA (base PAIIA, catálogo ou descrição do próprio anúncio). Veículos/aplicações: bloco ⑨ Compatibilidades. Palavras-chave: geradas automaticamente na Inteligência de Busca.
         </p>
 
         <div style={gradeDois}>
@@ -5235,57 +5305,59 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
           />
           <label style={labelStyle}>
             Código / OEM
-            <div data-paiia-codigo-oem style={{ ...campo, display: "flex", alignItems: "center", color: "#e2e8f0" }}>
-              {[...new Set([numeroPeca, codigo, anuncio?.oem].map((c) => String(c || "").trim()).filter(Boolean))].join(" · ") || "—"}
+            <div data-paiia-codigo-oem style={{ ...campo, display: "grid", gap: "4px", color: "#e2e8f0" }}>
+              {(() => {
+                const ids = identificarCodigos({
+                  codigo,
+                  numeroPeca,
+                  oem: anuncio?.oem,
+                  codigoOemBase: anuncio?.pecaEncontrada?.codigo_oem,
+                  equivalentesBase: anuncio?.pecaEncontrada?.codigo_equivalente,
+                });
+                if (!ids.length) return "—";
+                return ids.map((c) => (
+                  <div key={c.compacto} data-paiia-codigo-identificado={c.compacto}>
+                    <strong>{c.codigo}</strong>{" "}
+                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>— {c.papeis.join(" · ")}</span>
+                  </div>
+                ));
+              })()}
             </div>
           </label>
-          <Campo
-            label="Função / localização da peça"
-            value={funcaoPeca}
-            onChange={setFuncaoPeca}
-            placeholder="Só se confirmada (ex.: Suporte do conjunto de transmissão e motor)"
-          />
-          <Campo
-            label="Fonte da função/localização"
-            value={fonteFuncao}
-            onChange={setFonteFuncao}
-            placeholder="Ex.: Renault Mecânico, catálogo, base PAIIA"
-          />
-          <Campo
-            label="Especificação técnica / medida"
-            value={especificacaoTecnica}
-            onChange={setEspecificacaoTecnica}
-            placeholder="Ex.: M12 × 1,75 × 35"
-          />
-          <Campo
-            label="Como o comprador procura (opcional)"
-            value={termoComercial}
-            onChange={setTermoComercial}
-            placeholder="Opcional — se vazio, o PAIIA usa a função (ex.: Parafuso suporte motor)"
-          />
         </div>
         <p style={{ ...textoAuxiliar, marginTop: "6px" }}>
           {nomePecaBase
             ? "Nome vindo da base/catálogo do PAIIA. Corrija se necessário."
             : "A base não informou o nome da peça. Informe para usar na identificação."}{" "}
-          Campo em branco fica em branco — o PAIIA não inventa função nem medida.
+          O mesmo código escrito com ou sem espaços, pontos ou hífens aparece uma vez só.
         </p>
 
         {(() => {
-          // Dados lidos da DESCRIÇÃO do próprio anúncio (como dado, não palavra solta).
+          // Características técnicas JÁ confirmadas: as registradas nesta
+          // ficha (campos antigos, preservados) e as rotuladas na descrição
+          // do próprio anúncio. Só leitura; nada é inventado nem apagado.
           const lidos = extrairDadosDescricao(descricao);
-          const sugestoes = [
-            ...lidos.medidas.filter((m) => normalizarTexto(m) !== normalizarTexto(especificacaoTecnica)).map((m) => ({ rotulo: `Medida: ${m}`, aplicar: () => setEspecificacaoTecnica(m) })),
-            ...lidos.funcoes.filter((f) => normalizarTexto(f) !== normalizarTexto(funcaoPeca)).map((f) => ({ rotulo: `Função: ${f}`, aplicar: () => { setFuncaoPeca(f); if (!fonteFuncao.trim()) setFonteFuncao("Descrição do anúncio"); } })),
-          ];
-          if (!sugestoes.length) return null;
+          const itens = [];
+          const vistos = new Set();
+          const add = (rotulo, valor, fonte) => {
+            const v = String(valor || "").trim();
+            const k = normalizarTexto(v);
+            if (!v || vistos.has(k)) return;
+            vistos.add(k);
+            itens.push({ rotulo, valor: v, fonte });
+          };
+          add("Função / localização", funcaoPeca, fonteFuncao || "registrado nesta ficha");
+          add("Especificação / medida", especificacaoTecnica, "registrado nesta ficha");
+          for (const f of lidos.funcoes) add("Função / localização", f, "descrição do anúncio");
+          for (const m of lidos.medidas) add("Medida", m, "descrição do anúncio");
+          if (!itens.length) return null;
           return (
-            <div data-paiia-dados-descricao style={{ marginTop: "8px", display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
-              <span style={textoAuxiliar}>Encontrado na descrição:</span>
-              {sugestoes.map((x) => (
-                <button key={x.rotulo} type="button" onClick={x.aplicar} style={botaoMini}>
-                  Usar {x.rotulo}
-                </button>
+            <div data-paiia-caracteristicas-confirmadas style={{ marginTop: "8px", padding: "10px 12px", borderRadius: "9px", border: "1px solid #334155", background: "#020617" }}>
+              <div style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "bold", marginBottom: "6px" }}>Características técnicas confirmadas</div>
+              {itens.map((x) => (
+                <div key={`${x.rotulo}-${x.valor}`} style={{ color: "#e2e8f0", fontSize: "13px" }}>
+                  {x.rotulo}: <strong>{x.valor}</strong> <span style={{ color: "#64748b", fontSize: "11px" }}>({x.fonte})</span>
+                </div>
               ))}
             </div>
           );
@@ -5336,8 +5408,10 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                 lineHeight: "1.5",
               }}
             >
-              Buscas montadas com os dados CONFIRMADOS do próprio
-              produto: código, peça, função, medida e compatibilidades.
+              Palavras-chave geradas AUTOMATICAMENTE com os dados confirmados
+              do próprio produto: código/SKU/OEM (com e sem espaços, pontos e
+              hífens), peça, categoria, sinônimos equivalentes, marca,
+              características e veículos confirmados. Nada para preencher.
               Concorrentes ficam separados, só como sugestão.
             </div>
           </div>
@@ -5381,12 +5455,22 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
         {(() => {
           // FONTE = dados confirmados do próprio produto (nunca concorrente).
           const lidos = extrairDadosDescricao(descricao);
+          const pecaBase = anuncio?.pecaEncontrada || {};
           const dadosBusca = {
-            codigos: [numeroPeca, codigo, anuncio?.oem, ...lidos.codigos],
+            codigos: [
+              codigo, numeroPeca, anuncio?.oem,
+              ...String(pecaBase.codigo_oem || "").split(/[,;\n]+/),
+              ...String(pecaBase.codigo_equivalente || "").split(/[,;\n]+/),
+              ...lidos.codigos,
+            ],
             nomePeca,
+            // Termo antigo digitado na ficha (preservado; o campo saiu da tela).
             termoComercial,
-            funcao: funcaoPeca,
-            medida: especificacaoTecnica,
+            funcao: funcaoPeca || lidos.funcoes[0] || "",
+            medidas: [especificacaoTecnica, ...lidos.medidas].filter(Boolean),
+            categoria: categoriaId ? categoria : "",
+            marca,
+            fabricante: pecaBase.fabricante || pecaBase.marca || "",
             aplicacoes: aplicacoesConfirmadas,
             modelos: modelosSemDetalhes,
           };
@@ -5397,7 +5481,9 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             confirmados
           );
           const rotuloOrigem = {
-            codigo: "Código/OEM", peca: "Peça", funcao: "Função/localização", medida: "Especificação",
+            codigo: "Código/OEM", variacao: "Mesmo código, outra escrita", peca: "Peça", categoria: "Categoria",
+            sinonimo: "Sinônimo equivalente (dicionário PAIIA)", marca: "Marca", fabricante: "Fabricante (base/catálogo)",
+            funcao: "Função/localização", medida: "Especificação",
             montadora: "Montadora", modelo: "Modelo confirmado", motor: "Motor", ano: "Ano", versao: "Versão",
           };
           const caixa = { padding: "14px", borderRadius: "12px", border: "1px solid #164e63", background: "#020617", textAlign: "left" };
@@ -5405,7 +5491,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
           return (
             <>
               <div data-paiia-termos-confirmados style={caixa}>
-                <div style={tituloCaixa}>DADOS CONFIRMADOS DO PRODUTO</div>
+                <div style={tituloCaixa}>PALAVRAS-CHAVE AUTOMÁTICAS (DADOS CONFIRMADOS DO PRODUTO)</div>
                 {confirmados.length ? (
                   <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                     {confirmados.map((t) => (
@@ -5415,7 +5501,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                     ))}
                   </div>
                 ) : (
-                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>Preencha o código, a peça e as compatibilidades para montar as buscas.</div>
+                  <div style={{ color: "#94a3b8", fontSize: "13px" }}>Aguardando código, nome da peça ou compatibilidades confirmadas.</div>
                 )}
               </div>
 
@@ -5425,7 +5511,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                   <div style={{ display: "grid", gap: "4px" }}>
                     {intencoes.map((x) => (
                       <div key={x.texto} data-tipo-busca={x.tipo} style={{ color: "#f8fafc", fontSize: "13px" }}>
-                        {x.tipo === "codigo" ? "🔢" : x.tipo === "funcao" ? "🛠" : "🚗"} {x.texto}
+                        {x.tipo === "codigo" ? "🔢" : x.tipo === "funcao" ? "🛠" : x.tipo === "sinonimo" ? "🔁" : "🚗"} {x.texto}
                       </div>
                     ))}
                   </div>
@@ -7513,7 +7599,7 @@ export default function MercadoLivreTeste(props) {
           const fotosLocais = (local?.campos?.fotos?.length ? local.campos.fotos : local?.anuncioConferido?.fotos) || [];
           window.__paiiaAnuncioSimulador = null;
           window.__paiiaFichaRecuperada = null;
-          window.__paiiaFotosPublicacao = fotosLocais.length ? fotosLocais : recBase.ok ? recBase.fotos : [];
+          guardarFotosEmMemoria(window, fotosLocais.length ? fotosLocais : recBase.ok ? recBase.fotos : [], { fichaIdPAIIA: r.anuncio.id, codigo: r.anuncio.codigo });
           window.__paiiaConflitoInicial = { id: r.anuncio.id, base: r.anuncio };
           setEstado({ pronto: true, erro: "" });
           return;
@@ -7532,7 +7618,7 @@ export default function MercadoLivreTeste(props) {
           return;
         }
         window.__paiiaAnuncioSimulador = null;
-        window.__paiiaFotosPublicacao = rec.fotos;
+        guardarFotosEmMemoria(window, rec.fotos, { fichaIdPAIIA: rec.id, codigo: rec.anuncio?.codigo || r.anuncio.codigo });
         window.__paiiaFichaRecuperada = rec.id;
         localStorage.setItem("mlAnuncioTeste", JSON.stringify(rec.anuncio));
         mapa[rec.chave] = rec.fichaConferencia;
