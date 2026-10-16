@@ -43,7 +43,7 @@ import {
 import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
 import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
 import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
-import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import { abrirFichaNoNovoAnuncio } from "../services/aberturaNovoAnuncio";
 import {
   edicoesDoNovoAnuncio,
   medidaCompletaFicha,
@@ -4289,13 +4289,14 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
       const lida = id ? await obterAnuncio(id) : null;
       const rasc = lida?.ok ? rascunhoNovoAnuncioDaFicha(lida.anuncio) : null;
       if (rasc) {
-        const texto = JSON.stringify({ ...rasc, fichaIdPAIIA: rasc.fichaId, fotosDaFicha: true, salvoEm: Date.now() });
-        localStorage.setItem("novoAnuncioTemporario", texto);
-        localStorage.setItem("rascunhoNovoAnuncioTemp", texto);
-        consumirNovaCriacaoMidia();
+        // Rascunho DESTA ficha (com as fotos dela) + limpa o que é de outro anúncio.
+        abrirFichaNoNovoAnuncio(rasc);
+      } else if (idFichaValido(id)) {
+        // Sem a releitura: o Novo Anúncio abre pedindo ESTA ficha (nunca o
+        // rascunho de outra; sem o dela aqui, relê pela base).
         const url = new URL(window.location.href);
         url.searchParams.set("tela", "novoAnuncio");
-        url.searchParams.set("ficha", rasc.fichaId);
+        url.searchParams.set("ficha", id);
         window.history.replaceState(window.history.state, "", url.toString());
       }
     } catch {
@@ -7481,14 +7482,8 @@ export default function MercadoLivreTeste(props) {
           return;
         }
         try {
-          const texto = JSON.stringify({ ...rasc, fichaIdPAIIA: rasc.fichaId, fotosDaFicha: true, salvoEm: Date.now() });
-          localStorage.setItem("novoAnuncioTemporario", texto);
-          localStorage.setItem("rascunhoNovoAnuncioTemp", texto);
-          consumirNovaCriacaoMidia();
-          const url = new URL(window.location.href);
-          url.searchParams.set("tela", "novoAnuncio");
-          url.searchParams.set("ficha", rasc.fichaId);
-          window.history.replaceState(window.history.state, "", url.toString());
+          // Rascunho DESTA ficha (com as fotos dela) + limpa o que é de outro anúncio.
+          abrirFichaNoNovoAnuncio(rasc);
         } catch (erro) {
           setEstado({ pronto: false, erro: `Não foi possível preparar o Novo Anúncio: ${erro?.name || erro}` });
           return;

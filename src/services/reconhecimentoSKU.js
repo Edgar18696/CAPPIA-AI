@@ -17,6 +17,7 @@
  *  - Não substitui as conferências da Publicação (que continuam iguais).
  */
 import { verificarDuplicidadeML, normalizarCodigoComparacao, nomeDaLoja } from "./duplicidadeML.js";
+import { avaliarMLBRegistrado, decidirConta, linhaConfirmadaML, ESTADO_CONTA, TEXTO_PENDENTE } from "./registroMLB.js";
 
 export const ESTADO_RECONHECIMENTO = Object.freeze({
   ENCONTRADO: "encontrado",
@@ -26,7 +27,7 @@ export const ESTADO_RECONHECIMENTO = Object.freeze({
   INCOMPLETA: "incompleta",
 });
 
-export const TEXTO_INCOMPLETA = "Verificação incompleta";
+export const TEXTO_INCOMPLETA = TEXTO_PENDENTE; // "Verificação pendente"
 
 /** As três contas do Mercado Livre da loja (sempre aparecem no quadro). */
 export const CONTAS_ML_LOJA = Object.freeze(["2412238242", "1729335019", "824312524"]);
@@ -101,7 +102,7 @@ export function avaliarBase(resp) {
 
 /** Resumo para a tela: completo? existe algo? */
 export function resumoReconhecimento(r) {
-  const partes = [r?.bling, r?.base, ...(Array.isArray(r?.contas) ? r.contas : [])].filter(Boolean);
+  const partes = [r?.bling, r?.base, r?.registro, ...(Array.isArray(r?.contas) ? r.contas : [])].filter(Boolean);
   const incompletas = partes.filter((p) => p.estado === ESTADO_RECONHECIMENTO.INCOMPLETA).length;
   const existe = partes.some((p) => p.estado === ESTADO_RECONHECIMENTO.ENCONTRADO || p.estado === ESTADO_RECONHECIMENTO.AMBIGUO);
   const possivel = partes.some((p) => p.estado === ESTADO_RECONHECIMENTO.POSSIVEL);
@@ -129,7 +130,7 @@ function comTempo(promessa, ms, motivo) {
  * - contas: [{ id, nome, conectada }]
  * Contas consultadas uma de cada vez (menos carga no Mercado Livre).
  */
-export async function reconhecerSKU({ codigo, contas = [], lerBling, lerBase, consultarML, tempoMaximoMs = TEMPO_MAXIMO_MS, agora = () => new Date().toISOString() }) {
+export async function reconhecerSKU({ codigo, contas = [], lerBling, lerBase, consultarML, lerRegistro = null, tempoMaximoMs = TEMPO_MAXIMO_MS, agora = () => new Date().toISOString() }) {
   const sku = txt(codigo);
   const chave = chaveCodigo(sku);
   if (!codigoProntoParaConsultar(sku)) return null;
@@ -141,24 +142,75 @@ export async function reconhecerSKU({ codigo, contas = [], lerBling, lerBase, co
     try { return avaliarBase(await comTempo(Promise.resolve(lerBase(sku)), tempoMaximoMs, "tempo esgotado na base PAIIA")); }
     catch (e) { return incompleta(e?.message || "falha ao consultar a base PAIIA"); }
   })();
+  // Registro interno (paiia_registro_mlb): MLBs já conhecidos deste SKU.
+  let registro = null;
+  let registros = [];
+  let erroRegistro = "";
+  if (typeof lerRegistro === "function") {
+    try {
+      const lido = await comTempo(Promise.resolve(lerRegistro(sku)), tempoMaximoMs, "tempo esgotado no registro interno");
+      if (lido?.ok === true) {
+        registros = Array.isArray(lido.registros) ? lido.registros : [];
+        registro = registros.length
+          ? { estado: ESTADO_RECONHECIMENTO.ENCONTRADO, total: registros.length }
+          : { estado: ESTADO_RECONHECIMENTO.NAO_ENCONTRADO, total: 0 };
+      } else {
+        erroRegistro = txt(lido?.erro) || "registro indisponível";
+      }
+    } catch (e) {
+      erroRegistro = e?.message || "falha ao ler o registro interno";
+    }
+    if (erroRegistro) registro = incompleta(erroRegistro);
+  }
+  const gravacoes = { inserir: [], atualizar: [] };
   const resultadosContas = [];
   for (const c of contas) {
-    if (!c?.conectada) {
-      resultadosContas.push(avaliarContaML({ conta: c?.id, nome: c?.nome, conectada: false, motivo: c?.motivo }));
-      continue;
+    const daConta = registros.filter((x) => txt(x?.ml_user_id) === txt(c?.id));
+    // 1) cada MLB registrado nesta conta, conferido AGORA no ML (histórico não é reconsultado)
+    const avaliados = [];
+    for (const reg of daConta) {
+      let resp = null;
+      if (c?.conectada && !["encerrado", "excluido"].includes(String(reg?.situacao))) {
+        try { resp = await comTempo(Promise.resolve(consultarML(c.id, `/items/${txt(reg.mlb_id).toUpperCase()}`)), tempoMaximoMs, "tempo esgotado no Mercado Livre"); }
+        catch (e) { resp = { ok: false, erro: e?.message || "falha ao consultar o Mercado Livre" }; }
+      }
+      const av = avaliarMLBRegistrado({ registro: reg, resp: c?.conectada ? resp : { ok: false, erro: "conta não conectada" }, agora: agora() });
+      avaliados.push(av);
+      if (av.atualizar) gravacoes.atualizar.push({ registro: reg, campos: av.atualizar });
     }
-    try {
-      const resultado = await comTempo(
-        verificarDuplicidadeML({ conta: c.id, codigos: [sku], consultar: (caminho) => consultarML(c.id, caminho) }),
-        tempoMaximoMs,
-        "tempo esgotado no Mercado Livre"
-      );
-      resultadosContas.push(avaliarContaML({ conta: c.id, nome: c.nome, resultado }));
-    } catch (e) {
-      resultadosContas.push(avaliarContaML({ conta: c.id, nome: c.nome, erro: e?.message || "falha ao consultar o Mercado Livre" }));
+    // 2) busca ao vivo pelo SKU (acha anúncios fora do registro)
+    let busca = null;
+    if (c?.conectada) {
+      try {
+        busca = await comTempo(
+          verificarDuplicidadeML({ conta: c.id, codigos: [sku], consultar: (caminho) => consultarML(c.id, caminho) }),
+          tempoMaximoMs,
+          "tempo esgotado no Mercado Livre"
+        );
+      } catch (e) {
+        busca = { erro: e?.message || "falha ao consultar o Mercado Livre" };
+      }
     }
+    const dec = decidirConta({ conta: c?.id, nome: c?.nome, conectada: Boolean(c?.conectada), motivoConta: c?.motivo, erroRegistro, avaliados, busca });
+    // 3) MLB confirmado pelo ML (mesmo SKU, mesma conta) e ainda fora do registro: registrar
+    if (lerRegistro && !erroRegistro && busca && !busca.erro) {
+      for (const n of dec.novos) gravacoes.inserir.push(linhaConfirmadaML({ sku, conta: c.id, contaNome: c.nome, mlb: n.mlb, status: n.status, agora: agora() }));
+    }
+    const mapa = { [ESTADO_CONTA.PUBLICADO]: ESTADO_RECONHECIMENTO.ENCONTRADO, [ESTADO_CONTA.POSSIVEL]: ESTADO_RECONHECIMENTO.POSSIVEL, [ESTADO_CONTA.LIVRE]: ESTADO_RECONHECIMENTO.NAO_ENCONTRADO, [ESTADO_CONTA.PENDENTE]: ESTADO_RECONHECIMENTO.INCOMPLETA };
+    resultadosContas.push({
+      conta: txt(c?.id),
+      nome: c?.nome || nomeDaLoja(c?.id),
+      estado: mapa[dec.estado],
+      estadoConta: dec.estado,
+      anuncios: dec.anuncios,
+      possiveis: dec.possiveis,
+      historico: dec.historico,
+      pendencias: dec.pendencias,
+      motivo: dec.motivo || (dec.pendencias || []).join("; "),
+      registrados: dec.registrados,
+    });
   }
-  const r = { codigo: sku, chave, bling: await parteBling, base: await parteBase, contas: resultadosContas, lido_em: agora() };
+  const r = { codigo: sku, chave, bling: await parteBling, base: await parteBase, registro, contas: resultadosContas, gravacoes, lido_em: agora() };
   return { ...r, resumo: resumoReconhecimento(r) };
 }
 

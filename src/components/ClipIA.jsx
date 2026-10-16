@@ -10,6 +10,11 @@ import {
 } from "../services/projetoAtualService";
 
 import { supabase } from "../supabase";
+import {
+  CHAVE_CLIP_GERACAO_FICHA,
+  clipEhDoAnuncioEmAndamento,
+  fichaDoAnuncioEmAndamento,
+} from "../services/aberturaNovoAnuncio";
 import { baixarClip as baixarClipArquivo } from "./utils/downloadUtils";
 import {
   buscarMascoteOficial,
@@ -1145,11 +1150,29 @@ function finalizarClipParaAnuncio({
   estilo,
   formato,
   duracao,
+  fichaDona,
 }) {
   if (!urlClip) {
     throw new Error(
       "O Clip foi concluído sem uma URL válida."
     );
+  }
+
+  // Geração em segundo plano de OUTRO anúncio (o usuário abriu outra
+  // ficha): o clip fica na Galeria, mas não entra no anúncio da tela.
+  if (
+    !clipEhDoAnuncioEmAndamento(
+      fichaDona
+    )
+  ) {
+    [
+      "clipGeracaoStatus",
+      "clipGeracaoMensagem",
+      CHAVE_CLIP_GERACAO_FICHA,
+    ].forEach((chave) =>
+      localStorage.removeItem(chave)
+    );
+    return;
   }
 
   localStorage.setItem(
@@ -2701,6 +2724,15 @@ function importarFotoComputador(
       "clipGeracaoErro"
     );
 
+    // Anúncio dono deste clip (ao terminar, só entra nele).
+    const fichaDonaClip =
+      fichaDoAnuncioEmAndamento();
+
+    localStorage.setItem(
+      CHAVE_CLIP_GERACAO_FICHA,
+      fichaDonaClip
+    );
+
     window.dispatchEvent(
       new CustomEvent(
         "appia:clip-gerando"
@@ -2805,6 +2837,9 @@ function importarFotoComputador(
           duracao:
             dadosGeracao
               .duracao,
+
+          fichaDona:
+            fichaDonaClip,
         });
       } catch (erro) {
         const mensagem =

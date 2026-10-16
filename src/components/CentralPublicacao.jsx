@@ -4,6 +4,12 @@ import { supabase } from "../supabase";
 import PainelFichasCentral from "./PainelFichasCentral";
 import { camposNovoAnuncioDaMedida } from "../services/dadosTecnicosAnuncio";
 import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import {
+  anuncioProntoEhDoAnuncioEmAndamento,
+  CHAVE_ABERTURA_NOVO_ANUNCIO,
+  escolherRascunho,
+  fichaDoRascunho,
+} from "../services/aberturaNovoAnuncio";
 
 function formatarMoeda(valor) {
   if (
@@ -736,8 +742,17 @@ export default function CentralPublicacao({
   }
 
   function voltarAnuncio() {
-    if (anuncio) {
+    // O anúncio pronto guardado é de OUTRA ficha (o usuário já está em
+    // outra)? Não volta para ele: volta para o anúncio em andamento.
+    if (anuncio && !anuncioProntoEhDoAnuncioEmAndamento(anuncio)) {
+      localStorage.removeItem("anuncioProntoPublicacao");
+    } else if (anuncio) {
+      // Rascunho da MESMA ficha: custo/precificação e o resto continuam.
+      const rascunhoMesmaFicha =
+        escolherRascunho(localStorage, { fichaId: fichaDoRascunho(anuncio) }) || {};
       const dadosRetorno = {
+        ...rascunhoMesmaFicha,
+        fotosDaFicha: undefined,
         codigo: anuncio?.codigo || "",
         oem: anuncio?.oem || "",
         titulo: tituloEditavel || anuncio?.titulo || "",
@@ -787,6 +802,7 @@ export default function CentralPublicacao({
       );
       // Voltar ao Anúncio não é criação nova: abre com estes dados.
       consumirNovaCriacaoMidia();
+      localStorage.removeItem(CHAVE_ABERTURA_NOVO_ANUNCIO);
     }
 
     setScreen?.(

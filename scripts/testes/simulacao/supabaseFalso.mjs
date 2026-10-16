@@ -4,11 +4,12 @@
 // os testes provarem que nada foi para o ML, o Bling ou a base de
 // conhecimento. Suporta só o que os serviços da ficha usam.
 // =============================================================
-export const banco = { tabelas: { paiia_anuncios: [], paiia_anuncios_publicacoes: [] }, chamadas: [], funcoes: [], seq: 0 };
+export const banco = { tabelas: { paiia_anuncios: [], paiia_anuncios_publicacoes: [], paiia_registro_mlb: [] }, chamadas: [], funcoes: [], seq: 0, falhar: {} };
 export const USUARIO = "11111111-2222-4333-8444-555555555555";
 
 export function zerarBanco() {
-  banco.tabelas = { paiia_anuncios: [], paiia_anuncios_publicacoes: [] };
+  banco.tabelas = { paiia_anuncios: [], paiia_anuncios_publicacoes: [], paiia_registro_mlb: [] };
+  banco.falhar = {};
   banco.chamadas = [];
   banco.funcoes = [];
   banco.seq = 0;
@@ -86,6 +87,7 @@ class Consulta {
   eq(k, v) { this.filtros.push((l) => String(l[k]) === String(v)); return this; }
   neq(k, v) { this.filtros.push((l) => String(l[k]) !== String(v)); return this; }
   is(k, v) { this.filtros.push((l) => (l[k] ?? null) === v); return this; }
+  in(k, vs) { this.filtros.push((l) => (vs || []).map(String).includes(String(l[k]))); return this; }
   order() { return this; }
   limit(n) { this.lim = n; return this; }
   maybeSingle() { this.unico = "talvez"; return this.executar(); }
@@ -97,6 +99,12 @@ class Consulta {
     if (!t) return { data: null, error: { code: "42P01", message: `tabela ${this.tabela} não existe no teste` } };
     const casa = (l) => this.filtros.every((f) => f(l));
     if (this.op === "delete") return { data: null, error: { message: "DELETE não é permitido pelo app" } };
+    // Falha simulada por tabela/operação (ex.: banco.falhar = { "paiia_registro_mlb:select": true }).
+    if (banco.falhar[`${this.tabela}:${this.op}`]) return { data: null, error: { message: `falha simulada em ${this.tabela}` } };
+    // Registro interno: o mesmo MLB nunca duas vezes para o mesmo usuário (índice único).
+    if (this.op === "insert" && this.tabela === "paiia_registro_mlb" && t.some((l) => l.usuario_id === this.dados.usuario_id && l.mlb_id === this.dados.mlb_id)) {
+      return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint \"paiia_registro_mlb_mlb_unico\"" } };
+    }
     if (this.op === "insert") {
       const linha = { id: novoId(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...clone(this.dados) };
       t.push(linha);

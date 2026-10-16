@@ -51,6 +51,14 @@ const CHAVES_TEMPORARIAS_CRIACAO = [
   "clipRemovidoPublicacao",
   "retornarParaMidiasPublicacao",
   "retornarParaNovoAnuncio",
+  // Também de UM anúncio (nunca passam para o próximo):
+  "fotoPronta",
+  "voltarParaFotosAnuncio",
+  "voltarParaMidiasAnuncio",
+  "codigoNovoAnuncio",
+  "fotosSelecionadasAnuncio",
+  "clipGeracaoFicha",
+  "paiiaAberturaNovoAnuncio",
 ];
 
 export function ehTelaNovaCriacaoMidia(tela) {

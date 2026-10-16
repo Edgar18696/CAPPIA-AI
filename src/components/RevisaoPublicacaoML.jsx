@@ -28,6 +28,7 @@ import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLB
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
+import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services/registroMLBService";
 import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, reais as reaisFrete } from "../services/fretePrecificacao";
 import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
@@ -297,6 +298,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
   const [resultado, setResultado] = useState(null);
+  // Registro interno do MLB recém-publicado ({ ok, erro } | null).
+  const [registroInterno, setRegistroInterno] = useState(null);
   const [ocupado, setOcupado] = useState("conexao");
   const [autorizado, setAutorizado] = useState(false);
   const [armado, setArmado] = useState(false);
@@ -1052,6 +1055,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           blingProdutoId: registroBling.bling_produto_id, registro: registroBling,
         });
       }
+      // Registro interno permanente (SKU + conta + MLB). Falhar aqui NÃO
+      // desfaz nada: o MLB já está na ficha/publicação, que bloqueiam nova
+      // publicação deste SKU nesta conta; a próxima consulta do SKU registra.
+      const rr = await registrarPublicadoNoRegistro({
+        sku: skuEnvio, conta: contaEscolhida, contaNome: nomeDaLoja(contaEscolhida, contaInfo?.nickname || ""),
+        mlb: r.item_id, anuncioId: ficha.anuncioId || null, blingProdutoId: registroBling.bling_produto_id,
+      }).catch((e) => ({ ok: false, erro: e?.message || "falha" }));
+      setRegistroInterno({ ...rr, mlb: r.item_id });
       // Compatibilidades: só os veículos do catálogo que confirmam as
       // aplicações aprovadas (lista mostrada antes da publicação).
       const idsCompat = (compatML?.veiculos || []).map((v) => v.id);
@@ -1126,6 +1137,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // Salva o resultado na ficha: MLB, data/hora, SKU, verificação, Bling.
     if (ficha.anuncioId) {
       const g = await registrarResultadoPublicacao({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, resultado: r, bling: estoque, sku: skuEnvio, verificacao });
+      // SKU do registro só fica CONFIRMADO com verificação pós-publicação sem pendência.
+      if (g.ok && !g.comPendencia && r?.ok && r.publicado && r.item_id) {
+        await confirmarSkuPublicado({ mlb: r.item_id, conta: contaEscolhida }).catch(() => null);
+      }
       // O registro do MLB para o Bling tem de ESTAR na ficha (relido e,
       // se preciso, gravado de novo): é ele que leva à etapa do Bling.
       const gr = registroBling ? await garantirRegistroIntegracaoBling({ anuncioId: ficha.anuncioId, registro: registroBling }) : { ok: true };
@@ -1783,6 +1798,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
               </button>
             )}
             {resultado && ficha.erroResultado && <p style={erro}>⚠ O resultado não foi salvo na ficha: {ficha.erroResultado}</p>}
+            {resultado?.ok && resultado.publicado && registroInterno?.ok && (
+              <p data-paiia-registro-interno="ok" style={{ ...info, color: "#86efac" }}>🗂 {registroInterno.mlb} guardado no registro interno de anúncios ({nomeDaLoja(contaEscolhida, contaInfo?.nickname || "")}).</p>
+            )}
+            {resultado?.ok && resultado.publicado && registroInterno && !registroInterno.ok && (
+              <p data-paiia-registro-interno="falhou" style={erro}>
+                ⚠ O anúncio {registroInterno.mlb} FOI publicado e está salvo na ficha, mas o registro interno não foi gravado ({registroInterno.erro}). NÃO publique de novo: o PAIIA já bloqueia nova publicação deste SKU nesta conta, e o registro será completado na próxima consulta do SKU.
+              </p>
+            )}
           </div>
         </>
       )}

@@ -1,13 +1,17 @@
 import { supabase } from "../supabase";
 import { listarAnunciosDoCodigo } from "./anuncioPublicacaoService";
 import { reconhecerSKU, criarCacheReconhecimento, chaveCodigo } from "./reconhecimentoSKU";
+import { lerRegistroDoSKU, aplicarGravacoesRegistro, registrarParecidoConfirmado } from "./registroMLBService";
 
 /*
  * Ligações do reconhecimento de SKU com o servidor — SOMENTE LEITURA:
  *  - Bling: bling-integracao "saldo_por_sku" (a mesma leitura da Publicação);
  *  - Mercado Livre: mercadolivre-publicacao "ml_consulta" GET, conta a conta
  *    (busca de anúncios da conta e leitura de cada anúncio);
- *  - Base PAIIA: SELECT das fichas deste código (listarAnunciosDoCodigo).
+ *  - Base PAIIA: SELECT das fichas deste código (listarAnunciosDoCodigo);
+ *  - Registro interno (paiia_registro_mlb): leitura dos MLBs deste SKU.
+ * Única gravação: no REGISTRO INTERNO, e só do que o Mercado Livre confirmou
+ * (MLB com o mesmo SKU na mesma conta, e a situação conferida agora).
  * Nenhuma ação de criar, publicar, vincular ou alterar estoque é chamada.
  */
 
@@ -32,5 +36,16 @@ export function reconhecerCodigo({ codigo, contas, forcar = false }) {
   const chave = chaveCodigo(codigo);
   // A chave inclui as contas conectadas: conectar/desconectar consulta de novo.
   const chaveCache = `${chave}|${contas.map((c) => `${c.id}:${c.conectada ? 1 : 0}`).join(",")}`;
-  return cache.obter(chaveCache, () => reconhecerSKU({ codigo, contas, lerBling, lerBase: listarAnunciosDoCodigo, consultarML }), { forcar });
+  return cache.obter(chaveCache, async () => {
+    const r = await reconhecerSKU({ codigo, contas, lerBling, lerBase: listarAnunciosDoCodigo, consultarML, lerRegistro: lerRegistroDoSKU });
+    if (!r) return r;
+    const g = r.gravacoes || { inserir: [], atualizar: [] };
+    const gravacao = g.inserir.length || g.atualizar.length ? await aplicarGravacoesRegistro(g) : { registrados: [], atualizados: 0, falhas: [] };
+    return { ...r, gravacao };
+  }, { forcar });
+}
+
+/** "É o mesmo produto — registrar": anúncio parecido confirmado pelo usuário. */
+export async function registrarParecido({ sku, conta, contaNome, mlb, status }) {
+  return registrarParecidoConfirmado({ sku, conta, contaNome, mlb, status });
 }

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 
 function numero(valor) {
   const convertido = Number(valor);
@@ -358,7 +359,11 @@ export default function CentralInteligencia({
             <button
               key={nome}
               type="button"
-              onClick={() => setScreen?.(tela)}
+              onClick={() => {
+                // "Novo Anúncio" = criação nova (nada de outro anúncio).
+                if (tela === "novoAnuncio") iniciarAnuncioNovo();
+                setScreen?.(tela);
+              }}
               style={botaoAcao}
             >
               <span style={{ fontSize: "28px" }}>{icone}</span>

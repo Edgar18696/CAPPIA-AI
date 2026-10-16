@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { salvarFichaNovoAnuncio } from "../services/fichaNovoAnuncioService";
 import { lerRascunhoAnuncio, rascunhoMaisRecente } from "./useNovoAnuncio";
-import { deveIniciarNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import { decidirAberturaNovoAnuncio } from "../services/aberturaNovoAnuncio";
 import {
   podeCriarFicha,
   montarNovoAnuncioParaFicha,
@@ -23,22 +23,20 @@ const ESPERA_MS = 1500;
 /**
  * ID da ficha em andamento ao abrir o Novo Anúncio: o do endereço
  * (?tela=novoAnuncio&ficha=) ou o do MESMO rascunho que a tela restaura.
- * Criação nova (Home / Limpar) começa sem ficha.
+ * Criação nova (Home / Limpar) começa sem ficha. Mesma decisão da tela
+ * (services/aberturaNovoAnuncio): o rascunho de outra ficha nunca conta.
  */
-export function fichaDoNovoAnuncioAoAbrir() {
+export function fichaDaAbertura(ab) {
   const nada = { id: "", codigo: "" };
+  if (!ab || ab.modo === "novo" || !idFichaValido(ab.fichaId)) return nada;
+  const usado = ab.rascunho;
+  return { id: ab.fichaId, codigo: usado ? normalizarCodigoFicha(usado.codigo || usado.oem) : "" };
+}
+export function fichaDoNovoAnuncioAoAbrir() {
   try {
-    if (deveIniciarNovaCriacaoMidia()) return nada;
-    const usado = rascunhoMaisRecente();
-    const codigo = normalizarCodigoFicha(usado?.codigo || usado?.oem);
-    const url = new URL(window.location.href);
-    const daUrl = url.searchParams.get("ficha") || "";
-    if (url.searchParams.get("tela") === "novoAnuncio" && idFichaValido(daUrl)) {
-      return { id: daUrl, codigo: String(usado?.fichaIdPAIIA || "") === daUrl ? codigo : "" };
-    }
-    return idFichaValido(usado?.fichaIdPAIIA) ? { id: usado.fichaIdPAIIA, codigo } : nada;
+    return fichaDaAbertura(decidirAberturaNovoAnuncio());
   } catch {
-    return nada;
+    return { id: "", codigo: "" };
   }
 }
 /** ID da ficha que está no rascunho DESTE navegador ("" se não houver). */
@@ -67,8 +65,8 @@ function fichaNoEndereco(id) {
   }
 }
 
-export default function useFichaNovoAnuncio({ estado, desativado = false }) {
-  const [abertura] = useState(() => (desativado ? { id: "", codigo: "" } : fichaDoNovoAnuncioAoAbrir()));
+export default function useFichaNovoAnuncio({ estado, desativado = false, abertura: aberturaTela }) {
+  const [abertura] = useState(() => (desativado ? { id: "", codigo: "" } : aberturaTela ? fichaDaAbertura(aberturaTela) : fichaDoNovoAnuncioAoAbrir()));
   const [fichaId, setFichaId] = useState(abertura.id);
   const [status, setStatus] = useState({ estado: fichaId ? "salvo" : "", erro: "", em: "" });
   // editou: só uma edição REAL do usuário grava uma ficha que já existe.

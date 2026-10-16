@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 import Button from "./ui/Button";
+import {
+  iniciarAnuncioNovo,
+  precificacaoDoAnuncioEmAndamento,
+} from "../services/aberturaNovoAnuncio";
 import MeusCustos, {
   carregarPerfilCustos,
   resumirPerfilCustos,
@@ -533,6 +537,22 @@ export default function CentralPrecificacao({
       precoFinal,
       dadosAtualizados
     );
+  }
+
+  // Precificação aberta a partir do anúncio em andamento (mesma ficha):
+  // volta para ele com o preço. Senão é um anúncio NOVO com este preço e
+  // custo (nada de outro anúncio passa).
+  if (
+    !precificacaoDoAnuncioEmAndamento(
+      dadosAtualizados
+    )
+  ) {
+    iniciarAnuncioNovo({
+      dados: {
+        preco: String(precoFinal),
+        custo: String(custo || ""),
+      },
+    });
   }
 
   alert(

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { listarFichasCentral } from "../services/fichasCentralService";
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
-import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import { retomarAnuncioGuardado } from "../services/aberturaNovoAnuncio";
 import {
   ESTADO_CENTRAL,
   TEXTO_ESTADO_CENTRAL,
@@ -9,7 +9,6 @@ import {
   resumoFichaCentral,
   ordenarFichasCentral,
   lerAnuncioEmAndamento,
-  restaurarAnuncioEmAndamento,
   rascunhoLocalJaNaBase,
   enderecoDaFicha,
 } from "../services/fichasCentral";
@@ -55,8 +54,9 @@ export default function PainelFichasCentral({ setScreen }) {
 
   function retomarLocal() {
     try {
-      // "Retomar" não é criação nova: o Novo Anúncio abre com o guardado.
-      if (restaurarAnuncioEmAndamento(localStorage)) consumirNovaCriacaoMidia();
+      // "Retomar" não é criação nova: o Novo Anúncio abre SÓ com o guardado
+      // (as fotos dele; nada do anúncio que estava na tela).
+      retomarAnuncioGuardado(localStorage);
     } catch {
       // segue: o Novo Anúncio abre com o que houver
     }

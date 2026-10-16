@@ -5,9 +5,11 @@ import {
   limparAnuncioTemporario,
 } from "../services/anunciosService";
 import {
-  consumirNovaCriacaoMidia,
-  deveIniciarNovaCriacaoMidia,
-} from "../services/limparEstadoTemporarioMidia";
+  decidirAberturaNovoAnuncio,
+  consumirAberturaNovoAnuncio,
+  fotosDaMemoriaValem,
+  escolherRascunho,
+} from "../services/aberturaNovoAnuncio";
 
 // =====================================================
 // RASCUNHO LEVE DO NOVO ANÚNCIO
@@ -142,14 +144,8 @@ export function rascunhoTemTexto(dados) {
  * depois no Novo Anúncio (o salvamento automático grava a reserva).
  */
 export function rascunhoMaisRecente() {
-  const principal = lerRascunhoAnuncio("novoAnuncioTemporario");
-  const reserva = lerRascunhoAnuncio("rascunhoNovoAnuncioTemp");
-  const p = rascunhoTemTexto(principal);
-  const r = rascunhoTemTexto(reserva);
-  if (p && r) return Number(reserva.salvoEm || 0) > Number(principal.salvoEm || 0) ? reserva : principal;
-  if (p) return principal;
-  if (r) return reserva;
-  return principal || reserva || null;
+  // Mesma regra em um lugar só (services/aberturaNovoAnuncio).
+  return escolherRascunho(localStorage);
 }
 
 export function lerRascunhoAnuncio(chave) {
@@ -249,6 +245,10 @@ export default function useNovoAnuncio({
   setAuditoria,
 
   extrasRascunho,
+
+  // Decisão de abertura do Novo Anúncio (decidirAberturaNovoAnuncio),
+  // tomada uma vez na montagem da tela.
+  abertura,
 }) {
   const fotosSeguras =
     Array.isArray(fotosAnuncio)
@@ -322,20 +322,39 @@ export default function useNovoAnuncio({
       return;
     }
 
-    if (deveIniciarNovaCriacaoMidia()) {
-      consumirNovaCriacaoMidia();
+    // Abertura decidida UMA vez (criação nova, ficha pedida pelo endereço
+    // ou o anúncio em andamento). O rascunho de OUTRA ficha nunca entra.
+    const ab = abertura || decidirAberturaNovoAnuncio();
 
-      const vazio = criarAnuncioVazio() || {};
+    if (ab.recarregarDaBase) {
+      // ?ficha= sem o rascunho dela neste navegador: a tela relê a ficha
+      // pela base (NovoAnuncio) e não mostra nada de outro anúncio.
+      return;
+    }
 
-      setCodigo(vazio.codigo || "");
-      setOem(vazio.oem || "");
-      setTitulo(vazio.titulo || "");
-      setDescricao(vazio.descricao || "");
-      setPreco(vazio.preco || "");
-      setTipoAnuncio(vazio.tipoAnuncio || "classico");
-      setPecaEncontrada(null);
-      setDiagnostico(null);
-      setAuditoria(null);
+    function preencherCampos(base) {
+      const anuncio = {
+        ...(criarAnuncioVazio() || {}),
+        ...(base || {}),
+      };
+
+      setCodigo(anuncio.codigo || "");
+      setOem(anuncio.oem || "");
+      setTitulo(anuncio.titulo || "");
+      setDescricao(anuncio.descricao || "");
+      setPreco(anuncio.preco || "");
+      setTipoAnuncio(anuncio.tipoAnuncio || "classico");
+      setPecaEncontrada(anuncio.pecaEncontrada || null);
+      setDiagnostico(anuncio.diagnostico || null);
+      setAuditoria(anuncio.auditoria || null);
+    }
+
+    if (ab.modo === "novo") {
+      consumirAberturaNovoAnuncio();
+
+      // Anúncio NOVO: nada de outro anúncio (nem as fotos da memória).
+      // Só os dados que vieram com o pedido (peça do catálogo, preço).
+      preencherCampos(ab.dados);
 
       if (podeAtualizarFotos) {
         setFotosAnuncio([]);
@@ -344,45 +363,38 @@ export default function useNovoAnuncio({
       return;
     }
 
-    function aplicarRascunho(anuncio) {
-      setCodigo(anuncio.codigo || "");
-      setOem(anuncio.oem || "");
-      setTitulo(anuncio.titulo || "");
-      setDescricao(anuncio.descricao || "");
-      setPreco(anuncio.preco || "");
-      setTipoAnuncio(
-        anuncio.tipoAnuncio || "classico"
-      );
-      setPecaEncontrada(
-        anuncio.pecaEncontrada || null
-      );
-      setDiagnostico(
-        anuncio.diagnostico || null
-      );
-      setAuditoria(
-        anuncio.auditoria || null
-      );
+    if (ab.modo === "ficha") {
+      consumirAberturaNovoAnuncio();
+    }
 
-      // Ficha reaberta da BASE (?ficha=<id>): as fotos são as DELA, mesmo
-      // que a memória tenha fotos de outro anúncio. Vale uma vez só.
-      if (podeAtualizarFotos && anuncio.fotosDaFicha === true) {
+    function aplicarRascunho(anuncio) {
+      preencherCampos(anuncio);
+
+      if (!podeAtualizarFotos) {
+        return;
+      }
+
+      // Fotos da memória de OUTRO anúncio (ou ficha reaberta da base,
+      // fotosDaFicha): valem as fotos DESTE rascunho, mesmo vazias.
+      if (!fotosDaMemoriaValem(anuncio)) {
         setFotosAnuncio(Array.isArray(anuncio.fotos) ? anuncio.fotos : []);
-        ["novoAnuncioTemporario", "rascunhoNovoAnuncioTemp"].forEach((chave) => {
-          const r = lerRascunhoAnuncio(chave);
-          if (r && r.fotosDaFicha) {
-            delete r.fotosDaFicha;
-            try {
-              localStorage.setItem(chave, JSON.stringify(r));
-            } catch {
-              // sem espaço: na próxima abertura as fotos da ficha valem de novo
+        if (anuncio.fotosDaFicha === true) {
+          ["novoAnuncioTemporario", "rascunhoNovoAnuncioTemp"].forEach((chave) => {
+            const r = lerRascunhoAnuncio(chave);
+            if (r && r.fotosDaFicha) {
+              delete r.fotosDaFicha;
+              try {
+                localStorage.setItem(chave, JSON.stringify(r));
+              } catch {
+                // sem espaço: na próxima abertura as fotos da ficha valem de novo
+              }
             }
-          }
-        });
+          });
+        }
         return;
       }
 
       if (
-        podeAtualizarFotos &&
         Array.isArray(anuncio.fotos) &&
         anuncio.fotos.length
       ) {
@@ -394,20 +406,8 @@ export default function useNovoAnuncio({
       }
     }
 
-    const anuncioTemporario =
-      lerRascunhoAnuncio(
-        "novoAnuncioTemporario"
-      );
-
-    const rascunhoReserva =
-      lerRascunhoAnuncio(
-        "rascunhoNovoAnuncioTemp"
-      );
-
-    if (anuncioTemporario) {
-      // Vale o rascunho MAIS RECENTE (principal ou reserva).
-      aplicarRascunho(rascunhoMaisRecente() || anuncioTemporario);
-
+    if (ab.rascunho) {
+      aplicarRascunho(ab.rascunho);
       return;
     }
 
@@ -477,67 +477,21 @@ export default function useNovoAnuncio({
       return;
     }
 
-    // Fallback: a cópia principal não existe (ex.: falta de espaço
-    // ao abrir a Galeria) → recupera do rascunho de reserva.
-    if (rascunhoTemTexto(rascunhoReserva)) {
-      aplicarRascunho(rascunhoReserva);
-      return;
-    }
-
-    const vazio =
-      criarAnuncioVazio() || {};
-
-    setCodigo(
-      vazio.codigo || ""
-    );
-
-    setOem(
-      vazio.oem || ""
-    );
-
-    setTitulo(
-      vazio.titulo || ""
-    );
-
-    setDescricao(
-      vazio.descricao || ""
-    );
-
-    setPreco(
-      vazio.preco || ""
-    );
-
-    setTipoAnuncio(
-      vazio.tipoAnuncio ||
-        "classico"
-    );
-
-    setPecaEncontrada(
-      vazio.pecaEncontrada ||
-        null
-    );
-
-    setDiagnostico(
-      vazio.diagnostico ||
-        null
-    );
-
-    setAuditoria(
-      vazio.auditoria ||
-        null
-    );
+    // Nada para abrir: tela vazia. Fotos da memória só ficam se forem
+    // deste anúncio ainda sem ficha (ex.: foto pronta da Foto IA).
+    preencherCampos(null);
 
     if (podeAtualizarFotos) {
       setFotosAnuncio(
         (fotosAtuais) =>
-          Array.isArray(
-            fotosAtuais
-          )
+          Array.isArray(fotosAtuais) &&
+          fotosDaMemoriaValem(null)
             ? fotosAtuais
             : []
       );
     }
   }, [
+    abertura,
     anuncioEditando,
     podeAtualizarFotos,
     setAuditoria,

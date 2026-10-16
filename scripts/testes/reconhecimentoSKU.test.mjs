@@ -267,20 +267,27 @@ test("14) cache: sem consultas repetidas; incompleta não fica guardada; 'verifi
   assert.equal(m, 2, "incompleta tenta de novo na próxima vez");
 });
 
-test("15) somente leitura: só saldo_por_sku, ml_consulta GET e leitura da base", () => {
+test("15) só leituras no ML/Bling/base; única gravação = registro interno (sem apagar)", () => {
   const svc = ler("src/services/reconhecimentoSKUService.js");
   const regras = ler("src/services/reconhecimentoSKU.js");
   const tela = ler("src/components/PainelSKUExistente.jsx");
+  const reg = ler("src/services/registroMLBService.js");
   const acoes = [...svc.matchAll(/acao: "([a-z_]+)"/g)].map((m) => m[1]).sort();
   assert.deepEqual(acoes, ["ml_consulta", "saldo_por_sku"]);
   assert.ok(svc.includes('metodo: "GET"'));
-  // Nenhum acesso direto a tabelas (a base é lida só por listarAnunciosDoCodigo, um SELECT).
+  // Nenhum acesso direto a tabelas no reconhecimento: a base é lida por
+  // listarAnunciosDoCodigo e o registro pelo serviço do registro.
   assert.equal(/\.from\(|\.(insert|update|upsert)\(/.test(svc + regras + tela), false);
   assert.ok(svc.includes("lerBase: listarAnunciosDoCodigo"));
+  assert.ok(svc.includes("lerRegistro: lerRegistroDoSKU"));
   const codigoSvc = svc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/"mercadolivre-publicacao"/g, "");
-  assert.equal(/criar_produto|publicar|estoque|conferir_cadastro_sku|registrar/i.test(codigoSvc), false);
+  assert.equal(/criar_produto|publicar|estoque|conferir_cadastro_sku/i.test(codigoSvc), false);
   assert.deepEqual([...svc.matchAll(/functions\.invoke\("([a-z-]+)"/g)].map((m) => m[1]).sort(), ["bling-integracao", "mercadolivre-publicacao"]);
   assert.equal(/functions\.invoke|supabase/.test(regras + tela), false, "regras e tela não chamam o servidor direto");
+  // O serviço do registro só toca a tabela do registro e nunca apaga.
+  assert.deepEqual([...new Set([...reg.matchAll(/\.from\(([A-Za-z_"]+)\)/g)].map((m) => m[1]))], ["T"]);
+  assert.ok(reg.includes('const T = "paiia_registro_mlb";'));
+  assert.equal(/\.delete\(|\.upsert\(|functions\.invoke/.test(reg), false);
 });
 
 test("16) Novo Anúncio mostra o quadro; Publicação e canais intactos", () => {

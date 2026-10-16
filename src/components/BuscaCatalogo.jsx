@@ -5,6 +5,7 @@ import PainelResumoCatalogo from "./PainelResumoCatalogo";
 import DiagnosticoTecnicoIA from "./DiagnosticoTecnicoIA";
 import FichaTecnicaIA from "./FichaTecnicaIA";
 import CentroInteligenciaIA from "./CentroInteligenciaIA";
+import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 
 /*
  * ============================================================
@@ -805,10 +806,10 @@ export default function BuscaCatalogo({
       termo ||
       "";
 
-    localStorage.setItem(
-      "codigoNovoAnuncio",
-      String(codigo)
-    );
+    // Anúncio NOVO já com o código escolhido (nada do anúncio anterior).
+    iniciarAnuncioNovo({
+      dados: { codigo: String(codigo) },
+    });
 
     setScreen(
       "novoAnuncio"
@@ -1017,12 +1018,15 @@ export default function BuscaCatalogo({
         onCriarAnuncio={(
           item
         ) => {
-          localStorage.setItem(
-            "codigoNovoAnuncio",
-            item.codigo_oem ||
-              item.codigo_equivalente ||
-              ""
-          );
+          // Anúncio NOVO já com o código escolhido.
+          iniciarAnuncioNovo({
+            dados: {
+              codigo:
+                item.codigo_oem ||
+                item.codigo_equivalente ||
+                "",
+            },
+          });
 
           setScreen(
             "novoAnuncio"

@@ -3,6 +3,7 @@ import {
   ehTelaNovaCriacaoMidia,
   prepararNovaCriacaoMidia,
 } from "../services/limparEstadoTemporarioMidia";
+import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 import { ROTULO_CONTA_INTERNA_TESTE } from "../config/contasInternasPaiia";
 
 export default function Home({
@@ -128,8 +129,10 @@ export default function Home({
   ];
 
   function abrirCard(card) {
-    if (
-      card.novoAnuncio ||
+    if (card.novoAnuncio) {
+      // Anúncio NOVO: nada de outro anúncio (o em andamento é guardado).
+      iniciarAnuncioNovo();
+    } else if (
       ehTelaNovaCriacaoMidia(card.tela)
     ) {
       prepararNovaCriacaoMidia();

@@ -34,9 +34,15 @@ import AssistenteAnuncio from "./AssistenteAnuncio";
 import DadosPeca from "./DadosPeca";
 import useNovoAnuncio, {
   gravarRascunhoAnuncio,
-  rascunhoMaisRecente,
 } from "../hooks/useNovoAnuncio";
-import { deveIniciarNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
+import {
+  decidirAberturaNovoAnuncio,
+  escolherRascunho,
+  fichaDoRascunho,
+  marcarDonoFotosAnuncio,
+  precificacaoDoAnuncioEmAndamento,
+} from "../services/aberturaNovoAnuncio";
+import { enderecoDaFicha } from "../services/fichasCentral";
 import useFichaNovoAnuncio from "../hooks/useFichaNovoAnuncio";
 import { OPCOES_TIPO_VEICULO, TIPO_CARRO, normalizarTipoVeiculo } from "../services/tipoVeiculoAnuncio";
 import { kgParaG, medidaDoNovoAnuncio, textoMedida } from "../services/dadosTecnicosAnuncio";
@@ -488,9 +494,34 @@ export default function NovoAnuncio({
   setScreen,
   fotosAnuncio,
   setFotosAnuncio,
-  anuncioEditando,
+  anuncioEditando: anuncioEditandoApp,
   setAnuncioEditando,
 }) {
+  // ABERTURA decidida uma vez: criação nova, ficha pedida (?ficha=) ou o
+  // anúncio em andamento (services/aberturaNovoAnuncio). Um anúncio novo
+  // nunca herda nada de outro; a ficha B mostra só os dados de B.
+  const [abertura] = useState(() => decidirAberturaNovoAnuncio());
+  // Criação nova pedida / ficha pedida: a edição antiga (Meus Anúncios,
+  // Projetos, Meus Rascunhos) que ficou no App não vale aqui.
+  const anuncioEditando = abertura.ignorarEdicao ? null : anuncioEditandoApp;
+  useEffect(() => {
+    if (abertura.ignorarEdicao && anuncioEditandoApp) {
+      setAnuncioEditando?.(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // ?ficha= sem o rascunho dela neste navegador: relê a ficha pela base
+  // (a Conferência devolve para cá com os dados DELA).
+  useEffect(() => {
+    if (!abertura.recarregarDaBase) return;
+    try {
+      window.history.replaceState(window.history.state, "", enderecoDaFicha(window.location.href, abertura.fichaId));
+    } catch {
+      return;
+    }
+    setScreen?.("mercadoLivreTeste");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [
     projetoAtual,
     setProjetoAtual,
@@ -517,13 +548,17 @@ useEffect(() => {
     return;
   }
 
-  if (deveIniciarNovaCriacaoMidia()) {
+  if (abertura.modo === "novo") {
+    // Anúncio novo: só o que veio com o pedido (ex.: custo da Precificação).
+    if (abertura.dados) {
+      aplicarExtrasRascunho(abertura.dados);
+    }
     return;
   }
 
-  // Vale o rascunho MAIS RECENTE (cópia principal ou reserva do
-  // salvamento automático): o F5 não volta a uma versão antiga.
-  const dadosRestaurar = rascunhoMaisRecente();
+  // O rascunho escolhido na abertura (o mais recente DESTE anúncio/ficha):
+  // o F5 não volta a uma versão antiga e nunca abre outra ficha.
+  const dadosRestaurar = abertura.rascunho;
 
   if (!dadosRestaurar) {
     return;
@@ -584,8 +619,11 @@ useEffect(() => {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try {
-        // Mesmo rascunho escolhido na restauração (o mais recente).
-        const dados = rascunhoMaisRecente();
+        // Mesmo anúncio da abertura (o rascunho mais recente DELE).
+        const dados =
+          abertura.modo === "novo"
+            ? null
+            : escolherRascunho(localStorage, { fichaId: abertura.fichaId || "" });
 
         if (!dados) {
           return;
@@ -728,6 +766,14 @@ useEffect(() => {
         rascunho.fotos
       ) ||
       rascunho.fotos.length === 0
+    ) {
+      return;
+    }
+
+    // Só as fotos do MESMO anúncio da abertura (nunca de outra ficha).
+    if (
+      abertura.modo === "novo" ||
+      fichaDoRascunho(rascunho) !== (abertura.fichaId || "")
     ) {
       return;
     }
@@ -1382,16 +1428,28 @@ function formatarPrecoAppia(
     dadosPrecificacao = {};
   }
 
+  // Consumidas aqui: preço/custo de uma precificação nunca passam para
+  // outro anúncio (o anúncio novo recebe os dele no pedido de criação).
+  localStorage.removeItem("precoSugeridoAppia");
+  localStorage.removeItem("dadosPrecificacaoAppia");
+
+  if (
+    abertura.modo === "novo" ||
+    !precoSugerido ||
+    !(
+      precificacaoDoAnuncioEmAndamento(dadosPrecificacao) ||
+      fichaDoRascunho(dadosPrecificacao) === (abertura.fichaId || "")
+    )
+  ) {
+    return;
+  }
+
   if (dadosPrecificacao?.custo) {
     setCusto(
       String(
         dadosPrecificacao.custo
       )
     );
-  }
-
-  if (!precoSugerido) {
-    return;
   }
 
   setPreco(
@@ -1440,6 +1498,14 @@ function formatarPrecoAppia(
     clipAnuncio,
     setClipAnuncio,
   ] = useState(() => {
+    // Clip DESTE anúncio: novo = nenhum; ficha reaberta = o da ficha;
+    // volta do Clip IA = o recém-escolhido (ou o do rascunho).
+    if (abertura.modo === "novo") {
+      return "";
+    }
+    if (abertura.modo === "ficha") {
+      return String(abertura.rascunho?.clip || "");
+    }
     return (
       localStorage.getItem(
         "clipPronto"
@@ -1447,7 +1513,7 @@ function formatarPrecoAppia(
       localStorage.getItem(
         "clipSelecionado"
       ) ||
-      ""
+      String(abertura.rascunho?.clip || "")
     );
   });
 
@@ -2057,6 +2123,10 @@ console.log(
   dadosSalvos
 );
     if (!dadosSalvos) return;
+    // Usada uma vez: não volta a preencher o próximo anúncio.
+    localStorage.removeItem("pecaCatalogoSelecionada");
+    // Ficha reaberta: só os dados DELA.
+    if (abertura.modo === "ficha") return;
 
     try {
       const dados = JSON.parse(dadosSalvos);
@@ -2142,7 +2212,8 @@ setVeioDaCentralTecnica(true);
   // a publicação). Não cria anúncio no ML, produto no Bling nem registro na
   // base de conhecimento: é só a ficha operacional deste anúncio.
   const fichaNovo = useFichaNovoAnuncio({
-    desativado: Boolean(anuncioEditando),
+    abertura,
+    desativado: Boolean(anuncioEditando) || Boolean(abertura.recarregarDaBase),
     estado: {
       codigo, oem, titulo, descricao, preco, tipoAnuncio, pecaEncontrada,
       fotos: fotosAnuncio, clip: clipAnuncio, canalVenda, categoriaConcorrencia,
@@ -2275,7 +2346,33 @@ setVeioDaCentralTecnica(true);
     setAuditoria,
 
     extrasRascunho,
+
+    abertura,
   });
+
+  // Dono das fotos que ficam na memória do App: a ficha desta tela. Outra
+  // abertura (outra ficha / anúncio novo) troca essas fotos pelas dela.
+  useEffect(() => {
+    marcarDonoFotosAnuncio(anuncioEditando ? "edicao" : fichaNovo.fichaId);
+  }, [anuncioEditando, fichaNovo.fichaId]);
+
+  // Outro anúncio na MESMA tela (outro código): nada do anterior passa —
+  // fotos, preço, custo/precificação, clip.
+  function zerarDadosDoAnuncioAnterior() {
+    setFotosAnuncio([]);
+    setPreco("");
+    setClipAnuncio("");
+    ["clipPronto", "clipSelecionado", "clipSelecionadoEstilo"].forEach((chave) => localStorage.removeItem(chave));
+    setCusto("");
+    setFretePrecificacao("");
+    setCustoCompraDetalhado("");
+    setFreteCompraDetalhado("");
+    setEmbalagemDetalhada("");
+    setOutrosCustosDetalhados("");
+    setCategoriaConcorrencia("");
+    setResultadoConcorrencia(null);
+    setResultadoCustosML(null);
+  }
 
 function montarUrlPesquisaMercadoLivre(termo = "") {
   const busca = String(termo || "")
@@ -2847,6 +2944,8 @@ async function buscarEMontarAnuncio() {
     fichaNovo.novaFicha();
     // Outro anúncio: nada técnico do anterior (tipo, peso, medidas) passa.
     zerarDadosTecnicos();
+    // ...nem fotos, preço, custo ou clip do anúncio anterior.
+    zerarDadosDoAnuncioAnterior();
   }
 
   setOem("");
@@ -4057,6 +4156,10 @@ Deseja publicar mesmo assim?`
     "dadosPrecificacaoAppia",
     JSON.stringify({
       ...dadosPrecificacaoSalvos,
+
+      // A precificação volta para ESTA ficha (nunca para outro anúncio).
+      fichaIdPAIIA:
+        fichaNovo.fichaId || "",
 
       codigo:
         codigo || oem || "",

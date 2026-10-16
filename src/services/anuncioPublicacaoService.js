@@ -2,6 +2,8 @@ import { supabase } from "../supabase";
 import { conflitoDeVersao, decisaoBaseComGravacao, montarCompatibilidadesPersistidas } from "./publicacaoSegura";
 import { mesclarRejeicoes } from "./categoriaML";
 import { CANAL, erroSelecao, montarRegistroCanais, normalizarSelecao, canaisSelecionados } from "./canaisPublicacao";
+import { lerRegistroDoSKU } from "./registroMLBService";
+import { registrosQueBloqueiam } from "./registroMLB";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -300,6 +302,19 @@ export async function conferirDuplicidadeBase({ codigo, sku, contaId }) {
     }
   }
   const registros = [...todas.values()].filter(publicacaoExiste);
+  // REGISTRO INTERNO (paiia_registro_mlb): todo MLB registrado NESTA conta que
+  // não seja histórico (encerrado/excluído) entra na conferência e só deixa
+  // de bloquear se o Mercado Livre confirmar agora o encerramento/exclusão.
+  // Falha ao ler o registro = BLOQUEIA (ok:false).
+  const reg = await lerRegistroDoSKU(...chaves);
+  if (!reg.ok) return { ok: false, disponivel: true, erro: `registro interno de anúncios indisponível (${reg.erro})` };
+  const jaListados = new Set(registros.map((p) => String(p.mlb_id || "").trim().toUpperCase()).filter(Boolean));
+  for (const r of registrosQueBloqueiam(reg.registros, conta)) {
+    const mlb = String(r.mlb_id || "").toUpperCase();
+    if (jaListados.has(mlb)) continue;
+    jaListados.add(mlb);
+    registros.push({ id: `registro:${r.id}`, anuncio_id: r.anuncio_id || "", ml_user_id: r.ml_user_id, conta_nome: r.conta_nome, mlb_id: mlb, status_publicacao: "registro_interno", sku: r.sku, sku_normalizado: r.sku_normalizado, origem_registro: r.origem, situacao_registro: r.situacao });
+  }
   return { ok: true, registros };
 }
 

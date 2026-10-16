@@ -2,6 +2,7 @@ import { useState } from "react";
 import identificarCatalogo from "../services/catalogos/identificarCatalogo";
 import { pesquisarCatalogoUniversal } from "../services/catalogos/pesquisarCatalogoUniversal";
 import { consultarCatCarOEM } from "../services/catcarService";
+import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 
 function obterFabricanteInicial() {
   const catalogoSelecionado =
@@ -406,14 +407,9 @@ export default function PesquisaCatalogoCompleta({
       return;
     }
 
-    localStorage.setItem(
-      "usarDadosCatalogoNoAnuncio",
-      "true"
-    );
-
-    localStorage.setItem(
-      "novoAnuncioTemporario",
-      JSON.stringify({
+    // Anúncio NOVO com os dados desta peça (nada do anúncio anterior).
+    iniciarAnuncioNovo({
+      dados: {
         codigo:
           peca.codigo_oem || "",
 
@@ -444,10 +440,8 @@ export default function PesquisaCatalogoCompleta({
 
         baseMestre:
           peca.baseMestre || null,
-
-        fotos: [],
-      })
-    );
+      },
+    });
 
     setScreen("novoAnuncio");
   }

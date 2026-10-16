@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { supabase } from "../supabase";
+import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 
 function limparTexto(valor) {
   return String(valor ?? "")
@@ -282,14 +283,9 @@ export default function CentralPesquisa({
  function abrirGeradorAnuncio(
   item
 ) {
-  localStorage.setItem(
-    "usarDadosCatalogoNoAnuncio",
-    "true"
-  );
-
-  localStorage.setItem(
-    "novoAnuncioTemporario",
-    JSON.stringify({
+  // Anúncio NOVO com os dados desta peça (nada do anúncio anterior).
+  iniciarAnuncioNovo({
+    dados: {
       codigo:
         item.codigo_oem || "",
 
@@ -317,10 +313,8 @@ export default function CentralPesquisa({
 
       baseMestre:
         item.baseMestre || null,
-
-      fotos: [],
-    })
-  );
+    },
+  });
 
   setResultadoPesquisa(item);
 
