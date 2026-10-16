@@ -16,6 +16,8 @@
  * Testes: scripts/testes/publicacaoSegura.test.mjs
  */
 
+import { origemFotosAprovadas } from "./fotosDaFicha.js";
+
 // ---------------------------------------------------------------
 // Normalização (compara CONTEÚDO, não formato)
 // ---------------------------------------------------------------
@@ -130,6 +132,9 @@ export function conferirFichaPersistida({ tela, envio, base }) {
   if (!persistido) {
     return { ok: false, motivo: "A ficha gravada não tem uma Conferência aprovada. Refaça a Conferência antes de validar/publicar.", divergencias: [] };
   }
+  // Fotos POR ID DA FICHA: as fotos aprovadas precisam ser desta ficha.
+  const origemFotos = origemFotosAprovadas(base);
+  if (!origemFotos.ok) return { ok: false, motivo: `Publicação bloqueada: ${origemFotos.motivo}`, divergencias: ["fotos de outra ficha"] };
   // Campos que a cópia gravada não tem (ficha antiga) não são comparados.
   const divergencias = [...divergenciasAnuncio(tela, persistido, { somenteCamposDe: persistido })];
   // O que vai ao ML (Publicação) também precisa bater com a ficha.

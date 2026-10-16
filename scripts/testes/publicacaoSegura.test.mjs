@@ -35,6 +35,8 @@ const BASE_668E = {
   id: "668e6d90-063d-4ceb-8661-824e30e85832",
   dados_conferencia: {
     salvo_em: "2026-10-06T09:38:07.871Z",
+    // Fotos do Novo Anúncio da mesma ficha (origem das fotos comprovada — regra de 17/10/2026).
+    novo_anuncio: { fotos: FOTOS },
     ficha: { etapa: "publicacao", anuncioConferido: PERSISTIDO, assinaturaAprovada: "[...]", campos: { descricao: DESC_7, preco: "31.08" } },
     base_paiia: { decisao: "autorizado", gravacao: { lote_id: "c36431b2-8f39-466a-8479-05fcbb694cfc", inseridos: 1 }, decidido_em: "2026-10-05T19:28:51.764Z" },
   },
@@ -260,7 +262,7 @@ test("foto embutida (data:/blob:) não derruba a aprovação; foto pública troc
 
 test("ficha antiga gravada sem tipo de veículo: a tela (que completa pelo campo) não é bloqueada por isso", () => {
   const { tipoVeiculo: _t, ...antiga } = PERSISTIDO;
-  const base = { dados_conferencia: { ficha: { anuncioConferido: antiga, assinaturaAprovada: "[...]" } } };
+  const base = { dados_conferencia: { novo_anuncio: { fotos: FOTOS }, ficha: { anuncioConferido: antiga, assinaturaAprovada: "[...]" } } };
   assert.equal(conferirFichaPersistida({ tela: PERSISTIDO, envio: envioDe(PERSISTIDO), base }).ok, true);
   assert.equal(conferirFichaPersistida({ tela: { ...PERSISTIDO, descricao: DESC_6 }, envio: envioDe(PERSISTIDO), base }).ok, false);
 });

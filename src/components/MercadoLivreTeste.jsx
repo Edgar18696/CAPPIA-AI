@@ -41,7 +41,7 @@ import {
   publicacaoExiste,
 } from "../services/anuncioPublicacaoService";
 import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
-import { fotosIniciaisConferencia, guardarFotosEmMemoria, simuladorEhDoAnuncio, fotosDiferentesDoNovoAnuncio, chaveFotosConferidas, MEMORIA_FOTOS_DONO } from "../services/fotosDaFicha";
+import { fotosIniciaisConferencia, guardarFotosEmMemoria, simuladorEhDoAnuncio, decidirFotosDaFicha, situacaoFotosNaTela, juntarHistoricoFotos, listaUrls, marcaDasFotos, MEMORIA_FOTOS_DONO } from "../services/fotosDaFicha";
 import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
 import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
 import { abrirFichaNoNovoAnuncio } from "../services/aberturaNovoAnuncio";
@@ -1543,6 +1543,8 @@ function salvarFotosNoSimulador(
   // Guardamos em memória para não estourar localStorage.
   // =====================================================
   guardarFotosEmMemoria(window, lista, anuncio);
+  // Toda mudança de fotos nesta tela é ação do usuário (botões): intencional.
+  setFotosConfirmadasNaTela(true);
 
   try {
     const salvo =
@@ -1820,6 +1822,61 @@ function moverFoto(
   const [anuncioIdPAIIA, setAnuncioIdPAIIA] = useState(() =>
     String(fichaSalva?.campos?.anuncioIdPAIIA || fichaIdDoAnuncio || "")
   );
+  // =====================================================
+  // FOTOS POR ID DA FICHA (services/fotosDaFicha). Lê a ficha na base (só
+  // LEITURA) para saber as fotos do Novo Anúncio DESTA ficha, a marca e o
+  // histórico das fotos da Conferência. Abrir nunca grava nada.
+  //  - Fotos sem relação com esta ficha: aprovação e publicação bloqueadas
+  //    até o usuário escolher (usar as do Novo Anúncio ou confirmar).
+  //  - Fotos de outro anúncio que estavam gravadas: ignoradas ao abrir e
+  //    guardadas no histórico da ficha na próxima gravação (nada apagado).
+  // =====================================================
+  const [fotosNovoAnuncioFicha, setFotosNovoAnuncioFicha] = useState(() =>
+    anuncioIdPAIIA ? null : listaUrls(anuncio?.fotos)
+  );
+  const [fotosDaBase, setFotosDaBase] = useState({ lida: false, marca: String(fichaSalva?.campos?.fotosFichaId || ""), fotos: listaUrls(fichaSalva?.campos?.fotos), historico: Array.isArray(fichaSalva?.campos?.fotosHistorico) ? fichaSalva.campos.fotosHistorico : [], ignoradas: [], motivoIgnoradas: "", erro: "" });
+  const [fotosConfirmadasNaTela, setFotosConfirmadasNaTela] = useState(false);
+  const [ignoradasRestauradas, setIgnoradasRestauradas] = useState(false);
+  useEffect(() => {
+    const id = anuncioIdPAIIA;
+    if (!id) return undefined;
+    let ativo = true;
+    (async () => {
+      const r = await obterAnuncio(id).catch(() => null);
+      if (!ativo) return;
+      if (!r?.ok) {
+        setFotosNovoAnuncioFicha([]);
+        setFotosDaBase((b) => ({ ...b, lida: true, erro: "Não foi possível reler a ficha na base para conferir as fotos." }));
+        return;
+      }
+      const d = r.anuncio?.dados_conferencia || {};
+      const campos = d.ficha?.campos || {};
+      const conferido = d.ficha?.anuncioConferido || null;
+      const fotosConf = listaUrls(campos.fotos).length ? campos.fotos : conferido?.fotos;
+      const dec = decidirFotosDaFicha({ fichaId: id, fotosConferencia: fotosConf, marcaConferencia: campos.fotosFichaId || conferido?.fotosFichaId || "", fotosNovoAnuncio: d.novo_anuncio?.fotos });
+      setFotosNovoAnuncioFicha(listaUrls(d.novo_anuncio?.fotos));
+      setFotosDaBase({
+        lida: true,
+        marca: String(campos.fotosFichaId || conferido?.fotosFichaId || ""),
+        fotos: listaUrls(fotosConf),
+        historico: Array.isArray(campos.fotosHistorico) ? campos.fotosHistorico : [],
+        ignoradas: dec.ignoradas,
+        motivoIgnoradas: dec.motivo,
+        erro: "",
+      });
+    })();
+    return () => { ativo = false; };
+  }, [anuncioIdPAIIA]);
+  const situacaoFotos = situacaoFotosNaTela({
+    fichaId: anuncioIdPAIIA,
+    fotosTela: fotos,
+    fotosNovoAnuncio: fotosNovoAnuncioFicha,
+    marcaBase: fotosDaBase.marca,
+    fotosBase: fotosDaBase.fotos,
+    confirmadasNaTela: fotosConfirmadasNaTela,
+  });
+  if (fotosDaBase.erro && situacaoFotos.estado === "confirmar") situacaoFotos.motivo = `${fotosDaBase.erro} Confirme que estas fotos são deste anúncio.`;
+  const ignoradasNaAbertura = !ignoradasRestauradas && fotosDaBase.ignoradas.length && !listaUrls(fotos).some((u) => fotosDaBase.ignoradas.includes(u)) ? fotosDaBase.ignoradas : [];
   // Ficha aprovada gravada na base PAIIA (fonte da recuperação no F5).
   const [fichaBase, setFichaBase] = useState({ pronta: false, erro: "" });
   // Rascunho desta Conferência já confirmado na base (mesmo ID): só então o
@@ -2661,6 +2718,8 @@ const exigenciaGtin = useMemo(() => {
       marca,
       gtin,
       fotos: fotos.map(obterUrlFoto).filter(Boolean),
+      // Marca: estas fotos foram aprovadas PARA esta ficha (a Publicação confere).
+      fotosFichaId: situacaoFotos.estado === "ok" ? marcaDasFotos(anuncioIdPAIIA, fotos.map(obterUrlFoto).filter(Boolean)) : "",
       categoria,
       categoriaId,
       // Decisão da categoria (confirmação do usuário + rastreabilidade) e
@@ -3679,6 +3738,11 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
   // Grava a ficha da conferência a cada alteração (uma por código).
   // Assim nada do que foi conferido some ao navegar ou atualizar a tela.
   const camposFicha = {
+    // Fotos POR ID DA FICHA: o histórico guarda (sem apagar) fotos de outro
+    // anúncio ignoradas. A MARCA vai só junto das fotos (montarDadosFicha).
+    fotosHistorico: fotosDaBase.ignoradas.length
+      ? juntarHistoricoFotos(fotosDaBase.historico, { fotos: fotosDaBase.ignoradas, motivo: fotosDaBase.motivoIgnoradas || "fotos de outro anúncio ignoradas" })
+      : fotosDaBase.historico,
     titulo: tituloAnuncio,
     preco,
     codigo,
@@ -3847,7 +3911,8 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
   const fotosFicha = urlsFotosFicha(fotos);
   const fotosForaDaFicha = (Array.isArray(fotos) ? fotos.length : 0) - fotosFicha.length;
   const aprovadoAgora = Boolean(anuncioConferido && assinaturaAprovadaRef.current);
-  const assinaturaRascunho = JSON.stringify([assinaturaFicha, fotosFicha, aplicacoesManuais, aprovadoAgora]);
+  // A confirmação das fotos (marca) também precisa chegar à base.
+  const assinaturaRascunho = JSON.stringify([assinaturaFicha, fotosFicha, aplicacoesManuais, aprovadoAgora, situacaoFotos.estado === "ok"]);
   const idFichaRef = useRef(anuncioIdPAIIA);
   useEffect(() => { if (anuncioIdPAIIA) idFichaRef.current = anuncioIdPAIIA; }, [anuncioIdPAIIA]);
   const rascunhoRef = useRef({ timer: 0, gravando: false, pendente: false, ultima: "", confirmadoNestaTela: fichaConfirmada, fechada: "" });
@@ -3859,7 +3924,9 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
       compatibilidades: anuncio?.compatibilidades,
     }, 150000) || {};
     const aprovado = Boolean(anuncioConferido && assinaturaAprovadaRef.current);
-    const campos = { ...camposFicha, anuncioIdPAIIA: "", fotos: fotosFicha, aplicacoesManuais };
+    // Marca = esta ficha + ESTA lista de fotos (só quando são desta ficha).
+    const fotosFichaId = situacaoFotos.estado === "ok" ? marcaDasFotos(anuncioIdPAIIA || idFichaRef.current, fotosFicha) : "";
+    const campos = { ...camposFicha, anuncioIdPAIIA: "", fotos: fotosFicha, fotosFichaId, aplicacoesManuais };
     const ficha =
       copiaLeve({
         campos,
@@ -4140,46 +4207,23 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     return () => { ativo = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fichas JÁ gravadas com fotos de outro anúncio (antes da correção): lê
-  // (só LEITURA) as fotos que o usuário colocou no Novo Anúncio DESTA ficha.
-  // Se as fotos da Conferência não têm nenhuma delas, avisa. Nada é trocado
-  // nem apagado sozinho: o usuário escolhe.
-  const [fotosNovoAnuncioFicha, setFotosNovoAnuncioFicha] = useState(null);
-  const [, setFotosConferidasVersao] = useState(0); // só para redesenhar
-  useEffect(() => {
-    const id = anuncioIdPAIIA;
-    if (!id) return undefined;
-    let ativo = true;
-    (async () => {
-      const r = await obterAnuncio(id).catch(() => null);
-      if (!ativo || !r?.ok) return;
-      setFotosNovoAnuncioFicha(urlsFotosFicha(r.anuncio?.dados_conferencia?.novo_anuncio?.fotos));
-    })();
-    return () => { ativo = false; };
-  }, [anuncioIdPAIIA]);
-  const avisoFotosOutraFicha = (() => {
-    const r = fotosDiferentesDoNovoAnuncio({ fotosConferencia: urlsFotosFicha(fotos), fotosNovoAnuncio: fotosNovoAnuncioFicha });
-    if (!r.suspeita) return null;
-    try {
-      if (localStorage.getItem(chaveFotosConferidas(anuncioIdPAIIA, urlsFotosFicha(fotos))) === "1") return null;
-    } catch {
-      // sem acesso ao navegador: o aviso continua
-    }
-    return r;
-  })();
   function usarFotosDoNovoAnuncio() {
     const lista = (fotosNovoAnuncioFicha || []).map((u, i) => ({ imagem_processada: u, imagem_original: u, ordem: i, capa: i === 0 }));
     if (!lista.length) return;
     usuarioEditouRef.current = true;
     salvarFotosNoSimulador(lista);
   }
-  function manterFotosAtuais() {
-    try {
-      localStorage.setItem(chaveFotosConferidas(anuncioIdPAIIA, urlsFotosFicha(fotos)), "1");
-    } catch {
-      // sem espaço: o aviso volta a aparecer, nada se perde
-    }
-    setFotosConferidasVersao((v) => v + 1);
+  // Escolha consciente do usuário: estas fotos são deste anúncio.
+  function confirmarFotosDaFicha() {
+    usuarioEditouRef.current = true;
+    setFotosConfirmadasNaTela(true);
+  }
+  // Troca manual intencional: volta as fotos que tinham sido ignoradas.
+  function restaurarFotosIgnoradas() {
+    const lista = fotosDaBase.ignoradas.map((u, i) => ({ imagem_processada: u, imagem_original: u, ordem: i, capa: i === 0 }));
+    if (!lista.length) return;
+    setIgnoradasRestauradas(true);
+    salvarFotosNoSimulador(lista);
   }
 
   const pendenteDeGravar = gravacaoPendente || gravacao.estado === ESTADO_GRAVACAO.SALVANDO;
@@ -4243,13 +4287,39 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
       </div>
     </section>
   ) : null;
+  // Aviso das fotos desta ficha (Conferência e etapa de publicação).
+  const painelAvisoFotos = (situacaoFotos.estado === "outra_origem" || situacaoFotos.estado === "confirmar") && (
+          <div
+            data-paiia-aviso-fotos-outra-ficha={situacaoFotos.estado}
+            style={{ marginTop: "12px", padding: "12px", borderRadius: "10px", border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: "13px", lineHeight: 1.5 }}
+          >
+            <strong>⚠ Confira as fotos desta ficha.</strong> {situacaoFotos.motivo} A aprovação e a publicação ficam bloqueadas até você escolher. Nada é apagado.
+            {listaUrls(fotosNovoAnuncioFicha).length > 0 && (
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "8px 0" }}>
+                {listaUrls(fotosNovoAnuncioFicha).slice(0, 6).map((u) => (
+                  <img key={u} src={u} alt="Foto do Novo Anúncio" style={{ width: "64px", height: "64px", objectFit: "contain", background: "#fff", borderRadius: "6px" }} />
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "8px" }}>
+              {listaUrls(fotosNovoAnuncioFicha).length > 0 && (
+                <button type="button" data-paiia-usar-fotos-novo-anuncio onClick={usarFotosDoNovoAnuncio} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #fbbf24", background: "#b45309", color: "#fff", fontWeight: "bold", cursor: "pointer" }}>
+                  Usar as fotos do Novo Anúncio desta ficha
+                </button>
+              )}
+              <button type="button" data-paiia-confirmar-fotos-ficha onClick={confirmarFotosDaFicha} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #64748b", background: "transparent", color: "#e2e8f0", cursor: "pointer" }}>
+                Confirmo: estas fotos são deste anúncio
+              </button>
+            </div>
+          </div>
+        );
   const motivoBloqueioFicha = motivoBloqueioPublicacao({
     conflito: Boolean(conflito),
     gravacao: gravacao.estado,
     pendente: gravacaoPendente,
     erroFicha: fichaBase.erro || "",
     aprovada: Boolean(anuncioConferido),
-  });
+  }) || (situacaoFotos.estado !== "ok" ? `Fotos desta ficha — ${situacaoFotos.motivo}` : "");
 
   // Saindo da tela com gravação pendente: grava na hora.
   useEffect(() => () => {
@@ -4539,6 +4609,12 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     salvarEstadoAtualDoTeste();
 
     const faltando = [];
+
+    // Fotos desta ficha: sem relação com o Novo Anúncio dela (ou ainda
+    // conferindo) = não aprova.
+    if (situacaoFotos.estado !== "ok") {
+      faltando.push(`Fotos desta ficha — ${situacaoFotos.motivo}`);
+    }
 
     setPendenciasRevisao([]);
 
@@ -5045,6 +5121,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
         </section>
 
         {painelConflito}
+        {painelAvisoFotos && <section style={bloco}>{painelAvisoFotos}</section>}
         {!fichaBase.pronta ? (
           <section style={{ ...bloco, color: "#94a3b8" }} data-paiia-gravando-ficha>
             ⏳ Gravando a ficha aprovada deste anúncio na base PAIIA...
@@ -5262,25 +5339,17 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
           recebida(s) do anúncio.
         </div>
 
-        {avisoFotosOutraFicha && (
-          <div
-            data-paiia-aviso-fotos-outra-ficha
-            style={{ marginTop: "12px", padding: "12px", borderRadius: "10px", border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: "13px", lineHeight: 1.5 }}
-          >
-            <strong>⚠ Confira as fotos desta ficha.</strong> Nenhuma das {fotos.length} foto(s) desta Conferência é uma das{" "}
-            {avisoFotosOutraFicha.fotosNovoAnuncio.length} foto(s) que você colocou no Novo Anúncio deste anúncio. Elas podem ter vindo de
-            outro anúncio aberto antes nesta mesma janela. Nada foi apagado: escolha quais ficam nesta ficha.
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "8px 0" }}>
-              {avisoFotosOutraFicha.fotosNovoAnuncio.slice(0, 6).map((u) => (
-                <img key={u} src={u} alt="Foto do Novo Anúncio" style={{ width: "64px", height: "64px", objectFit: "contain", background: "#fff", borderRadius: "6px" }} />
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <button type="button" data-paiia-usar-fotos-novo-anuncio onClick={usarFotosDoNovoAnuncio} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #fbbf24", background: "#b45309", color: "#fff", fontWeight: "bold", cursor: "pointer" }}>
-                Usar as fotos do Novo Anúncio desta ficha
-              </button>
-              <button type="button" data-paiia-manter-fotos-conferencia onClick={manterFotosAtuais} style={{ padding: "8px 12px", borderRadius: "8px", border: "1px solid #64748b", background: "transparent", color: "#e2e8f0", cursor: "pointer" }}>
-                As fotos atuais estão corretas
+        {painelAvisoFotos}
+        {situacaoFotos.estado === "verificando" && fotos.length > 0 && (
+          <div data-paiia-fotos-verificando style={{ marginTop: "8px", color: "#94a3b8", fontSize: "12px" }}>⏳ {situacaoFotos.motivo}</div>
+        )}
+        {ignoradasNaAbertura.length > 0 && (
+          <div data-paiia-fotos-ignoradas={ignoradasNaAbertura.length} style={{ marginTop: "12px", padding: "12px", borderRadius: "10px", border: "1px solid #38bdf8", background: "#082f49", color: "#bae6fd", fontSize: "13px", lineHeight: 1.5 }}>
+            ℹ️ {ignoradasNaAbertura.length} foto(s) que estavam gravadas nesta Conferência não são desta ficha e foram ignoradas: a ficha abre com as fotos do Novo Anúncio dela.
+            Elas ficam guardadas no histórico da ficha (nada foi apagado).
+            <div style={{ marginTop: "8px" }}>
+              <button type="button" data-paiia-restaurar-fotos-ignoradas onClick={restaurarFotosIgnoradas} style={{ padding: "6px 10px", borderRadius: "8px", border: "1px solid #38bdf8", background: "transparent", color: "#e0f2fe", cursor: "pointer" }}>
+                Restaurar as fotos ignoradas (só se foi intencional)
               </button>
             </div>
           </div>
@@ -7596,7 +7665,11 @@ export default function MercadoLivreTeste(props) {
           if (!atual || String(atual.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== chaveLocal) {
             localStorage.setItem("mlAnuncioTeste", JSON.stringify({ ...(recBase.ok ? recBase.anuncio : {}), fichaIdPAIIA: r.anuncio.id }));
           }
-          const fotosLocais = (local?.campos?.fotos?.length ? local.campos.fotos : local?.anuncioConferido?.fotos) || [];
+          const fotosLocaisBrutas = (local?.campos?.fotos?.length ? local.campos.fotos : local?.anuncioConferido?.fotos) || [];
+          // Cópia local também passa pela regra das fotos POR ID DA FICHA.
+          const fotosLocais = fotosLocaisBrutas.length
+            ? decidirFotosDaFicha({ fichaId: r.anuncio.id, fotosConferencia: fotosLocaisBrutas, marcaConferencia: local?.campos?.fotosFichaId || "", fotosNovoAnuncio: r.anuncio.dados_conferencia?.novo_anuncio?.fotos }).fotos
+            : [];
           window.__paiiaAnuncioSimulador = null;
           window.__paiiaFichaRecuperada = null;
           guardarFotosEmMemoria(window, fotosLocais.length ? fotosLocais : recBase.ok ? recBase.fotos : [], { fichaIdPAIIA: r.anuncio.id, codigo: r.anuncio.codigo });

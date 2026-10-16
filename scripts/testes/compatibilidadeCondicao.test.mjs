@@ -172,7 +172,7 @@ test("conferência pós-publicação: condição divergente vira pendência (cas
 
 test("ficha persistida × envio: condição, preço e tipo de anúncio têm de ser os mesmos", () => {
   const aprovado = { titulo: "Sensor", descricao: "d", preco: "164.80", marca: "Mercedes-Benz", fotos: ["https://x/1.jpg"], codigo: "A0125423317", tipoAnuncio: "premium", condicao: "usado", quantidade: 1 };
-  const base = { dados_conferencia: { ficha: { anuncioConferido: aprovado, assinaturaAprovada: "[x]" } } };
+  const base = { dados_conferencia: { novo_anuncio: { fotos: aprovado.fotos }, ficha: { anuncioConferido: aprovado, assinaturaAprovada: "[x]" } } };
   const envio = { titulo: "Sensor", descricao: "d", preco: "164.80", marca: "Mercedes-Benz", fotos: ["https://x/1.jpg"], sku: "A0125423317", tipoAnuncio: "premium", quantidade: 1, condicao: "usado" };
   assert.equal(conferirFichaPersistida({ tela: aprovado, envio, base }).ok, true);
   assert.deepEqual(conferirFichaPersistida({ tela: aprovado, envio: { ...envio, condicao: "novo" }, base }).divergencias, ["condição"]);

@@ -6,6 +6,8 @@
  * Testes: scripts/testes/recuperacaoFichaConferencia.test.mjs
  */
 
+import { decidirFotosDaFicha } from "./fotosDaFicha.js";
+
 // Fotos que podem ir para a ficha da base: só endereços públicos (http/https).
 // Imagem embutida (data:/blob:) não cabe na ficha e é avisada na tela.
 export function urlsFotosFicha(lista) {
@@ -46,11 +48,22 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
     anuncioIdPAIIA: id,
     contaDestinoML: String(anuncioBase.conta_destino_ml_user_id || ficha.campos?.contaDestinoML || ""),
   };
-  const fotos =
+  // Fotos POR ID DA FICHA (services/fotosDaFicha): as da Conferência só
+  // valem se forem desta ficha; senão, as do Novo Anúncio desta ficha. As
+  // ignoradas seguem em decisaoFotos.ignoradas (nada é apagado).
+  const fotosConferencia =
     (Array.isArray(campos.fotos) && campos.fotos.length && campos.fotos) ||
     (aprovada && Array.isArray(conferido.fotos) && conferido.fotos.length && conferido.fotos) ||
-    (Array.isArray(dados.anuncio?.fotos) && dados.anuncio.fotos) ||
     [];
+  const fotosNovoAnuncio = Array.isArray(dados.novo_anuncio?.fotos) ? dados.novo_anuncio.fotos : [];
+  const decisaoFotos = decidirFotosDaFicha({
+    fichaId: id,
+    fotosConferencia,
+    marcaConferencia: campos.fotosFichaId || conferido?.fotosFichaId || "",
+    fotosNovoAnuncio,
+  });
+  // Ficha sem Conferência de fotos nem Novo Anúncio: a origem antiga.
+  const fotos = decisaoFotos.fotos.length ? decisaoFotos.fotos : (Array.isArray(dados.anuncio?.fotos) ? dados.anuncio.fotos : []);
   const fotosLimpas = fotos.filter(Boolean);
   const anuncio = {
     ...(dados.anuncio || {}),
@@ -82,6 +95,7 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
     chave,
     anuncio,
     fotos: fotosLimpas,
+    decisaoFotos,
     fichaConferencia,
     aplicacoesManuais: Array.isArray(campos.aplicacoesManuais) ? campos.aplicacoesManuais : null,
   };
