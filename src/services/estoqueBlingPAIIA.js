@@ -83,6 +83,25 @@ export function conferirEstoque({ quantidade, confirmada, bling }) {
 }
 
 /**
+ * Estoque quando o anúncio NÃO usa o Bling (Bling opcional, 17/10/2026).
+ * escolhido=false → o usuário ainda não escolheu (usar o Bling ou seguir sem).
+ * Nada é consultado no Bling: vale só a quantidade confirmada da ficha.
+ */
+export function conferirEstoqueSemBling({ quantidade, confirmada, escolhido }) {
+  const qtd = normalizarQuantidade(quantidade);
+  if (!qtd) {
+    return { nivel: "erro", texto: "Quantidade não informada: informe e confirme a quantidade (o PAIIA não assume nenhum valor)." };
+  }
+  if (!escolhido) {
+    return { nivel: "erro", texto: `Anúncio: ${qtd}. Escolha no bloco do Bling: usar o Bling neste anúncio ou publicar sem Bling.` };
+  }
+  if (!confirmada) {
+    return { nivel: "erro", texto: `Quantidade: ${qtd} (ainda não confirmada). Sem Bling: confirme a quantidade do anúncio.` };
+  }
+  return { nivel: "ok", texto: `Sem Bling neste anúncio. Quantidade confirmada: ${qtd}.` };
+}
+
+/**
  * Cadastro que SERIA criado no Bling, só com dados confirmados da ficha.
  * Devolve { produto, faltando[] } — com algo faltando, a criação fica bloqueada.
  */
@@ -157,40 +176,3 @@ export function conferirProdutoCriado({ enviado, criado, releitura }) {
   return { ok: problemas.length === 0, problemas };
 }
 
-/**
- * Conferência do cadastro do Bling ANTES de criar (13/10/2026): ativos e
- * depois inativos, em blocos de páginas, cada bloco com recibo assinado
- * pelo servidor. Um erro do Bling (ex.: 504) para SÓ aquele bloco e
- * devolve `retomar` para continuar do mesmo ponto. Excluídos ficam fora.
- *  chamar(corpo) → resposta da função bling-integracao
- * Devolve { ok, completo, recibos[], achados[], falha?, retomar? }.
- */
-export async function conferirCadastroBlingEmBlocos({ chamar, sku, retomar = null, aoProgresso = () => {}, maxChamadas = 60 }) {
-  const recibos = [...(Array.isArray(retomar?.recibos) ? retomar.recibos : [])];
-  let criterio = retomar?.criterio === 3 ? 3 : 2;
-  let pagina = Number(retomar?.pagina) >= 1 ? Number(retomar.pagina) : 1;
-  const parar = (erro) => ({ ok: false, completo: false, recibos, achados: [], falha: { criterio, pagina, erro }, retomar: { recibos, criterio, pagina } });
-  for (let n = 0; n < maxChamadas; n += 1) {
-    aoProgresso({ criterio, pagina, nome: criterio === 2 ? "ativos" : "inativos" });
-    let r;
-    try {
-      r = await chamar({ acao: "conferir_cadastro_sku", sku, criterio, pagina });
-    } catch (e) {
-      r = { ok: false, erro: e?.message || String(e) };
-    }
-    if (!r?.ok || !r.recibo) return parar(r?.erro || "Sem resposta do servidor.");
-    recibos.push(r.recibo);
-    if (Array.isArray(r.achados) && r.achados.length) return { ok: true, completo: false, recibos, achados: r.achados, retomar: null };
-    if (r.fim) {
-      if (criterio === 2) {
-        criterio = 3;
-        pagina = 1;
-        continue;
-      }
-      return { ok: true, completo: true, recibos, achados: [], retomar: null };
-    }
-    if (!r.proxima) return { ...parar("O cadastro do Bling tem mais páginas do que o limite conferido."), retomar: null };
-    pagina = Number(r.proxima);
-  }
-  return parar("Conferência do cadastro interrompida (muitas chamadas).");
-}

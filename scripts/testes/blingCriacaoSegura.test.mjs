@@ -5,7 +5,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 const S = await import("../../supabase/functions/_shared/blingCriacaoSegura.js");
-const { conferirCadastroBlingEmBlocos } = await import("../../src/services/estoqueBlingPAIIA.js");
 
 const SEGREDO = "segredo-de-teste";
 const USUARIO = "usuario-1";
@@ -162,38 +161,22 @@ function servidor(b) {
   };
 }
 
-test("site: 504 persistente num bloco para a conferência; CONTINUAR retoma do mesmo ponto e completa", async () => {
-  const b = catalogo({ ativos: 2550 });
-  b.falhas.set("2:13", 1); // bloco que começa na página 13 falha uma vez
-  const progresso = [];
-  const r1 = await conferirCadastroBlingEmBlocos({ chamar: servidor(b), sku: SKU, aoProgresso: (p) => progresso.push(`${p.criterio}:${p.pagina}`) });
-  assert.equal(r1.ok, false);
-  assert.deepEqual(r1.falha.criterio, 2);
-  assert.equal(r1.falha.pagina, 13);
-  assert.equal(r1.retomar.recibos.length, 1, "o bloco 1–12 já conferido é guardado");
-  const antes = b.chamadas.length;
-  const r2 = await conferirCadastroBlingEmBlocos({ chamar: servidor(b), sku: SKU, retomar: r1.retomar });
-  assert.equal(r2.ok, true);
-  assert.equal(r2.completo, true);
-  assert.ok(!b.chamadas.slice(antes).some((c) => /pagina=1&/.test(c) && /criterio=2/.test(c)), "não relê as páginas já conferidas");
-  const cob = await S.conferirCobertura({ segredo: SEGREDO, recibos: r2.recibos, usuarioId: USUARIO, sku: SKU });
-  assert.equal(cob.ok, true, cob.motivo);
-  assert.deepEqual(progresso.slice(0, 2), ["2:1", "2:13"]);
+test("site (17/10/2026): sem varredura paginada do cadastro antes de criar", async () => {
+  const fs = await import("node:fs");
+  const est = fs.readFileSync(new URL("../../src/services/estoqueBlingPAIIA.js", import.meta.url), "utf8");
+  const rev = fs.readFileSync(new URL("../../src/components/RevisaoPublicacaoML.jsx", import.meta.url), "utf8");
+  assert.equal(/conferirCadastroBlingEmBlocos|conferir_cadastro_sku/.test(est + rev), false);
+  assert.equal(/recibos:/.test(rev), false, "criar_produto vai sem recibos (verificação pontual no servidor)");
+  assert.match(rev, /acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: enviado/);
 });
 
-test("site: SKU achado (inativo, escrito com pontos) interrompe e devolve o cadastro existente", async () => {
-  const b = catalogo({ extras3: [{ id: 4242, codigo: "82.00.442.891", nome: "Inativo", situacao: "I" }] });
-  const r = await conferirCadastroBlingEmBlocos({ chamar: servidor(b), sku: SKU });
-  assert.equal(r.ok, true);
-  assert.equal(r.completo, false);
-  assert.equal(r.achados[0].id, 4242);
-});
-
-test("site: os 2 cadastros EXCLUÍDOS do 8200442891 não impedem a criação", async () => {
-  const b = catalogo();
-  const r = await conferirCadastroBlingEmBlocos({ chamar: servidor(b), sku: SKU });
-  assert.equal(r.ok, true);
-  assert.equal(r.completo, true);
-  assert.deepEqual(r.achados, []);
-  assert.ok(b.chamadas.every((c) => /criterio=(2|3)/.test(c)));
+test("site (17/10/2026): criar só com a conferência manual marcada; dúvida de escrita nunca cria nem vincula", async () => {
+  const fs = await import("node:fs");
+  const rev = fs.readFileSync(new URL("../../src/components/RevisaoPublicacaoML.jsx", import.meta.url), "utf8");
+  assert.match(rev, /produto: enviado, conferencia_manual: true \}/);
+  assert.match(rev, /if \(!conferiSkuBling\) return;/);
+  assert.match(rev, /disabled=\{cadastroBling\.faltando\.length > 0 \|\| criacaoBling\?\.ocupado \|\| !conferiSkuBling\}/);
+  const i = rev.indexOf("if (r.duvida_sku) {");
+  const bloco = rev.slice(i, rev.indexOf("return;", i));
+  assert.ok(i > 0 && !/usarCadastroExistente|finalizarCriacaoBling/.test(bloco), "dúvida não vincula nem finaliza");
 });

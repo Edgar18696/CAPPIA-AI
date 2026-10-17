@@ -279,11 +279,9 @@ test("14) publicado + falha no registro: o MLB fica na publicação e continua b
   assert.equal(banco.tabelas.paiia_anuncios_publicacoes[0].mlb_id, "MLB9900000901");
 });
 
-test("15) o quadro mostra 'Verificação pendente', histórico e botão de confirmação; Publicação só acrescenta bloqueio", () => {
-  const tela = ler("src/components/PainelSKUExistente.jsx");
-  assert.ok(tela.includes("É o mesmo produto — registrar"));
-  assert.ok(tela.includes("data-paiia-sku-historico"));
-  assert.ok(tela.includes("Registro interno"));
+test("15) Publicação mantém o bloqueio pelo registro interno (quadro de SKU removido)", () => {
+  // Quadro de SKU do Novo Anúncio removido (17/10/2026: sem busca automática).
+  assert.equal(fs.existsSync(path.join(RAIZ, "src/components/PainelSKUExistente.jsx")), false);
   const svc = ler("src/services/anuncioPublicacaoService.js");
   assert.ok(svc.includes("registrosQueBloqueiam(reg.registros, conta)"));
   assert.ok(svc.includes("registro interno de anúncios indisponível"));

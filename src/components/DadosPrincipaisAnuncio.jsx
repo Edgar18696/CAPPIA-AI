@@ -1,5 +1,3 @@
-import PainelSKUExistente from "./PainelSKUExistente";
-
 export default function DadosPrincipaisAnuncio({
   codigo,
   setCodigo,
@@ -47,9 +45,6 @@ export default function DadosPrincipaisAnuncio({
         placeholder="Código da peça"
         style={inputStyle}
       />
-
-      {/* Reconhecimento automático do SKU (somente consulta). */}
-      <PainelSKUExistente codigo={codigo} />
 
       {pecaEncontrada && (
         <div

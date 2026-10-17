@@ -26,6 +26,10 @@ import {
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const termos = (lista) => lista.map((t) => t.termo);
+// Lê o arquivo com quebras de linha normalizadas (no Windows o git pode
+// entregar CRLF): as conferências abaixo valem para o conteúdo, não para o
+// tipo de quebra de linha.
+const lerFonte = (rel) => fs.readFileSync(path.join(RAIZ, rel), "utf8").replace(/\r\n/g, "\n");
 
 test("1) códigos: mesmo código com/sem espaços, pontos e hífens = um só", () => {
   assert.equal(codigoCompacto("0 280-158.276"), "0280158276");
@@ -125,7 +129,7 @@ test("7) concorrentes continuam separados e nunca viram dado confirmado", () => 
 });
 
 test("8) Conferência: os 4 campos manuais saíram da tela; dados antigos preservados", () => {
-  const conf = fs.readFileSync(path.join(RAIZ, "src/components/MercadoLivreTeste.jsx"), "utf8");
+  const conf = lerFonte("src/components/MercadoLivreTeste.jsx");
   for (const rotulo of ["Função / localização da peça\"", "Fonte da função/localização\"", "Especificação técnica / medida\"", "Como o comprador procura (opcional)\""]) {
     assert.equal(conf.includes(`label="${rotulo}`), false, rotulo);
   }
@@ -138,6 +142,6 @@ test("8) Conferência: os 4 campos manuais saíram da tela; dados antigos preser
   assert.match(conf, /label="Nome da peça"/);
   assert.match(conf, /data-paiia-codigo-oem/);
   // Título/descrição não são alterados pela Inteligência de Busca
-  const ib = fs.readFileSync(path.join(RAIZ, "src/services/inteligenciaBusca.js"), "utf8");
+  const ib = lerFonte("src/services/inteligenciaBusca.js");
   assert.equal(/setTitulo|setDescricao|tituloAnuncio/.test(ib), false);
 });

@@ -267,39 +267,20 @@ test("14) cache: sem consultas repetidas; incompleta não fica guardada; 'verifi
   assert.equal(m, 2, "incompleta tenta de novo na próxima vez");
 });
 
-test("15) só leituras no ML/Bling/base; única gravação = registro interno (sem apagar)", () => {
-  const svc = ler("src/services/reconhecimentoSKUService.js");
+test("15) SEM busca automática de SKU (17/10/2026): quadro e serviço de consulta removidos", () => {
+  // Conferir se o produto já existe é responsabilidade do usuário: o Novo
+  // Anúncio não consulta Bling, Mercado Livre, base nem registro pelo SKU.
+  assert.equal(fs.existsSync(path.join(RAIZ, "src/components/PainelSKUExistente.jsx")), false);
+  assert.equal(fs.existsSync(path.join(RAIZ, "src/services/reconhecimentoSKUService.js")), false);
   const regras = ler("src/services/reconhecimentoSKU.js");
-  const tela = ler("src/components/PainelSKUExistente.jsx");
-  const reg = ler("src/services/registroMLBService.js");
-  const acoes = [...svc.matchAll(/acao: "([a-z_]+)"/g)].map((m) => m[1]).sort();
-  assert.deepEqual(acoes, ["ml_consulta", "saldo_por_sku"]);
-  assert.ok(svc.includes('metodo: "GET"'));
-  // Nenhum acesso direto a tabelas no reconhecimento: a base é lida por
-  // listarAnunciosDoCodigo e o registro pelo serviço do registro.
-  assert.equal(/\.from\(|\.(insert|update|upsert)\(/.test(svc + regras + tela), false);
-  assert.ok(svc.includes("lerBase: listarAnunciosDoCodigo"));
-  assert.ok(svc.includes("lerRegistro: lerRegistroDoSKU"));
-  const codigoSvc = svc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/"mercadolivre-publicacao"/g, "");
-  assert.equal(/criar_produto|publicar|estoque|conferir_cadastro_sku/i.test(codigoSvc), false);
-  assert.deepEqual([...svc.matchAll(/functions\.invoke\("([a-z-]+)"/g)].map((m) => m[1]).sort(), ["bling-integracao", "mercadolivre-publicacao"]);
-  assert.equal(/functions\.invoke|supabase/.test(regras + tela), false, "regras e tela não chamam o servidor direto");
-  // O serviço do registro só toca a tabela do registro e nunca apaga.
-  assert.deepEqual([...new Set([...reg.matchAll(/\.from\(([A-Za-z_"]+)\)/g)].map((m) => m[1]))], ["T"]);
-  assert.ok(reg.includes('const T = "paiia_registro_mlb";'));
-  assert.equal(/\.delete\(|\.upsert\(|functions\.invoke/.test(reg), false);
+  assert.equal(/functions\.invoke|supabase|\.from\(/.test(regras), false, "regras puras, sem servidor");
 });
 
-test("16) Novo Anúncio mostra o quadro; Publicação e canais intactos", () => {
+test("16) Novo Anúncio sem quadro de SKU; Publicação e canais intactos", () => {
   const dp = ler("src/components/DadosPrincipaisAnuncio.jsx");
-  assert.ok(dp.includes('import PainelSKUExistente from "./PainelSKUExistente";'));
-  const iCampo = dp.indexOf('placeholder="Código da peça"');
-  const iQuadro = dp.indexOf("<PainelSKUExistente codigo={codigo} />");
-  assert.ok(iCampo > 0 && iQuadro > iCampo && iQuadro < dp.indexOf('placeholder="Código OEM"'), "quadro logo abaixo do código");
+  assert.equal(dp.includes("PainelSKUExistente"), false);
+  assert.equal(/functions\.invoke|saldo_por_sku|ml_consulta|reconhecer/.test(dp), false);
   assert.ok(ler("src/components/NovoAnuncio.jsx").includes("<DadosPeca"), "Novo Anúncio usa os Dados da peça");
-  const tela = ler("src/components/PainelSKUExistente.jsx");
-  assert.ok(tela.includes("ESPERA_DIGITACAO_MS"), "espera o código parar de mudar");
-  assert.equal(R.ESPERA_DIGITACAO_MS >= 1000, true);
-  assert.equal(ler("src/components/RevisaoPublicacaoML.jsx").includes("PainelSKUExistente"), false, "Publicação não muda");
+  assert.equal(ler("src/components/RevisaoPublicacaoML.jsx").includes("PainelSKUExistente"), false);
   assert.ok(ler("src/components/MercadoLivreTeste.jsx").includes("EscolherCanaisPublicacao"), "escolha de canais preservada");
 });

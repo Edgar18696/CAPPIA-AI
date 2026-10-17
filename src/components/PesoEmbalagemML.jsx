@@ -167,22 +167,20 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
     setConfirmacao(null);
   }, [base, config]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Bling: somente leitura, só para comparação (NÃO VALIDADO).
-  useEffect(() => {
-    let ativo = true;
-    if (!sku) return undefined;
-    (async () => {
-      try {
-        const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "buscar_produto", codigo: sku } });
-        if (ativo) setBling(data || null);
-      } catch {
-        if (ativo) setBling(null);
-      }
-    })();
-    return () => {
-      ativo = false;
-    };
-  }, [sku]);
+  // Bling: somente leitura, só para comparação (NÃO VALIDADO) e SÓ quando o
+  // usuário pede (17/10/2026: nenhuma busca automática de SKU no Bling).
+  const [lendoBling, setLendoBling] = useState(false);
+  async function compararComBling() {
+    if (!sku || lendoBling) return;
+    setLendoBling(true);
+    try {
+      const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "buscar_produto", codigo: sku } });
+      setBling(data || { ok: false });
+    } catch {
+      setBling({ ok: false });
+    }
+    setLendoBling(false);
+  }
 
   const confirmadoAtual = Boolean(confirmacao?.ok && confirmacao.dimensoes === dimensoesParaApi(medida) && confirmacao.config === config);
   // Nível mostrado: só depois de confirmar (ou igual à medida própria). Senão, "A CONFIRMAR".
@@ -519,7 +517,7 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
                 base={sim}
               />
               <LinhaFonte rotulo="REFERÊNCIA DE CATEGORIA DO MARKETPLACE" m={referenciaML} extra=" (média da categoria — só referência)" c={custoPorRotulo["Referência do marketplace"]} base={sim} />
-              <LinhaFonte rotulo="CADASTRO BLING" m={blingMedida} extra={blingMedida ? " [NÃO VALIDADO]" : bling?.encontrado === false ? " — SKU não encontrado" : " — sem peso/medidas"} c={custoPorRotulo["Cadastro Bling"]} base={sim} />
+              <LinhaFonte rotulo="CADASTRO BLING" m={blingMedida} extra={blingMedida ? " [NÃO VALIDADO]" : bling === null ? " — não consultado (opcional)" : bling?.encontrado === false ? " — SKU não encontrado" : " — sem peso/medidas"} c={custoPorRotulo["Cadastro Bling"]} base={sim} />
               <LinhaFonte rotulo="MEDIDA QUE SERÁ ENVIADA AO MARKETPLACE" m={completa ? medida : null} extra={completa ? (nivelTela ? ` [${ROTULO_NIVEL[nivelTela]}]` : " [A CONFIRMAR — vira CONFIRMADO PELO USUÁRIO só depois da sua confirmação]") : " — nenhuma"} c={sim} destaque />
             </tbody>
           </table>
@@ -541,6 +539,11 @@ export default function PesoEmbalagemML({ sku, categoriaId, preco, tipoAnuncio, 
         </div>
       )}
 
+      {sku && bling === null && (
+        <button type="button" data-paiia-comparar-bling onClick={compararComBling} disabled={lendoBling} style={{ ...botaoCinza, padding: "4px 10px", fontSize: 12 }}>
+          {lendoBling ? "⏳ Lendo o Bling..." : "Comparar com o cadastro do Bling (opcional)"}
+        </button>
+      )}
       {sim && (
         <p data-paiia-resultado-simulacao style={{ ...info, color: "#86efac" }}>
           Simulação oficial (somente leitura): {sim.dimensoes.replace(",", " cm, ")} g → ML considera {formatarPeso(sim.peso_considerado_g)}; custo estimado {formatarReais(sim.custo_vendedor)} por envio.

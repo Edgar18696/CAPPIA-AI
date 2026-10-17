@@ -44,7 +44,7 @@ import {
   TEXTO_VEICULOS_SO_NA_DESCRICAO,
 } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
-import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, decidirCriacaoBling, conferirProdutoCriado, conferirCadastroBlingEmBlocos } from "../services/estoqueBlingPAIIA";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
@@ -98,7 +98,7 @@ function lerMarcaPadrao() {
  * fotos acessíveis, preço, estoque no Bling, peso confirmado na
  * Conferência e frete da conta. "erro" bloqueia; "aviso" não bloqueia.
  */
-function conferir({ freteConf = null, campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
+function conferir({ usoBling = null, freteConf = null, campos, quantidadeConfirmada = false, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado = "", descricao, compatML, aplicacoes, modelosSemDetalhes = [], tipoVeiculoPub = null, compatTexto, condicaoEnvio = "", semCompatConfirmada = false, semCompatAutorizadaPublicacao = false }) {
   const itens = [];
 
   // Condição: a APROVADA na ficha (novo/usado). Nunca assume "novo".
@@ -132,7 +132,7 @@ function conferir({ freteConf = null, campos, quantidadeConfirmada = false, prep
   //  "Duplicidade na base PAIIA", pela situação REAL no Mercado Livre.)
   // SKU oficial (SKU específico ou o próprio código da peça).
   if (!skuEnvio) itens.push({ item: "SKU", nivel: "erro", texto: "Sem SKU: o anúncio precisa sair com SKU (o código da peça)." });
-  else itens.push({ item: "SKU", nivel: "ok", texto: `SKU enviado ao Mercado Livre (igual ao produto do Bling): ${skuEnvio}.${codigoPesquisado && codigoPesquisado !== skuEnvio ? ` Código pesquisado na ficha: ${codigoPesquisado}.` : ""}` });
+  else itens.push({ item: "SKU", nivel: "ok", texto: `SKU enviado ao Mercado Livre${usoBling === "usar" ? " (igual ao produto do Bling)" : ""}: ${skuEnvio}.${codigoPesquisado && codigoPesquisado !== skuEnvio ? ` Código pesquisado na ficha: ${codigoPesquisado}.` : ""}` });
   // Proteção A: base PAIIA (código/SKU normalizado + conta + MLB + status).
   if (duplicidadeBase?.carregando) itens.push({ item: "Duplicidade na base PAIIA", nivel: "aviso", texto: "Conferindo na base PAIIA..." });
   else if (duplicidadeBase?.erro) itens.push({ item: "Duplicidade na base PAIIA", nivel: "erro", texto: `Não foi possível conferir a base PAIIA (${duplicidadeBase.erro}). Sem essa conferência a publicação fica bloqueada.` });
@@ -155,6 +155,7 @@ function conferir({ freteConf = null, campos, quantidadeConfirmada = false, prep
   else if (duplicidadeML?.possiveis?.length && !possivelConfirmado) itens.push({ item: "Possível duplicidade na conta", nivel: "erro", texto: `Anúncio desta conta com o mesmo código, mas SKU diferente/vazio: ${duplicidadeML.possiveis.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Confira no Mercado Livre; só publique se NÃO for o mesmo produto (marque a confirmação abaixo).` });
   else if (duplicidadeML?.possiveis?.length) itens.push({ item: "Possível duplicidade na conta", nivel: "aviso", texto: `Você confirmou que ${duplicidadeML.possiveis.map((d) => d.id).join(", ")} NÃO é o mesmo produto.` });
   else if (duplicidadeML?.verificado) itens.push({ item: "Duplicidade na conta", nivel: "ok", texto: `Nenhum anúncio deste SKU/código nesta conta (${duplicidadeML.buscas} buscas, ${duplicidadeML.candidatos} anúncios conferidos). O mesmo SKU em outras contas não bloqueia.` });
+  if (!duplicidadeML && !duplicidadeBase && skuEnvio) itens.push({ item: "Duplicidade na conta", nivel: "aviso", texto: "Proteção final: ao validar e de novo ao publicar, o PAIIA confere se este SKU já tem anúncio NESTA conta do Mercado Livre (e o registro interno). Duplicado bloqueia." });
   if (estoque?.ambiguo) itens.push({ item: "Bling", nivel: "erro", texto: "Mais de um produto no Bling com este SKU: resolva no Bling antes (o PAIIA não escolhe sozinho)." });
 
   // Marca: a marca REAL aprovada. Código OEM/"original" não é marca.
@@ -225,7 +226,11 @@ function conferir({ freteConf = null, campos, quantidadeConfirmada = false, prep
   // Estoque: UMA quantidade confirmada (ficha = Conferência = Publicação =
   // validação = payload do ML). Nunca assume 1. SKU fora do Bling exige a
   // criação do produto no Bling antes de validar no Mercado Livre.
-  const est = conferirEstoque({ quantidade: campos.quantidade, confirmada: quantidadeConfirmada, bling: estoque });
+  // Bling é OPCIONAL (17/10/2026): "sem" = só a quantidade confirmada da
+  // ficha; nada é conferido nem lançado no Bling. Sem escolha ainda = pede.
+  const est = usoBling === "usar"
+    ? conferirEstoque({ quantidade: campos.quantidade, confirmada: quantidadeConfirmada, bling: estoque })
+    : conferirEstoqueSemBling({ quantidade: campos.quantidade, confirmada: quantidadeConfirmada, escolhido: usoBling === "sem" });
   itens.push({ item: "Estoque", nivel: est.nivel, texto: est.texto });
 
   // Peso e embalagem (bloqueia sem medida validada/informada, fora do
@@ -564,27 +569,64 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contaEscolhida]);
 
+  // Bling OPCIONAL (17/10/2026): nenhuma busca de SKU ao abrir. Só confere
+  // se há Bling conectado (sem consultar produto): sem conexão = segue sem
+  // Bling. Com conexão, o usuário escolhe usar o Bling ou publicar sem ele.
+  // A escolha fica lembrada NESTE navegador para esta ficha (voltar/F5 não
+  // perguntam de novo). Lembrar "usar" NÃO consulta nada: a leitura do SKU
+  // continua sendo pelo botão.
+  const chaveUsoBling = anuncioId ? `paiiaUsoBling:${anuncioId}` : "";
+  const [usoBling, setUsoBlingEstado] = useState(() => {
+    try {
+      const v = chaveUsoBling ? localStorage.getItem(chaveUsoBling) : "";
+      return v === "usar" || v === "sem" ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  function setUsoBling(v) {
+    setUsoBlingEstado(v);
+    try {
+      if (chaveUsoBling && (v === "usar" || v === "sem")) localStorage.setItem(chaveUsoBling, v);
+    } catch {
+      // sem armazenamento local: só não lembra a escolha
+    }
+  }
+  const [blingConectado, setBlingConectado] = useState(null);
+  const [lendoBlingPub, setLendoBlingPub] = useState(false);
   useEffect(() => {
     let ativo = true;
     (async () => {
-      // Estoque: somente leitura no Bling, pelo SKU.
-      const sku = String(anuncio?.codigo || "").trim();
-      if (sku) {
-        try {
-          const { data } = await supabase.functions.invoke("bling-integracao", {
-            body: { acao: "saldo_por_sku", sku },
-          });
-          if (ativo) setEstoque(data || { ok: false });
-        } catch {
-          if (ativo) setEstoque({ ok: false });
-        }
-      } else if (ativo) setEstoque({ ok: false, encontrado: false });
+      let conectado;
+      try {
+        const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "status" } });
+        conectado = Boolean(data?.ok && data?.conectado);
+      } catch {
+        conectado = false;
+      }
+      if (!ativo) return;
+      setBlingConectado(conectado);
+      // Sem Bling conectado: segue sem Bling (não grava como escolha).
+      if (!conectado) setUsoBlingEstado("sem");
     })();
     return () => {
       ativo = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Uma leitura PONTUAL do SKU no Bling, só quando o usuário escolhe usar o Bling.
+  async function usarBlingNesteAnuncio() {
+    setUsoBling("usar");
+    setEstoque(null);
+    setLendoBlingPub(true);
+    setEstoque(await lerBling());
+    setLendoBlingPub(false);
+  }
+  function publicarSemBling() {
+    setUsoBling("sem");
+    setEstoque(null);
+    setCriacaoBling(null);
+    setPainelBling(false);
+  }
 
   // Mesmo código já publicado nesta conta por OUTRA ficha: não bloqueia
   // aqui pelo dado guardado; a "Duplicidade na base PAIIA" confere a
@@ -703,6 +745,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   // no Mercado Livre, só com clique/autorização (nunca automática).
   const [criacaoBling, setCriacaoBling] = useState(null);
   const [painelBling, setPainelBling] = useState(false);
+  // Conferência manual (17/10/2026): sem varredura do cadastro, o usuário
+  // confirma que conferiu no Bling outras escritas do SKU antes de criar.
+  const [conferiSkuBling, setConferiSkuBling] = useState(false);
   async function lerBling(skuBling = "") {
     const sku = String(skuBling || anuncio?.codigo || "").trim();
     if (!sku) return { ok: false, encontrado: false };
@@ -715,10 +760,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }
   async function relerBling() {
     setEstoque(null);
+    setLendoBlingPub(true);
     setEstoque(await lerBling());
+    setLendoBlingPub(false);
   }
-  // Conferência do cadastro em blocos: ponto de retomada se o Bling falhar.
-  const [retomadaBling, setRetomadaBling] = useState(null);
   async function chamarBling(corpo) {
     const { data, error } = await supabase.functions.invoke("bling-integracao", { body: corpo });
     return error ? { ok: false, erro: error.message } : data || { ok: false, erro: "Resposta vazia." };
@@ -735,44 +780,30 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   async function criarProdutoBling() {
     if (cadastroBling.faltando.length) return;
     const enviado = cadastroBling.produto;
-    setCriacaoBling({ ocupado: true, etapa: "Conferindo de novo o SKU no Bling..." });
-    // 1) Releitura imediatamente antes de criar: se já existir, NÃO cria.
-    const antes = await lerBling();
-    const decisao = decidirCriacaoBling(antes);
-    if (decisao.acao !== "criar") {
-      setEstoque(antes);
-      setCriacaoBling({ ocupado: false, ok: false, criado: false, jaExistia: decisao.acao === "ja_existe", erro: decisao.motivo });
+    // Verificação PONTUAL no servidor (17/10/2026): busca exata do SKU
+    // (ativos e inativos, variações de escrita) antes de criar e de novo sob
+    // a trava; se existir, NÃO cria e vincula ao existente. Sem varredura
+    // paginada do cadastro.
+    setCriacaoBling({ ocupado: true, etapa: "Conferindo o SKU no Bling e criando o produto..." });
+    if (!conferiSkuBling) return;
+    const r = await chamarBling({ acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: enviado, conferencia_manual: true });
+    if (r.duvida_sku) {
+      // Mesmo SKU com outra escrita no Bling: NUNCA cria nem vincula sozinho.
+      const lista = (r.candidatos || []).map((x) => `${x.codigo} (ID ${x.id})`).join(", ");
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, duvida: true, erro: r.erro || `O Bling tem este SKU escrito de outro jeito${lista ? `: ${lista}` : ""}. Confira manualmente no Bling. Nada foi criado.` });
       return;
     }
-    // 2) Cadastro inteiro (ativos + inativos; excluídos fora), em blocos.
-    //    Falha temporária do Bling: para e permite CONTINUAR do mesmo ponto.
-    const conf = await conferirCadastroBlingEmBlocos({
-      chamar: chamarBling,
-      sku: enviado.codigo,
-      retomar: retomadaBling?.sku === enviado.codigo ? retomadaBling : null,
-      aoProgresso: ({ nome, pagina }) => setCriacaoBling({ ocupado: true, etapa: `Conferindo o cadastro do Bling (${nome}, página ${pagina})...` }),
-    });
-    if (!conf.ok) {
-      setRetomadaBling(conf.retomar ? { ...conf.retomar, sku: enviado.codigo } : null);
-      setCriacaoBling({ ocupado: false, ok: false, criado: false, podeRetomar: Boolean(conf.retomar), erro: `${conf.falha?.erro || "Conferência do cadastro não concluída."}${conf.retomar ? " Clique de novo para CONTINUAR a conferência deste ponto." : ""}` });
+    if (r.conferencia_manual_necessaria) {
+      setConferiSkuBling(false);
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, erro: r.erro || "Confirme a conferência manual no Bling antes de criar. Nada foi criado." });
       return;
     }
-    setRetomadaBling(null);
-    if (conf.achados.length > 1) {
-      setCriacaoBling({ ocupado: false, ok: false, criado: false, erro: `Mais de um produto no Bling com este SKU (${conf.achados.map((x) => `${x.codigo} ID ${x.id}`).join("; ")}): resolva no Bling antes. Nada foi criado.` });
+    if (r.ambiguo) {
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, erro: r.erro || "Mais de um produto no Bling com este SKU: resolva no Bling antes. Nada foi criado." });
       return;
     }
-    if (conf.achados.length === 1) {
-      const x = conf.achados[0];
-      await usarCadastroExistente(x, `O SKU já existia no Bling escrito como ${x.codigo} (ID ${x.id}${String(x.situacao).toUpperCase() === "I" ? ", INATIVO" : ""}). Nada foi criado.`);
-      return;
-    }
-    // 3) Criação (o servidor confere recibos, trava e busca exata de novo).
-    setCriacaoBling({ ocupado: true, etapa: "Criando o produto no Bling..." });
-    const r = await chamarBling({ acao: "criar_produto", confirmado: true, confirmacao: "CRIAR_PRODUTO_BLING", produto: enviado, recibos: conf.recibos });
-    if (r.refazer_conferencia) setRetomadaBling(null);
     if (r.incerto || r.bloqueado) {
-      setCriacaoBling({ ocupado: false, ok: false, criado: false, incerto: true, erro: r.erro || "Resultado da criação incerto: confira antes de tentar de novo." });
+      setCriacaoBling({ ocupado: false, ok: false, criado: false, incerto: Boolean(r.incerto), erro: r.erro || "Resultado da criação incerto: confira antes de tentar de novo." });
       return;
     }
     if (r.ja_existia) {
@@ -1193,10 +1224,10 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setDuplicidadeBase(null);
     setPossivelConfirmadoIds("");
     setCompatML(null);
-    if (contaOk) {
-      conferirDuplicidadeML(contaEscolhida);
-      resolverCompat(contaEscolhida);
-    }
+    // Duplicidade (base + Mercado Livre, nesta conta) NÃO é buscada ao
+    // abrir/escolher a conta (17/10/2026): é a proteção final, feita quando o
+    // usuário clica em Validar e de novo na hora de Publicar.
+    if (contaOk) resolverCompat(contaEscolhida);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contaOk, contaEscolhida]);
 
@@ -1213,7 +1244,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }, [contaOk, contaEscolhida, campos.categoria_id, campos.gtin, preparo]);
 
   const conferencia = conferir({
-    freteConf, campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
+    usoBling, freteConf, campos, quantidadeConfirmada, preparo, validacao, estoque, fotosUrls, logistica, ficha, duplicidadeML, duplicidadeBase, possivelConfirmado, skuEnvio, codigoPesquisado,
     descricao: anuncio?.descricao, compatML, aplicacoes, modelosSemDetalhes, tipoVeiculoPub, compatTexto: anuncio?.compatibilidades,
     condicaoEnvio: dadosAnuncio.condicao, semCompatConfirmada: anuncio?.semCompatibilidadeConfirmada === true,
     semCompatAutorizadaPublicacao: semCompatAut.autorizado,
@@ -1241,16 +1272,19 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     setSemCompatAut((s) => (r.ok ? { autorizado: r.registro.autorizado === true, gravando: false, erro: "" } : { ...s, gravando: false, erro: r.erro || "Não foi possível gravar na ficha." }));
   }
   // Ordem do fluxo: quantidade confirmada e produto no Bling ANTES de validar no ML.
-  const blingPronto = Boolean(estoque?.encontrado && !estoque?.ambiguo);
+  // Bling opcional: só exige o produto no Bling se o usuário escolheu usar o Bling.
+  const blingPronto = usoBling === "sem" || Boolean(usoBling === "usar" && estoque?.encontrado && !estoque?.ambiguo);
   const modelosForaDescricao = conferencia.find((c) => c.item === "Modelos na descrição");
   const motivoSemValidar = modelosForaDescricao
     ? modelosForaDescricao.texto
     : !quantidadeConfirmada
     ? "Confirme a quantidade antes de validar no Mercado Livre."
     : !blingPronto
-      ? estoque?.encontrado === false
-        ? "Crie o produto no Bling (botão acima) antes de validar no Mercado Livre."
-        : "O Bling precisa ser consultado (e o SKU encontrado) antes de validar no Mercado Livre."
+      ? usoBling !== "usar"
+        ? "Escolha no bloco do Bling: usar o Bling neste anúncio ou publicar sem Bling."
+        : estoque?.encontrado === false
+          ? "Crie o produto no Bling (botão acima) ou escolha publicar sem Bling."
+          : "Consulte o Bling (ou escolha publicar sem Bling) antes de validar no Mercado Livre."
       : "";
   // Marca, código e GTIN já têm campo próprio acima.
   const cobertosPelosCampos = {
@@ -1383,13 +1417,53 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       <div data-paiia-bling-publicacao style={bloco} id="pub-etapa-bling">
         <button type="button" data-paiia-navegacao data-paiia-voltar-etapa="pub-etapa-conta" onClick={() => rolarPara("pub-etapa-conta")} style={botaoVoltarEtapa}>← Voltar à escolha da conta</button>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <strong style={subtitulo}>Bling — produto e estoque</strong>
-          <button type="button" data-paiia-reler-bling onClick={relerBling} disabled={estoque === null} style={{ ...botaoCinza, padding: "4px 10px" }}>
-            🔄 Reler Bling
-          </button>
+          <strong style={subtitulo}>Bling — produto e estoque (opcional)</strong>
+          {usoBling === "usar" && (
+            <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button type="button" data-paiia-reler-bling onClick={relerBling} disabled={estoque === null} style={{ ...botaoCinza, padding: "4px 10px" }}>
+                🔄 Reler Bling
+              </button>
+              <button type="button" data-paiia-publicar-sem-bling onClick={publicarSemBling} disabled={criacaoBling?.ocupado} style={{ ...botaoCinza, padding: "4px 10px" }}>
+                Publicar sem Bling
+              </button>
+            </span>
+          )}
         </div>
-        {estoque === null ? (
-          <p style={info}>⏳ Consultando o Bling pelo SKU {anuncio?.codigo || "—"}...</p>
+        {usoBling !== "usar" ? (
+          <div data-paiia-bling-escolha={usoBling || "pendente"} style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>
+            {usoBling === "sem" ? (
+              <div style={info}>
+                Sem Bling neste anúncio: o anúncio é publicado só com a quantidade confirmada; nada é consultado, criado ou alterado no Bling.
+                {blingConectado === false ? " (Nenhuma conta Bling conectada.)" : ""}
+              </div>
+            ) : (
+              <div style={info}>O Bling é opcional. Escolha se este anúncio usa o Bling (produto e estoque) ou segue sem ele.</div>
+            )}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+              {blingConectado !== false && (
+                <button type="button" data-paiia-usar-bling onClick={usarBlingNesteAnuncio} style={botaoAzul}>
+                  Usar o Bling neste anúncio
+                </button>
+              )}
+              {usoBling !== "sem" && (
+                <button type="button" data-paiia-publicar-sem-bling onClick={publicarSemBling} style={botaoCinza}>
+                  Publicar sem Bling
+                </button>
+              )}
+            </div>
+          </div>
+        ) : estoque === null ? (
+
+          lendoBlingPub ? (
+            <p style={info}>⏳ Consultando o Bling pelo SKU {anuncio?.codigo || "—"}...</p>
+          ) : (
+            <div style={info}>
+              Este anúncio usa o Bling. O SKU {anuncio?.codigo || "—"} só é consultado quando você pedir.{" "}
+              <button type="button" data-paiia-consultar-bling onClick={usarBlingNesteAnuncio} style={{ ...botaoAzul, padding: "4px 10px" }}>
+                Consultar o SKU no Bling
+              </button>
+            </div>
+          )
         ) : estoque?.ambiguo ? (
           <div style={erro}>
             ❌ Mais de um produto no Bling com o SKU {anuncio?.codigo}: {(estoque.candidatos || []).map((c) => `${c.codigo} (ID ${c.id})`).join(", ")}. Resolva no Bling: o PAIIA não escolhe sozinho e não cria outro.
@@ -1418,7 +1492,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                   ➕ Criar produto no Bling
                 </button>
                 {!contaOk && <p style={info}>Escolha a conta do Mercado Livre primeiro.</p>}
-                <p style={info}>Nada é criado sem o seu clique. Antes de criar, o PAIIA confere o SKU de novo no Bling (se já existir, não cria outro).</p>
+                <p style={info}>Nada é criado sem o seu clique. Na hora de criar, o PAIIA confere o SKU no Bling uma vez: se já existir igual, não cria e vincula a ele; se existir escrito de outro jeito, não cria e pede a sua conferência.</p>
               </div>
             ) : (
               <div data-paiia-conferir-criar-bling style={{ marginTop: 8, border: "1px solid #334155", borderRadius: 10, padding: 12 }}>
@@ -1447,9 +1521,13 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 {cadastroBling.faltando.length > 0 && (
                   <p data-paiia-bling-faltando style={erro}>❌ Falta (confirme na ficha antes de criar): {cadastroBling.faltando.join(", ")}.</p>
                 )}
+                <label data-paiia-conferi-sku-bling style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#fde68a", fontSize: 13, marginTop: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={conferiSkuBling} onChange={(e) => setConferiSkuBling(e.target.checked)} disabled={criacaoBling?.ocupado} style={{ marginTop: 3 }} />
+                  <span>Conferi no Bling: este SKU ({cadastroBling.produto?.codigo || "—"}) não existe escrito com hífen, espaço, ponto ou outro separador.</span>
+                </label>
                 <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                  <button type="button" data-paiia-confirmar-criar-bling onClick={criarProdutoBling} disabled={cadastroBling.faltando.length > 0 || criacaoBling?.ocupado} style={botaoAzul}>
-                    {criacaoBling?.ocupado ? `⏳ ${criacaoBling.etapa || "Criando..."}` : retomadaBling ? "↻ Continuar a conferência e criar no Bling" : "✔ Confirmar e criar no Bling"}
+                  <button type="button" data-paiia-confirmar-criar-bling onClick={criarProdutoBling} disabled={cadastroBling.faltando.length > 0 || criacaoBling?.ocupado || !conferiSkuBling} style={botaoAzul}>
+                    {criacaoBling?.ocupado ? `⏳ ${criacaoBling.etapa || "Criando..."}` : "✔ Confirmar e criar no Bling"}
                   </button>
                   <button type="button" onClick={() => setPainelBling(false)} disabled={criacaoBling?.ocupado} style={botaoCinza}>Cancelar</button>
                 </div>
@@ -1458,6 +1536,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             )}
             {criacaoBling && !criacaoBling.ocupado && !criacaoBling.ok && (
               <p data-paiia-bling-criacao="erro" style={erro}>❌ {criacaoBling.erro}</p>
+            )}
+            {criacaoBling && !criacaoBling.ocupado && criacaoBling.duvida && (
+              <p data-paiia-bling-duvida style={info}>Depois de conferir no Bling, use “🔄 Reler Bling” ou siga com “Publicar sem Bling”. O PAIIA não cria nem vincula sozinho neste caso.</p>
             )}
             {criacaoBling && !criacaoBling.ocupado && criacaoBling.incerto && (
               <button type="button" data-paiia-conferir-criacao-bling onClick={conferirCriacaoIncertaBling} style={botaoAzul}>🔎 Conferir criação no Bling</button>
@@ -1490,7 +1571,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 </div>
                 <div data-paiia-quantidade-estado style={{ fontSize: 12, marginTop: 4, color: quantidadeConfirmada ? "#86efac" : "#fde68a" }}>
                   {quantidadeConfirmada
-                    ? `✅ ${campos.quantidade} unidade(s) confirmada(s) — gravada na ficha; é esta que vai ao Mercado Livre${estoque?.encontrado ? "" : " e ao Bling"}.`
+                    ? `✅ ${campos.quantidade} unidade(s) confirmada(s) — gravada na ficha; é esta que vai ao Mercado Livre${usoBling === "usar" && !estoque?.encontrado ? " e ao Bling" : ""}.`
                     : avisoQuantidade || (qtdInicial.origem === "ficha_campo_estoque" && campos.quantidade === String(qtdInicial.valor)
                       ? `Valor da ficha (${qtdInicial.valor}). Confirme para usar.`
                       : "Informe e confirme a quantidade (o PAIIA não assume nenhum valor).")}

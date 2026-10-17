@@ -18,7 +18,7 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
   const pub = ficha?.publicacao || {};
   const [registro, setRegistro] = useState(() => registroDaFichaOuPublicacao(ficha?.dados_conferencia, pub));
   const [verificando, setVerificando] = useState(false);
-  const [estoque, setEstoque] = useState({ carregando: true });
+  const [estoque, setEstoque] = useState({ carregando: false, lido: false });
   const pend = pendenciaPublicacao(pub);
   const sku = String(pub.sku || registro?.sku_oficial || ficha?.codigo || "");
   // O endereço continua apontando ESTA ficha (F5 volta para ela).
@@ -41,16 +41,14 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
     if (error) return { ok: false, erro: error.message || "Falha ao falar com o servidor." };
     return data || { ok: false, erro: "Resposta vazia do servidor." };
   }
-  // Estoque: SOMENTE leitura no Bling, pelo SKU.
-  useEffect(() => {
-    let ativo = true;
-    (async () => {
-      const r = sku ? await consultarBling({ acao: "saldo_por_sku", sku }) : { ok: false };
-      if (ativo) setEstoque({ carregando: false, ...r });
-    })();
-    return () => { ativo = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sku]);
+  // Estoque: leitura no Bling SÓ quando o usuário pede (17/10/2026: nenhuma
+  // busca automática de SKU ao abrir a ficha).
+  async function lerEstoqueBling() {
+    if (!sku || estoque.carregando) return;
+    setEstoque({ carregando: true, lido: false });
+    const r = await consultarBling({ acao: "saldo_por_sku", sku });
+    setEstoque({ carregando: false, lido: true, ...r });
+  }
 
   // Situação ATUAL do MLB no Mercado Livre (somente leitura, na conta da
   // publicação). Não altera o histórico gravado na ficha.
@@ -104,9 +102,11 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
   const concluido = publicadoOk && (integrado || semRegistroBling) && !pend;
   const estoqueTexto = estoque.carregando
     ? "⏳ lendo no Bling..."
-    : estoque.ok && estoque.encontrado
-      ? `${estoque.saldoVirtualTotal ?? "—"} (disponível no Bling)`
-      : "não lido";
+    : !estoque.lido
+      ? "não consultado"
+      : estoque.ok && estoque.encontrado
+        ? `${estoque.saldoVirtualTotal ?? "—"} (disponível no Bling)`
+        : "não lido";
   const situacaoPub = pend ? "Publicado com pendência" : publicadoOk ? "Publicado" : "—";
   const situacaoBling = semRegistroBling
     ? "Sem etapa de vínculo no Bling para esta conta"
@@ -134,7 +134,14 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
           <tbody>
             <tr><td style={td}>SKU</td><td style={td} data-paiia-final-sku><b>{sku || "—"}</b></td></tr>
             <tr><td style={td}>Produto Bling (ID)</td><td style={td} data-paiia-final-produto-bling><b>{produtoBling || "—"}</b></td></tr>
-            <tr><td style={td}>Estoque</td><td style={td} data-paiia-final-estoque>{estoqueTexto}</td></tr>
+            <tr><td style={td}>Estoque</td><td style={td} data-paiia-final-estoque>
+              {estoqueTexto}
+              {produtoBling && sku && !estoque.carregando && (
+                <button type="button" data-paiia-ler-estoque-bling onClick={lerEstoqueBling} style={{ ...botao, marginLeft: 8, padding: "2px 8px" }}>
+                  Ler no Bling
+                </button>
+              )}
+            </td></tr>
             <tr><td style={td}>Conta Mercado Livre</td><td style={td} data-paiia-final-conta>{pub.conta_nome || ficha?.conta_destino_nome || "—"}{pub.ml_user_id ? ` (ID ${pub.ml_user_id})` : ""}</td></tr>
             <tr>
               <td style={td}>MLB</td>
