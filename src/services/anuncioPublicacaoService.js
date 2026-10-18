@@ -392,7 +392,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -504,6 +504,48 @@ export async function salvarCompatibilidadesML({ anuncioId, aplicacoes = [], com
     .eq("id", anuncioId);
   if (error) return falha(error);
   return { ok: true, compatibilidades_ml };
+}
+
+/**
+ * Correspondência de MODELO com o catálogo do ML, CONFIRMADA pelo usuário
+ * (18/10/2026; ex.: "Clio II" digitado = modelo "Clio" do catálogo).
+ * Grava SÓ a chave correspondencias_modelo_ml (montadora+modelo → modelo do
+ * catálogo). Não mexe nas aplicações aprovadas, na aprovação nem na versão.
+ * modeloCatalogo = null desfaz. Ficha já publicada não é alterada.
+ */
+export async function registrarCorrespondenciaModeloML({ anuncioId, chave, montadora, modeloDigitado, modeloCatalogo }) {
+  if (!anuncioId) return { ok: false, erro: "Sem a ficha gravada na base PAIIA." };
+  if (!chave) return { ok: false, erro: "Aplicação sem montadora/modelo." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  if (publicacaoExiste(atual.anuncio.publicacao)) return { ok: false, erro: "Esta ficha já foi publicada: não é alterada." };
+  const dados = atual.anuncio.dados_conferencia || {};
+  const mapa = { ...(dados.correspondencias_modelo_ml && typeof dados.correspondencias_modelo_ml === "object" ? dados.correspondencias_modelo_ml : {}) };
+  if (modeloCatalogo && modeloCatalogo.id) {
+    mapa[chave] = { montadora: String(montadora || ""), modelo_digitado: String(modeloDigitado || ""), modelo_id: String(modeloCatalogo.id), modelo_nome: String(modeloCatalogo.nome || ""), confirmado_em: new Date().toISOString() };
+  } else {
+    delete mapa[chave];
+  }
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, correspondencias_modelo_ml: mapa } })
+    .eq("id", anuncioId)
+    .eq("updated_at", atual.anuncio.updated_at);
+  if (error) return falha(error);
+  const relida = await obterAnuncio(anuncioId);
+  const gravado = relida.ok ? relida.anuncio.dados_conferencia?.correspondencias_modelo_ml || {} : null;
+  const confere = gravado && (modeloCatalogo?.id ? gravado[chave]?.modelo_id === String(modeloCatalogo.id) : !gravado[chave]);
+  if (!confere) return { ok: false, erro: "A ficha mudou ao mesmo tempo: a correspondência não foi gravada. Tente de novo." };
+  return { ok: true, correspondencias: gravado };
+}
+
+/** Correspondências confirmadas gravadas na ficha (leitura). */
+export async function lerCorrespondenciasModeloML(anuncioId) {
+  if (!anuncioId) return { ok: true, correspondencias: {} };
+  const r = await obterAnuncio(anuncioId);
+  if (!r.ok) return r;
+  const c = r.anuncio.dados_conferencia?.correspondencias_modelo_ml;
+  return { ok: true, correspondencias: c && typeof c === "object" ? c : {} };
 }
 
 /**

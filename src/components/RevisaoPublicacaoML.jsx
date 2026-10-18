@@ -17,6 +17,8 @@ import {
   publicacaoExiste,
   salvarCompatibilidadesML,
   registrarPublicacaoSemCompatibilidade,
+  registrarCorrespondenciaModeloML,
+  lerCorrespondenciasModeloML,
   registrarMLBPublicado,
   salvarRegistroIntegracaoBling,
   garantirRegistroIntegracaoBling,
@@ -32,14 +34,17 @@ import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services
 import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, reais as reaisFrete } from "../services/fretePrecificacao";
 import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
-  lerAplicacoesAprovadas,
   resolverCompatibilidades,
+  aplicacoesDaFicha,
+  aplicarCorrespondencias,
+  chaveModeloML,
   marcaInvalida,
   descricaoAfirmaOriginal,
   conferirPublicacao,
   separarAplicacoesParaML,
   normalizarCondicao,
   situacaoCompatibilidade,
+  textoSoModelosSemDetalhes,
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO,
 } from "../services/compatibilidadeML";
@@ -111,7 +116,11 @@ function conferir({ usoBling = null, freteConf = null, campos, quantidadeConfirm
   if (sitCompat.bloqueia) {
     // semCompatOpcao: este é o ÚNICO bloqueio que a opção "Publicar sem
     // compatibilidade — vou cadastrar manualmente depois" pode liberar.
-    itens.push({ item: "Compatibilidades", nivel: "erro", semCompatOpcao: true, texto: `${sitCompat.soNaDescricao ? TEXTO_VEICULOS_SO_NA_DESCRICAO : TEXTO_SEM_APLICACAO} Volte à Conferência para cadastrar as aplicações (ou marcar "Publicar sem compatibilidade").` });
+    // Modelos registrados sem motor/ano NÃO são "nada cadastrado": estão
+    // gravados; só não geram vínculo no catálogo do ML (17/10/2026).
+    itens.push({ item: "Compatibilidades", nivel: "erro", semCompatOpcao: true, texto: modelosSemDetalhes.length
+      ? textoSoModelosSemDetalhes(modelosSemDetalhes)
+      : `${sitCompat.soNaDescricao ? TEXTO_VEICULOS_SO_NA_DESCRICAO : TEXTO_SEM_APLICACAO} Volte à Conferência para cadastrar as aplicações (ou marcar "Publicar sem compatibilidade").` });
   } else if (sitCompat.semAplicacao && semCompatAutorizadaPublicacao && !semCompatConfirmada) {
     itens.push({ item: "Compatibilidades", nivel: "aviso", texto: "Publicação SEM compatibilidade, autorizada por você na Publicação (cadastro manual no Mercado Livre depois). Nenhum veículo será vinculado agora." });
   } else if (sitCompat.semAplicacao) {
@@ -197,7 +206,7 @@ function conferir({ usoBling = null, freteConf = null, campos, quantidadeConfirm
   if (aplicacoes.length) {
     if (!compatML || compatML.carregando) itens.push({ item: "Compatibilidades", nivel: "erro", texto: `Procurando no catálogo do ML os veículos das ${aplicacoes.length} aplicação(ões) aprovada(s)...` });
     else if (compatML.erro) itens.push({ item: "Compatibilidades", nivel: "erro", texto: `Catálogo de veículos não consultado (${compatML.erro}). Reconsulte antes de publicar.` });
-    else if (!compatML.veiculos.length) itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `Nenhum veículo do catálogo confirma as aplicações aprovadas. Se publicar assim, o anúncio fica PUBLICADO COM PENDÊNCIA.` });
+    else if (!compatML.veiculos.length) itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `${aplicacoes.length} aplicação(ões) registrada(s) e gravada(s) na ficha, mas nenhuma versão do catálogo do Mercado Livre as confirma (não é erro de gravação). Se publicar assim, o anúncio fica PUBLICADO COM PENDÊNCIA de compatibilidade.` });
     else itens.push({ item: "Compatibilidades", nivel: "ok", texto: `${compatML.veiculos.length} veículo(s) do catálogo serão vinculados (${compatML.descartados.length} descartado(s) por não confirmar os dados aprovados).` });
   }
 
@@ -708,23 +717,55 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   // casadas com o catálogo de veículos do ML (consultas somente leitura).
   // Só aplicações com dados suficientes (motor e/ou ano confirmados) vão para
   // a tabela do ML; modelos sem detalhes ficam fora (nunca por suposição).
-  const todasAplicacoes = useMemo(
-    () => lerAplicacoesAprovadas({ aplicacoes: anuncio?.aplicacoes, texto: anuncio?.compatibilidades }),
-    [anuncio]
-  );
+  // 18/10/2026: a lista ESTRUTURADA aprovada na Conferência (o texto só
+  // para fichas antigas, sem a lista) — sem reconverter o texto.
+  const todasAplicacoes = useMemo(() => aplicacoesDaFicha(anuncio).lista, [anuncio]);
   const separadas = useMemo(() => separarAplicacoesParaML(todasAplicacoes), [todasAplicacoes]);
-  const aplicacoes = separadas.detalhadas;
   const modelosSemDetalhes = separadas.semDetalhes;
+  // Correspondências de MODELO com o catálogo do ML confirmadas pelo usuário
+  // (gravadas na ficha; voltam no F5 e ao reabrir). Nunca automáticas.
+  const [correspondencias, setCorrespondencias] = useState({ carregado: false, mapa: {}, gravando: "", erro: "" });
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      if (!ficha.anuncioId) { if (ativo) setCorrespondencias((c) => ({ ...c, carregado: true })); return; }
+      const r = await lerCorrespondenciasModeloML(ficha.anuncioId);
+      if (ativo) setCorrespondencias((c) => ({ ...c, carregado: true, mapa: r.ok ? r.correspondencias : {}, erro: r.ok ? "" : r.erro || "" }));
+    })();
+    return () => { ativo = false; };
+  }, [ficha.anuncioId]);
+  const aplicacoes = useMemo(() => aplicarCorrespondencias(separadas.detalhadas, correspondencias.mapa), [separadas, correspondencias.mapa]);
   const [compatML, setCompatML] = useState(null);
-  async function resolverCompat(conta) {
-    if (!conta || !aplicacoes.length) { setCompatML(null); return; }
+  async function resolverCompat(conta, lista = aplicacoes) {
+    if (!conta || !lista.length) { setCompatML(null); return; }
     setCompatML({ carregando: true });
     const consultar = (caminho, metodo = "GET", corpo) => chamar("ml_consulta", { metodo, caminho, ...(corpo ? { corpo } : {}) }, conta);
     try {
-      setCompatML(await resolverCompatibilidades(aplicacoes, consultar));
+      setCompatML(await resolverCompatibilidades(lista, consultar));
     } catch (e) {
       setCompatML({ erro: e?.message || "falha na consulta" });
     }
+  }
+  const [escolhaModelo, setEscolhaModelo] = useState({});
+  async function confirmarModeloCatalogo(item, modeloId) {
+    const m = (item.modelosMarca || []).find((x) => x.id === String(modeloId));
+    if (!m || !ficha.anuncioId) return;
+    setCorrespondencias((c) => ({ ...c, gravando: item.chave, erro: "" }));
+    const r = await registrarCorrespondenciaModeloML({ anuncioId: ficha.anuncioId, chave: item.chave, montadora: item.montadora, modeloDigitado: item.modeloDigitado, modeloCatalogo: m });
+    if (!r.ok) { setCorrespondencias((c) => ({ ...c, gravando: "", erro: r.erro || "Não foi possível gravar." })); return; }
+    setCorrespondencias((c) => ({ ...c, gravando: "", mapa: r.correspondencias }));
+    setArmado(false);
+    await resolverCompat(contaEscolhida, aplicarCorrespondencias(separadas.detalhadas, r.correspondencias));
+  }
+  async function desfazerModeloCatalogo(chave) {
+    if (!ficha.anuncioId) return;
+    const c0 = correspondencias.mapa[chave];
+    setCorrespondencias((c) => ({ ...c, gravando: chave, erro: "" }));
+    const r = await registrarCorrespondenciaModeloML({ anuncioId: ficha.anuncioId, chave, montadora: c0?.montadora, modeloDigitado: c0?.modelo_digitado, modeloCatalogo: null });
+    if (!r.ok) { setCorrespondencias((c) => ({ ...c, gravando: "", erro: r.erro || "Não foi possível gravar." })); return; }
+    setCorrespondencias((c) => ({ ...c, gravando: "", mapa: r.correspondencias }));
+    setArmado(false);
+    await resolverCompat(contaEscolhida, aplicarCorrespondencias(separadas.detalhadas, r.correspondencias));
   }
 
   // Leitura (com nova tentativa) do MLB criado e das compatibilidades dele.
@@ -1146,7 +1187,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           .filter((id) => !presentes.has(String(id)))
           .map((id) => ({ id, nome: compatML.veiculos.find((v) => v.id === id)?.nome || id, motivo: motivoEnvio || "não apareceu no anúncio depois do envio" })),
         descartados_antes: (compatML?.descartados || []).map((d) => ({ id: d.id, nome: d.nome, motivo: d.motivo })),
-        sem_catalogo: compatML?.semCatalogo || [],
+        sem_catalogo: (compatML?.semCatalogo || []).map((s) => ({ aplicacao: s.aplicacao, motivo: s.motivo })),
       };
       if (aplicacoes.length && !idsCompat.length && !verificacao.pendencias.some((t) => t.startsWith("Compatibilidades"))) {
         verificacao.pendencias.push("Compatibilidades: havia aplicações aprovadas e nenhum veículo foi vinculado.");
@@ -1227,9 +1268,16 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // Duplicidade (base + Mercado Livre, nesta conta) NÃO é buscada ao
     // abrir/escolher a conta (17/10/2026): é a proteção final, feita quando o
     // usuário clica em Validar e de novo na hora de Publicar.
-    if (contaOk) resolverCompat(contaEscolhida);
+    // Só depois de ler as correspondências confirmadas na ficha (senão a
+    // primeira consulta sairia sem elas).
+    if (contaOk && correspondencias.carregado) resolverCompat(contaEscolhida);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contaOk, contaEscolhida]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mesma consulta do efeito acima, quando as correspondências chegam
+    if (contaOk && correspondencias.carregado) resolverCompat(contaEscolhida);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [correspondencias.carregado]);
 
   const [categoriaConf, setCategoriaConf] = useState(null);
   useEffect(() => {
@@ -1672,7 +1720,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             {aplicacoes.length > 0 && (
               <div data-paiia-compat-ml style={{ marginTop: 10, color: "#e2e8f0", fontSize: 13 }}>
                 <b>Compatibilidades (só as aplicações aprovadas):</b>{" "}
-                {aplicacoes.map((a) => [a.modelo, a.motor, a.anoInicio && a.anoFim ? (a.anoInicio === a.anoFim ? a.anoInicio : `${a.anoInicio}–${a.anoFim}`) : a.anoInicio ? `a partir de ${a.anoInicio}` : a.anoFim ? `até ${a.anoFim}` : ""].filter(Boolean).join(" ")).join(" · ")}
+                {aplicacoes.map((a) => [a.modeloCatalogo?.nome ? `${a.modelo} (catálogo ML: ${a.modeloCatalogo.nome})` : a.modelo, a.motor, a.anoInicio && a.anoFim ? (a.anoInicio === a.anoFim ? a.anoInicio : `${a.anoInicio}–${a.anoFim}`) : a.anoInicio ? `a partir de ${a.anoInicio}` : a.anoFim ? `até ${a.anoFim}` : ""].filter(Boolean).join(" ")).join(" · ")}
                 {compatML?.carregando && <p style={info}>⏳ Procurando os veículos no catálogo do Mercado Livre...</p>}
                 {compatML?.erro && (
                   <p style={erro}>
@@ -1683,10 +1731,42 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 {compatML?.veiculos && (
                   <>
                     <div style={{ marginTop: 4 }}>Serão vinculados {compatML.veiculos.length} veículo(s):</div>
-                    {compatML.veiculos.map((v) => <div key={v.id} data-paiia-compat-veiculo style={{ color: "#86efac" }}>✓ {v.nome}</div>)}
+                    {compatML.veiculos.map((v) => <div key={v.id} data-paiia-compat-veiculo={v.id} style={{ color: "#86efac" }}>✓ {v.nome}</div>)}
                     {compatML.descartados.length > 0 && <div style={{ marginTop: 4, color: "#94a3b8" }}>Descartados (não confirmam os dados aprovados):</div>}
-                    {compatML.descartados.map((d) => <div key={d.id} data-paiia-compat-descartado style={{ color: "#94a3b8" }}>✗ {d.nome} — {d.motivo}</div>)}
-                    {compatML.semCatalogo.map((x) => <div key={x.aplicacao} style={{ color: "#facc15" }}>⚠ {x.aplicacao}: {x.motivo}</div>)}
+                    {compatML.descartados.map((d) => <div key={d.id} data-paiia-compat-descartado={d.id} style={{ color: "#94a3b8" }}>✗ {d.nome} — {d.motivo}</div>)}
+                    {compatML.semCatalogo.map((x) => (
+                      <div key={x.aplicacao} data-paiia-compat-sem-catalogo={x.chave || ""} style={{ color: "#facc15" }}>
+                        ⚠ {x.aplicacao}: {x.motivo}
+                        {x.chave && Array.isArray(x.modelosMarca) && x.modelosMarca.length > 0 && (
+                          <div data-paiia-escolher-modelo-ml={x.chave} style={{ margin: "4px 0 6px 14px", color: "#e2e8f0" }}>
+                            O nome digitado (“{x.modeloDigitado}”) não é um modelo do catálogo do Mercado Livre. Escolha o modelo correspondente na lista REAL do catálogo ({x.montadora}). Nada é vinculado sem a sua confirmação; depois, só entram veículos do período, motor e versão aprovados.
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                              <select data-paiia-modelo-ml-opcao value={escolhaModelo[x.chave] || ""} onChange={(e) => setEscolhaModelo((v) => ({ ...v, [x.chave]: e.target.value }))} style={{ padding: 4 }}>
+                                <option value="">— escolha o modelo do catálogo —</option>
+                                {(x.candidatos || []).length > 0 && (
+                                  <optgroup label="Mais prováveis">
+                                    {x.candidatos.map((m) => <option key={`c-${m.id}`} value={m.id}>{m.nome}</option>)}
+                                  </optgroup>
+                                )}
+                                <optgroup label={`Todos os modelos ${x.montadora} no catálogo`}>
+                                  {x.modelosMarca.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                                </optgroup>
+                              </select>
+                              <button type="button" data-paiia-confirmar-modelo-ml={x.chave} disabled={!escolhaModelo[x.chave] || correspondencias.gravando === x.chave || !ficha.anuncioId} onClick={() => confirmarModeloCatalogo(x, escolhaModelo[x.chave])} style={{ ...botaoCinza, padding: "4px 10px" }}>
+                                {correspondencias.gravando === x.chave ? "⏳ Gravando..." : "Confirmar correspondência"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {Object.entries(correspondencias.mapa || {}).filter(([k]) => aplicacoes.some((a) => a.modeloCatalogo && chaveModeloML(a.montadora, a.modelo) === k)).map(([k, c]) => (
+                      <div key={k} data-paiia-modelo-ml-confirmado={k} style={{ color: "#bae6fd", marginTop: 4 }}>
+                        ✔ Correspondência confirmada por você: “{c.modelo_digitado}” = modelo “{c.modelo_nome}” do catálogo ({c.montadora}). Os veículos acima foram conferidos pelo período, motor e versão aprovados.{" "}
+                        <button type="button" data-paiia-desfazer-modelo-ml={k} disabled={correspondencias.gravando === k} onClick={() => desfazerModeloCatalogo(k)} style={{ ...botaoCinza, padding: "2px 8px" }}>Desfazer</button>
+                      </div>
+                    ))}
+                    {correspondencias.erro && <div style={{ color: "#fca5a5" }}>❌ {correspondencias.erro}</div>}
                   </>
                 )}
               </div>

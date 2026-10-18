@@ -6844,315 +6844,11 @@ const custoTotalVenda =
           maxWidth: "100%",
         }}
       >
-        <div
-          role="radiogroup"
-          aria-label="Categoria da concorrência"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            flexWrap: "wrap",
-          }}
-        >
-          {["original", "importado"].map((categoria) => {
-            const selecionada =
-              categoriaConcorrencia === categoria;
-            const rotulo =
-              categoria === "original"
-                ? "Original"
-                : "Importado";
-
-            return (
-              <label
-                key={categoria}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  padding: "10px 13px",
-                  borderRadius: "10px",
-                  border: selecionada
-                    ? "1px solid #67e8f9"
-                    : "1px solid #475569",
-                  background: selecionada
-                    ? "rgba(8,145,178,.22)"
-                    : "#020617",
-                  color: selecionada
-                    ? "#cffafe"
-                    : "#e2e8f0",
-                  fontWeight: "800",
-                  cursor: pesquisandoConcorrencia
-                    ? "wait"
-                    : "pointer",
-                  opacity: pesquisandoConcorrencia
-                    ? 0.7
-                    : 1,
-                }}
-              >
-                <input
-                  type="radio"
-                  name="categoria-concorrencia"
-                  value={categoria}
-                  checked={selecionada}
-                  disabled={pesquisandoConcorrencia}
-                  onChange={() => {
-                    setCategoriaConcorrencia(categoria);
-                    setResultadoConcorrencia(null);
-                    setErroConcorrencia("");
-                  }}
-                />
-                {rotulo}
-              </label>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={pesquisarConcorrenciaPaizinho}
-          disabled={
-            pesquisandoConcorrencia ||
-            !categoriaConcorrencia
-          }
-          style={{
-            padding: "13px 18px",
-            borderRadius: "10px",
-            border: "1px solid #38bdf8",
-            background: "#1d4ed8",
-            color: "#ffffff",
-            fontWeight: "bold",
-            cursor: pesquisandoConcorrencia
-              ? "wait"
-              : categoriaConcorrencia
-                ? "pointer"
-                : "not-allowed",
-            opacity:
-              pesquisandoConcorrencia ||
-              !categoriaConcorrencia
-                ? 0.55
-                : 1,
-            whiteSpace: "normal",
-          }}
-        >
-          {pesquisandoConcorrencia
-            ? "⏳ Paizinho pesquisando..."
-            : "🤖 Paizinho, pesquisar a concorrência"}
-        </button>
-      </div>
+        
+             </div>
     </div>
-
-    <div
-      style={{
-        marginBottom: "12px",
-        color: categoriaConcorrencia
-          ? "#a5f3fc"
-          : "#fde68a",
-        fontSize: "12px",
-        fontWeight: "700",
-        textAlign: "right",
-      }}
-    >
-      {resultadoConcorrencia
-        ? `Concorrência — ${
-            resultadoConcorrencia.classificacao.tipo === "original"
-              ? "Peças originais"
-              : "Peças importadas"
-          }`
-        : categoriaConcorrencia === "original"
-          ? "Comparando peças originais"
-          : categoriaConcorrencia === "importado"
-            ? "Comparando peças importadas"
-            : "Escolha Original ou Importado para pesquisar."}
-    </div>
-
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns:
-          "repeat(auto-fit,minmax(190px,1fr))",
-        gap: "10px",
-      }}
-    >
-      <div
-        style={{
-          padding: "12px",
-          borderRadius: "10px",
-          border: "1px solid #334155",
-          background: "#020617",
-        }}
-      >
-        <div
-          style={{
-            color: "#94a3b8",
-            fontSize: "11px",
-            fontWeight: "bold",
-          }}
-        >
-          SEU PREÇO
-        </div>
-
-        <strong
-          style={{
-            color: "#f8fafc",
-            fontSize: "16px",
-          }}
-        >
-          {preco
-            ? `R$ ${preco}`
-            : "Não informado"}
-        </strong>
-      </div>
-
-      <div
-        style={{
-          padding: "12px",
-          borderRadius: "10px",
-          border: "1px solid #334155",
-          background: "#020617",
-        }}
-      >
-        <div
-          style={{
-            color: "#94a3b8",
-            fontSize: "11px",
-            fontWeight: "bold",
-          }}
-        >
-          🟡 MENOR PREÇO
-        </div>
-
-        <strong
-          style={{
-            color: resultadoConcorrencia
-              ? "#86efac"
-              : "#f8fafc",
-            fontSize: "14px",
-          }}
-        >
-          {resultadoConcorrencia?.mercadoGeral?.quantidade > 0
-            ? formatarPrecoAppia(
-                resultadoConcorrencia.mercadoGeral.minimo
-              )
-            : resultadoConcorrencia
-              ? "Nenhum comparável encontrado"
-              : "Aguardando pesquisa"}
-        </strong>
-      </div>
-
-      <div
-        style={{
-          padding: "12px",
-          borderRadius: "10px",
-          border: "1px solid #334155",
-          background: "#020617",
-        }}
-      >
-        <div
-          style={{
-            color: "#94a3b8",
-            fontSize: "11px",
-            fontWeight: "bold",
-          }}
-        >
-          🟠 PREÇO MÉDIO
-        </div>
-
-        <strong
-          style={{
-            color: resultadoConcorrencia
-              ? "#86efac"
-              : "#f8fafc",
-            fontSize: "14px",
-          }}
-        >
-          {resultadoConcorrencia?.mercadoGeral?.quantidade > 0
-            ? formatarPrecoAppia(
-                resultadoConcorrencia.mercadoGeral.media
-              )
-            : resultadoConcorrencia
-              ? "Nenhum comparável encontrado"
-              : "Aguardando pesquisa"}
-        </strong>
-      </div>
-
-      <div
-        style={{
-          padding: "12px",
-          borderRadius: "10px",
-          border: "1px solid #334155",
-          background: "#020617",
-        }}
-      >
-        <div
-          style={{
-            color: "#94a3b8",
-            fontSize: "11px",
-            fontWeight: "bold",
-          }}
-        >
-          📊 MAIOR PREÇO
-        </div>
-
-        <strong
-          style={{
-            color: resultadoConcorrencia
-              ? "#86efac"
-              : "#f8fafc",
-            fontSize: "14px",
-          }}
-        >
-          {resultadoConcorrencia?.mercadoGeral?.quantidade > 0
-            ? formatarPrecoAppia(
-                resultadoConcorrencia.mercadoGeral.maximo
-              )
-            : resultadoConcorrencia
-              ? "Sem comparáveis"
-              : "Aguardando pesquisa"}
-        </strong>
-      </div>
-    </div>
-
-    <div
-      style={{
-        marginTop: "10px",
-        padding: "10px 12px",
-        borderRadius: "10px",
-        border: "1px dashed #475569",
-        background: "#0f172a",
-        color: "#94a3b8",
-        fontSize: "11px",
-      }}
-    >
-      A menor faixa, a média e a maior faixa consideram somente a categoria escolhida.
-    </div>
-
-    <div
-      style={{
-        marginTop: "12px",
-        padding: "12px",
-        borderRadius: "10px",
-        border: "1px solid #334155",
-        background: "#020617",
-        color: "#cbd5e1",
-        fontSize: "12px",
-        lineHeight: 1.5,
-      }}
-    >
-      <strong
-        style={{
-          color: "#67e8f9",
-        }}
-      >
-        💡 Análise do Paizinho:
-      </strong>{" "}
-
-      {erroConcorrencia
-        ? `⚠️ ${erroConcorrencia}`
-        : resultadoConcorrencia
-          ? resultadoConcorrencia.analise
-          : "Clique em ‘Paizinho, pesquisar a concorrência’. O PAIIA pesquisará Mercado Livre e Shopee e trará as faixas de preço para esta tela."}
-    </div>
-
+        
+    
     <div
       style={{
         marginTop: "12px",
@@ -7176,12 +6872,9 @@ const custoTotalVenda =
             .replace(/\s+/g, " ")
             .trim();
 
-          const url =
-            resultadoConcorrencia
-              ?.fontes?.[0]?.url ||
-            montarUrlPesquisaMercadoLivre(
-              termoManual
-            );
+          const url = montarUrlPesquisaMercadoLivre(
+  termoManual
+);
 
           window.open(
             url,
@@ -7217,12 +6910,9 @@ const custoTotalVenda =
             .replace(/\s+/g, " ")
             .trim();
 
-          const url =
-            resultadoConcorrencia
-              ?.fontes?.[1]?.url ||
-            montarUrlPesquisaShopee(
-              termoManual
-            );
+          const url = montarUrlPesquisaShopee(
+  termoManual
+);
 
           window.open(
             url,
@@ -7233,7 +6923,7 @@ const custoTotalVenda =
         style={{
           padding: "12px 16px",
           borderRadius: "10px",
-          border:
+        border:
             "1px solid #fb923c",
           background: "#431407",
           color: "#fed7aa",
@@ -7245,28 +6935,7 @@ const custoTotalVenda =
       </button>
     </div>
 
-    <div
-      style={{
-        marginTop: "10px",
-        color: "#94a3b8",
-        fontSize: "11px",
-        textAlign: "center",
-      }}
-    >
-      🔎 Pesquisa:{" "}
-      {resultadoConcorrencia?.termo ||
-        [
-          codigo || oem || "",
-          titulo ||
-            pecaEncontrada?.peca ||
-            "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim() ||
-        "aguardando peça"}
-    </div>
+    
   </div>
 
 

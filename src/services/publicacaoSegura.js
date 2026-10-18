@@ -281,6 +281,8 @@ export function montarCompatibilidadesPersistidas({ aplicacoes = [], compat = nu
     aplicacoes: (Array.isArray(aplicacoes) ? aplicacoes : []).map((a) => ({
       montadora: a?.montadora || "", modelo: a?.modelo || "", motor: a?.motor || "",
       anoInicio: a?.anoInicio ?? null, anoFim: a?.anoFim ?? null,
+      ...(a?.versao ? { versao: String(a.versao) } : {}),
+      ...(a?.modeloCatalogo?.id ? { modelo_catalogo: { id: String(a.modeloCatalogo.id), nome: String(a.modeloCatalogo.nome || "") } } : {}),
     })),
     veiculos,
     total: veiculos.length,

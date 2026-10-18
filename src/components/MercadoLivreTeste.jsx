@@ -11,6 +11,7 @@ import {
   descricaoAfirmaOriginal,
   montarDescricaoPadrao,
   situacaoCompatibilidade,
+  textoSoModelosSemDetalhes,
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO,
 } from "../services/compatibilidadeML";
@@ -74,6 +75,15 @@ import {
   separarSugestoesConcorrentes,
   identificarCodigos,
 } from "../services/inteligenciaBusca";
+import {
+  SINONIMOS_TIPO_PECA,
+  extrairProdutoPrincipal,
+  nucleoDoProduto,
+  identificarProdutoPrincipal,
+  decidirNomePeca,
+  ROTULO_ORIGEM_NOME,
+  ORIGENS_NOME_USUARIO,
+} from "../services/nomePecaFicha";
 
 function normalizarTexto(valor = "") {
   return String(valor || "")
@@ -326,224 +336,6 @@ function lerCategoriaDefinida(anuncio) {
 // A categoria do ML é decidida em services/categoriaML.js (09/10/2026):
 // o PAIIA nunca escolhe sozinho.
 // =====================================================
-const PALAVRAS_IGNORADAS_CATEGORIA = new Set([
-  "para", "com", "sem", "kit", "peca", "pecas", "original", "novo", "nova",
-  "oem", "marca", "jogo", "unidade", "carro", "carros", "veiculo", "veiculos",
-  "automotivo", "automotiva", "linha", "motor", "flex", "gasolina", "alcool",
-  "diesel", "valvulas", "valvula16", "torken", "kits", "jogos", "conjunto",
-  "conjuntos", "acompanha", "acompanham", "incluso", "inclusos", "inclui",
-]);
-
-// Mesma peça com outro nome no Mercado Livre (só equivalências certas).
-const SINONIMOS_TIPO_PECA = {
-  bico: ["injetor"],
-  injetor: ["bico"],
-};
-
-function radicalPalavra(p) {
-  if (p.length > 6 && p.endsWith("es")) return p.slice(0, -2);
-  if (p.length > 4 && p.endsWith("s")) return p.slice(0, -1);
-  return p;
-}
-
-function palavrasDaPeca(texto, ignorar) {
-  return normalizarTexto(texto)
-    .replace(/[^a-z0-9 ]+/g, " ")
-    .split(/\s+/)
-    .filter((p) => p.length >= 4 && !/\d/.test(p) && !PALAVRAS_IGNORADAS_CATEGORIA.has(p) && !ignorar.has(p))
-    .map(radicalPalavra);
-}
-
-// =====================================================
-// PRODUTO PRINCIPAL (é ele que define a categoria)
-// Itens que acompanham a peça (presilhas, parafusos, mangueira, filtro,
-// sensor, anel, conector...) e a palavra "KIT" nunca definem a categoria.
-// A posição no título é só auxílio: fontes superiores (Base, cadastro, nome
-// da peça) mandam. "e"/vírgula/parênteses não quebram nomes compostos.
-// =====================================================
-// Palavras que NÃO são a peça (marca, montadora, modelo, comercial): servem
-// só de contexto. Modelos/motores da aplicação confirmada entram também.
-const MARCAS_E_MONTADORAS_CONTEXTO = new Set([
-  "renault", "fiat", "vw", "volkswagen", "chevrolet", "gm", "ford", "honda", "toyota",
-  "hyundai", "kia", "nissan", "peugeot", "citroen", "mitsubishi", "jeep", "dodge", "ram",
-  "chrysler", "bmw", "audi", "mercedes", "benz", "volvo", "subaru", "suzuki", "jac",
-  "chery", "caoa", "land", "rover", "troller", "iveco", "scania", "mwm", "cummins",
-  "bosch", "magneti", "marelli", "delphi", "ngk", "denso", "mte", "mte-thomson", "torken",
-  "vdo", "siemens", "continental", "valeo", "sachs", "skf", "tecfil", "sabo", "nytron",
-  "gauss", "dayco", "gates", "cofap", "monroe", "nakata", "trw", "fras-le", "fraslle", "hella",
-  "original", "originais", "genuino", "genuina", "novo", "nova", "novos", "novas", "premium",
-  "promocao", "oferta", "importado", "importada", "nacional", "paralelo", "similar",
-  "qualidade", "garantia", "pronta", "entrega", "envio", "imediato", "frete", "gratis",
-]);
-const MODELOS_CONTEXTO = new Set([
-  "symbol", "clio", "sandero", "logan", "duster", "kangoo", "megane", "scenic", "fluence",
-  "captur", "kwid", "oroch", "master", "trafic", "gol", "voyage", "saveiro", "fox", "polo",
-  "golf", "jetta", "passat", "bora", "parati", "santana", "amarok", "up", "virtus", "nivus",
-  "palio", "uno", "siena", "strada", "punto", "linea", "doblo", "idea", "toro", "mobi",
-  "argo", "cronos", "ducato", "onix", "prisma", "cobalt", "spin", "corsa", "celta", "classic",
-  "agile", "montana", "astra", "vectra", "zafira", "meriva", "cruze", "s10", "trailblazer",
-  "captiva", "malibu", "tracker", "ka", "fiesta", "ecosport", "focus", "fusion", "ranger",
-  "courier", "civic", "fit", "city", "hrv", "crv", "corolla", "etios", "hilux", "yaris",
-  "hb20", "tucson", "ix35", "santa", "fe", "creta", "azera", "sonata", "elantra", "i30",
-  "sportage", "cerato", "picanto", "sorento", "march", "versa", "kicks", "sentra", "frontier",
-  "livina", "tiida", "206", "207", "208", "2008", "307", "308", "408", "partner", "c3", "c4",
-  "xsara", "picasso", "aircross", "berlingo", "jumper", "boxer", "l200", "pajero", "lancer",
-  "asx", "outlander", "renegade", "compass", "e36", "e46",
-]);
-const PALAVRAS_KIT = new Set(["kit", "kits", "jogo", "jogos", "conjunto", "conjuntos", "conj", "cj", "jg", "par", "pares", "unidade", "unidades", "un", "und", "unid", "pcs", "pecas", "peca", "x"]);
-const PALAVRAS_PULAR = new Set(["para", "p/", "pra"]);
-const CONECTORES_NOME = new Set(["de", "da", "do", "dos", "das", "d", "a"]);
-// Separadores fortes: depois deles vêm itens que acompanham.
-const SEPARADORES_FORTES = new Set(["+", "&", ";", "|", "com", "c/", "acompanha", "acompanham", "inclui", "incluso", "inclusos", "inclusa", "inclusas", "incluindo", "mais", "compativel", "-", "–"]);
-// Separadores fracos ("e", vírgula, parênteses): só separam quando o que vem
-// depois é claramente um item acompanhante — nomes compostos são preservados
-// (ex.: "Sensor de Pressão e Temperatura").
-const SEPARADORES_FRACOS = new Set(["e", ",", "(", ")"]);
-const ITENS_ACOMPANHANTES = new Set([
-  "presilha", "trava", "fixacao", "parafuso", "arruela", "conector", "anel", "aneis", "oring",
-  "o-ring", "borracha", "abracadeira", "junta", "graxa", "grampo", "vedacao", "retentor", "porca",
-  "mangueira", "filtro", "pre-filtro", "prefiltro", "chicote", "plug", "suporte", "coxim",
-  "sensor", "pressostato", "boia", "tampa", "cinta", "bucha", "pino", "mola", "adesivo", "manual",
-]);
-// Substantivos que costumam ser o NOME da peça (para achar onde ela começa
-// no título quando há marca/montadora/código antes).
-const NUCLEOS_DE_PECA = new Set([
-  "bico", "injetor", "mangueira", "bomba", "sensor", "sonda", "bobina", "pressostato", "valvula",
-  "filtro", "cabo", "vela", "junta", "correia", "polia", "tensor", "rolamento", "amortecedor",
-  "pastilha", "disco", "tambor", "lona", "cilindro", "pistao", "anel", "atuador", "corpo",
-  "regulador", "modulo", "rele", "chicote", "interruptor", "alternador", "radiador",
-  "reservatorio", "tampa", "termostato", "eletroventilador", "ventoinha", "flauta", "galeria",
-  "coxim", "bucha", "bieleta", "terminal", "pivo", "homocinetica", "tulipa", "trambulador",
-  "embreagem", "plato", "retentor", "tubo", "cano", "mecanismo", "palheta", "moldura", "porca",
-  "presilha", "trava", "maquina", "fechadura", "farol", "lanterna", "retrovisor", "caixa",
-  "coletor", "catalisador", "silencioso", "cabecote", "bronzina", "biela", "comando", "tucho",
-  "engrenagem", "corrente", "carter", "bujao", "solenoide", "medidor", "boia", "motor",
-  "partida", "arranque", "borboleta", "unidade", "kit-reparo", "reparo", "acionador",
-  "servo", "cubo", "mancal", "eixo", "semi-eixo", "barra", "bandeja", "balanca", "mola",
-  "batente", "coifa", "cruzeta", "diferencial", "volante", "chave", "ignicao", "tanque",
-  "trocador", "intercooler", "turbina", "turbo", "compressor", "condensador", "evaporador",
-  "ventilador", "resistencia", "lampada", "vareta", "pedal", "alavanca", "suporte",
-]);
-
-function normalizarPalavra(p) {
-  return normalizarTexto(p).replace(/[^a-z0-9/+&;|,()\-–]/g, "");
-}
-
-function ehContextoDoTitulo(n, contexto) {
-  if (!n) return true;
-  if (/\d/.test(n)) return true; // código, OEM, motor (1.6, 16v), anos, quantidade
-  if (/^(?:flex|gasolina|alcool|etanol|diesel|gnv|turbo16v|\d*v|cv|hp|valvulas?)$/.test(n)) return true;
-  return MARCAS_E_MONTADORAS_CONTEXTO.has(n) || MODELOS_CONTEXTO.has(n) || contexto.has(n);
-}
-
-function singularDaPeca(texto) {
-  const palavras = texto.split(" ");
-  const primeira = normalizarTexto(palavras[0] || "");
-  if (!/s$/.test(primeira) || NUCLEOS_DE_PECA.has(primeira)) return texto;
-  let antesDoDe = true;
-  return palavras.map((w) => {
-    const n = normalizarTexto(w);
-    if (CONECTORES_NOME.has(n)) { antesDoDe = false; return w; }
-    if (!antesDoDe || w.length <= 3) return w;
-    if (/(?:or|ar|er)es$/i.test(w)) return w.slice(0, -2);
-    if (/[õo]es$/i.test(w)) return w.slice(0, -3) + "ão";
-    if (/[^s]s$/i.test(w)) return w.slice(0, -1);
-    return w;
-  }).join(" ");
-}
-
-// Separa, no título, marca/código/montadora/modelo/motor/anos/quantidade/
-// Kit e itens acompanhantes; depois identifica a peça principal.
-function extrairProdutoPrincipal(texto, contexto = new Set()) {
-  const t = limparCampoTexto(texto)
-    .replace(/\bc\/\s*/gi, " c/ ")
-    .replace(/\bp\/\s*/gi, " p/ ")
-    .replace(/([+&;|,()])/g, " $1 ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!t) return { principal: "", acompanha: [] };
-  const tokens = t.split(" ").map((w) => ({ w, n: normalizarPalavra(w) }));
-  const ehNucleo = (n) => NUCLEOS_DE_PECA.has(n) || NUCLEOS_DE_PECA.has(radicalPalavra(n)) ||
-    NUCLEOS_DE_PECA.has(n.replace(/es$/, "")) || NUCLEOS_DE_PECA.has(n.replace(/oes$/, "ao"));
-  const pulavel = (n) => PALAVRAS_KIT.has(n) || PALAVRAS_PULAR.has(n) || CONECTORES_NOME.has(n) ||
-    ehContextoDoTitulo(n, contexto) || SEPARADORES_FRACOS.has(n);
-  // Início: 1º substantivo de peça antes de um separador forte; sem ele,
-  // a 1ª palavra que não é marca/modelo/código/Kit (só como auxílio).
-  let inicio = -1;
-  for (let i = 0; i < tokens.length; i++) {
-    if (SEPARADORES_FORTES.has(tokens[i].n)) break;
-    if (ehNucleo(tokens[i].n)) { inicio = i; break; }
-  }
-  if (inicio < 0) {
-    inicio = tokens.findIndex((x) => !pulavel(x.n) && !SEPARADORES_FORTES.has(x.n));
-  }
-  if (inicio < 0) return { principal: "", acompanha: [] };
-  const nome = [];
-  let quebraFraca = false;
-  let i = inicio;
-  for (; i < tokens.length; i++) {
-    const { w, n } = tokens[i];
-    if (SEPARADORES_FORTES.has(n)) break;
-    if (PALAVRAS_PULAR.has(n)) continue;
-    if (SEPARADORES_FRACOS.has(n)) {
-      const prox = tokens.slice(i + 1).find((x) => !SEPARADORES_FRACOS.has(x.n));
-      if (!prox || n === "(" || n === ")" || ITENS_ACOMPANHANTES.has(prox.n) || ITENS_ACOMPANHANTES.has(radicalPalavra(prox.n)) || ehContextoDoTitulo(prox.n, contexto)) {
-        quebraFraca = !!prox && (ITENS_ACOMPANHANTES.has(prox.n) || ITENS_ACOMPANHANTES.has(radicalPalavra(prox.n)));
-        break;
-      }
-      if (n === "e") nome.push(w);
-      continue;
-    }
-    if (i > inicio && (ehContextoDoTitulo(n, contexto) || PALAVRAS_KIT.has(n))) break;
-    nome.push(w);
-  }
-  while (nome.length && (CONECTORES_NOME.has(normalizarTexto(nome[nome.length - 1])) || normalizarTexto(nome[nome.length - 1]) === "e")) nome.pop();
-  // Acompanhantes: o que vem depois do separador, sem marca/modelo/código.
-  const acompanha = [];
-  let atual = [];
-  const fechar = () => {
-    const txt = atual.join(" ").trim();
-    if (txt && palavrasDaPeca(txt, new Set()).length) acompanha.push(txt);
-    atual = [];
-  };
-  let depois = quebraFraca;
-  for (let j = i; j < tokens.length; j++) {
-    const { w, n } = tokens[j];
-    if (SEPARADORES_FORTES.has(n)) { depois = true; fechar(); continue; }
-    if (!depois) continue;
-    if (SEPARADORES_FRACOS.has(n) || ehContextoDoTitulo(n, contexto) || PALAVRAS_KIT.has(n) || PALAVRAS_PULAR.has(n)) { fechar(); continue; }
-    if (ITENS_ACOMPANHANTES.has(n) || ITENS_ACOMPANHANTES.has(radicalPalavra(n))) fechar();
-    atual.push(w);
-  }
-  fechar();
-  return { principal: singularDaPeca(nome.join(" ")), acompanha };
-}
-
-function nucleoDoProduto(texto, ignorar = new Set()) {
-  return palavrasDaPeca(extrairProdutoPrincipal(texto, ignorar).principal, ignorar)[0] || "";
-}
-
-// Ordem de prioridade (só dados reais): 1) Base PAIIA/catálogo, 2) cadastro
-// confirmado, 3) nome da peça no anúncio, 4) título (marca, aplicação,
-// código e inclusos separados), 5) descrição (apoio). Uma fonte superior
-// vale mais que a posição das palavras no título.
-function identificarProdutoPrincipal({ anuncio, nomePeca, nomePecaBase, titulo, descricao, contexto = new Set() }) {
-  const peca = anuncio?.pecaEncontrada || {};
-  const editado = limparCampoTexto(nomePeca) && limparCampoTexto(nomePeca) !== limparCampoTexto(nomePecaBase);
-  const fontes = [
-    [editado ? "" : peca.peca, "Base PAIIA"],
-    [editado ? "" : peca.familia, "Base PAIIA (família)"],
-    [anuncio?.produtoPrincipal || anuncio?.nomePeca || anuncio?.produto?.nome, "cadastro do produto"],
-    [nomePeca, "nome da peça na Conferência"],
-    [titulo, "título do anúncio"],
-    [String(descricao || "").split(/[\n.]/)[0], "descrição (apoio)"],
-  ];
-  for (const [texto, fonte] of fontes) {
-    const r = extrairProdutoPrincipal(texto, contexto);
-    if (r.principal) return { ...r, fonte };
-  }
-  return { principal: "", acompanha: [], fonte: "" };
-}
 
 function formatarCompatibilidadesLegiveis(
   aplicacoes = [],
@@ -2232,7 +2024,32 @@ const aplicacoesConfirmadas = useMemo(
 const nomePecaBase = limparCampoTexto(
   anuncio?.pecaEncontrada?.peca || anuncio?.pecaEncontrada?.familia || ""
 );
-const [nomePeca, setNomePeca] = useState(() => inicial("nomePeca", nomePecaBase));
+// NOME DA PEÇA (18/10/2026): preenchido sozinho só com fonte confiável
+// (base/catálogo, cadastro, ou o tipo de peça reconhecido no título, sem
+// veículo/anos/motor/código). Ambíguo → sugestões a confirmar. O nome
+// digitado/confirmado pelo usuário (nomePecaOrigem) nunca é sobrescrito.
+// Abrir a ficha não grava nada: só uma edição real grava (com a origem).
+const [decisaoNomeInicial] = useState(() => {
+  const contexto = new Set(
+    aplicacoesConfirmadas.flatMap((a) => [a.montadora, a.modelo, a.motor, a.versao])
+      .filter(Boolean).flatMap((t) => normalizarTexto(t).split(/\s+/))
+  );
+  return decidirNomePeca({
+    salvo: inicial("nomePeca", nomePecaBase),
+    origemSalva: fichaSalva?.campos?.nomePecaOrigem || "",
+    base: nomePecaBase,
+    cadastro: limparCampoTexto(anuncio?.produtoPrincipal || anuncio?.produto?.nome || ""),
+    titulo: tituloAnuncio,
+    descricao,
+    contexto,
+  });
+});
+const [nomePeca, setNomePeca] = useState(() => decisaoNomeInicial.nome);
+const [nomePecaOrigem, setNomePecaOrigem] = useState(() => decisaoNomeInicial.origem || "");
+function editarNomePeca(valor, origem = "manual") {
+  setNomePeca(valor);
+  setNomePecaOrigem(limparCampoTexto(valor) ? origem : "");
+}
 // Dados técnicos ANTIGOS da peça (16/10/2026: os 4 campos manuais saíram da
 // tela). Os valores já registrados em fichas antigas são PRESERVADOS: seguem
 // gravados na ficha, aparecem só para leitura e alimentam a Inteligência de
@@ -3756,6 +3573,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     tipoAnuncio: modalidade,
     freteML: registroFreteConf,
     nomePeca,
+    nomePecaOrigem,
     // Sem confirmação, a categoria que veio da ficha continua guardada como
     // HERDADA (não confirmada) — nada se perde, e ela segue sem valer sozinha.
     categoriaML: categoriaId
@@ -5366,12 +5184,29 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
         </p>
 
         <div style={gradeDois}>
-          <Campo
-            label="Nome da peça"
-            value={nomePeca}
-            onChange={setNomePeca}
-            placeholder="Ex.: Parafuso de aço, sensor, bico injetor..."
-          />
+          <div data-paiia-nome-peca-bloco data-paiia-nome-peca-origem={nomePecaOrigem || ""}>
+            <Campo
+              label="Nome da peça"
+              value={nomePeca}
+              onChange={(v) => editarNomePeca(v, "manual")}
+              placeholder="Ex.: Parafuso de aço, sensor, bico injetor..."
+            />
+            {nomePeca && nomePecaOrigem && ROTULO_ORIGEM_NOME[nomePecaOrigem] && (
+              <div style={{ color: "#94a3b8", fontSize: "12px", marginTop: "2px" }}>Origem: {ROTULO_ORIGEM_NOME[nomePecaOrigem]}</div>
+            )}
+            {decisaoNomeInicial.estado === "confirmar" && !ORIGENS_NOME_USUARIO.has(nomePecaOrigem) && (
+              <div data-paiia-nome-peca-confirmar style={{ marginTop: "6px", padding: "6px 8px", border: "1px solid #a16207", borderRadius: "6px", color: "#fde68a", fontSize: "13px" }}>
+                ⚠ {decisaoNomeInicial.motivo}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+                  {decisaoNomeInicial.sugestoes.map((sg) => (
+                    <button key={sg.fonte + sg.nome} type="button" data-paiia-nome-peca-sugestao={sg.nome} onClick={() => editarNomePeca(sg.nome, "confirmado")} style={{ padding: "3px 8px", borderRadius: "6px", border: "1px solid #64748b", background: "#1e293b", color: "#e2e8f0", cursor: "pointer" }}>
+                      Usar “{sg.nome}” ({sg.fonte})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <label style={labelStyle}>
             Código / OEM
             <div data-paiia-codigo-oem style={{ ...campo, display: "grid", gap: "4px", color: "#e2e8f0" }}>
@@ -5397,7 +5232,9 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
         <p style={{ ...textoAuxiliar, marginTop: "6px" }}>
           {nomePecaBase
             ? "Nome vindo da base/catálogo do PAIIA. Corrija se necessário."
-            : "A base não informou o nome da peça. Informe para usar na identificação."}{" "}
+            : nomePeca
+              ? "Corrija se necessário: o nome que você digitar ou confirmar é mantido."
+              : "Nenhuma fonte confiável informou o nome da peça. Informe para usar na identificação."}{" "}
           O mesmo código escrito com ou sem espaços, pontos ou hífens aparece uma vez só.
         </p>
 
@@ -6710,7 +6547,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     )}
     {!aplicacoesConfirmadas.length && (
       <div data-paiia-sem-aplicacao style={{ marginTop: "8px", padding: "10px", borderRadius: "8px", border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: "12px" }}>
-        <div style={{ fontWeight: "bold" }}>⚠ {TEXTO_SEM_APLICACAO}</div>
+        <div data-paiia-compat-so-modelos={modelosSemDetalhes.length ? "sim" : "nao"} style={{ fontWeight: "bold" }}>⚠ {modelosSemDetalhes.length ? textoSoModelosSemDetalhes(modelosSemDetalhes) : TEXTO_SEM_APLICACAO}</div>
         {situacaoCompatibilidade({ aplicacoes: aplicacoesConfirmadas, modelosSemDetalhes, descricao }).soNaDescricao && (
           <div data-paiia-veiculos-so-na-descricao style={{ marginTop: "6px" }}>{TEXTO_VEICULOS_SO_NA_DESCRICAO}</div>
         )}

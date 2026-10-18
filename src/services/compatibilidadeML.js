@@ -30,6 +30,8 @@ export function lerAplicacoesAprovadas({ aplicacoes, texto } = {}) {
         motor: limpar([a?.motor, a?.versao].filter(Boolean).join(" ")),
         anoInicio: ano(a?.anoInicio ?? a?.ano_inicio),
         anoFim: ano(a?.anoFim ?? a?.ano_fim),
+        // Versão aprovada separada (18/10/2026): conferida no catálogo.
+        ...(limpar(a?.versao) ? { versao: limpar(a.versao) } : {}),
       });
     }
     return lista;
@@ -68,6 +70,60 @@ export function lerAplicacoesAprovadas({ aplicacoes, texto } = {}) {
     }
   }
   return lista.filter((a) => a.montadora && a.modelo && a.modelo !== "Modelo não informado");
+}
+
+/**
+ * Aplicações da ficha para a Publicação (18/10/2026): a lista ESTRUTURADA
+ * aprovada na Conferência (aplicacoesDetalhadas + modelosSemDetalhes); o
+ * texto só para fichas antigas, sem a lista.
+ */
+export function aplicacoesDaFicha(anuncio = {}) {
+  const det = Array.isArray(anuncio?.aplicacoesDetalhadas) ? anuncio.aplicacoesDetalhadas : [];
+  const mod = Array.isArray(anuncio?.modelosSemDetalhes) ? anuncio.modelosSemDetalhes : [];
+  if (det.length || mod.length) {
+    return { origem: "lista_aprovada", lista: lerAplicacoesAprovadas({ aplicacoes: [...det, ...mod.map((m) => ({ montadora: m?.montadora, modelo: m?.modelo }))] }) };
+  }
+  if (Array.isArray(anuncio?.aplicacoes) && anuncio.aplicacoes.length) return { origem: "aplicacoes", lista: lerAplicacoesAprovadas({ aplicacoes: anuncio.aplicacoes }) };
+  return { origem: "texto", lista: lerAplicacoesAprovadas({ texto: anuncio?.compatibilidades }) };
+}
+
+// ---------- Correspondência de MODELO com o catálogo do ML (18/10/2026) ----------
+// O nome digitado (ex.: "Clio II", geração) pode não existir no catálogo do
+// ML. O PAIIA NUNCA associa sozinho: mostra os modelos REAIS da montadora no
+// catálogo e o usuário confirma. Depois, anos, motor e versão continuam
+// conferidos veículo a veículo (nada é ampliado).
+
+/** Chave da correspondência: montadora + modelo digitado (sem acento/caixa). */
+export function chaveModeloML(montadora, modelo) {
+  return `${semAcento(montadora)}|${semAcento(modelo)}`;
+}
+
+const MARCAS_GERACAO = /^(?:i{1,3}|iv|v|vi|[2-9]|g[1-9]|mk[1-9]|mark[1-9])$/;
+/** Modelos do catálogo que PODEM corresponder (só sugestão; nunca escolhidos sozinhos). */
+export function candidatosModeloCatalogo(modeloDigitado, modelosMarca = []) {
+  const palavras = semAcento(modeloDigitado).split(/\s+/).filter(Boolean);
+  while (palavras.length > 1 && MARCAS_GERACAO.test(palavras[palavras.length - 1])) palavras.pop();
+  while (palavras.length > 1 && /^(?:novo|nova|new)$/.test(palavras[0])) palavras.shift();
+  const base = palavras.join(" ");
+  const primeira = palavras[0] || "";
+  const lista = (Array.isArray(modelosMarca) ? modelosMarca : []).filter((m) => m && m.id !== undefined && limpar(m.name));
+  const nota = (m) => {
+    const n = semAcento(m.name);
+    if (n === base) return 3;
+    if (n.startsWith(base + " ") || base.startsWith(n + " ")) return 2;
+    if (primeira && n.split(" ")[0] === primeira) return 1;
+    return 0;
+  };
+  return lista.map((m) => ({ id: String(m.id), nome: limpar(m.name), nota: nota(m) })).filter((m) => m.nota > 0).sort((x, y) => y.nota - x.nota || x.nome.localeCompare(y.nome, "pt-BR")).map(({ id, nome }) => ({ id, nome }));
+}
+
+/** Aplica as correspondências confirmadas (por montadora + modelo) às aplicações. */
+export function aplicarCorrespondencias(aplicacoes = [], correspondencias = {}) {
+  const mapa = correspondencias && typeof correspondencias === "object" ? correspondencias : {};
+  return (Array.isArray(aplicacoes) ? aplicacoes : []).map((a) => {
+    const c = mapa[chaveModeloML(a?.montadora, a?.modelo)];
+    return c && c.modelo_id ? { ...a, modeloCatalogo: { id: String(c.modelo_id), nome: limpar(c.modelo_nome) } } : a;
+  });
 }
 
 /**
@@ -177,6 +233,12 @@ export function avaliarVeiculo(produto, aplicacao) {
       return { ok: false, motivo: outrasValvulas ? `versão não é ${valv}v` : `versão do catálogo não confirma ${valv}v${extra}` };
     }
   }
+  // Versão aprovada (quando informada): todas as palavras dela precisam
+  // aparecer na versão do veículo no catálogo.
+  if (limpar(aplicacao.versao)) {
+    const faltam = semAcento(aplicacao.versao).split(/[\s/-]+/).filter((w) => w.length >= 2 && !new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(versao));
+    if (faltam.length) return { ok: false, motivo: `versão ${aplicacao.versao} não confirmada no catálogo` };
+  }
   return { ok: true, motivo: "" };
 }
 
@@ -212,8 +274,22 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
     // 2) modelo exato
     const rm = await consultar(`/catalog_domains/${DOMINIO_CARROS}/attributes/MODEL/top_values`, "POST", { known_attributes: [{ id: "BRAND", value_id: String(marca.id) }] });
     if (!rm?.ok) return { erro: rm?.erro || "catálogo de modelos indisponível" };
-    const modelo = (Array.isArray(rm.dados) ? rm.dados : []).find((m) => semAcento(m?.name) === semAcento(a.modelo));
-    if (!modelo) { semCatalogo.push({ aplicacao: rotulo(a), motivo: `modelo ${a.modelo} não encontrado no catálogo` }); continue; }
+    const modelosMarca = Array.isArray(rm.dados) ? rm.dados : [];
+    let modelo = modelosMarca.find((m) => semAcento(m?.name) === semAcento(a.modelo));
+    let viaCorrespondencia = false;
+    if (!modelo && a.modeloCatalogo?.id) {
+      // Correspondência CONFIRMADA pelo usuário: precisa existir no catálogo agora.
+      modelo = modelosMarca.find((m) => String(m?.id) === String(a.modeloCatalogo.id));
+      viaCorrespondencia = Boolean(modelo);
+      if (!modelo) {
+        semCatalogo.push({ aplicacao: rotulo(a), chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, motivo: `o modelo confirmado (${a.modeloCatalogo.nome || a.modeloCatalogo.id}) não existe mais no catálogo da ${marca.name}`, candidatos: candidatosModeloCatalogo(a.modelo, modelosMarca), modelosMarca: modelosMarca.map((m) => ({ id: String(m.id), nome: limpar(m.name) })) });
+        continue;
+      }
+    }
+    if (!modelo) {
+      semCatalogo.push({ aplicacao: rotulo(a), chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, motivo: `modelo ${a.modelo} não encontrado no catálogo`, candidatos: candidatosModeloCatalogo(a.modelo, modelosMarca), modelosMarca: modelosMarca.map((m) => ({ id: String(m.id), nome: limpar(m.name) })), aConfirmar: true });
+      continue;
+    }
     // 3) veículos (versões/anos) desse modelo
     const produtos = [];
     for (let offset = 0; offset < 2000; offset += 50) {
@@ -240,12 +316,12 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
       const av = avaliarVeiculo(p, a);
       if (av.ok) {
         algum = true;
-        if (!veiculos.has(p.id)) veiculos.set(p.id, { id: p.id, nome: nomeVeiculo(p), aplicacao: rotulo(a) });
+        if (!veiculos.has(p.id)) veiculos.set(p.id, { id: p.id, nome: nomeVeiculo(p), aplicacao: rotulo(a), ...(viaCorrespondencia ? { modeloCatalogo: limpar(modelo.name) } : {}) });
       } else if (!veiculos.has(p.id) && !descartados.some((d) => d.id === p.id)) {
         descartados.push({ id: p.id, nome: nomeVeiculo(p), motivo: av.motivo, aplicacao: rotulo(a) });
       }
     }
-    if (!algum) semCatalogo.push({ aplicacao: rotulo(a), motivo: "nenhum veículo do catálogo confirma todos os dados aprovados" });
+    if (!algum) semCatalogo.push({ aplicacao: rotulo(a), motivo: `nenhum veículo do catálogo${viaCorrespondencia ? ` (modelo ${limpar(modelo.name)})` : ""} confirma todos os dados aprovados (período, motor${a.versao ? ", versão" : ""})` });
   }
   // Um veículo aceito por uma aplicação não aparece como descartado por outra.
   const aceitos = [...veiculos.values()];
@@ -435,6 +511,16 @@ export function descricaoCitaVeiculos(texto) {
  * soNaDescricao: além disso, a descrição cita veículos.
  * bloqueia: sem aplicação e SEM a confirmação explícita "publicar sem compatibilidade".
  */
+/**
+ * Só modelos registrados SEM motor/ano (17/10/2026, caso 510959620): estão
+ * GRAVADOS na ficha, mas o catálogo do ML não vincula veículo sem esses
+ * dados. Texto distinto de "nada cadastrado" (não é falha de gravação).
+ */
+export function textoSoModelosSemDetalhes(modelos = []) {
+  const lista = (Array.isArray(modelos) ? modelos : []).map((m) => [m?.montadora, m?.modelo].filter(Boolean).join(" ")).filter(Boolean);
+  return `Modelos registrados e gravados na ficha: ${lista.join(", ") || "—"} (sem motor e sem ano). Sem esses dados o catálogo do Mercado Livre não vincula veículos: o anúncio sairia sem compatibilidade no ML. Para vincular, complete motor ou ano no bloco ⑨; se for intencional, autorize publicar sem compatibilidade.`;
+}
+
 export function situacaoCompatibilidade({ aplicacoes = [], modelosSemDetalhes = [], descricao = "", semCompatibilidadeConfirmada = false } = {}) {
   const semAplicacao = !aplicacoes.length && !modelosSemDetalhes.length;
   const soNaDescricao = semAplicacao && descricaoCitaVeiculos(descricao);
