@@ -75,6 +75,7 @@ import {
   separarSugestoesConcorrentes,
   identificarCodigos,
 } from "../services/inteligenciaBusca";
+import { extrairAplicacoesDaDescricao, assinaturaDescricao } from "../services/aplicacoesDescricao";
 import {
   SINONIMOS_TIPO_PECA,
   extrairProdutoPrincipal,
@@ -123,6 +124,8 @@ function normalizarAplicacao(item, origem) {
     anoFim: limparCampoTexto(item.ano_fim || item.anoFinal || item.ano_ate || item.anoAte || item.anoFim),
     versao: limparCampoTexto(item.versao || item.versao_motor || item.versaoMotor),
     origem,
+    // Aplicação lida da descrição do anúncio manual (19/10/2026): só rótulo.
+    ...(item.fonte === "descricao" ? { fonte: "descricao" } : {}),
   };
   if (!a.montadora && !a.modelo) return null;
   return a;
@@ -1964,7 +1967,32 @@ const [legadoAplicacoes] = useState(() => {
   const lista = Array.isArray(salvas) ? salvas.map((a) => normalizarAplicacao(a, "manual")).filter(Boolean) : [];
   return separarAplicacoesLegadas(lista);
 });
-const [aplicacoesManuais, setAplicacoesManuais] = useState(() => legadoAplicacoes.detalhadas);
+// ANÚNCIO MANUAL (19/10/2026): sem peça da base PAIIA/catálogo PDF, a
+// DESCRIÇÃO escrita pelo usuário é a fonte autorizada das aplicações. Elas
+// entram como aplicações do usuário (origem "manual", fonte "descrição"),
+// exatamente como escritas — nada é completado nem ampliado. Só na primeira
+// leitura desta descrição: o que o usuário editar/remover depois vale.
+// Anúncio da base PDF: continua só com as aplicações da base (sem misturar).
+const origemManualDaFicha =
+  !anuncio?.pecaEncontrada &&
+  !(Array.isArray(anuncio?.aplicacoes) && anuncio.aplicacoes.length);
+const [leituraDescricao] = useState(() => {
+  if (!origemManualDaFicha) return { aplicar: false, detalhadas: [], modelos: [], naoLidas: [], assinatura: "" };
+  const assinatura = assinaturaDescricao(descricao);
+  const lida = extrairAplicacoesDaDescricao(descricao);
+  const jaLida = String(fichaSalva?.campos?.aplicacoesDescricaoLidas || "") === assinatura;
+  const temSalvas = legadoAplicacoes.detalhadas.length > 0 || legadoAplicacoes.modelos.length > 0 ||
+    (Array.isArray(fichaSalva?.campos?.modelosSemDetalhes) && fichaSalva.campos.modelosSemDetalhes.length > 0);
+  return { ...lida, assinatura, aplicar: Boolean(assinatura) && !jaLida && !temSalvas };
+});
+const [aplicacoesDescricaoLidas] = useState(() =>
+  leituraDescricao.aplicar ? leituraDescricao.assinatura : String(fichaSalva?.campos?.aplicacoesDescricaoLidas || "")
+);
+const [aplicacoesManuais, setAplicacoesManuais] = useState(() =>
+  leituraDescricao.aplicar
+    ? leituraDescricao.detalhadas.map((a) => ({ ...normalizarAplicacao(a, "manual"), fonte: "descricao" }))
+    : legadoAplicacoes.detalhadas
+);
 // Aplicações vindas da base que o usuário removeu/editou NESTE anúncio.
 const [aplicacoesBaseExcluidas, setAplicacoesBaseExcluidas] = useState(() => inicial("aplicacoesBaseExcluidas", []) || []);
 const [novosModelos, setNovosModelos] = useState({ montadora: "", modelos: "" });
@@ -2005,6 +2033,7 @@ const [modelosSemDetalhes, setModelosSemDetalhes] = useState(() =>
   juntarModelos(
     inicial("modelosSemDetalhes", []) || [],
     legadoAplicacoes.modelos,
+    leituraDescricao.aplicar ? leituraDescricao.modelos : [],
     aplicacoesBaseSeparadas.modelos.filter((m) => !aplicacoesBaseExcluidas.includes(chaveModeloBase(m)))
   )
 );
@@ -3574,6 +3603,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     freteML: registroFreteConf,
     nomePeca,
     nomePecaOrigem,
+    aplicacoesDescricaoLidas,
     // Sem confirmação, a categoria que veio da ficha continua guardada como
     // HERDADA (não confirmada) — nada se perde, e ela segue sem valer sozinha.
     categoriaML: categoriaId
@@ -6528,13 +6558,23 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
   <div style={{ color: "#e2e8f0", fontWeight: "bold", fontSize: "13px", margin: "4px 0 6px" }}>
     🔧 Aplicações detalhadas ({aplicacoesConfirmadas.length})
   </div>
+  {origemManualDaFicha && (
+    <div data-paiia-aplicacoes-descricao style={{ ...textoAuxiliar, marginBottom: "6px" }}>
+      Anúncio manual: as aplicações escritas na descrição são usadas como foram informadas (sem nova pesquisa). No Mercado Livre entram só os veículos do catálogo com o mesmo modelo, motor, versão e anos.
+      {leituraDescricao.naoLidas.length > 0 && (
+        <div data-paiia-descricao-nao-lida style={{ color: "#fde68a", marginTop: "4px" }}>
+          ⚠ Trecho(s) da descrição que o PAIIA não conseguiu ler com segurança (nada foi inventado; cadastre abaixo se precisar): {leituraDescricao.naoLidas.map((x) => `“${x.linha}” (${x.motivo})`).join("; ")}
+        </div>
+      )}
+    </div>
+  )}
   <div data-paiia-lista-aplicacoes style={{ display: "grid", gap: "6px", marginBottom: "12px" }}>
     {aplicacoesConfirmadas.length ? (
       aplicacoesConfirmadas.map((a, i) => (
         <div key={i} data-paiia-aplicacao={textoAplicacao(a)} style={linhaAplicacao}>
           <span>{textoAplicacao(a)}</span>
           <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <span style={seloOrigemAplicacao(a.origem)}>{a.origem === "manual" ? "manual" : "base"}</span>
+            <span style={seloOrigemAplicacao(a.origem)} data-paiia-origem-aplicacao={a.fonte === "descricao" ? "descricao" : a.origem}>{a.origem === "manual" ? (a.fonte === "descricao" ? "da descrição" : "manual") : "base"}</span>
             <button type="button" data-paiia-editar-aplicacao onClick={() => editarAplicacao(a)} style={botaoMini}>Editar</button>
             <button type="button" data-paiia-remover-aplicacao onClick={() => removerAplicacao(a)} style={botaoMini}>Remover</button>
           </span>

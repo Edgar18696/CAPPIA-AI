@@ -134,17 +134,16 @@ test("C1) Publicação usa a LISTA APROVADA da Conferência (não reconverte o t
   assert.match(rev, /aplicacoesDaFicha\(anuncio\)\.lista/);
 });
 
-test("C2) Clio II NÃO é associado a Clio sozinho: fica pendente, com sugestões e a lista REAL de modelos", async () => {
+test("C2) (regra de 19/10) Clio II → Clio AUTOMÁTICO quando é a única correspondência segura; só 2009–2016 1.6 16V", async () => {
   const { consultar } = catalogo();
   const sep = separarAplicacoesParaML(aplicacoesDaFicha(FICHA_7701).lista);
   const r = await resolverCompatibilidades(sep.detalhadas, consultar);
-  assert.equal(r.veiculos.length, 0);
-  assert.equal(r.semCatalogo.length, 1);
-  const s = r.semCatalogo[0];
-  assert.equal(s.aConfirmar, true);
-  assert.equal(s.chave, "renault|clio ii");
-  assert.deepEqual(s.candidatos.map((c) => c.nome), ["Clio", "Clio Sedan"]);
-  assert.deepEqual(s.modelosMarca.map((c) => c.nome), ["Clio", "Clio Sedan", "Sandero", "Logan"]);
+  assert.deepEqual(r.veiculos.map((v) => v.id).sort(), ["MLB1001", "MLB1002"]);
+  assert.ok(r.veiculos.every((v) => v.correspondencia === "automatica" && v.modeloCatalogo === "Clio"));
+  assert.deepEqual(r.correspondencias.map((c) => [c.modeloDigitado, c.modeloCatalogo, c.tipo]), [["Clio II", "Clio", "automatica"]]);
+  assert.equal(r.semCatalogo.length, 0);
+  // Clio Sedan (outro modelo) não entra
+  assert.ok(!r.veiculos.some((v) => v.id === "MLB2001"));
 });
 
 test("C3) correspondência CONFIRMADA: só veículos do período, motor e válvulas aprovados", async () => {

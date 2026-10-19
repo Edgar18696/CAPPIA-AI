@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "../supabase";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
+import CorrecaoCompatMLB from "./CorrecaoCompatMLB";
 import { registroDaFichaOuPublicacao, conferirIntegracao, precisaConferir, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
 import { salvarRegistroIntegracaoBling, pendenciaPublicacao } from "../services/anuncioPublicacaoService";
 import { lerSituacaoMLBAtual } from "../services/situacaoMLBAtual";
@@ -188,6 +189,8 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
           Esta ficha já tem MLB: o PAIIA não publica de novo e não cria outro produto no Bling.
         </p>
       </section>
+
+      {mlbFicha && contaFicha && !situacaoML.excluido && <CorrecaoCompatMLB ficha={ficha} mlb={mlbFicha} conta={contaFicha} />}
 
       {registro && (
         <PainelIntegracaoBling registro={registro} verificando={verificando} onVerificar={() => verificar(true)} />

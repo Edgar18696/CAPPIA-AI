@@ -117,6 +117,27 @@ export function candidatosModeloCatalogo(modeloDigitado, modelosMarca = []) {
   return lista.map((m) => ({ id: String(m.id), nome: limpar(m.name), nota: nota(m) })).filter((m) => m.nota > 0).sort((x, y) => y.nota - x.nota || x.nome.localeCompare(y.nome, "pt-BR")).map(({ id, nome }) => ({ id, nome }));
 }
 
+/**
+ * Correspondência AUTOMÁTICA (19/10/2026, regra autorizada pela usuária):
+ * só quando é ÚNICA e SEGURA — depois de tirar a geração ("II", "G5", "MK4")
+ * ou "Novo", sobra um nome que é IGUAL a exatamente UM modelo do catálogo
+ * (ex.: "Clio II" → "Clio"). Mais de um candidato com nome igual, ou só
+ * nomes parecidos ("Clio Hatch" × "Clio Sedan"): ambíguo, nada é escolhido.
+ */
+export function correspondenciaAutomatica(modeloDigitado, modelosMarca = []) {
+  const palavras = semAcento(modeloDigitado).split(/\s+/).filter(Boolean);
+  const original = palavras.join(" ");
+  while (palavras.length > 1 && MARCAS_GERACAO.test(palavras[palavras.length - 1])) palavras.pop();
+  while (palavras.length > 1 && /^(?:novo|nova|new)$/.test(palavras[0])) palavras.shift();
+  const base = palavras.join(" ");
+  const lista = (Array.isArray(modelosMarca) ? modelosMarca : []).filter((m) => m && m.id !== undefined && limpar(m.name));
+  if (base === original) return { modelo: null, motivo: "" };
+  const iguais = lista.filter((m) => semAcento(m.name) === base);
+  if (iguais.length === 1) return { modelo: iguais[0], motivo: `correspondência automática: “${limpar(modeloDigitado)}” = “${limpar(iguais[0].name)}” do catálogo` };
+  if (iguais.length > 1) return { modelo: null, motivo: `mais de um modelo “${base}” no catálogo (ambíguo)` };
+  return { modelo: null, motivo: "" };
+}
+
 /** Aplica as correspondências confirmadas (por montadora + modelo) às aplicações. */
 export function aplicarCorrespondencias(aplicacoes = [], correspondencias = {}) {
   const mapa = correspondencias && typeof correspondencias === "object" ? correspondencias : {};
@@ -250,6 +271,7 @@ export function avaliarVeiculo(produto, aplicacao) {
  */
 export async function resolverCompatibilidades(aplicacoes, consultar) {
   const veiculos = new Map();
+  const correspondencias = [];
   const descartados = [];
   const semCatalogo = [];
   const rotulo = (a) => `${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`.replace(/\s+/g, " ");
@@ -286,8 +308,21 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
         continue;
       }
     }
+    let automatica = "";
     if (!modelo) {
-      semCatalogo.push({ aplicacao: rotulo(a), chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, motivo: `modelo ${a.modelo} não encontrado no catálogo`, candidatos: candidatosModeloCatalogo(a.modelo, modelosMarca), modelosMarca: modelosMarca.map((m) => ({ id: String(m.id), nome: limpar(m.name) })), aConfirmar: true });
+      const auto = correspondenciaAutomatica(a.modelo, modelosMarca);
+      if (auto.modelo) {
+        modelo = auto.modelo;
+        viaCorrespondencia = true;
+        automatica = auto.motivo;
+      } else if (auto.motivo) {
+        semCatalogo.push({ aplicacao: rotulo(a), chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, motivo: `modelo ${a.modelo}: ${auto.motivo}`, candidatos: candidatosModeloCatalogo(a.modelo, modelosMarca), modelosMarca: modelosMarca.map((m) => ({ id: String(m.id), nome: limpar(m.name) })), aConfirmar: true, ambiguo: true });
+        continue;
+      }
+    }
+    if (!modelo) {
+      const cands = candidatosModeloCatalogo(a.modelo, modelosMarca);
+      semCatalogo.push({ aplicacao: rotulo(a), chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, motivo: cands.length > 1 ? `modelo ${a.modelo} não encontrado no catálogo com o mesmo nome; há mais de um modelo parecido (ambíguo)` : `modelo ${a.modelo} não encontrado no catálogo`, ambiguo: cands.length > 1, candidatos: candidatosModeloCatalogo(a.modelo, modelosMarca), modelosMarca: modelosMarca.map((m) => ({ id: String(m.id), nome: limpar(m.name) })), aConfirmar: true });
       continue;
     }
     // 3) veículos (versões/anos) desse modelo
@@ -316,10 +351,13 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
       const av = avaliarVeiculo(p, a);
       if (av.ok) {
         algum = true;
-        if (!veiculos.has(p.id)) veiculos.set(p.id, { id: p.id, nome: nomeVeiculo(p), aplicacao: rotulo(a), ...(viaCorrespondencia ? { modeloCatalogo: limpar(modelo.name) } : {}) });
+        if (!veiculos.has(p.id)) veiculos.set(p.id, { id: p.id, nome: nomeVeiculo(p), aplicacao: rotulo(a), ...(viaCorrespondencia ? { modeloCatalogo: limpar(modelo.name), correspondencia: automatica ? "automatica" : "confirmada" } : {}) });
       } else if (!veiculos.has(p.id) && !descartados.some((d) => d.id === p.id)) {
         descartados.push({ id: p.id, nome: nomeVeiculo(p), motivo: av.motivo, aplicacao: rotulo(a) });
       }
+    }
+    if (automatica && !correspondencias.some((c) => c.chave === chaveModeloML(a.montadora, a.modelo))) {
+      correspondencias.push({ chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, modeloCatalogo: limpar(modelo.name), tipo: "automatica", texto: automatica, veiculos: algum });
     }
     if (!algum) semCatalogo.push({ aplicacao: rotulo(a), motivo: `nenhum veículo do catálogo${viaCorrespondencia ? ` (modelo ${limpar(modelo.name)})` : ""} confirma todos os dados aprovados (período, motor${a.versao ? ", versão" : ""})` });
   }
@@ -329,6 +367,7 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
     veiculos: aceitos.sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR")),
     descartados: descartados.filter((d) => !veiculos.has(d.id)),
     semCatalogo,
+    correspondencias,
     dominio: DOMINIO_CARROS,
   };
 }
@@ -426,6 +465,42 @@ const num = (v) => {
  * item: GET /items/{id};  compat: GET /items/{id}/compatibilities (ou null)
  * Devolve { itens:[{item, esperado, recebido, ok, obrigatorio}], pendencias:[texto] }.
  */
+/**
+ * IDs dos veículos do catálogo que o anúncio TEM, relidos no ML (19/10/2026).
+ * Junta /items/{MLB}/compatibilities e, quando o anúncio usa "produto do
+ * vendedor" (MLBU), /user-products/{MLBU}/compatibilities — senão um envio
+ * aceito no MLBU parecia "zero aceitos".
+ */
+export function idsCompatibilidadesLidas(...respostas) {
+  const ids = new Set();
+  for (const r of respostas) {
+    const lista = Array.isArray(r?.products) ? r.products : Array.isArray(r) ? r : [];
+    for (const p of lista) {
+      const id = String(p?.catalog_product_id || p?.catalog_product?.id || p?.product_id || p?.id || "").toUpperCase();
+      if (/^MLB\d+$/.test(id)) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Resultado das compatibilidades depois do envio: nunca "sucesso" com zero
+ * aceitos. estado: "ok" (todos aceitos) | "parcial" | "zero" | "sem_envio" |
+ * "nao_relido".
+ */
+export function resultadoCompatibilidades({ enviados = [], lidos = null, aplicacoesInformadas = 0 } = {}) {
+  const env = [...new Set((enviados || []).map((x) => String(x).toUpperCase()))];
+  if (!env.length) {
+    return { estado: "sem_envio", enviados: 0, aceitos: 0, sucesso: false, texto: aplicacoesInformadas ? "Nenhum veículo do catálogo foi enviado: as aplicações informadas continuam gravadas na ficha, mas o anúncio está SEM compatibilidade no Mercado Livre." : "Sem compatibilidades para enviar." };
+  }
+  if (!lidos) return { estado: "nao_relido", enviados: env.length, aceitos: 0, sucesso: false, texto: `${env.length} veículo(s) enviado(s), mas não foi possível reler o anúncio: aceitação NÃO confirmada.` };
+  const aceitos = env.filter((id) => lidos.has(id));
+  const rejeitados = env.filter((id) => !lidos.has(id));
+  if (!aceitos.length) return { estado: "zero", enviados: env.length, aceitos: 0, rejeitados, sucesso: false, texto: `O Mercado Livre aceitou 0 de ${env.length} veículo(s) enviados: o anúncio está SEM compatibilidade.` };
+  if (rejeitados.length) return { estado: "parcial", enviados: env.length, aceitos: aceitos.length, rejeitados, sucesso: false, texto: `O Mercado Livre aceitou ${aceitos.length} de ${env.length} veículo(s).` };
+  return { estado: "ok", enviados: env.length, aceitos: aceitos.length, rejeitados: [], sucesso: true, texto: `O Mercado Livre aceitou os ${aceitos.length} veículo(s) enviados.` };
+}
+
 export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
   const itens = [];
   const add = (nome, esp, rec, ok, obrigatorio = true) => itens.push({ item: nome, esperado: esp, recebido: rec, ok: Boolean(ok), obrigatorio });
@@ -457,8 +532,8 @@ export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
   }
   const enviados = Array.isArray(esperado.compatibilidades) ? esperado.compatibilidades : [];
   if (enviados.length || esperado.compatibilidadesAprovadas) {
-    const presentes = new Set((compat?.products || []).map((p) => String(p?.catalog_product_id || "")));
-    const aceitos = enviados.filter((id) => presentes.has(String(id)));
+    const presentes = idsCompatibilidadesLidas(compat);
+    const aceitos = enviados.filter((id) => presentes.has(String(id).toUpperCase()));
     add(
       "Compatibilidades",
       `${enviados.length} veículo(s)`,

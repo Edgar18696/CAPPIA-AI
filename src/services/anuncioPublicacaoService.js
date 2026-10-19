@@ -392,7 +392,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -540,6 +540,29 @@ export async function registrarCorrespondenciaModeloML({ anuncioId, chave, monta
 }
 
 /** Correspondências confirmadas gravadas na ficha (leitura). */
+/**
+ * Histórico das correções de compatibilidade de um MLB já publicado
+ * (19/10/2026). Só ACRESCENTA um registro em correcoes_compatibilidade
+ * (máx. 30); não mexe na publicação, na aprovação nem em nenhum outro dado.
+ */
+export async function registrarCorrecaoCompatibilidade({ anuncioId, registro }) {
+  if (!anuncioId || !registro) return { ok: false, erro: "Sem ficha ou registro." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const dados = atual.anuncio.dados_conferencia || {};
+  const lista = Array.isArray(dados.correcoes_compatibilidade) ? dados.correcoes_compatibilidade : [];
+  const novo = { ...registro, em: new Date().toISOString() };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, correcoes_compatibilidade: [...lista, novo].slice(-30) } })
+    .eq("id", anuncioId)
+    .eq("updated_at", atual.anuncio.updated_at);
+  if (error) return falha(error);
+  const relida = await obterAnuncio(anuncioId);
+  const ok = relida.ok && (relida.anuncio.dados_conferencia?.correcoes_compatibilidade || []).some((r) => r.em === novo.em);
+  return ok ? { ok: true } : { ok: false, erro: "A ficha mudou ao mesmo tempo: o histórico da correção não foi gravado (a correção no ML foi feita)." };
+}
+
 export async function lerCorrespondenciasModeloML(anuncioId) {
   if (!anuncioId) return { ok: true, correspondencias: {} };
   const r = await obterAnuncio(anuncioId);

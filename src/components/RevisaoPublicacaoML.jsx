@@ -37,6 +37,8 @@ import {
   resolverCompatibilidades,
   aplicacoesDaFicha,
   aplicarCorrespondencias,
+  idsCompatibilidadesLidas,
+  resultadoCompatibilidades,
   chaveModeloML,
   marcaInvalida,
   descricaoAfirmaOriginal,
@@ -779,6 +781,16 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     }
     const c = await chamar("ml_consulta", { metodo: "GET", caminho: `/items/${itemId}/compatibilities` }, conta);
     if (c?.ok) compat = c.dados || { products: [] };
+    // Anúncio com "produto do vendedor" (MLBU): a compatibilidade fica no
+    // MLBU. Relê lá também (19/10/2026) — senão um envio aceito parecia zero.
+    const up = String(item?.user_product_id || "");
+    if (/^MLBU\d+$/.test(up)) {
+      const cu = await chamar("ml_consulta", { metodo: "GET", caminho: `/user-products/${up}/compatibilities` }, conta);
+      if (cu?.ok) {
+        const ids = idsCompatibilidadesLidas(compat, cu.dados);
+        compat = { ...(compat || {}), products: [...ids].map((id) => ({ catalog_product_id: id })), fonte_user_product: up };
+      }
+    }
     return { item, compat };
   }
 
@@ -1175,22 +1187,31 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         item,
         compat,
       });
-      const presentes = new Set((compat?.products || []).map((p) => String(p?.catalog_product_id || "")));
+      const presentes = idsCompatibilidadesLidas(compat);
+      const resultadoCompat = resultadoCompatibilidades({ enviados: idsCompat, lidos: compat ? presentes : null, aplicacoesInformadas: aplicacoes.length + modelosSemDetalhes.length });
       const motivoEnvio = envioCompat && !envioCompat.ok
         ? (envioCompat.erro || (envioCompat.resultados || []).filter((x) => !x.ok).map((x) => x.erro).join("; ") || "o ML recusou o envio")
         : "";
       verificacao.compatibilidades = {
         aplicacoes_aprovadas: aplicacoes.length,
         enviados: idsCompat.length,
-        aceitos: idsCompat.filter((id) => presentes.has(String(id))).length,
+        aceitos: resultadoCompat.aceitos,
+        estado: resultadoCompat.estado,
+        texto: resultadoCompat.texto,
+        informadas: aplicacoes.length + modelosSemDetalhes.length,
+        correspondencias: (compatML?.correspondencias || []).map((c) => ({ de: c.modeloDigitado, para: c.modeloCatalogo, tipo: c.tipo })),
         rejeitados: idsCompat
-          .filter((id) => !presentes.has(String(id)))
+          .filter((id) => !presentes.has(String(id).toUpperCase()))
           .map((id) => ({ id, nome: compatML.veiculos.find((v) => v.id === id)?.nome || id, motivo: motivoEnvio || "não apareceu no anúncio depois do envio" })),
         descartados_antes: (compatML?.descartados || []).map((d) => ({ id: d.id, nome: d.nome, motivo: d.motivo })),
         sem_catalogo: (compatML?.semCatalogo || []).map((s) => ({ aplicacao: s.aplicacao, motivo: s.motivo })),
       };
       if (aplicacoes.length && !idsCompat.length && !verificacao.pendencias.some((t) => t.startsWith("Compatibilidades"))) {
         verificacao.pendencias.push("Compatibilidades: havia aplicações aprovadas e nenhum veículo foi vinculado.");
+      }
+      // Nunca "sucesso" com zero (ou parte) aceitos pelo ML (19/10/2026).
+      if (idsCompat.length && !resultadoCompat.sucesso && !verificacao.pendencias.some((t) => t.startsWith("Compatibilidades"))) {
+        verificacao.pendencias.push(`Compatibilidades: ${resultadoCompat.texto}`);
       }
       // Padrões fixos relidos no MLB criado (garantia, retirada, regulatória).
       const padroesEnviados = r.padroes_ml || validacao?.padroes_ml || preparo?.padroes_ml || null;
@@ -1767,6 +1788,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                       </div>
                     ))}
                     {correspondencias.erro && <div style={{ color: "#fca5a5" }}>❌ {correspondencias.erro}</div>}
+                    {(compatML.correspondencias || []).filter((c) => c.tipo === "automatica").map((c) => (
+                      <div key={`auto-${c.chave}`} data-paiia-modelo-ml-automatico={c.chave} style={{ color: "#bae6fd", marginTop: 4 }}>
+                        ✔ Correspondência automática (única no catálogo): “{c.modeloDigitado}” = modelo “{c.modeloCatalogo}” ({c.montadora}). Só entram os veículos do período, motor e versão informados.
+                      </div>
+                    ))}
+                    <div data-paiia-compat-resumo style={{ marginTop: 6, color: "#cbd5e1" }}>
+                      Informadas por você: {aplicacoes.length + modelosSemDetalhes.length} aplicação(ões) · Correspondidas no catálogo do ML: {compatML.veiculos.length} veículo(s) · Sem correspondência: {compatML.semCatalogo.length} (continuam gravadas na ficha) · Aceitas pelo ML: conferido depois do envio.
+                    </div>
                   </>
                 )}
               </div>
@@ -1943,10 +1972,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                     </table>
                   )}
                   {v?.compatibilidades && (
-                    <p style={info} data-paiia-compat-resultado>
-                      Compatibilidades: {v.compatibilidades.enviados} enviada(s), {v.compatibilidades.aceitos} aceita(s), {v.compatibilidades.rejeitados.length} rejeitada(s)
-                      {v.compatibilidades.rejeitados.length > 0 && ` — ${v.compatibilidades.rejeitados.map((x) => `${x.nome}: ${x.motivo}`).join("; ")}`}.
-                    </p>
+                    <div data-paiia-compat-resultado data-paiia-compat-estado={v.compatibilidades.estado || ""} style={{ ...info, color: v.compatibilidades.estado === "ok" ? "#86efac" : "#fde68a" }}>
+                      <div>Compatibilidades — {v.compatibilidades.estado === "ok" ? "✅" : "⚠"} {v.compatibilidades.texto || `${v.compatibilidades.enviados} enviada(s), ${v.compatibilidades.aceitos} aceita(s)`}</div>
+                      <div data-paiia-compat-informadas>• Informadas por você (gravadas na ficha): {v.compatibilidades.informadas ?? v.compatibilidades.aplicacoes_aprovadas} aplicação(ões)</div>
+                      <div data-paiia-compat-correspondidas>• Correspondidas no catálogo do ML: {v.compatibilidades.enviados} veículo(s){(v.compatibilidades.correspondencias || []).length > 0 && ` (${v.compatibilidades.correspondencias.map((c) => `${c.de} → ${c.para}${c.tipo === "automatica" ? ", automática" : ""}`).join("; ")})`}</div>
+                      <div data-paiia-compat-aceitas>• Aceitas pelo Mercado Livre depois do envio: {v.compatibilidades.aceitos}</div>
+                      {v.compatibilidades.rejeitados.length > 0 && <div>• Não aceitas: {v.compatibilidades.rejeitados.map((x) => `${x.nome}: ${x.motivo}`).join("; ")}</div>}
+                      {(v.compatibilidades.sem_catalogo || []).length > 0 && <div>• Sem correspondência no catálogo (continuam na ficha): {v.compatibilidades.sem_catalogo.map((x) => `${x.aplicacao} — ${x.motivo}`).join("; ")}</div>}
+                    </div>
                   )}
                 </div>
               );
