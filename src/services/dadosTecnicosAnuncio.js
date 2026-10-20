@@ -109,6 +109,9 @@ export function edicoesDoNovoAnuncio({ anuncio, fichaSalva }) {
   const tipoNA = normalizarTipoVeiculo(anuncio?.tipoVeiculo);
   const medidaNA = medidaCompletaFicha(anuncio?.embalagem) ? anuncio.embalagem : null;
   if (!fichaSalva) {
+    const marcasPrec = marcasPrecificacaoNA(anuncio);
+    if (marcasPrec.tipoAnuncio) out.marcas.tipoAnuncio = marcasPrec.tipoAnuncio;
+    if (marcasPrec.preco) out.marcas.preco = marcasPrec.preco;
     if (tipoNA) out.tipoVeiculo = tipoNA;
     if (medidaNA) out.medida = medidaNA;
     if (ed.tipoVeiculo) out.marcas.tipoVeiculo = ed.tipoVeiculo;
@@ -116,6 +119,7 @@ export function edicoesDoNovoAnuncio({ anuncio, fichaSalva }) {
     return out;
   }
   const c = fichaSalva.campos || {};
+  aplicarPrecificacaoDoNovoAnuncio({ anuncio, fichaSalva, ed, aplicadas, out });
   if (tipoNA && txt(ed.tipoVeiculo) && txt(ed.tipoVeiculo) > txt(aplicadas.tipoVeiculo)) {
     out.marcas.tipoVeiculo = ed.tipoVeiculo;
     if (tipoNA !== normalizarTipoVeiculo(c.tipoVeiculo)) {
@@ -133,8 +137,78 @@ export function edicoesDoNovoAnuncio({ anuncio, fichaSalva }) {
   return out;
 }
 
+// ---------------------------------------------------------------
+// PRECIFICAÇÃO (19/10/2026): tipo de anúncio (Clássico/Premium) e preço
+// final são escolhidos no NOVO ANÚNCIO (a Conferência não tem seletor de
+// tipo). Antes, a Conferência dava prioridade à cópia que ELA guardou e
+// ignorava a troca feita depois no Novo Anúncio, enquanto o registro de
+// frete (freteML) seguia o mais recente: Publicação com "tipo de anúncio
+// mudou (premium → classico)". Agora a troca feita no Novo Anúncio depois
+// da Conferência é EDIÇÃO REAL (como peso/medidas e tipo de veículo): a
+// Conferência recebe o valor novo e pede nova aprovação só desse campo.
+// ---------------------------------------------------------------
+export function normalizarTipoAnuncioNA(v) {
+  const t = txt(v).toLowerCase();
+  if (t === "premium" || t === "gold_pro") return "premium";
+  if (t === "classico" || t === "clássico" || t === "gold_special") return "classico";
+  return "";
+}
+const precoNumero = (v) => {
+  const n = numeroBR(v);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
+};
+/**
+ * Quando o Novo Anúncio definiu tipo e preço (ISO). Marca explícita
+ * (edicoes.tipoAnuncio / edicoes.preco, gravada quando o usuário muda o
+ * campo) ou, em fichas anteriores a esta regra, a hora da cotação de frete
+ * feita no Novo Anúncio COM ESSE MESMO tipo/preço (prova de que foi uma
+ * escolha do usuário, não um padrão). O tipo só é escolhido no Novo
+ * Anúncio; o preço também pode ser editado na Conferência, por isso o
+ * preço só usa a marca explícita.
+ */
+export function marcasPrecificacaoNA(anuncio) {
+  const ed = anuncio?.edicoes || {};
+  const f = anuncio?.freteML && typeof anuncio.freteML === "object" ? anuncio.freteML : null;
+  const tipo = normalizarTipoAnuncioNA(anuncio?.tipoAnuncio);
+  const preco = precoNumero(anuncio?.preco);
+  const quando = txt(f?.calculado_em);
+  const maior = (a, b) => (txt(a) > txt(b) ? txt(a) : txt(b));
+  return {
+    tipoAnuncio: tipo ? maior(ed.tipoAnuncio, f && quando && normalizarTipoAnuncioNA(f.tipoAnuncio) === tipo ? quando : "") : "",
+    // Preço também é editável na Conferência: só a marca explícita conta.
+    preco: preco ? txt(ed.preco) : "",
+  };
+}
+function aplicarPrecificacaoDoNovoAnuncio({ anuncio, fichaSalva, aplicadas, out }) {
+  const c = fichaSalva?.campos || {};
+  const conf = fichaSalva?.anuncioConferido || null;
+  const m = marcasPrecificacaoNA(anuncio);
+  const tipoNA = normalizarTipoAnuncioNA(anuncio?.tipoAnuncio);
+  if (tipoNA && m.tipoAnuncio && m.tipoAnuncio > txt(aplicadas.tipoAnuncio)) {
+    out.marcas.tipoAnuncio = m.tipoAnuncio;
+    const tipoConf = normalizarTipoAnuncioNA(c.tipoAnuncio) || normalizarTipoAnuncioNA(conf?.tipoAnuncio);
+    const tipoAprovado = normalizarTipoAnuncioNA(conf?.tipoAnuncio);
+    if (tipoNA !== tipoConf || (tipoAprovado && tipoNA !== tipoAprovado)) {
+      out.tipoAnuncio = tipoNA;
+      out.campos.push("tipo de anúncio");
+    }
+  }
+  const precoNA = precoNumero(anuncio?.preco);
+  if (precoNA && m.preco && m.preco > txt(aplicadas.preco)) {
+    out.marcas.preco = m.preco;
+    const precoConf = precoNumero(c.preco) || precoNumero(conf?.preco);
+    const precoAprovado = precoNumero(conf?.preco);
+    if (precoNA !== precoConf || (precoAprovado && precoNA !== precoAprovado)) {
+      out.preco = String(anuncio.preco);
+      out.campos.push("preço");
+    }
+  }
+}
+
 /** Nomes da assinatura da aprovação ligados a cada dado técnico. */
 export const CAMPOS_ASSINATURA_TECNICOS = Object.freeze({
   "tipo de veículo": ["tipo de veículo"],
+  "tipo de anúncio": ["tipo de anúncio"],
+  "preço": ["preço"],
   "peso e medidas": ["peso de envio", "comprimento de envio", "largura de envio", "altura de envio", "peso e medidas confirmados", "peso/medidas"],
 });

@@ -1796,7 +1796,11 @@ function moverFoto(
 
   const [preco, setPreco] =
     useState(() =>
-      inicial("preco", String(anuncio?.preco || ""))
+      (() => {
+        const v = inicial("preco", String(anuncio?.preco || ""));
+        // Preço escolhido no Novo Anúncio depois desta Conferência.
+        return edicoesNA.preco || v;
+      })()
     );
 
   const [codigo, setCodigo] =
@@ -2264,7 +2268,9 @@ useEffect(() => {
     } catch {
       preferencia = "";
     }
-    return tipoAnuncioDaFicha({ fichaSalva, anuncio, preferencia });
+    // Trocado no Novo Anúncio DEPOIS desta Conferência: vale o novo
+    // (edição real; a aprovação desse campo é pedida de novo).
+    return edicoesNA.tipoAnuncio || tipoAnuncioDaFicha({ fichaSalva, anuncio, preferencia });
   });
 
   useEffect(() => {

@@ -176,7 +176,10 @@ test("desatualizado: troca de conta, peso, cada medida, modalidade, categoria, t
   const { registro } = await calcularFreteEPrecos({ params: PARAMS, base: BASE, precoFinal: 78.99, consultar });
   const atual = { ...PARAMS, preco: 78.99 };
   assert.equal(situacaoFrete({ registro, atual }).estado, "ok");
-  assert.equal(situacaoFrete({ registro, atual: { ...atual, preco: 60 } }).estado, "ok", "mesma faixa");
+  // (20/10) mesma faixa NÃO confirma: o preço final precisa de cotação no valor exato
+  const mesmaFaixaOutroPreco = situacaoFrete({ registro, atual: { ...atual, preco: 60 } });
+  assert.equal(mesmaFaixaOutroPreco.estado, "desatualizado", "mesma faixa, outro preço");
+  assert.ok(mesmaFaixaOutroPreco.motivos.some((m) => /ainda não cotado no valor exato/.test(m)));
   const casos = [
     [{ conta: "824312524" }, /conta mudou/],
     [{ medida: { ...PARAMS.medida, peso_g: 350 } }, /peso mudou \(200 → 350\)/],

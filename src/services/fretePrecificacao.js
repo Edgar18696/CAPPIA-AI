@@ -116,7 +116,10 @@ export function caminhoCotacao(p, preco) {
  * cobrado > 0. Qualquer outra coisa = erro (nunca supõe).
  */
 export function lerRespostaCotacao(resp) {
-  if (!resp?.ok) return { ok: false, erro: txt(resp?.erro) || "Mercado Livre indisponível." };
+  if (!resp?.ok) {
+    const status = Number(resp?.status) > 0 ? ` (HTTP ${resp.status})` : "";
+    return { ok: false, erro: `${txt(resp?.erro) || "Mercado Livre indisponível."}${status}` };
+  }
   const c = resp?.dados?.coverage?.all_country;
   const custo = Number(c?.list_cost);
   const peso = Number(c?.billable_weight);
@@ -125,6 +128,8 @@ export function lerRespostaCotacao(resp) {
   const rate = Number(c?.discount?.rate);
   return {
     ok: true,
+    status: Number(resp?.status) > 0 ? Number(resp.status) : null,
+    moeda: txt(c?.currency_id) || null,
     custo_vendedor: centavos(custo),
     frete_cheio: Number.isFinite(cheio) && cheio > 0 ? centavos(cheio) : centavos(custo),
     desconto_pct: Number.isFinite(rate) ? Math.round(rate * 1000) / 10 : 0,
@@ -132,7 +137,33 @@ export function lerRespostaCotacao(resp) {
   };
 }
 
-/** Uma cotação no preço informado. consultar(caminho) → { ok, dados, erro }. */
+/**
+ * O que foi enviado ao ML numa cotação (para conferir no próprio PAIIA):
+ * conta, medidas/peso enviados, preço consultado, tipo e modalidade.
+ */
+export function dadosDaConsulta(params, preco) {
+  return {
+    caminho: caminhoCotacao(params, preco),
+    conta: params.conta,
+    dimensoes: dimensoesParaApi(params.medida),
+    item_price: centavos(preco),
+    listing_type_id: params.tipoAnuncio === "premium" ? "gold_pro" : "gold_special",
+    logistic_type: params.modalidade,
+  };
+}
+
+/** Peso INFORMADO da embalagem e peso cúbico (cálculo local, só para comparar; nunca vira frete). */
+export function pesosInformados(medida) {
+  const m = normalizarMedida(medida || {});
+  if (!medidaCompleta(m)) return null;
+  return { informado_g: Math.round(m.peso_g), cubico_g: pesoCubicoG(m) };
+}
+
+/**
+ * Uma cotação no preço informado. consultar(caminho) → { ok, status, dados, erro, recebido_em }.
+ * cotado_em = horário ORIGINAL da resposta do ML (recebido_em); reaproveitar a
+ * memória da tela não muda esse horário.
+ */
 export async function cotarNoPreco({ params, preco, consultar, agora = () => new Date().toISOString() }) {
   let resp;
   try {
@@ -140,8 +171,13 @@ export async function cotarNoPreco({ params, preco, consultar, agora = () => new
   } catch (e) {
     resp = { ok: false, erro: String(e?.message || e) };
   }
+  // Sem horário de chegada (consultas de teste/antigas): carimba a PRÓPRIA resposta uma
+  // única vez; se ela for reaproveitada da memória, o horário original continua.
+  if (resp && typeof resp === "object" && resp.ok && !txt(resp.recebido_em)) {
+    try { resp.recebido_em = agora(); } catch { /* resposta imutável: usa o horário agora */ }
+  }
   const r = lerRespostaCotacao(resp);
-  return { ...r, preco_cotado: centavos(preco), faixa: faixaDoPreco(preco), faixa_rotulo: rotuloFaixa(preco), cotado_em: agora(), origem: ORIGEM_FRETE.ML };
+  return { ...r, preco_cotado: centavos(preco), faixa: faixaDoPreco(preco), faixa_rotulo: rotuloFaixa(preco), cotado_em: txt(resp?.recebido_em) || agora(), consulta: dadosDaConsulta(params, preco), origem: ORIGEM_FRETE.ML };
 }
 
 /**
@@ -231,31 +267,48 @@ export function criarCotadorPorFaixa({ params, consultar, estimar = false }) {
  * final escolhido (se houver). Sem cotação real: estimativa identificada.
  * Devolve o REGISTRO que vai para a ficha (freteML).
  */
-export async function calcularFreteEPrecos({ params, base, precoFinal, consultar, agora = () => new Date().toISOString() }) {
+export async function calcularFreteEPrecos({ params, base, precoFinal, consultar, agora = () => new Date().toISOString(), estimar = true }) {
+  const inicio = agora();
   const falta = prontoParaCotar(params);
   if (falta.length) return { ok: false, erro: `Falta: ${falta.join(", ")}.` };
   if (!(base.custo > 0)) return { ok: false, erro: "Informe o custo da mercadoria." };
-  const cotador = criarCotadorPorFaixa({ params, consultar, estimar: true });
+  // estimar:false (Novo Anúncio, 19/10): falha do ML = erro com o motivo real; nunca valor inventado.
+  const cotador = criarCotadorPorFaixa({ params, consultar, estimar });
   const margens = {};
   for (const m of MARGENS_PADRAO) {
     const r = await convergirPreco({ base, margem: m.margem, cotarFaixa: cotador });
     if (!r.ok) return { ok: false, erro: r.erro };
-    margens[m.chave] = { rotulo: m.rotulo, margem: m.margem, preco: r.preco, frete: r.cotacao.custo_vendedor, frete_cheio: r.cotacao.frete_cheio, desconto_pct: r.cotacao.desconto_pct, peso_cobrado_g: r.cotacao.peso_cobrado_g, origem: r.cotacao.origem, faixa_rotulo: rotuloFaixa(r.preco), comissaoValor: r.comissaoValor, impostoValor: r.impostoValor, custosSemFrete: r.custosSemFrete, resultado: r.resultado, margemPct: r.margemPct };
+    margens[m.chave] = { rotulo: m.rotulo, margem: m.margem, preco: r.preco, frete: r.cotacao.custo_vendedor, frete_cheio: r.cotacao.frete_cheio, desconto_pct: r.cotacao.desconto_pct, peso_cobrado_g: r.cotacao.peso_cobrado_g, origem: r.cotacao.origem, faixa_rotulo: rotuloFaixa(r.preco), comissaoValor: r.comissaoValor, impostoValor: r.impostoValor, custosSemFrete: r.custosSemFrete, resultado: r.resultado, margemPct: r.margemPct,
+      // (20/10) qual cotação oficial foi usada nesta margem
+      preco_cotado: r.cotacao.preco_cotado, cotado_em: r.cotacao.cotado_em ?? null, consulta: r.cotacao.consulta || null, status: r.cotacao.status ?? null, exato: centavos(r.cotacao.preco_cotado) === centavos(r.preco) };
   }
   let final = null;
   let sugestao = null;
   if (centavos(precoFinal) > 0) {
     const c = await cotador(precoFinal);
     if (!c.ok) return { ok: false, erro: c.erro };
-    // Preço final: cotação NO PRÓPRIO preço (não só na faixa).
-    const exata = c.origem === ORIGEM_FRETE.ML ? await cotarNoPreco({ params, preco: precoFinal, consultar, agora }) : c;
-    const cf = exata.ok ? exata : c;
+    // Preço final: cotação NO PRÓPRIO preço (não só na faixa). (20/10) Sem a
+    // cotação exata o cálculo NÃO é confirmado: erro real, sem cair na da faixa.
+    const exata = c.origem === ORIGEM_FRETE.ML ? await cotarNoPreco({ params, preco: precoFinal, consultar, agora }) : estimativaPAIIA({ medida: params.medida, preco: precoFinal });
+    if (!exata.ok) return { ok: false, erro: `Não foi possível cotar o preço final exato (${reais(precoFinal)}) no Mercado Livre: ${exata.erro}` };
+    const cf = exata;
     final = { ...cf, ...resultadoDoPreco({ preco: precoFinal, frete: cf.custo_vendedor, base }) };
     sugestao = await sugestaoFaixa({ preco: precoFinal, base, cotarFaixa: cotador });
   }
   const todas = [...Object.values(margens), ...(final ? [final] : [])];
   const origem = todas.every((x) => x.origem === ORIGEM_FRETE.ML) ? ORIGEM_FRETE.ML : ORIGEM_FRETE.ESTIMATIVA;
   const ref = final || margens.recomendado;
+  // (20/10) Cotações oficiais usadas neste cálculo (uma por consulta), para conferir no PAIIA.
+  const tInicio = Date.parse(inicio);
+  const cotacoes = [];
+  for (const [uso, x] of [...MARGENS_PADRAO.map((m) => [m.rotulo, margens[m.chave]]), ...(final ? [["Preço final", final]] : [])]) {
+    const caminho = x?.consulta?.caminho;
+    if (!caminho) continue;
+    const ja = cotacoes.find((q) => q.consulta.caminho === caminho);
+    if (ja) { ja.usos.push(uso); continue; }
+    const t = Date.parse(x.cotado_em || "");
+    cotacoes.push({ usos: [uso], consulta: x.consulta, status: x.status ?? null, custo_vendedor: x.custo_vendedor ?? x.frete, frete_cheio: x.frete_cheio, desconto_pct: x.desconto_pct, peso_cobrado_g: x.peso_cobrado_g, cotado_em: x.cotado_em || null, reaproveitada: Number.isFinite(t) && Number.isFinite(tInicio) && t < tInicio });
+  }
   return {
     ok: true,
     registro: {
@@ -266,9 +319,11 @@ export async function calcularFreteEPrecos({ params, base, precoFinal, consultar
       base,
       margens,
       final: final
-        ? { preco: final.preco, preco_cotado: final.preco_cotado, faixa: final.faixa, faixa_rotulo: final.faixa_rotulo, custo_vendedor: final.custo_vendedor, frete_cheio: final.frete_cheio, desconto_pct: final.desconto_pct, peso_cobrado_g: final.peso_cobrado_g, origem: final.origem, cotado_em: final.cotado_em, resultado: final.resultado, margemPct: final.margemPct, comissaoValor: final.comissaoValor, impostoValor: final.impostoValor, custosSemFrete: final.custosSemFrete }
+        ? { preco: final.preco, preco_cotado: final.preco_cotado, faixa: final.faixa, faixa_rotulo: final.faixa_rotulo, custo_vendedor: final.custo_vendedor, frete_cheio: final.frete_cheio, desconto_pct: final.desconto_pct, peso_cobrado_g: final.peso_cobrado_g, origem: final.origem, cotado_em: final.cotado_em, resultado: final.resultado, margemPct: final.margemPct, comissaoValor: final.comissaoValor, impostoValor: final.impostoValor, custosSemFrete: final.custosSemFrete, consulta: final.consulta || null, status: final.status ?? null, exato: centavos(final.preco_cotado) === centavos(final.preco) }
         : null,
       peso_cobrado_g: ref?.peso_cobrado_g ?? null,
+      pesos: pesosInformados(params.medida),
+      cotacoes,
       sugestao,
     },
   };
@@ -305,6 +360,8 @@ export function situacaoFrete({ registro, atual }) {
   const precoAtual = centavos(atual?.preco);
   if (!registro.final) motivos.push("preço final ainda não cotado (escolha o preço e recalcule)");
   else if (precoAtual > 0 && !mesmaFaixa(precoAtual, registro.final.preco_cotado)) motivos.push(`preço ${reais(precoAtual)} está em outra faixa de frete (${rotuloFaixa(precoAtual)}); frete cotado em ${reais(registro.final.preco_cotado)} (${registro.final.faixa_rotulo})`);
+  // (20/10) Mesma faixa não basta: o preço final só é confirmado com cotação no valor EXATO.
+  else if (precoAtual > 0 && precoAtual !== centavos(registro.final.preco_cotado)) motivos.push(`preço final ${reais(precoAtual)} ainda não cotado no valor exato (cotado em ${reais(registro.final.preco_cotado)})`);
   if (motivos.length) return { estado: "desatualizado", motivos };
   if (registro.origem !== ORIGEM_FRETE.ML || registro.final?.origem !== ORIGEM_FRETE.ML) {
     return { estado: "estimativa", motivos: ["Frete é ESTIMATIVA PAIIA (sem cotação real do Mercado Livre): a publicação fica bloqueada até haver cotação real."] };

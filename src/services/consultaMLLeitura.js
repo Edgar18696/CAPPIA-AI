@@ -14,7 +14,10 @@ export function consultorML(conta) {
         body: { acao: "ml_consulta", conta_ml: c, metodo: "GET", caminho },
       });
       if (error) return { ok: false, erro: error.message || "Falha ao falar com o servidor." };
-      return data || { ok: false, erro: "Resposta vazia do servidor." };
+      if (!data) return { ok: false, erro: "Resposta vazia do servidor." };
+      // (20/10) Horário em que a resposta do servidor/ML chegou. Fica junto da
+      // resposta: se a tela reaproveitar da memória, o horário original é mantido.
+      return { ...data, recebido_em: new Date().toISOString() };
     } catch (e) {
       return { ok: false, erro: String(e?.message || e) };
     }
