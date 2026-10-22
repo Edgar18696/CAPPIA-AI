@@ -48,6 +48,7 @@ export const CHAVES_DE_UM_ANUNCIO = Object.freeze([
   "usarDadosCatalogoNoAnuncio",
   "codigoNovoAnuncio",
   "fotosSelecionadasAnuncio",
+  "paiiaVozComplemento", // marca/quantidade ditas no PAIIA Voz (só do anúncio aberto por ele)
 ]);
 const CHAVES_STATUS_CLIP = ["clipGeracaoStatus", "clipGeracaoMensagem", "clipGeracaoErro"];
 

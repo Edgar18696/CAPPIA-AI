@@ -76,6 +76,7 @@ import {
   identificarCodigos,
 } from "../services/inteligenciaBusca";
 import { extrairAplicacoesDaDescricao, assinaturaDescricao } from "../services/aplicacoesDescricao";
+import { complementoParaConferencia } from "../modules/paiiaVoz/servicos/fichaVoz";
 import {
   SINONIMOS_TIPO_PECA,
   extrairProdutoPrincipal,
@@ -1880,8 +1881,14 @@ function moverFoto(
     setOrigemCategoria,
   ] = useState(categoriaInicial?.origem || "");
 
+  // PAIIA Voz: marca e quantidade ditas para ESTE código entram como valor
+  // de partida só em anúncio novo (sem ficha salva). Ficha salva manda.
+  const [complementoVoz] = useState(() =>
+    fichaSalva ? { marca: "", quantidadeEstoque: "" } : complementoParaConferencia(null, anuncio?.codigo)
+  );
+
   const [marca, setMarca] =
-    useState(() => inicial("marca", ""));
+    useState(() => inicial("marca", complementoVoz.marca));
 
   const [
     numeroPeca,
@@ -2300,7 +2307,7 @@ useEffect(() => {
   const [
     quantidadeEstoque,
     setQuantidadeEstoque,
-  ] = useState(() => inicial("quantidadeEstoque", ""));
+  ] = useState(() => inicial("quantidadeEstoque", complementoVoz.quantidadeEstoque));
 
   const [
     sku,

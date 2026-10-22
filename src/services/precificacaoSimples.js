@@ -121,5 +121,6 @@ export function resumoFrete(registro) {
     faixa: d.faixa_rotulo || "",
     cotadoEm: d.cotado_em || registro?.calculado_em || "",
     estimativa: registro?.origem !== "mercado_livre" || (d.origem && d.origem !== "mercado_livre"),
+    simulacao: registro?.origem === "simulacao_teste" || d.origem === "simulacao_teste",
   };
 }

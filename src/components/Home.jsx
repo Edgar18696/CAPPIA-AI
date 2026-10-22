@@ -52,6 +52,14 @@ export default function Home({
       novoAnuncio: true,
     },
     {
+      titulo: "PAIIA Voz",
+      icone: "🎙️",
+      texto:
+        "Fale ou fotografe a peça: o PAIIA anota código, título, descrição, peso e medidas e envia ao Novo Anúncio para você conferir.",
+      tela: "paiiaVoz",
+      destaque: true,
+    },
+    {
       titulo:
         "Consulta por Chassi e Código",
       icone: "🚗",

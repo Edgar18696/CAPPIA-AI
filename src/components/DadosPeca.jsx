@@ -20,11 +20,24 @@ export default function DadosPeca({
   etapaProcessamento,
   progressoProcessamento,
   avisoNaoEncontrado = "",
+  // Ficha pronta do PAIIA Voz: os dados já vieram preenchidos. Sem o botão
+  // de busca e sem busca pelo Enter (evita trocar título/descrição por
+  // acidente). Os campos continuam editáveis. Outros fluxos: igual a antes.
+  fichaPaiiaVoz = false,
 }) {
+  const buscar = fichaPaiiaVoz ? () => {} : buscarEMontarAnuncio;
   return (
     <section style={secaoStyle}>
+      {fichaPaiiaVoz ? (
+        <div data-testid="aviso-ficha-paiia-voz" data-paiia-ficha-voz style={avisoVozStyle}>
+          🎙️ Ficha pronta do PAIIA Voz: código, referência, título, descrição e
+          fotos já vieram preenchidos. Nenhuma busca é feita — confira e edite
+          os campos à vontade.
+        </div>
+      ) : (
       <button
         type="button"
+        data-testid="botao-buscar-montar"
         onClick={buscarEMontarAnuncio}
         disabled={processando}
         style={{
@@ -41,6 +54,7 @@ export default function DadosPeca({
   ? "🔄 Analisando peça..."
   : "🔍 Buscar e Montar Anúncio"}
       </button>
+      )}
 
       <PainelProcessamentoAnuncio
         processando={processando}
@@ -72,7 +86,7 @@ export default function DadosPeca({
         tipoAnuncio={tipoAnuncio}
         setTipoAnuncio={setTipoAnuncio}
         pecaEncontrada={pecaEncontrada}
-        buscarEMontarAnuncio={buscarEMontarAnuncio}
+        buscarEMontarAnuncio={buscar}
         processando={processando}
       />
     </section>
@@ -86,6 +100,17 @@ const avisoStyle = {
   border: "1px solid #f59e0b",
   background: "rgba(245,158,11,.12)",
   color: "#fde68a",
+  fontSize: "14px",
+  lineHeight: 1.5,
+};
+
+const avisoVozStyle = {
+  marginBottom: "14px",
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1px solid #22d3ee",
+  background: "rgba(34,211,238,.10)",
+  color: "#cffafe",
   fontSize: "14px",
   lineHeight: 1.5,
 };

@@ -3,6 +3,13 @@
 // (função mercadolivre-publicacao, ação ml_consulta GET). Nada é gravado.
 // =============================================================
 import { supabase } from "../supabase";
+import { MODO_TESTE_LOCAL } from "../config/modoTesteLocal";
+
+// (22/10/2026) Frete SIMULADO só existe no MODO TESTE local (o servidor de
+// teste troca config/modoTesteLocal.js por um que diz true). No PAIIA real
+// é false: uma resposta marcada como simulação é RECUSADA (só vale a
+// cotação oficial do Mercado Livre).
+export const FRETE_SIMULADO_PERMITIDO = MODO_TESTE_LOCAL === true;
 
 /** consultar(caminho) → { ok, status, dados, erro } na conta informada. */
 export function consultorML(conta) {
@@ -15,6 +22,9 @@ export function consultorML(conta) {
       });
       if (error) return { ok: false, erro: error.message || "Falha ao falar com o servidor." };
       if (!data) return { ok: false, erro: "Resposta vazia do servidor." };
+      if (data.simulacao === true && !FRETE_SIMULADO_PERMITIDO) {
+        return { ok: false, erro: "Resposta SIMULADA recusada: fora do modo teste só vale a cotação oficial do Mercado Livre." };
+      }
       // (20/10) Horário em que a resposta do servidor/ML chegou. Fica junto da
       // resposta: se a tela reaproveitar da memória, o horário original é mantido.
       return { ...data, recebido_em: new Date().toISOString() };

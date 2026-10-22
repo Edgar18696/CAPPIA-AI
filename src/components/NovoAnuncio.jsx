@@ -5,7 +5,13 @@ import {
 } from "react";
 import { supabase } from "../supabase";
 import { idContaMLAtivaOpcional, useContasML, contasMLConectadas } from "../services/contaMLAtiva";
-import { consultorML, modalidadesDaConta } from "../services/consultaMLLeitura";
+import { consultorML, modalidadesDaConta, FRETE_SIMULADO_PERMITIDO } from "../services/consultaMLLeitura";
+// (22/10/2026) Frete que pode formar os 3 preços: a cotação OFICIAL do
+// Mercado Livre; no MODO TESTE local, também a SIMULAÇÃO (fictícia,
+// identificada e com a publicação bloqueada). No PAIIA real, só a oficial.
+const freteUsavelNA = (registro) =>
+  registro?.origem === "mercado_livre" || (FRETE_SIMULADO_PERMITIDO && registro?.origem === "simulacao_teste");
+const freteSimuladoNA = (registro) => FRETE_SIMULADO_PERMITIDO && registro?.origem === "simulacao_teste";
 import { CHAVE_COMISSOES_REFERENCIA, lerComissoesReferencia, comissaoDeReferencia, textoPorcentagem, criarConsultaComCache, assinaturaRecalculo, precisaRecalcular, soFaltaPreco, resumoFrete } from "../services/precificacaoSimples";
 import {
   calcularFreteEPrecos,
@@ -503,6 +509,17 @@ export default function NovoAnuncio({
   // Criação nova pedida / ficha pedida: a edição antiga (Meus Anúncios,
   // Projetos, Meus Rascunhos) que ficou no App não vale aqui.
   const anuncioEditando = abertura.ignorarEdicao ? null : anuncioEditandoApp;
+  // Ficha pronta vinda do PAIIA Voz (código, referência, título, descrição e
+  // fotos já preenchidos): sem o botão "Buscar e Montar Anúncio" e sem nova
+  // busca — os campos continuam editáveis. A marca fica no rascunho, então
+  // vale também depois do F5. Os outros fluxos não mudam.
+  const [origemPaiiaVoz] = useState(() =>
+    anuncioEditando
+      ? ""
+      : String(
+          (abertura.modo === "novo" ? abertura.dados?.origemPaiiaVoz : abertura.rascunho?.origemPaiiaVoz) || ""
+        )
+  );
   useEffect(() => {
     if (abertura.ignorarEdicao && anuncioEditandoApp) {
       setAnuncioEditando?.(null);
@@ -542,6 +559,31 @@ export default function NovoAnuncio({
       return null;
     }
   });
+// PAIIA Voz: as fotos escolhidas no assistente entram pelo MESMO envio
+// de fotos do computador (1200×1200, Storage atual), uma única vez e só
+// no anúncio NOVO aberto por ele. Nada acontece em outros anúncios.
+useEffect(() => {
+  if (!globalThis.__paiiaVozFotosPendentes) return undefined;
+  // Lido só quando o temporizador dispara (o modo de desenvolvimento do
+  // React monta duas vezes; assim as fotos são enviadas uma única vez).
+  const t = setTimeout(() => {
+    const pendentes = globalThis.__paiiaVozFotosPendentes;
+    globalThis.__paiiaVozFotosPendentes = null;
+    if (
+      !pendentes ||
+      abertura.modo !== "novo" ||
+      !abertura.dados?.origemPaiiaVoz ||
+      pendentes.origem !== abertura.dados.origemPaiiaVoz ||
+      !Array.isArray(pendentes.arquivos) ||
+      !pendentes.arquivos.length
+    ) {
+      return;
+    }
+    buscarFotosNoComputador(pendentes.arquivos);
+  }, 500);
+  return () => clearTimeout(t);
+}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 useEffect(() => {
   if (anuncioEditando) {
     return;
@@ -551,6 +593,22 @@ useEffect(() => {
     // Anúncio novo: só o que veio com o pedido (ex.: custo da Precificação).
     if (abertura.dados) {
       aplicarExtrasRascunho(abertura.dados);
+      // (22/10) PAIIA Voz: peso/medidas ditos entram SÓ nos campos vazios.
+      const pm = abertura.dados.pesoMedidasVoz;
+      if (abertura.dados.origemPaiiaVoz && pm && typeof pm === "object" && pm.campos && typeof pm.campos === "object") {
+        const atuais = { pesoFreteML, comprimentoFreteML, larguraFreteML, alturaFreteML };
+        const setters = { pesoFreteML: setPesoFreteML, comprimentoFreteML: setComprimentoFreteML, larguraFreteML: setLarguraFreteML, alturaFreteML: setAlturaFreteML };
+        const preenchidos = [];
+        for (const [campo, valor] of Object.entries(pm.campos)) {
+          if (!setters[campo] || typeof valor !== "string" || !valor.trim()) continue;
+          if (String(atuais[campo] ?? "").trim()) continue; // já tinha valor: não substitui
+          setters[campo]((atual) => (String(atual ?? "").trim() ? atual : valor));
+          preenchidos.push(campo);
+        }
+        if (preenchidos.length) {
+          setVozPesoMedidas({ campos: preenchidos, texto: String(pm.texto || ""), frases: Array.isArray(pm.frases) ? pm.frases.slice(0, 6) : [], duvidas: Array.isArray(pm.duvidas) ? pm.duvidas.slice(0, 4) : [], conferido: false });
+        }
+      }
     }
     return;
   }
@@ -926,6 +984,13 @@ const [comprimentoFreteML, setComprimentoFreteML] =
 const [registroFreteML, setRegistroFreteML] =
   useState(null);
 
+// (22/10/2026) Peso/medidas que vieram do PAIIA Voz: preenchem só campos
+// vazios e o frete só usa depois que você conferir ("Conferi").
+// { campos: ["pesoFreteML", …], texto, frases, duvidas, conferido }
+const [vozPesoMedidas, setVozPesoMedidas] =
+  useState(null);
+const pesoMedidasVozPendente = Boolean(vozPesoMedidas && !vozPesoMedidas.conferido && vozPesoMedidas.campos?.length);
+
 // DADOS TÉCNICOS (uma fonte só): tipo de veículo da ficha (anúncio novo =
 // Carro/Caminhonete) e o MESMO peso/medidas do cálculo de frete.
 const [tipoVeiculoNA, setTipoVeiculoNA] =
@@ -1064,7 +1129,7 @@ function calcularPrecoComMargem(
     // cotação válida não há preço (nada de frete zero ou inventado).
     const chave = { 10: "conservador", 15: "recomendado", 20: "ideal" }[margemLiquida];
     const m = chave ? registroFreteML?.margens?.[chave] : null;
-    return m && m.preco > 0 && registroFreteML?.origem === "mercado_livre" ? m.preco : 0;
+    return m && m.preco > 0 && freteUsavelNA(registroFreteML) ? m.preco : 0;
   }
   return precoComMargem({ base: basePrecificacaoAtual(), frete: numeroPrecificacao(fretePrecificacao), margem: margemLiquida });
 }
@@ -1664,7 +1729,8 @@ function formatarPrecoAppia(
   const medidaFreteNA = medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML });
   const paramsFreteNA = parametrosCotacao({
     conta: contaFreteId,
-    medida: medidaFreteNA,
+    // (22/10) Peso/medidas do PAIIA Voz ainda não conferidos: o frete espera.
+    medida: pesoMedidasVozPendente ? null : medidaFreteNA,
     modalidade: modalidadeFreteML,
     categoria: pecaEncontrada?.categoria_id || diagnostico?.categoria_id || "",
     tipoAnuncio,
@@ -2214,6 +2280,8 @@ setVeioDaCentralTecnica(true);
   const fichaNovo = useFichaNovoAnuncio({
     abertura,
     desativado: Boolean(anuncioEditando) || Boolean(abertura.recarregarDaBase),
+    // (22/10) Ficha do PAIIA Voz: saindo pelo menu, falha no salvamento vira aviso.
+    avisarFalhaAoSair: Boolean(origemPaiiaVoz),
     estado: {
       codigo, oem, titulo, descricao, preco, tipoAnuncio, pecaEncontrada,
       fotos: fotosAnuncio, clip: clipAnuncio, canalVenda, categoriaConcorrencia,
@@ -2259,6 +2327,8 @@ setVeioDaCentralTecnica(true);
     edicoesDadosTecnicos,
     freteML: registroFreteML,
     mostrarAplicacoes,
+    ...(origemPaiiaVoz ? { origemPaiiaVoz } : {}),
+    ...(vozPesoMedidas ? { vozPesoMedidas } : {}),
   };
 
   function aplicarExtrasRascunho(dados) {
@@ -2296,6 +2366,8 @@ setVeioDaCentralTecnica(true);
     setTipoVeiculoNA(normalizarTipoVeiculo(dados.tipoVeiculo) || TIPO_CARRO);
     const ed = dados.edicoesDadosTecnicos || dados.edicoes;
     setEdicoesDadosTecnicos(ed && typeof ed === "object" ? { ...ed } : {});
+    // (22/10) Peso/medidas do PAIIA Voz e se já foram conferidos (vale no F5).
+    setVozPesoMedidas(dados.vozPesoMedidas && typeof dados.vozPesoMedidas === "object" ? dados.vozPesoMedidas : null);
     // Registro de frete × precificação DESTA ficha (nunca de outro anúncio).
     if (dados.freteML && typeof dados.freteML === "object") {
       setRegistroFreteML(dados.freteML);
@@ -5187,6 +5259,10 @@ marcarAnuncioPronto({
                   ? `💾 Ficha salva na base PAIIA (ID ${fichaNovo.fichaId.slice(0, 8)})${fichaNovo.status.em ? ` · ${new Date(fichaNovo.status.em).toLocaleTimeString("pt-BR")}` : ""}`
                   : "A ficha é criada na base PAIIA assim que houver o código da peça e algum dado do anúncio."}
         </p>
+        {/* Ficha do PAIIA Voz: sem a barra de navegação (Voltar à Central /
+            Ir para) — a tela começa pelo aviso e pelos dados do anúncio. Os
+            botões de cada seção continuam. Outros fluxos: barra igual. */}
+        {!origemPaiiaVoz && (
         <nav data-paiia-etapas-novo-anuncio style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", margin: "0 0 12px" }}>
           <button type="button" data-paiia-navegacao data-paiia-voltar-central-na onClick={voltarCentralDoNovoAnuncio} disabled={saidaNA.salvando} style={botaoEtapaNA}>
             ← Voltar à Central de Publicação
@@ -5198,6 +5274,7 @@ marcarAnuncioPronto({
             </button>
           ))}
         </nav>
+        )}
         {saidaNA.salvando && <p data-paiia-salvando-ao-sair style={{ color: "#bfdbfe", fontSize: 12 }}>⏳ Salvando a ficha antes de sair...</p>}
         {saidaNA.erro && (
           <p data-paiia-erro-ao-sair style={{ color: "#fca5a5", fontSize: 13 }}>
@@ -5222,6 +5299,7 @@ marcarAnuncioPronto({
   setTipoAnuncio={setTipoAnuncio}
   pecaEncontrada={pecaEncontrada}
   buscarEMontarAnuncio={buscarEMontarAnuncio}
+  fichaPaiiaVoz={Boolean(origemPaiiaVoz)}
   processando={processando}
   etapaProcessamento={etapaProcessamento}
   progressoProcessamento={progressoProcessamento}
@@ -5420,6 +5498,23 @@ marcarAnuncioPronto({
       <input data-paiia-na-altura value={alturaFreteML} onChange={(e) => alterarDadoTecnico("alturaFreteML", e.target.value)} placeholder="Ex.: 8" style={campoPrecificacaoAppia} />
     </label>
   </div>
+  {vozPesoMedidas?.campos?.length ? (
+    <div data-paiia-voz-peso-medidas={vozPesoMedidas.conferido ? "conferido" : "pendente"} style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${vozPesoMedidas.conferido ? "#22c55e" : "#f59e0b"}`, background: vozPesoMedidas.conferido ? "#052e16" : "#422006", color: vozPesoMedidas.conferido ? "#bbf7d0" : "#fde68a", fontSize: 13 }}>
+      🎙️ {vozPesoMedidas.conferido ? "Peso/medidas do PAIIA Voz conferidos." : "Peso/medidas vieram do PAIIA Voz — confira antes do frete."}{" "}
+      Preenchidos: <b>{vozPesoMedidas.campos.map((c) => ({ pesoFreteML: "peso", comprimentoFreteML: "comprimento", larguraFreteML: "largura", alturaFreteML: "altura" })[c] || c).join(", ")}</b>
+      {vozPesoMedidas.texto ? <> ({vozPesoMedidas.texto})</> : null}.
+      {vozPesoMedidas.frases?.length ? <span style={{ display: "block", color: "#cbd5e1" }}>O que você disse: “{vozPesoMedidas.frases.join(" / ")}”</span> : null}
+      {vozPesoMedidas.duvidas?.length ? <span style={{ display: "block" }}>⚠ {vozPesoMedidas.duvidas.join(" ")}</span> : null}
+      {!vozPesoMedidas.conferido && (
+        <>
+          <span style={{ display: "block", marginTop: 4 }}>O frete usa o peso e as medidas da <b>EMBALAGEM</b> (peça + caixa). Se o que você disse era da peça, corrija os campos acima. Campos que já tinham valor não foram trocados.</span>
+          <button type="button" data-paiia-conferi-peso-medidas onClick={() => setVozPesoMedidas((v) => (v ? { ...v, conferido: true, conferidoEm: new Date().toISOString() } : v))} style={{ ...botaoEtapaNA, marginTop: 6, borderColor: "#f59e0b", color: "#fde68a" }}>
+            ✔ Conferi peso e medidas da embalagem
+          </button>
+        </>
+      )}
+    </div>
+  ) : null}
   <p data-paiia-na-medida-resumo style={{ color: "#94a3b8", fontSize: 12, margin: "8px 0 0" }}>
     {medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML })
       ? `Embalagem: ${textoMedida(medidaDoNovoAnuncio({ pesoFreteML, alturaFreteML, larguraFreteML, comprimentoFreteML }))}. `
@@ -5716,7 +5811,11 @@ marcarAnuncioPronto({
             data-paiia-frete-estado={situacaoFreteNA.estado}
             style={{ width: "100%", marginTop: "12px", padding: "12px", borderRadius: "12px", border: "1px solid #334155", background: "#020617", color: "#e2e8f0", fontSize: "13px", boxSizing: "border-box" }}
           >
-            <div style={{ fontWeight: 700, color: "#bae6fd", marginBottom: 8 }}>🚚 Frete de venda — cotação oficial do Mercado Livre</div>
+            <div style={{ fontWeight: 700, color: "#bae6fd", marginBottom: 8 }}>
+              {FRETE_SIMULADO_PERMITIDO && (freteSimuladoNA(registroFreteML) || contaAtivaNA?.simulacao === true)
+                ? <span data-paiia-frete-titulo-simulacao>🧪 Frete de venda — SIMULAÇÃO do modo teste (não é cotação oficial)</span>
+                : "🚚 Frete de venda — cotação oficial do Mercado Livre"}
+            </div>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
               <label>
                 Conta:{" "}
@@ -5745,7 +5844,24 @@ marcarAnuncioPronto({
               ) : estadoML === "erro" ? (
                 <span data-paiia-frete-erro style={{ color: "#fca5a5" }}>⚠ A cotação do Mercado Livre falhou: {cotacaoFrete.erro} Nenhum frete foi considerado e os preços não foram calculados.</span>
               ) : falta.length || !(baseFreteNA.custo > 0) ? (
-                <span style={{ color: "#fde68a" }}>Para cotar falta: {[...falta, ...(baseFreteNA.custo > 0 ? [] : ["custo da mercadoria"])].join(", ")}.</span>
+                <span style={{ color: "#fde68a" }} data-paiia-frete-falta>Para cotar falta: {[...falta.map((x) => (pesoMedidasVozPendente && /peso e as 3 medidas/.test(x) ? "conferir o peso e as medidas que vieram do PAIIA Voz (Dados técnicos → “Conferi”)" : x)), ...(baseFreteNA.custo > 0 ? [] : ["custo da mercadoria"])].join(", ")}.</span>
+              ) : fr && fr.simulacao && freteSimuladoNA(registroFreteML) ? (
+                <span data-paiia-frete-simulado>
+                  <span data-paiia-selo-simulacao style={{ display: "block", background: "#7c2d12", border: "1px solid #fb923c", color: "#fff7ed", borderRadius: 8, padding: "6px 8px", fontWeight: 800, marginBottom: 6 }}>
+                    🧪 SIMULAÇÃO — NÃO É COTAÇÃO OFICIAL
+                    <span style={{ display: "block", fontWeight: 400, fontSize: 12 }}>Frete fictício do modo teste (sem conta real e sem consulta ao Mercado Livre). Serve só para testar o cálculo; a publicação fica bloqueada.</span>
+                  </span>
+                  Frete de venda SIMULADO: <b data-paiia-frete-pago>{reaisFrete(fr.valor)}</b>
+                  {fr.faixa ? ` · faixa ${fr.faixa}` : ""}
+                  {registroFreteML?.final ? " · preço final" : " · opção Recomendado"}
+                  <br />
+                  <span style={{ fontSize: 13 }}>
+                    Peso informado da embalagem: <b data-paiia-frete-peso-informado>{registroFreteML?.pesos?.informado_g ?? "—"} g</b>
+                    {registroFreteML?.pesos?.cubico_g ? <span style={{ color: "#94a3b8" }}> (peso cúbico {registroFreteML.pesos.cubico_g} g)</span> : null}
+                    {" · "}Peso considerado na simulação: <b data-paiia-frete-peso-ml>{fr.peso ? `${fr.peso} g` : "—"}</b>
+                  </span>
+                  {aguardandoPreco ? <span style={{ color: "#fde68a" }}> · escolha o preço abaixo</span> : null}
+                </span>
               ) : fr && !fr.estimativa ? (
                 <span>
                   Frete de venda (pago por você): <b data-paiia-frete-pago>{reaisFrete(fr.valor)}</b>
@@ -5777,7 +5893,7 @@ marcarAnuncioPronto({
             </div>
             {registroFreteML?.cotacoes?.length && !recalculando ? (
               <details data-paiia-frete-cotacoes style={{ marginTop: 6, fontSize: 12, color: "#cbd5e1" }}>
-                <summary style={{ cursor: "pointer", color: "#94a3b8" }}>🔎 Conferir as cotações oficiais usadas ({registroFreteML.cotacoes.length})</summary>
+                <summary style={{ cursor: "pointer", color: "#94a3b8" }}>{freteSimuladoNA(registroFreteML) ? `🔎 Conferir as cotações SIMULADAS usadas (${registroFreteML.cotacoes.length}) — não são do Mercado Livre` : `🔎 Conferir as cotações oficiais usadas (${registroFreteML.cotacoes.length})`}</summary>
                 {registroFreteML.cotacoes.map((q) => (
                   <div key={q.consulta.caminho} data-paiia-frete-cotacao style={{ borderTop: "1px solid #1e293b", padding: "6px 0" }}>
                     <b>{q.usos.join(", ")}</b>: preço consultado <b>{reaisFrete(q.consulta.item_price)}</b> · frete <b>{reaisFrete(q.custo_vendedor)}</b>
@@ -5786,7 +5902,7 @@ marcarAnuncioPronto({
                     Medidas/peso enviados: <b>{q.consulta.dimensoes}</b> · modalidade <b>{ROTULO_MODALIDADE_FRETE[q.consulta.logistic_type] || q.consulta.logistic_type}</b> ({q.consulta.logistic_type}) · {q.consulta.listing_type_id === "gold_pro" ? "Premium" : "Clássico"} · conta {q.consulta.conta}
                     {q.status ? ` · HTTP ${q.status}` : ""}
                     <br />
-                    Resposta do ML: {q.cotado_em ? new Date(q.cotado_em).toLocaleString("pt-BR") : "—"}
+                    {freteSimuladoNA(registroFreteML) ? "Simulação em" : "Resposta do ML"}: {q.cotado_em ? new Date(q.cotado_em).toLocaleString("pt-BR") : "—"}
                     {q.reaproveitada ? <span data-paiia-frete-reaproveitada style={{ color: "#fde68a" }}> · reaproveitada da memória desta tela (horário original)</span> : null}
                   </div>
                 ))}
@@ -6066,7 +6182,7 @@ marcarAnuncioPronto({
     const resultado = !(precoAtualNumero > 0) || !(base.custo > 0)
       ? null
       : ml
-        ? final && registroFreteML?.origem === "mercado_livre" && !recalculando && Math.round(final.preco * 100) === Math.round(precoAtualNumero * 100) && Math.round(Number(final.preco_cotado) * 100) === Math.round(precoAtualNumero * 100)
+        ? final && freteUsavelNA(registroFreteML) && !recalculando && Math.round(final.preco * 100) === Math.round(precoAtualNumero * 100) && Math.round(Number(final.preco_cotado) * 100) === Math.round(precoAtualNumero * 100)
           ? { ...final, frete: final.custo_vendedor }
           : null
         : resultadoDoPreco({ preco: precoAtualNumero, frete: freteManual, base });
@@ -6090,7 +6206,7 @@ marcarAnuncioPronto({
         >
           {precos.map(([margem, chave, nome, cor, valor]) => {
             // (20/10) frete oficial e peso cobrado usados NESTA opção
-            const mg = ml && registroFreteML?.origem === "mercado_livre" && !recalculando ? registroFreteML?.margens?.[chave] : null;
+            const mg = ml && freteUsavelNA(registroFreteML) && !recalculando ? registroFreteML?.margens?.[chave] : null;
             return (
               <button key={chave} type="button" data-paiia-ml-margem={chave} disabled={!(valor > 0) || recalculando} onClick={() => aplicarPrecoSugerido(valor)} style={{ ...botaoPrecoSugestao, border: `1px solid ${cor}`, opacity: valor > 0 && !recalculando ? 1 : 0.55 }}>
                 <span>{nome}</span>
@@ -6098,7 +6214,7 @@ marcarAnuncioPronto({
                 <small>{margem}% líquido</small>
                 {mg ? (
                   <small data-paiia-ml-margem-frete={chave} style={{ color: "#94a3b8" }}>
-                    frete ML {reaisFrete(mg.frete)} · peso cobrado {mg.peso_cobrado_g} g
+                    {freteSimuladoNA(registroFreteML) ? "frete SIMULADO" : "frete ML"} {reaisFrete(mg.frete)} · peso cobrado {mg.peso_cobrado_g} g
                     {mg.exato === false && mg.preco_cotado ? ` · cotado em ${reaisFrete(mg.preco_cotado)} (mesma faixa)` : ""}
                   </small>
                 ) : null}
@@ -6108,6 +6224,46 @@ marcarAnuncioPronto({
         </div>
         {ml && !(precoMargem15 > 0) && !recalculando && (
           <p style={{ color: "#94a3b8", fontSize: 12, margin: "6px 0 0", width: "100%" }}>Os três preços aparecem quando houver cotação oficial do frete (Mercado Livre).</p>
+        )}
+        {ml && origemPaiiaVoz && freteUsavelNA(registroFreteML) && !recalculando && precoMargem15 > 0 && (
+          // (22/10/2026) Conta de cada opção, linha a linha (só exibição: a
+          // fórmula continua a do services/fretePrecificacao).
+          <details data-paiia-calculo-precos style={{ width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box", marginTop: 8, fontSize: 12, color: "#cbd5e1" }}>
+            <summary style={{ cursor: "pointer", color: "#94a3b8" }}>🧮 Ver a conta das 3 opções{freteSimuladoNA(registroFreteML) ? " (frete SIMULADO)" : ""}</summary>
+            {/* Uma conta por opção, empilhadas (cabe na tela do celular). */}
+            {[["conservador", "🔶 Conservador"], ["recomendado", "🟢 Recomendado"], ["ideal", "🔵 Ideal"]].map(([k, nomeOpcao]) => {
+              const m = registroFreteML?.margens?.[k];
+              if (!m) return null;
+              const linhasConta = [
+                ["Preço de venda", m.preco, ""],
+                ["Custo da mercadoria", numeroPrecificacao(custo), "− "],
+                ["Frete de compra", numeroPrecificacao(freteCompraPrecificacao), "− "],
+                ["Embalagem", base.despesas, "− "],
+                [freteSimuladoNA(registroFreteML) ? "Frete de venda (SIMULADO)" : "Frete de venda (ML)", m.frete, "− "],
+                [`Comissão (${String(base.comissao).replace(".", ",")}%)`, m.comissaoValor, "− "],
+                [`Impostos (${String(base.imposto).replace(".", ",")}%)`, m.impostoValor, "− "],
+                ["= Lucro líquido", m.resultado, ""],
+              ];
+              return (
+                <div key={k} data-paiia-calculo-opcao={k} style={{ marginTop: 8, padding: "8px 10px", border: "1px solid #334155", borderRadius: 10, boxSizing: "border-box", width: "100%" }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>{nomeOpcao} ({m.margem}% líquido)</div>
+                  {linhasConta.map(([nome, valor, sinal]) => (
+                    <div key={nome} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: nome.startsWith("=") ? 700 : 400, color: nome.startsWith("=") ? "#86efac" : undefined }}>
+                      <span>{nome}</span>
+                      <span data-paiia-calculo-celula={`${k}:${nome}`} style={{ whiteSpace: "nowrap" }}>{sinal}{reaisFrete(valor)}</span>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: 700 }}>
+                    <span>Margem líquida sobre o preço</span>
+                    <span data-paiia-calculo-margem={k} style={{ whiteSpace: "nowrap" }}>{String(m.margemPct).replace(".", ",")}%</span>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ color: "#94a3b8", marginTop: 6 }}>
+              Fórmula: preço = (custo + frete de compra + embalagem + frete de venda) ÷ (1 − (comissão% + impostos% + margem%)). O frete de venda depende da faixa de preço; o PAIIA repete a conta até o frete e o preço ficarem na mesma faixa. Diferenças de 0,01 ponto na margem vêm do arredondamento em centavos.
+            </div>
+          </details>
         )}
 
         <div style={{ width: "100%", marginTop: "14px" }}>
@@ -6124,8 +6280,10 @@ marcarAnuncioPronto({
             </div>
             {ml && resultado.exato ? (
               <div data-paiia-ml-final-exato style={{ color: "#86efac", fontSize: 12, marginBottom: 8 }}>
-                ✔ Preço final cotado no valor exato ({reaisFrete(resultado.preco_cotado)}) · frete ML {reaisFrete(resultado.custo_vendedor)} · peso cobrado {resultado.peso_cobrado_g} g
-                {resultado.cotado_em ? ` · resposta do ML em ${new Date(resultado.cotado_em).toLocaleString("pt-BR")}` : ""}
+                {freteSimuladoNA(registroFreteML)
+                  ? <>🧪 Preço final calculado com frete SIMULADO ({reaisFrete(resultado.custo_vendedor)}, peso {resultado.peso_cobrado_g} g) — NÃO É COTAÇÃO OFICIAL; não serve para publicar.</>
+                  : <>✔ Preço final cotado no valor exato ({reaisFrete(resultado.preco_cotado)}) · frete ML {reaisFrete(resultado.custo_vendedor)} · peso cobrado {resultado.peso_cobrado_g} g
+                {resultado.cotado_em ? ` · resposta do ML em ${new Date(resultado.cotado_em).toLocaleString("pt-BR")}` : ""}</>}
               </div>
             ) : null}
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "6px 20px", color: "#cbd5e1", fontSize: "13px" }}>
@@ -6133,7 +6291,7 @@ marcarAnuncioPronto({
               {linha("📦 Custo da mercadoria", numeroPrecificacao(custo), "− ")}
               {linha("🚛 Frete de compra", numeroPrecificacao(freteCompraPrecificacao), "− ")}
               {linha("📦 Embalagem", base.despesas, "− ")}
-              {linha(ml ? "🚚 Frete de venda (Mercado Livre)" : "🚚 Frete de venda", resultado.frete, "− ")}
+              {linha(ml ? (freteSimuladoNA(registroFreteML) ? "🚚 Frete de venda (SIMULADO)" : "🚚 Frete de venda (Mercado Livre)") : "🚚 Frete de venda", resultado.frete, "− ")}
               {linha(`🏷️ Comissão (${String(base.comissao).replace(".", ",")}%)`, resultado.comissaoValor, "− ")}
               {linha(`🧾 Impostos (${String(base.imposto).replace(".", ",")}%)`, resultado.impostoValor, "− ")}
             </div>

@@ -27,7 +27,11 @@ import { dimensoesParaApi, normalizarMedida, medidaCompleta, pesoCubicoG } from 
  * uma NOVA cotação no preço real (o ML é a referência, não esta tabela).
  */
 export const LIMITES_FAIXA_FRETE = Object.freeze([19, 49, 79, 100, 120, 150, 200]);
-export const ORIGEM_FRETE = Object.freeze({ ML: "mercado_livre", ESTIMATIVA: "estimativa_paiia" });
+// SIMULACAO (22/10/2026): frete FICTÍCIO do MODO TESTE local (sem conta
+// real). Só existe quando a consulta vem do Supabase falso do teste
+// (consultaMLLeitura recusa fora dele). NUNCA libera a publicação.
+export const ORIGEM_FRETE = Object.freeze({ ML: "mercado_livre", ESTIMATIVA: "estimativa_paiia", SIMULACAO: "simulacao_teste" });
+export const TEXTO_SIMULACAO = "SIMULAÇÃO — NÃO É COTAÇÃO OFICIAL";
 export const MARGENS_PADRAO = Object.freeze([
   Object.freeze({ chave: "conservador", rotulo: "Conservador", margem: 10 }),
   Object.freeze({ chave: "recomendado", rotulo: "Recomendado", margem: 15 }),
@@ -128,6 +132,7 @@ export function lerRespostaCotacao(resp) {
   const rate = Number(c?.discount?.rate);
   return {
     ok: true,
+    ...(resp?.simulacao === true ? { origem: ORIGEM_FRETE.SIMULACAO } : {}),
     status: Number(resp?.status) > 0 ? Number(resp.status) : null,
     moeda: txt(c?.currency_id) || null,
     custo_vendedor: centavos(custo),
@@ -177,7 +182,7 @@ export async function cotarNoPreco({ params, preco, consultar, agora = () => new
     try { resp.recebido_em = agora(); } catch { /* resposta imutável: usa o horário agora */ }
   }
   const r = lerRespostaCotacao(resp);
-  return { ...r, preco_cotado: centavos(preco), faixa: faixaDoPreco(preco), faixa_rotulo: rotuloFaixa(preco), cotado_em: txt(resp?.recebido_em) || agora(), consulta: dadosDaConsulta(params, preco), origem: ORIGEM_FRETE.ML };
+  return { ...r, preco_cotado: centavos(preco), faixa: faixaDoPreco(preco), faixa_rotulo: rotuloFaixa(preco), cotado_em: txt(resp?.recebido_em) || agora(), consulta: dadosDaConsulta(params, preco), origem: r.origem || ORIGEM_FRETE.ML };
 }
 
 /**
@@ -273,7 +278,14 @@ export async function calcularFreteEPrecos({ params, base, precoFinal, consultar
   if (falta.length) return { ok: false, erro: `Falta: ${falta.join(", ")}.` };
   if (!(base.custo > 0)) return { ok: false, erro: "Informe o custo da mercadoria." };
   // estimar:false (Novo Anúncio, 19/10): falha do ML = erro com o motivo real; nunca valor inventado.
-  const cotador = criarCotadorPorFaixa({ params, consultar, estimar });
+  const cotadorFaixa = criarCotadorPorFaixa({ params, consultar, estimar });
+  // (22/10) Qualquer cotação SIMULADA usada no caminho marca o cálculo todo.
+  let viuSimulacao = false;
+  const cotador = async (preco) => {
+    const c = await cotadorFaixa(preco);
+    if (c?.origem === ORIGEM_FRETE.SIMULACAO) viuSimulacao = true;
+    return c;
+  };
   const margens = {};
   for (const m of MARGENS_PADRAO) {
     const r = await convergirPreco({ base, margem: m.margem, cotarFaixa: cotador });
@@ -289,14 +301,18 @@ export async function calcularFreteEPrecos({ params, base, precoFinal, consultar
     if (!c.ok) return { ok: false, erro: c.erro };
     // Preço final: cotação NO PRÓPRIO preço (não só na faixa). (20/10) Sem a
     // cotação exata o cálculo NÃO é confirmado: erro real, sem cair na da faixa.
-    const exata = c.origem === ORIGEM_FRETE.ML ? await cotarNoPreco({ params, preco: precoFinal, consultar, agora }) : estimativaPAIIA({ medida: params.medida, preco: precoFinal });
+    const exata = c.origem !== ORIGEM_FRETE.ESTIMATIVA ? await cotarNoPreco({ params, preco: precoFinal, consultar, agora }) : estimativaPAIIA({ medida: params.medida, preco: precoFinal });
+    if (exata.origem === ORIGEM_FRETE.SIMULACAO) viuSimulacao = true;
     if (!exata.ok) return { ok: false, erro: `Não foi possível cotar o preço final exato (${reais(precoFinal)}) no Mercado Livre: ${exata.erro}` };
     const cf = exata;
     final = { ...cf, ...resultadoDoPreco({ preco: precoFinal, frete: cf.custo_vendedor, base }) };
     sugestao = await sugestaoFaixa({ preco: precoFinal, base, cotarFaixa: cotador });
   }
   const todas = [...Object.values(margens), ...(final ? [final] : [])];
-  const origem = todas.every((x) => x.origem === ORIGEM_FRETE.ML) ? ORIGEM_FRETE.ML : ORIGEM_FRETE.ESTIMATIVA;
+  // Qualquer valor simulado = cálculo SIMULADO inteiro (nunca vira "mercado_livre").
+  const origem = viuSimulacao || todas.some((x) => x.origem === ORIGEM_FRETE.SIMULACAO)
+    ? ORIGEM_FRETE.SIMULACAO
+    : todas.every((x) => x.origem === ORIGEM_FRETE.ML) ? ORIGEM_FRETE.ML : ORIGEM_FRETE.ESTIMATIVA;
   const ref = final || margens.recomendado;
   // (20/10) Cotações oficiais usadas neste cálculo (uma por consulta), para conferir no PAIIA.
   const tInicio = Date.parse(inicio);
@@ -363,6 +379,9 @@ export function situacaoFrete({ registro, atual }) {
   // (20/10) Mesma faixa não basta: o preço final só é confirmado com cotação no valor EXATO.
   else if (precoAtual > 0 && precoAtual !== centavos(registro.final.preco_cotado)) motivos.push(`preço final ${reais(precoAtual)} ainda não cotado no valor exato (cotado em ${reais(registro.final.preco_cotado)})`);
   if (motivos.length) return { estado: "desatualizado", motivos };
+  if (registro.origem === ORIGEM_FRETE.SIMULACAO || registro.final?.origem === ORIGEM_FRETE.SIMULACAO) {
+    return { estado: "simulacao", motivos: [`Frete SIMULADO do modo teste (${TEXTO_SIMULACAO}): a publicação fica bloqueada; só vale a cotação real do Mercado Livre.`] };
+  }
   if (registro.origem !== ORIGEM_FRETE.ML || registro.final?.origem !== ORIGEM_FRETE.ML) {
     return { estado: "estimativa", motivos: ["Frete é ESTIMATIVA PAIIA (sem cotação real do Mercado Livre): a publicação fica bloqueada até haver cotação real."] };
   }
@@ -376,6 +395,7 @@ export function situacaoFrete({ registro, atual }) {
  */
 export function conferirCotacao({ registro, nova }) {
   if (!nova?.ok) return { ok: false, motivo: `não foi possível confirmar o frete no Mercado Livre (${nova?.erro || "erro"})` };
+  if (nova.origem === ORIGEM_FRETE.SIMULACAO || registro?.origem === ORIGEM_FRETE.SIMULACAO) return { ok: false, motivo: `frete SIMULADO (${TEXTO_SIMULACAO}) não serve para publicar` };
   const f = registro?.final;
   if (!f) return { ok: false, motivo: "registro sem preço final cotado" };
   const difs = [];

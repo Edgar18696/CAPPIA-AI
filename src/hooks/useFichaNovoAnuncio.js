@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { salvarFichaNovoAnuncio } from "../services/fichaNovoAnuncioService";
 import { lerRascunhoAnuncio, rascunhoMaisRecente } from "./useNovoAnuncio";
 import { decidirAberturaNovoAnuncio } from "../services/aberturaNovoAnuncio";
+import { registrarAvisoFichaNaoSalva, limparAvisoFichaNaoSalva, falhaQueMereceAviso } from "../services/avisoFichaNaoSalva";
 import {
   podeCriarFicha,
   montarNovoAnuncioParaFicha,
@@ -65,7 +66,7 @@ function fichaNoEndereco(id) {
   }
 }
 
-export default function useFichaNovoAnuncio({ estado, desativado = false, abertura: aberturaTela }) {
+export default function useFichaNovoAnuncio({ estado, desativado = false, abertura: aberturaTela, avisarFalhaAoSair = false }) {
   const [abertura] = useState(() => (desativado ? { id: "", codigo: "" } : aberturaTela ? fichaDaAbertura(aberturaTela) : fichaDoNovoAnuncioAoAbrir()));
   const [fichaId, setFichaId] = useState(abertura.id);
   const [status, setStatus] = useState({ estado: fichaId ? "salvo" : "", erro: "", em: "" });
@@ -77,8 +78,8 @@ export default function useFichaNovoAnuncio({ estado, desativado = false, abertu
   const montado = montarNovoAnuncioParaFicha(estado, fichaId);
   const assinatura = assinaturaNovoAnuncio(montado);
   const pode = podeCriarFicha({ ...estado, fotos: estado?.fotos });
-  const atualRef = useRef({ montado, assinatura, pode, estado, desativado });
-  atualRef.current = { montado, assinatura, pode, estado, desativado };
+  const atualRef = useRef({ montado, assinatura, pode, estado, desativado, avisarFalhaAoSair });
+  atualRef.current = { montado, assinatura, pode, estado, desativado, avisarFalhaAoSair };
 
   // Endereço sempre aponta a ficha em andamento (F5 / outro navegador).
   useEffect(() => {
@@ -127,11 +128,15 @@ export default function useFichaNovoAnuncio({ estado, desativado = false, abertu
         st.id = r.fichaId;
         setFichaId(r.fichaId);
       }
+      st.falhou = false;
       setStatus({ estado: "salvo", erro: "", em: r.salvoEm });
+      // (22/10) Salvou: um aviso antigo de "não salva ao sair" deixa de valer.
+      if (atualRef.current.avisarFalhaAoSair) limparAvisoFichaNaoSalva();
     } else if (r.fechada) {
       st.fechada = st.id;
       setStatus({ estado: "fechada", erro: r.erro, em: "" });
     } else {
+      st.falhou = true;
       setStatus({ estado: "erro", erro: r.erro || "Não foi possível salvar a ficha na base PAIIA.", em: "" });
     }
     return r;
@@ -149,12 +154,23 @@ export default function useFichaNovoAnuncio({ estado, desativado = false, abertu
   }, [assinatura, pode, desativado, gravar]);
 
   // Saindo da tela com gravação pendente: grava na hora.
+  // (22/10) Ficha do PAIIA Voz (sem o "Voltar à Central"): também tenta de
+  // novo quando a última gravação tinha falhado e, se falhar, deixa o aviso
+  // para a próxima tela (só neste navegador; nada vai à base).
   useEffect(() => () => {
     const st = ref.current;
-    if (st.timer) {
-      window.clearTimeout(st.timer);
-      gravar();
-    }
+    const avisar = atualRef.current.avisarFalhaAoSair;
+    const pendente = Boolean(st.timer) || (avisar && st.falhou);
+    if (st.timer) window.clearTimeout(st.timer);
+    if (!pendente) return;
+    const e = atualRef.current.estado;
+    gravar().then((r) => {
+      if (avisar && falhaQueMereceAviso(r)) {
+        registrarAvisoFichaNaoSalva({ codigo: e?.codigo || e?.oem, titulo: e?.titulo, fichaId: ref.current.id, erro: r.erro || "Não foi possível salvar a ficha na base PAIIA." });
+      }
+    }, (erro) => {
+      if (avisar) registrarAvisoFichaNaoSalva({ codigo: e?.codigo || e?.oem, titulo: e?.titulo, fichaId: ref.current.id, erro: String(erro?.message || erro) });
+    });
   }, [gravar]);
 
   /** Grava agora (antes de navegar). Devolve { ok, fichaId, erro }. */

@@ -5,6 +5,7 @@ import BuscaCatalogo from "./components/BuscaCatalogo";
 import MeusRascunhos from "./components/MeusRascunhos";
 import ContasMarketplace from "./components/ContasMarketplace";
 import ContaMLAtivaBadge from "./components/ContaMLAtivaBadge";
+import AvisoFichaNaoSalva from "./components/AvisoFichaNaoSalva";
 import { retornoOAuthPendente } from "./services/retornoOAuth";
 import InteligenciaCatalogo from "./components/InteligenciaCatalogo";
 import LeitorCatalogoIA from "./components/LeitorCatalogoIA";
@@ -31,6 +32,7 @@ import {
   API_PROCESSAR_FOTO,
 } from "./components/constants/apiConstants";
 import CentralPublicacaoScreen from "./components/screens/CentralPublicacaoScreen";
+import PaiiaVoz from "./modules/paiiaVoz/PaiiaVoz";
 import FotoIAScreen from "./components/screens/FotoIAScreen";
 import BannerStudio from "./components/BannerStudio";
 import useGaleriaState from "./hooks/useGaleriaState";
@@ -2931,6 +2933,9 @@ return (
   </div>
 </header>
 
+{/* (22/10) Ficha do PAIIA Voz que NÃO foi salva ao sair do Novo Anúncio pelo menu. */}
+{screen !== "login" && screen !== "novoAnuncio" && <AvisoFichaNaoSalva setScreen={setScreen} />}
+
 {notificacao && (
   <div
     style={{
@@ -3156,6 +3161,13 @@ return (
   <CriarMascotePaizinho
     cardStyle={cardStyle}
     setScreen={setScreen}
+  />
+)}
+
+{screen === "paiiaVoz" && (
+  <PaiiaVoz
+    setScreen={setScreen}
+    usuario={usuario}
   />
 )}
 

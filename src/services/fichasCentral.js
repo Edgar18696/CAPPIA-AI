@@ -214,7 +214,7 @@ export function rascunhoLocalJaNaBase(local, fichas) {
 // ---------------------------------------------------------------
 // Tela no endereço (F5 volta para a mesma etapa, não para a Home).
 // ---------------------------------------------------------------
-export const TELAS_DO_FLUXO = Object.freeze(["novoAnuncio", "centralPublicacao", "mercadoLivreTeste"]);
+export const TELAS_DO_FLUXO = Object.freeze(["novoAnuncio", "centralPublicacao", "mercadoLivreTeste", "paiiaVoz"]);
 
 /**
  * Tela a abrir no carregamento.
