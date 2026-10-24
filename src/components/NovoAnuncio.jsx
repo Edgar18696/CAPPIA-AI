@@ -32,6 +32,12 @@ import {
 import PainelCatalogo from "./PainelCatalogo";
 import ChecklistAnuncio from "./ChecklistAnuncio";
 import PainelFotosAnuncio from "./PainelFotosAnuncio";
+// (P-06) Galeria PAIIA em quadro dentro do Novo Anúncio (mesmo componente do localhost/E11).
+import GaleriaSeletor from "./fotos/GaleriaSeletor";
+import { vagasFotos, juntarFotosGaleriaAnuncio } from "../modules/paiiaVoz/servicos/galeriaVoz";
+
+// (P-06) Limite de fotos do Novo Anúncio para a Galeria PAIIA.
+export const LIMITE_FOTOS_NOVO_ANUNCIO = 6;
 import PontuacaoAnuncio from "./PontuacaoAnuncio";
 import AnaliseIA from "./AnaliseIA";
 import AssistenteAnuncio from "./AssistenteAnuncio";
@@ -1801,6 +1807,8 @@ function formatarPrecoAppia(
   const ultimoFreteAutoRef = useRef("");
   const inputFotosComputadorRef = useRef(null);
   const [envioFotosPC, setEnvioFotosPC] = useState({ ocupado: false, texto: "", notas: [], erros: [] });
+  // (P-06) Quadro da Galeria PAIIA dentro do Novo Anúncio.
+  const [galeriaNA, setGaleriaNA] = useState(false);
   // Salvar a ficha antes de sair do Novo Anúncio pela seta "Voltar".
   const [saidaNA, setSaidaNA] = useState({ salvando: false, erro: "" });
   const [, setAvisoGravacaoFrete] = useState("");
@@ -4388,6 +4396,15 @@ Deseja publicar mesmo assim?`
     });
   }
 
+  // ---------------- (P-06) Galeria PAIIA no Novo Anúncio ----------------
+  // As fotos entram como endereços da Galeria (igual à tela Galeria), sem baixar nem
+  // enviar nada; sem repetir; até 6; ordem e capa como hoje.
+  function usarGaleriaNovoAnuncio(itens) {
+    setFotosAnuncio((atuais) => juntarFotosGaleriaAnuncio(atuais, itens, LIMITE_FOTOS_NOVO_ANUNCIO));
+    setGaleriaNA(false);
+    return "";
+  }
+
   function escolherFotosGaleria() {
   // =====================================================
   // PRESERVA AS FOTOS EM MEMÓRIA
@@ -5347,7 +5364,8 @@ marcarAnuncioPronto({
 >
   <button
     type="button"
-    onClick={escolherFotosGaleria}
+    onClick={() => setGaleriaNA(true)}
+    data-paiia-escolher-foto-galeria
     style={{
       ...botaoAzul,
       minWidth: "310px",
@@ -5391,6 +5409,24 @@ marcarAnuncioPronto({
     }}
   />
 </div>
+{/* (P-06) Quadro da Galeria PAIIA (o mesmo componente do localhost). */}
+{galeriaNA && (
+  <div style={{ marginBottom: 12, color: "#e2e8f0" }}>
+    <GaleriaSeletor
+      supabase={supabase}
+      userId={usuario?.id}
+      vagas={vagasFotos(fotosUnicas.length, LIMITE_FOTOS_NOVO_ANUNCIO)}
+      urlsExistentes={fotosUnicas.map((f) => f?.imagem_processada || f?.imagem_original)}
+      onEscolher={usarGaleriaNovoAnuncio}
+      onFechar={() => setGaleriaNA(false)}
+      onGaleriaCompleta={escolherFotosGaleria}
+      onArquivo={() => inputFotosComputadorRef.current?.click()}
+      estiloBotao={{ ...botaoAzul, padding: "10px 18px" }}
+      estiloLink={{ background: "none", border: 0, color: "#67e8f9", fontWeight: 700, cursor: "pointer", padding: "6px 4px" }}
+      estiloCaixa={{ border: "1px solid #334155", borderRadius: 14, padding: 12, background: "#0b1220" }}
+    />
+  </div>
+)}
 {(envioFotosPC.texto || envioFotosPC.erros?.length > 0) && (
   <div data-paiia-envio-fotos-computador style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 12, textAlign: "center" }}>
     <div>{envioFotosPC.texto}</div>

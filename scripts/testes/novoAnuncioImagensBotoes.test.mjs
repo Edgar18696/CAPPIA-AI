@@ -13,7 +13,7 @@ const NOVO = semComentarios(ler("src/components/NovoAnuncio.jsx"));
 
 function secaoImagens() {
   const ini = NOVO.indexOf("③ 🖼 Imagens do Anúncio");
-  const fim = NOVO.indexOf("{(envioFotosPC.texto", ini);
+  const fim = NOVO.indexOf("{galeriaNA && (", ini);
   assert.ok(ini > 0 && fim > ini, "seção Imagens do Anúncio encontrada");
   return NOVO.slice(ini, fim);
 }
@@ -36,7 +36,7 @@ test("Novo Anúncio: 'Escolher Banner' e 'Tirar foto' não aparecem", () => {
 
 test("Novo Anúncio: os dois botões continuam ligados como antes", () => {
   const s = secaoImagens();
-  assert.ok(s.includes("onClick={escolherFotosGaleria}"), "Escolher Foto abre a Galeria como antes");
+  assert.ok(s.includes("onClick={() => setGaleriaNA(true)}") && s.includes("data-paiia-escolher-foto-galeria"), "(P-06) Escolher Foto abre o quadro da Galeria PAIIA na própria ficha");
   assert.ok(s.includes("onClick={() => inputFotosComputadorRef.current?.click()}"), "Buscar foto abre o seletor de arquivos");
   assert.ok(s.includes("buscarFotosNoComputador(lista);"), "o arquivo escolhido segue o envio de sempre");
   assert.ok(NOVO.includes("function escolherFotosGaleria()"), "função da Galeria preservada");
