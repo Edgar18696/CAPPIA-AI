@@ -4474,6 +4474,8 @@ Deseja publicar mesmo assim?`
     "galeria"
   );
 }
+// (E12) Sem botão nesta tela; mantida sem uso para reverter sem perda.
+// eslint-disable-next-line no-unused-vars
 function escolherBannerGaleria() {
   // Preserva as imagens já escolhidas
   window.__paiiaFotosNovoAnuncio =
@@ -5357,20 +5359,8 @@ marcarAnuncioPronto({
     🖼 Escolher Foto
   </button>
 
-  <button
-    type="button"
-    onClick={escolherBannerGaleria}
-    style={{
-      ...botaoEscuro,
-      minWidth: "310px",
-      padding: "16px 24px",
-      fontSize: "15px",
-      fontWeight: "bold",
-    }}
-  >
-    🎨 Escolher Banner
-  </button>
-
+  {/* (E12 - 24/10/2026) Na seção Imagens ficam SÓ "Escolher Foto" e "Buscar foto pronta".
+      Banners já escolhidos continuam no anúncio; o Banner segue acessível pela Galeria. */}
   <button
     type="button"
     data-paiia-buscar-foto-computador
