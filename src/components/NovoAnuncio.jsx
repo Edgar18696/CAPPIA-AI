@@ -2289,7 +2289,8 @@ setVeioDaCentralTecnica(true);
     abertura,
     desativado: Boolean(anuncioEditando) || Boolean(abertura.recarregarDaBase),
     // (22/10) Ficha do PAIIA Voz: saindo pelo menu, falha no salvamento vira aviso.
-    avisarFalhaAoSair: Boolean(origemPaiiaVoz),
+    // (23/10) Sem a barra do topo em TODOS os modos: vale para toda ficha.
+    avisarFalhaAoSair: true,
     estado: {
       codigo, oem, titulo, descricao, preco, tipoAnuncio, pecaEncontrada,
       fotos: fotosAnuncio, clip: clipAnuncio, canalVenda, categoriaConcorrencia,
@@ -4312,18 +4313,6 @@ Deseja publicar mesmo assim?`
     }
   }
 
-  // Navegação entre as etapas da MESMA página: só rola até o bloco (e guarda
-  // a etapa no endereço, para o F5 voltar a ela). Não grava, não limpa nada.
-  function irParaEtapaNA(alvo) {
-    try {
-      const url = new URL(window.location.href);
-      url.hash = alvo;
-      window.history.replaceState(window.history.state, "", url.toString());
-      document.getElementById(alvo)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    } catch {
-      // sem rolagem
-    }
-  }
   // ← Voltar à Central: termina o salvamento da MESMA ficha antes de sair.
   // Se não salvar, avisa e fica na tela (nada é perdido).
   async function voltarCentralDoNovoAnuncio() {
@@ -5278,22 +5267,12 @@ marcarAnuncioPronto({
                   ? `💾 Ficha salva na base PAIIA (ID ${fichaNovo.fichaId.slice(0, 8)})${fichaNovo.status.em ? ` · ${new Date(fichaNovo.status.em).toLocaleTimeString("pt-BR")}` : ""}`
                   : "A ficha é criada na base PAIIA assim que houver o código da peça e algum dado do anúncio."}
         </p>
-        {/* Ficha do PAIIA Voz: sem a barra de navegação (Voltar à Central /
-            Ir para) — a tela começa pelo aviso e pelos dados do anúncio. Os
-            botões de cada seção continuam. Outros fluxos: barra igual. */}
-        {!origemPaiiaVoz && (
-        <nav data-paiia-etapas-novo-anuncio style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center", margin: "0 0 12px" }}>
-          <button type="button" data-paiia-navegacao data-paiia-voltar-central-na onClick={voltarCentralDoNovoAnuncio} disabled={saidaNA.salvando} style={botaoEtapaNA}>
-            ← Voltar à Central de Publicação
-          </button>
-          <span style={{ color: "#64748b", fontSize: 12 }}>Ir para:</span>
-          {[["na-etapa-dados", "Dados da peça"], ["secao-fotos-anuncio", "Fotos"], ["na-etapa-dados-tecnicos", "Dados técnicos"], ["na-etapa-preco-frete", "Preço e frete"], ["na-etapa-finalizar", "Finalizar"]].map(([alvo, nome]) => (
-            <button key={alvo} type="button" data-paiia-navegacao data-paiia-ir-etapa={alvo} onClick={() => irParaEtapaNA(alvo)} style={botaoEtapaNA}>
-              {nome}
-            </button>
-          ))}
-        </nav>
-        )}
+        {/* (23/10) Sem a barra de navegação do topo (Voltar à Central /
+            Ir para: Dados da peça, Fotos, Dados técnicos, Preço e frete,
+            Finalizar) em TODOS os modos de entrada. Só visual: as seções, os
+            botões "← Voltar ..." de cada seção, a Conferência e a Publicação
+            continuam iguais. A ficha é gravada sozinha e, ao sair pelo menu,
+            uma falha de gravação vira aviso (avisarFalhaAoSair). */}
         {saidaNA.salvando && <p data-paiia-salvando-ao-sair style={{ color: "#bfdbfe", fontSize: 12 }}>⏳ Salvando a ficha antes de sair...</p>}
         {saidaNA.erro && (
           <p data-paiia-erro-ao-sair style={{ color: "#fca5a5", fontSize: 13 }}>

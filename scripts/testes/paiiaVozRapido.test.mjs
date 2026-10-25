@@ -296,10 +296,11 @@ test("Novo Anúncio + PAIIA Voz: a marca de origem vai no rascunho (vale depois 
   assert.equal(dados.origemPaiiaVoz, "rap");
 });
 
-test("Novo Anúncio + PAIIA Voz: sem a barra superior (Voltar à Central / Ir para); seções e outros fluxos iguais", () => {
+test("Novo Anúncio (23/10): sem a barra superior (Voltar à Central / Ir para) em TODOS os modos; seções e fluxo iguais", () => {
   const na = lerNA("src/components/NovoAnuncio.jsx");
-  assert.match(na, /\{!origemPaiiaVoz && \(\n\s*<nav data-paiia-etapas-novo-anuncio[^]*Voltar à Central de Publicação[^]*Ir para:[^]*<\/nav>\n\s*\)\}/, "a barra só some na ficha do Voz");
-  assert.equal((na.match(/<nav data-paiia-etapas-novo-anuncio/g) || []).length, 1);
+  assert.equal((na.match(/<nav data-paiia-etapas-novo-anuncio/g) || []).length, 0, "a barra saiu para todos os modos de entrada");
+  assert.equal(/data-paiia-ir-etapa=/.test(na), false, "sem os botões Ir para");
+  assert.equal(/data-paiia-voltar-central-na/.test(na), false, "sem o botão Voltar à Central do topo");
   for (const id of ["na-etapa-dados", "na-etapa-dados-tecnicos", "na-etapa-preco-frete", "na-etapa-finalizar"]) {
     assert.match(na, new RegExp(`id="${id}"`), `seção ${id} continua`);
   }
@@ -402,7 +403,7 @@ test("Aviso de falha ao sair pelo menu: só ficha do PAIIA Voz, só no navegador
   const h = lerNA("src/hooks/useFichaNovoAnuncio.js");
   assert.match(h, /const pendente = Boolean\(st\.timer\) \|\| \(avisar && st\.falhou\);/, "outros fluxos: igual a antes (só grava se havia pendência)");
   const na = lerNA("src/components/NovoAnuncio.jsx");
-  assert.match(na, /avisarFalhaAoSair: Boolean\(origemPaiiaVoz\),/);
+  assert.match(na, /avisarFalhaAoSair: true,/, "(23/10) sem a barra do topo: aviso de falha ao sair vale para toda ficha");
   const app = lerNA("src/App.jsx");
   assert.match(app, /\{screen !== "login" && screen !== "novoAnuncio" && <AvisoFichaNaoSalva setScreen=\{setScreen\} \/>\}/);
   assert.equal(/supabase/.test(lerNA("src/services/avisoFichaNaoSalva.js")), false, "o aviso não usa a base");
