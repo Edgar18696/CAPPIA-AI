@@ -5,6 +5,8 @@ import {
 } from "../services/limparEstadoTemporarioMidia";
 import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 import { ROTULO_CONTA_INTERNA_TESTE } from "../config/contasInternasPaiia";
+// (P-08) Cartões fora da vista da Home (a tela continua existindo): ver config/homePaiia.js.
+import { cartaoVisivelNaHome } from "../config/homePaiia";
 
 export default function Home({
   totalFotos,
@@ -236,7 +238,7 @@ export default function Home({
           marginTop: "20px",
         }}
       >
-        {cards.map((card) => (
+        {cards.filter((card) => cartaoVisivelNaHome(card.tela)).map((card) => (
           <button
             key={card.titulo}
             type="button"
