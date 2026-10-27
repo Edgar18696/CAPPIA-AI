@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import { mesclarNovoAnuncio, fichaFechada, normalizarCodigoFicha, idFichaValido } from "./fichaNovoAnuncio";
+import { TEXTO_FICHA_EXCLUIDA } from "./exclusaoFicha";
 
 /*
  * Ficha persistente do NOVO ANÚNCIO na base PAIIA (paiia_anuncios).
@@ -30,6 +31,9 @@ export async function lerFichaNovoAnuncio(fichaId) {
 /**
  * Cria (sem ID) ou atualiza (com ID) a MESMA ficha com os dados do Novo Anúncio.
  * - Ficha publicada/cancelada: nunca é alterada → { ok:false, fechada:true }.
+ * - Ficha com ID que não existe mais (excluída): nunca é recriada →
+ *   { ok:false, fechada:true, excluida:true }.
+ * - ID preenchido mas inválido: bloqueia → { ok:false, idInvalido:true }.
  * - status_fluxo não é mudado numa ficha existente (aprovação/publicação
  *   continuam sendo da Conferência/Publicação).
  */
@@ -38,9 +42,17 @@ export async function salvarFichaNovoAnuncio({ fichaId = "", codigo, titulo, mon
   if (!usuarioId) return { ok: false, erro: "Sessão expirada: entre de novo no PAIIA." };
   const agora = new Date().toISOString();
   const cod = String(codigo || "").trim();
+  // (27/10/2026) ID de ficha preenchido mas inválido: bloqueia, NÃO cria outra.
+  if (String(fichaId ?? "").trim() && !idFichaValido(fichaId)) {
+    return { ok: false, idInvalido: true, fichaId, erro: "Identificação da ficha inválida: nada foi gravado. Abra o anúncio de novo pela Central de Publicação." };
+  }
   if (idFichaValido(fichaId)) {
     const r = await lerFichaNovoAnuncio(fichaId);
     if (!r.ok && !r.naoEncontrada) return r;
+    // (27/10/2026) A ficha deste ID não existe mais (excluída definitivamente
+    // na Central): NÃO cria outra — nem por esta aba, outra aba ou outro
+    // computador. "fechada" faz o Novo Anúncio parar de gravar nela.
+    if (!r.ok) return { ok: false, fechada: true, excluida: true, naoEncontrada: true, fichaId, erro: TEXTO_FICHA_EXCLUIDA };
     if (r.ok) {
       if (fichaFechada(r.ficha)) return { ok: false, fechada: true, fichaId, erro: "Esta ficha já foi publicada ou cancelada: o Novo Anúncio não altera ela." };
       const dados = mesclarNovoAnuncio(r.ficha.dados_conferencia, montado, agora);

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { listarFichasCentral } from "../services/fichasCentralService";
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import { retomarAnuncioGuardado } from "../services/aberturaNovoAnuncio";
+import { excluirFichaDefinitivamente } from "../services/exclusaoFichaService";
+import { avaliarExclusao, TEXTO_CONFIRMAR_EXCLUSAO, descartarRascunhoLocalDaFicha } from "../services/exclusaoFicha";
 import {
   ESTADO_CENTRAL,
   TEXTO_ESTADO_CENTRAL,
@@ -11,6 +13,8 @@ import {
   lerAnuncioEmAndamento,
   rascunhoLocalJaNaBase,
   enderecoDaFicha,
+  CHAVE_ANUNCIO_EM_ANDAMENTO,
+  CHAVES_ANUNCIO_LOCAL,
 } from "../services/fichasCentral";
 
 /*
@@ -18,11 +22,16 @@ import {
  * Mostra TODAS as fichas do usuário (prontas ou não) com o estado de cada
  * uma, e o rascunho do Novo Anúncio guardado neste navegador.
  * "Abrir" só navega: a ficha é reaberta pela base (?ficha=<ID>) na etapa
- * em que estava. Nada é apagado, recriado ou publicado aqui.
+ * em que estava. Nada é recriado ou publicado aqui.
+ * (27/10/2026) "🗑 Excluir" aparece SÓ nas fichas elegíveis (prévia de
+ * exclusaoFicha.js) e, depois de UMA confirmação explícita de exclusão
+ * DEFINITIVA, chama exclusaoFichaService: ele relê tudo, confere de novo e
+ * quem apaga é só a função protegida do banco. Anúncios publicados, MLBs,
+ * Bling, Base PAIIA e fotos nunca são apagados.
  */
 export default function PainelFichasCentral({ setScreen }) {
   const [estado, setEstado] = useState({ carregando: true, erro: "", fichas: [] });
-  const [local] = useState(() => {
+  const [local, setLocal] = useState(() => {
     try {
       return lerAnuncioEmAndamento(localStorage);
     } catch {
@@ -30,6 +39,12 @@ export default function PainelFichasCentral({ setScreen }) {
     }
   });
   const [mostrarTodas, setMostrarTodas] = useState(false);
+  // (27/10) Exclusão definitiva: fichas como vieram da base (para a prévia),
+  // ficha em exclusão e a mensagem do resultado.
+  const [brutas, setBrutas] = useState(() => new Map());
+  const [excluindo, setExcluindo] = useState("");
+  const [aviso, setAviso] = useState({ texto: "", erro: false });
+  const [versao, setVersao] = useState(0);
 
   useEffect(() => {
     let ativo = true;
@@ -37,10 +52,46 @@ export default function PainelFichasCentral({ setScreen }) {
       const r = await listarFichasCentral();
       if (!ativo) return;
       if (!r.ok) setEstado({ carregando: false, erro: r.erro, fichas: [] });
-      else setEstado({ carregando: false, erro: "", fichas: ordenarFichasCentral(r.fichas.map(resumoFichaCentral)) });
+      else {
+        setBrutas(new Map(r.fichas.map((f) => [f.id, f])));
+        setEstado({ carregando: false, erro: "", fichas: ordenarFichasCentral(r.fichas.map(resumoFichaCentral)) });
+      }
     })();
     return () => { ativo = false; };
-  }, []);
+  }, [versao]);
+
+  /** Prévia: mostra o botão só se a ficha parece elegível (a conferência real vem no clique). */
+  function previaExclusao(id) {
+    const f = brutas.get(id);
+    return f ? avaliarExclusao(f) : { pode: false, motivo: "Ficha não carregada." };
+  }
+
+  async function excluir(f) {
+    if (excluindo) return;
+    const ok = window.confirm(`${TEXTO_CONFIRMAR_EXCLUSAO}\n\nFicha: ${f.codigo || "Sem código"} · ${f.titulo || "Sem título"}`);
+    if (!ok) return;
+    setExcluindo(f.id);
+    setAviso({ texto: "⏳ Conferindo a ficha antes de excluir...", erro: false });
+    let r;
+    try {
+      r = await excluirFichaDefinitivamente(f.id);
+    } catch (e) {
+      r = { apagada: false, erro: `Falha inesperada (${e?.message || "erro"}): nada foi apagado.` };
+    }
+    if (r.apagada) {
+      try {
+        descartarRascunhoLocalDaFicha(localStorage, f.id, { chaveGuardada: CHAVE_ANUNCIO_EM_ANDAMENTO, chavesLocais: CHAVES_ANUNCIO_LOCAL });
+        setLocal(lerAnuncioEmAndamento(localStorage));
+      } catch {
+        // sem acesso ao navegador: a ficha já não existe na base
+      }
+      setAviso({ texto: "🗑 Ficha excluída definitivamente.", erro: false });
+    } else {
+      setAviso({ texto: `${r.protegida ? "🔒" : "❌"} ${r.erro || "Nada foi apagado."}`, erro: true });
+    }
+    setExcluindo("");
+    setVersao((v) => v + 1);
+  }
 
   function abrirFicha(id) {
     try {
@@ -76,7 +127,7 @@ export default function PainelFichasCentral({ setScreen }) {
     <section data-paiia-fichas-central style={caixa}>
       <h3 style={{ color: "#fde047", margin: "0 0 6px" }}>📂 Suas fichas de anúncio</h3>
       <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 10px" }}>
-        Todas as fichas aparecem aqui, mesmo as que ainda não estão prontas. Abrir uma ficha só navega: nada é apagado nem publicado.
+        Todas as fichas aparecem aqui, mesmo as que ainda não estão prontas. Abrir uma ficha só navega: nada é apagado nem publicado. "Excluir" aparece só em fichas iniciadas e abandonadas.
       </p>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -101,6 +152,7 @@ export default function PainelFichasCentral({ setScreen }) {
         </div>
       )}
 
+      {aviso.texto && <p data-paiia-exclusao-msg style={{ ...sub, color: aviso.erro ? "#fca5a5" : "#86efac" }}>{aviso.texto}</p>}
       {estado.carregando && <p style={sub}>⏳ Lendo as fichas na base PAIIA...</p>}
       {estado.erro && <p style={{ ...sub, color: "#fca5a5" }}>❌ {estado.erro}</p>}
       {!estado.carregando && !estado.erro && !estado.fichas.length && !mostrarLocal && (
@@ -135,6 +187,16 @@ export default function PainelFichasCentral({ setScreen }) {
                     ? "🧩 Ver canais escolhidos"
                     : "▶ Continuar"}
           </button>
+          {(() => {
+            const pv = previaExclusao(f.id);
+            return pv.pode ? (
+              <button type="button" data-paiia-excluir-ficha={f.id} onClick={() => excluir(f)} disabled={Boolean(excluindo)} style={botaoExcluir}>
+                {excluindo === f.id ? "⏳ Excluindo..." : "🗑 Excluir"}
+              </button>
+            ) : (
+              <span data-paiia-ficha-protegida={f.id} title={pv.motivo || "Ficha protegida"} style={sub}>🔒 Protegida</span>
+            );
+          })()}
         </div>
       ))}
       {estado.fichas.length > 12 && (
@@ -149,5 +211,6 @@ export default function PainelFichasCentral({ setScreen }) {
 const caixa = { border: "1px solid #334155", borderRadius: 12, padding: 14, background: "#0f172a", marginBottom: 16 };
 const linha = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid #1e293b", color: "#e2e8f0", fontSize: 14 };
 const sub = { color: "#94a3b8", fontSize: 12 };
+const botaoExcluir = { padding: "6px 12px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#fca5a5", cursor: "pointer", fontSize: 13 };
 const botao = { padding: "6px 12px", borderRadius: 8, border: "1px solid #475569", background: "#334155", color: "#e2e8f0", cursor: "pointer", fontSize: 13 };
 const etiqueta = (e) => ({ background: COR_ESTADO_CENTRAL[e].fundo, color: COR_ESTADO_CENTRAL[e].texto, borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" });

@@ -1,10 +1,18 @@
 // Criação segura no Bling (13/10/2026): consulta exata em ativos/inativos,
 // varredura em blocos com recibo e retomada, tentativas só em GET,
 // classificação do POST e decisão da criação incerta. Nada vai à rede.
-import test from "node:test";
+import testBase from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 
-const S = await import("../../supabase/functions/_shared/blingCriacaoSegura.js");
+// (27/10/2026) O código desta Edge Function fica no Supabase e não está no
+// GitHub: sem o arquivo na pasta, os testes aparecem como PULADOS (não como
+// aprovados nem como falha). Com o arquivo presente, rodam normalmente.
+const ARQUIVO = new URL("../../supabase/functions/_shared/blingCriacaoSegura.js", import.meta.url);
+const PRESENTE = fs.existsSync(ARQUIVO);
+const MOTIVO = "Edge Function _shared/blingCriacaoSegura.js fora do repositório (fica no Supabase)";
+const test = PRESENTE ? testBase : (nome, ...resto) => testBase.skip(nome, { skip: MOTIVO }, resto[resto.length - 1]);
+const S = PRESENTE ? await import(ARQUIVO.href) : {};
 
 const SEGREDO = "segredo-de-teste";
 const USUARIO = "usuario-1";

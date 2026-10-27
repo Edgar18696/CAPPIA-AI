@@ -4,6 +4,7 @@ import { mesclarRejeicoes } from "./categoriaML";
 import { CANAL, erroSelecao, montarRegistroCanais, normalizarSelecao, canaisSelecionados } from "./canaisPublicacao";
 import { lerRegistroDoSKU } from "./registroMLBService";
 import { registrosQueBloqueiam } from "./registroMLB";
+import { TEXTO_FICHA_EXCLUIDA } from "./exclusaoFicha";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -103,6 +104,16 @@ export async function listarAnunciosDoCodigo(codigo) {
   };
 }
 
+/**
+ * (27/10/2026) A tela tem o ID de uma ficha que NÃO existe mais na base
+ * (excluída definitivamente na Central): nunca é recriada por salvamento
+ * automático, outra aba ou outro computador. "fechada" faz as telas pararem
+ * de gravar nela, como já fazem com ficha publicada/cancelada.
+ */
+function respostaFichaExcluida() {
+  return { ok: false, disponivel: true, fechada: true, excluida: true, naoEncontrado: true, erro: TEXTO_FICHA_EXCLUIDA };
+}
+
 /** Lê UMA ficha pelo ID (fonte de verdade da conta de destino). */
 export async function obterAnuncio(anuncioId) {
   if (!anuncioId) return { ok: false, disponivel: true, erro: "Sem ID do anúncio." };
@@ -134,7 +145,7 @@ export async function salvarContaDestino({ anuncioId, codigo, titulo, contaId, c
     if (atual.ok && publicacaoExiste(atual.anuncio.publicacao)) {
       return { ok: false, disponivel: true, erro: "Este anúncio já foi publicado: a conta de destino não pode mudar." };
     }
-    if (!atual.ok) id = null; // ficha sumiu: cria outra
+    if (!atual.ok) return respostaFichaExcluida(); // ficha sumiu: NÃO cria outra (27/10)
   }
 
   if (id) {
@@ -336,6 +347,7 @@ export async function salvarFichaAprovada({ anuncioId, codigo, titulo, dadosConf
   if (anuncioId) {
     const atual = await obterAnuncio(anuncioId);
     if (!atual.ok && !atual.naoEncontrado) return atual;
+    if (!atual.ok) return respostaFichaExcluida(); // ficha sumiu: NÃO cria outra (27/10)
     const publicado = atual.ok && publicacaoExiste(atual.anuncio.publicacao);
     if (atual.ok && !publicado) {
       if (conflitoDeVersao({ versaoEsperada, versaoNaBase: atual.anuncio.dados_conferencia?.salvo_em })) {
@@ -410,6 +422,7 @@ export async function salvarRascunhoFicha({ anuncioId, codigo, titulo, dadosConf
   if (anuncioId) {
     const atual = await obterAnuncio(anuncioId);
     if (!atual.ok && !atual.naoEncontrado) return atual;
+    if (!atual.ok) return respostaFichaExcluida(); // ficha sumiu: NÃO cria outra, nem com criarSeFechada (27/10)
     const fechada = atual.ok && (publicacaoExiste(atual.anuncio.publicacao) || STATUS_FICHA_FECHADA.includes(atual.anuncio.status_fluxo));
     if (atual.ok && !fechada && conflitoDeVersao({ versaoEsperada, versaoNaBase: atual.anuncio.dados_conferencia?.salvo_em })) {
       return { ok: false, disponivel: true, conflito: true, erro: ERRO_CONFLITO };

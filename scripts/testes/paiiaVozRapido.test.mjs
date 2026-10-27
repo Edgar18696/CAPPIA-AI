@@ -273,7 +273,8 @@ test("base PAIIA: encontrado vira sugestão; não encontrado não bloqueia", () 
 // Novo Anúncio recebendo a ficha pronta do PAIIA Voz (22/10/2026)
 // ---------------------------------------------------------------
 import fsNA from "node:fs";
-const lerNA = (p) => fsNA.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
+// (27/10/2026) No Windows o Git grava os arquivos com CRLF: o teste compara como LF.
+const lerNA = (p) => fsNA.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("Novo Anúncio + PAIIA Voz: sem o botão 'Buscar e Montar' e sem busca pelo Enter; outros fluxos iguais", () => {
   const dp = lerNA("src/components/DadosPeca.jsx");

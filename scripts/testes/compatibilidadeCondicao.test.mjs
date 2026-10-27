@@ -145,8 +145,11 @@ test("condição: normalização e valor do ML (nunca assume novo)", () => {
   assert.equal(condicaoParaML(undefined), "");
 });
 
-test("função de publicação: condition vem da ficha (sem 'new' fixo) e validar/publicar recusam sem condição", () => {
-  const ts = fs.readFileSync(path.join(RAIZ, "supabase/functions/mercadolivre-publicacao/index.ts"), "utf8");
+// (27/10/2026) O código da Edge Function mercadolivre-publicacao fica no
+// Supabase e não está no GitHub: sem o arquivo na pasta, este teste é PULADO.
+const ARQUIVO_PUBLICACAO = path.join(RAIZ, "supabase/functions/mercadolivre-publicacao/index.ts");
+test("função de publicação: condition vem da ficha (sem 'new' fixo) e validar/publicar recusam sem condição", { skip: fs.existsSync(ARQUIVO_PUBLICACAO) ? false : "Edge Function mercadolivre-publicacao fora do repositório (fica no Supabase)" }, () => {
+  const ts = fs.readFileSync(ARQUIVO_PUBLICACAO, "utf8").replace(/\r\n/g, "\n");
   assert.equal(/condition:\s*"new"/.test(ts), false, "não pode haver condition: \"new\" fixo");
   assert.match(ts, /condition:\s*condicaoML\(entrada\?\.condicao\)/);
   const corpoFn = ts.match(/function condicaoML\(v: unknown\)[^{]*\{([\s\S]*?)\n    \}/)[1];
