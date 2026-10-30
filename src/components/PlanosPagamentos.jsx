@@ -8,7 +8,7 @@ export default function PlanosPagamentos({
   const [planoSelecionado, setPlanoSelecionado] =
     useState("ouro");
 
-  const [carteira, setCarteira] = useState(null);
+  const [, setCarteira] = useState(null); // saldo não é mais exibido nesta página
 
   const [formaPagamento, setFormaPagamento] =
     useState("pix");
@@ -66,7 +66,7 @@ export default function PlanosPagamentos({
           "Banner Express IA",
           "Catálogos técnicos",
           "Consulta por chassi",
-          "60 créditos de Clip IA",
+          "Clip IA incluído na assinatura",
           "Maior volume de processamento",
           "Prioridade de processamento",
           "Suporte prioritário",
@@ -314,16 +314,6 @@ export default function PlanosPagamentos({
           valor={
             usuario?.email ||
             "Usuário PAIIA"
-          }
-        />
-
-        <ResumoCard
-          icone="💎"
-          titulo="Créditos disponíveis"
-          valor={
-            carteira?.saldo != null
-              ? `${carteira.saldo}`
-              : "—"
           }
         />
 
@@ -1173,51 +1163,6 @@ export default function PlanosPagamentos({
         </div>
       </section>
 
-      <section
-        style={{
-          marginTop: "20px",
-          padding: "18px",
-          borderRadius: "16px",
-          border: "1px solid #2563eb",
-          background: "#0f172a",
-        }}
-      >
-        <h3 style={{ margin: 0, color: "#67e8f9" }}>
-          💎 Comprar créditos adicionais
-        </h3>
-        <p
-          style={{
-            color: "#cbd5e1",
-            fontSize: "14px",
-            lineHeight: 1.55,
-          }}
-        >
-          Precisou de mais? Compre créditos adicionais sem
-          alterar seu plano.
-        </p>
-        <p
-          style={{
-            color: "#94a3b8",
-            fontSize: "13px",
-            lineHeight: 1.55,
-          }}
-        >
-          Esta é uma compra avulsa para recursos que excederem
-          o limite mensal, principalmente Clip IA. Ela não
-          altera o Plano Profissional Ouro nem a renovação da
-          assinatura. Os pacotes e valores serão exibidos após
-          a configuração comercial e do gateway.
-        </p>
-        <button
-          type="button"
-          onClick={() =>
-            alert("Os pacotes de créditos ainda serão configurados. Seus dados desta tela foram preservados.")
-          }
-          style={botaoPrincipal}
-        >
-          Comprar créditos adicionais
-        </button>
-      </section>
 
 
       <section
