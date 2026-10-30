@@ -42,23 +42,8 @@ export default function MeusRascunhos({
     setScreen("novoAnuncio");
   }
 
-  async function excluirRascunho(id) {
-    const confirmar = confirm("Deseja excluir este rascunho?");
-    if (!confirmar) return;
+  // Excluir retirado desta tela antiga (registros preservados).
 
-    const { error } = await supabase
-      .from("rascunhos_anuncios")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", usuario.id);
-
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-
-    carregarRascunhos();
-  }
 async function duplicarRascunho(rascunho) {
   const novoRascunho = {
     user_id: usuario.id,
@@ -144,12 +129,6 @@ async function duplicarRascunho(rascunho) {
 >
   📄 Duplicar
 </button>
-                <button
-                  style={botaoExcluir}
-                  onClick={() => excluirRascunho(item.id)}
-                >
-                  🗑 Excluir
-                </button>
               </div>
             </div>
           ))}
@@ -200,11 +179,6 @@ const botaoEditar = {
   color: "#fff",
   fontWeight: "bold",
   cursor: "pointer",
-};
-
-const botaoExcluir = {
-  ...botaoEditar,
-  background: "#dc2626",
 };
 
 const botaoVoltar = {

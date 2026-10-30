@@ -32,20 +32,9 @@ export default function MeusAnuncios({
     setCarregando(false);
   }
 
-  async function excluirAnuncio(id) {
-    const confirmar = window.confirm("Deseja realmente excluir este anúncio?");
+  // Excluir retirado desta tela antiga (registros preservados). Para excluir fichas,
+  // usar a Central de Publicação, que tem as proteções do Excluir definitivo.
 
-    if (!confirmar) return;
-
-    const { error } = await supabase.from("anuncios").delete().eq("id", id);
-
-    if (error) {
-      alert("Erro ao excluir: " + error.message);
-      return;
-    }
-
-    carregarAnuncios();
-  }
 
   return (
     <div style={{ marginTop: "40px" }}>
@@ -129,15 +118,6 @@ export default function MeusAnuncios({
                   📄 Duplicar
                 </button>
 
-                <button
-                  style={{
-                    ...botaoAcaoStyle,
-                    background: "#dc2626",
-                  }}
-                  onClick={() => excluirAnuncio(anuncio.id)}
-                >
-                  🗑️ Excluir
-                </button>
                 <button
   style={{
     ...botaoAcaoStyle,

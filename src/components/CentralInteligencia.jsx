@@ -114,7 +114,8 @@ export default function CentralInteligencia({
 
   const acoes = [
   ["🛒", "Novo Anúncio", "novoAnuncio"],
-  ["📋", "Meus Anúncios", "meusAnuncios"],
+  // "Meus Anúncios" leva à Central de Publicação (fichas atuais e Excluir protegido).
+  ["📋", "Meus Anúncios", "centralPublicacao"],
   ["💰", "Precificação", "centralPrecificacao"],
   ["📤", "Publicar", "centralPublicacao"],
   ["📸", "Foto IA", "foto"],
