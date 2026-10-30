@@ -61,12 +61,9 @@ export default function PlanosPagamentos({
         recursos: [
           "Criador Inteligente de Anúncios",
           "Foto IA profissional",
-          "50 Fotos IA profissionais incluídas por mês",
           "Imagens prontas para anunciar: 1200 × 1200, fundo branco, recorte profissional, ótima nitidez e peça preservada",
-          "Banner Express IA",
           "Catálogos técnicos",
           "Consulta por chassi",
-          "Clip IA incluído na assinatura",
           "Maior volume de processamento",
           "Prioridade de processamento",
           "Suporte prioritário",
