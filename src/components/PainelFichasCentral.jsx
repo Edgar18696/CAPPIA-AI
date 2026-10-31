@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { supabase } from "../supabase";
 import { listarFichasCentral } from "../services/fichasCentralService";
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import { retomarAnuncioGuardado } from "../services/aberturaNovoAnuncio";
@@ -28,6 +29,11 @@ import {
  * DEFINITIVA, chama exclusaoFichaService: ele relê tudo, confere de novo e
  * quem apaga é só a função protegida do banco. Anúncios publicados, MLBs,
  * Bling, Base PAIIA e fotos nunca são apagados.
+ * (31/10/2026) TODAS as fichas mostram um único "🗑 Excluir". Ficha sem
+ * publicação/vínculos: exclusão definitiva segura (a de sempre). Ficha com
+ * MLB, publicação, Bling ou protegida: o mesmo botão só ARQUIVA (sai da
+ * lista pela tabela paiia_fichas_arquivadas); histórico, MLB, Bling e
+ * proteção contra duplicidade continuam intactos.
  */
 export default function PainelFichasCentral({ setScreen }) {
   const [estado, setEstado] = useState({ carregando: true, erro: "", fichas: [] });
@@ -43,6 +49,7 @@ export default function PainelFichasCentral({ setScreen }) {
   // ficha em exclusão e a mensagem do resultado.
   const [brutas, setBrutas] = useState(() => new Map());
   const [excluindo, setExcluindo] = useState("");
+  const [arquivando, setArquivando] = useState("");
   const [aviso, setAviso] = useState({ texto: "", erro: false });
   const [versao, setVersao] = useState(0);
 
@@ -67,8 +74,14 @@ export default function PainelFichasCentral({ setScreen }) {
   }
 
   async function excluir(f) {
-    if (excluindo) return;
-    const ok = window.confirm(`${TEXTO_CONFIRMAR_EXCLUSAO}\n\nFicha: ${f.codigo || "Sem código"} · ${f.titulo || "Sem título"}`);
+    if (excluindo || arquivando) return;
+    const nome = `Ficha: ${f.codigo || "Sem código"} · ${f.titulo || "Sem título"}`;
+    if (!previaExclusao(f.id).pode) {
+      const okArq = window.confirm(`Excluir esta ficha da Central?\n\nProdutos no Bling e anúncios no Mercado Livre não são alterados.\n\n${nome}`);
+      if (okArq) await arquivar(f);
+      return;
+    }
+    const ok = window.confirm(`${TEXTO_CONFIRMAR_EXCLUSAO}\n\n${nome}`);
     if (!ok) return;
     setExcluindo(f.id);
     setAviso({ texto: "⏳ Conferindo a ficha antes de excluir...", erro: false });
@@ -86,11 +99,54 @@ export default function PainelFichasCentral({ setScreen }) {
         // sem acesso ao navegador: a ficha já não existe na base
       }
       setAviso({ texto: "🗑 Ficha excluída definitivamente.", erro: false });
+    } else if (r.protegida) {
+      // A conferência do banco protegeu a ficha: em vez de apagar, só arquiva.
+      setExcluindo("");
+      await arquivar(f);
+      return;
     } else {
-      setAviso({ texto: `${r.protegida ? "🔒" : "❌"} ${r.erro || "Nada foi apagado."}`, erro: true });
+      setAviso({ texto: `❌ ${r.erro || "Nada foi apagado."}`, erro: true });
     }
     setExcluindo("");
     setVersao((v) => v + 1);
+  }
+
+  async function arquivar(f) {
+    setArquivando(f.id);
+    setAviso({ texto: "⏳ Excluindo a ficha da Central...", erro: false });
+    let erro = "";
+    try {
+      const { data: u } = await supabase.auth.getUser();
+      const usuarioId = u?.user?.id;
+      if (!usuarioId) erro = "Sessão expirada: entre de novo no PAIIA.";
+      else {
+        const { error } = await supabase
+          .from("paiia_fichas_arquivadas")
+          .insert({ anuncio_id: f.id, usuario_id: usuarioId, motivo: "Arquivada pela Central de Publicação" });
+        if (error) erro = error.message || "Não foi possível arquivar.";
+      }
+    } catch (e) {
+      erro = `Falha inesperada (${e?.message || "erro"}).`;
+    }
+    setAviso(erro ? { texto: `❌ ${erro} Nada foi alterado.`, erro: true } : { texto: "🗑 Ficha excluída da Central.", erro: false });
+    setArquivando("");
+    setVersao((v) => v + 1);
+  }
+
+  /** Rascunho guardado SÓ neste navegador: apaga do navegador (não existe na base). */
+  function excluirLocal() {
+    if (!local) return;
+    const ok = window.confirm(`Excluir este rascunho?\n\nEle está salvo só neste navegador e será apagado. Produtos no Bling e anúncios no Mercado Livre não são alterados.\n\nRascunho: ${local.resumo?.codigo || "Sem código"} · ${local.resumo?.titulo || "Sem título"}`);
+    if (!ok) return;
+    try {
+      const id = local.resumo?.fichaId || local.fichaIdPAIIA || local.fichaId;
+      if (id) descartarRascunhoLocalDaFicha(localStorage, id, { chaveGuardada: CHAVE_ANUNCIO_EM_ANDAMENTO, chavesLocais: CHAVES_ANUNCIO_LOCAL });
+      if (lerAnuncioEmAndamento(localStorage)) localStorage.removeItem(CHAVE_ANUNCIO_EM_ANDAMENTO);
+      setLocal(lerAnuncioEmAndamento(localStorage));
+      setAviso({ texto: "🗑 Rascunho excluído deste navegador.", erro: false });
+    } catch {
+      setAviso({ texto: "❌ Não foi possível apagar o rascunho deste navegador. Nada foi alterado na base.", erro: true });
+    }
   }
 
   function abrirFicha(id) {
@@ -127,7 +183,7 @@ export default function PainelFichasCentral({ setScreen }) {
     <section data-paiia-fichas-central style={caixa}>
       <h3 style={{ color: "#fde047", margin: "0 0 6px" }}>📂 Suas fichas de anúncio</h3>
       <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 10px" }}>
-        Todas as fichas aparecem aqui, mesmo as que ainda não estão prontas. Abrir uma ficha só navega: nada é apagado nem publicado. "Excluir" aparece só em fichas iniciadas e abandonadas.
+        Todas as fichas aparecem aqui, mesmo as que ainda não estão prontas. Abrir uma ficha só navega: nada é apagado nem publicado. "Excluir" tira a ficha da Central. Produtos no Bling e anúncios no Mercado Livre não são alterados.
       </p>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -148,6 +204,9 @@ export default function PainelFichasCentral({ setScreen }) {
           </span>
           <button type="button" data-paiia-retomar-local onClick={retomarLocal} style={botao}>
             ✏️ Retomar no Novo Anúncio
+          </button>
+          <button type="button" data-paiia-excluir-local onClick={excluirLocal} style={botaoExcluir}>
+            🗑 Excluir
           </button>
         </div>
       )}
@@ -187,16 +246,9 @@ export default function PainelFichasCentral({ setScreen }) {
                     ? "🧩 Ver canais escolhidos"
                     : "▶ Continuar"}
           </button>
-          {(() => {
-            const pv = previaExclusao(f.id);
-            return pv.pode ? (
-              <button type="button" data-paiia-excluir-ficha={f.id} onClick={() => excluir(f)} disabled={Boolean(excluindo)} style={botaoExcluir}>
-                {excluindo === f.id ? "⏳ Excluindo..." : "🗑 Excluir"}
-              </button>
-            ) : (
-              <span data-paiia-ficha-protegida={f.id} title={pv.motivo || "Ficha protegida"} style={sub}>🔒 Protegida</span>
-            );
-          })()}
+          <button type="button" data-paiia-excluir-ficha={f.id} onClick={() => excluir(f)} disabled={Boolean(excluindo || arquivando)} style={botaoExcluir}>
+            {excluindo === f.id || arquivando === f.id ? "⏳ Excluindo..." : "🗑 Excluir"}
+          </button>
         </div>
       ))}
       {estado.fichas.length > 12 && (

@@ -233,5 +233,8 @@ test("11) Voltar nunca limpa campos confirmados", () => {
   assert.equal(/set(Fotos|Compatibilidades|Preco|QuantidadeEstoque|Marca|Categoria|CategoriaId|TipoVeiculo|LogisticaConferencia)\(/.test(trecho), false);
   assert.equal(/removeItem|cancelarFichaSemConta/.test(trecho), false);
   const painel = ler("src/components/PainelFichasCentral.jsx");
-  assert.equal(/removeItem|cancelarFichaSemConta|\.delete\(/.test(painel), false);
+  assert.equal(/cancelarFichaSemConta|\.delete\(/.test(painel), false);
+  // (31/10/2026) o único removeItem do painel é o "🗑 Excluir" do rascunho Em andamento (com confirmação)
+  const semExcluirLocal = painel.slice(0, painel.indexOf("function excluirLocal()")) + painel.slice(painel.indexOf("function abrirFicha(id)"));
+  assert.equal(/removeItem/.test(semExcluirLocal), false);
 });
