@@ -48,8 +48,7 @@ import {
   situacaoCompatibilidade,
   textoSoModelosSemDetalhes,
   TEXTO_SEM_APLICACAO,
-  TEXTO_VEICULOS_SO_NA_DESCRICAO,
-} from "../services/compatibilidadeML";
+  TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
@@ -208,6 +207,7 @@ function conferir({ usoBling = null, freteConf = null, campos, quantidadeConfirm
   if (aplicacoes.length) {
     if (!compatML || compatML.carregando) itens.push({ item: "Compatibilidades", nivel: "erro", texto: `Procurando no catálogo do ML os veículos das ${aplicacoes.length} aplicação(ões) aprovada(s)...` });
     else if (compatML.erro) itens.push({ item: "Compatibilidades", nivel: "erro", texto: `Catálogo de veículos não consultado (${compatML.erro}). Reconsulte antes de publicar.` });
+    else if (!compatML.veiculos.length && compatibilidadeNaoExigivel(tipoVeiculoPub?.tipoFicha || tipoVeiculoPub?.nome)) itens.push({ item: "Compatibilidades", nivel: "ok", texto: `Linha Pesada: o catálogo de veículos do Mercado Livre não tem estas aplicações; elas ficam na ficha e na descrição, sem pendência.` });
     else if (!compatML.veiculos.length) itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `${aplicacoes.length} aplicação(ões) registrada(s) e gravada(s) na ficha, mas nenhuma versão do catálogo do Mercado Livre as confirma (não é erro de gravação). Se publicar assim, o anúncio fica PUBLICADO COM PENDÊNCIA de compatibilidade.` });
     else itens.push({ item: "Compatibilidades", nivel: "ok", texto: `${compatML.veiculos.length} veículo(s) do catálogo serão vinculados (${compatML.descartados.length} descartado(s) por não confirmar os dados aprovados).` });
   }
@@ -1180,6 +1180,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           fotos: fotosUrls.length,
           marca: campos.marca,
           tipoVeiculo: tipoVeiculoEnvio,
+          tipoVeiculoFicha: tipoVeiculoPub.tipoFicha || "",
           compatibilidades: idsCompat,
           compatibilidadesAprovadas: aplicacoes.length,
           condicao: dadosAnuncio.condicao,

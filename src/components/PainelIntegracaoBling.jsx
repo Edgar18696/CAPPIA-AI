@@ -1,5 +1,5 @@
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
-import { ESTADO, TEXTO_ESTADO, passosBling, AVISO_VINCULO_MANUAL, URL_BLING_TRAZER } from "../services/vinculoBlingPublicacao";
+import { ESTADO, TEXTO_ESTADO, passosBling, passosBlingAutomatico, avisoVinculoBling, vinculoAutomaticoDaLoja, URL_BLING_TRAZER } from "../services/vinculoBlingPublicacao";
 
 /*
  * Etapa visual "trazer este MLB para o Bling" (anúncio NOVO do PAIIA).
@@ -18,10 +18,11 @@ export default function PainelIntegracaoBling({ registro, verificando = false, o
   if (!registro?.mlb) return null;
   const estado = registro.estado || ESTADO.AGUARDANDO;
   const integrado = estado === ESTADO.INTEGRADO;
+  const automatico = vinculoAutomaticoDaLoja(registro.bling_loja_id);
 
   return (
     <div data-paiia-integracao-bling={estado} style={caixa}>
-      <div data-paiia-vinculo-manual style={destaqueManual}>⚠ {AVISO_VINCULO_MANUAL}</div>
+      <div data-paiia-vinculo-manual={automatico ? undefined : ""} data-paiia-vinculo-automatico={automatico ? "" : undefined} style={automatico ? destaqueAutomatico : destaqueManual}>{automatico ? "🔗" : "⚠"} {avisoVinculoBling(registro.bling_loja_id)}</div>
       <div style={{ ...linha, color: "#86efac" }}>✅ Publicado no Mercado Livre</div>
       <div style={linha}>
         MLB: <b data-paiia-mlb style={{ fontFamily: "monospace", fontSize: 15 }}>{registro.mlb}</b>{" "}
@@ -57,10 +58,10 @@ export default function PainelIntegracaoBling({ registro, verificando = false, o
           </div>
           {estado === ESTADO.AGUARDANDO && (
             <ol data-paiia-passos-bling style={passos}>
-              {passosBling({ lojaNome: registro.bling_loja_nome, sku: registro.sku_oficial }).map((p) => <li key={p}>{p}</li>)}
+              {(automatico ? passosBlingAutomatico({ sku: registro.sku_oficial }) : passosBling({ lojaNome: registro.bling_loja_nome, sku: registro.sku_oficial })).map((p) => <li key={p}>{p}</li>)}
             </ol>
           )}
-          <div data-paiia-aviso-automatica style={aviso}>O PAIIA só confere depois, por leitura. Quem confirma o vínculo é você, no Bling.</div>
+          <div data-paiia-aviso-automatica style={aviso}>{automatico ? "O PAIIA só confere, por leitura. Quem vincula é o Bling (mesmo SKU, sem criar produto)." : "O PAIIA só confere depois, por leitura. Quem confirma o vínculo é você, no Bling."}</div>
         </>
       )}
     </div>
@@ -74,3 +75,4 @@ const botao = { padding: "6px 12px", borderRadius: 8, border: "1px solid #475569
 const passos = { color: "#cbd5e1", fontSize: 12, lineHeight: 1.7, margin: "10px 0 0 18px", padding: 0 };
 const aviso = { marginTop: 8, color: "#fca5a5", fontSize: 12, fontWeight: 700 };
 const destaqueManual = { marginBottom: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #f87171", background: "#450a0a", color: "#fecaca", fontSize: 13, fontWeight: 800 };
+const destaqueAutomatico = { marginBottom: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid #16a34a", background: "#052e16", color: "#bbf7d0", fontSize: 13, fontWeight: 800 };

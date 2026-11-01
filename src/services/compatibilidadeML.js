@@ -501,6 +501,11 @@ export function resultadoCompatibilidades({ enviados = [], lidos = null, aplicac
   return { estado: "ok", enviados: env.length, aceitos: aceitos.length, rejeitados: [], sucesso: true, texto: `O Mercado Livre aceitou os ${aceitos.length} veículo(s) enviados.` };
 }
 
+/** (01/11/2026) Compatibilidade só é exigível fora da Linha Pesada (o catálogo de veículos do ML é de carros/caminhonetes). */
+export function compatibilidadeNaoExigivel(tipoVeiculo) {
+  return semAcento(tipoVeiculo).replace(/\s+/g, " ").trim() === "linha pesada";
+}
+
 export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
   const itens = [];
   const add = (nome, esp, rec, ok, obrigatorio = true) => itens.push({ item: nome, esperado: esp, recebido: rec, ok: Boolean(ok), obrigatorio });
@@ -531,7 +536,12 @@ export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
     add("Tipo de veículo", esperado.tipoVeiculo, t || "nenhum", chaveTipo(t) === chaveTipo(esperado.tipoVeiculo));
   }
   const enviados = Array.isArray(esperado.compatibilidades) ? esperado.compatibilidades : [];
-  if (enviados.length || esperado.compatibilidadesAprovadas) {
+  // (01/11/2026) Linha Pesada (ônibus/caminhão) sem nenhum veículo no catálogo do ML:
+  // não há compatibilidade exigível — não vira pendência. Se houver veículos, confere normalmente.
+  const naoExigivel = !enviados.length && compatibilidadeNaoExigivel(esperado.tipoVeiculoFicha || esperado.tipoVeiculo);
+  if (naoExigivel) {
+    add("Compatibilidades", "não exigível (Linha Pesada)", "sem compatibilidades no catálogo do ML", true, false);
+  } else if (enviados.length || esperado.compatibilidadesAprovadas) {
     const presentes = idsCompatibilidadesLidas(compat);
     const aceitos = enviados.filter((id) => presentes.has(String(id).toUpperCase()));
     add(

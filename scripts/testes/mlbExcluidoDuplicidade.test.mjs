@@ -20,7 +20,7 @@ const ler = (f) => fs.readFileSync(path.join(RAIZ, f), "utf8");
 const { anuncioEncerradoML, situacaoMLBRegistrado, avaliarRegistrosBase, verificarDuplicidadeML, textoMLBAnterior } = await import("../../src/services/duplicidadeML.js");
 const { mesclarMLBsAnteriores, CHAVES_PRESERVADAS_FICHA, preservarChavesDaFicha } = await import("../../src/services/anuncioPublicacaoService.js");
 const { textoSituacaoMLBAtual } = await import("../../src/services/situacaoMLBAtual.js");
-const { passosBling, PASSOS_BLING, AVISO_VINCULO_MANUAL, AVISO_AUTOMATICA } = await import("../../src/services/vinculoBlingPublicacao.js");
+const { passosBling, PASSOS_BLING, AVISO_VINCULO_MANUAL, AVISO_AUTOMATICA, AVISO_VINCULO_AUTOMATICO_SKU, avisoVinculoBling, LOJAS_ML_BLING } = await import("../../src/services/vinculoBlingPublicacao.js");
 const { decidirCriacaoBling } = await import("../../src/services/estoqueBlingPAIIA.js");
 
 const CONTA = "1729335019";
@@ -202,7 +202,7 @@ test("Bling: SKU existente é localizado e NADA é criado; ID antigo do históri
   assert.ok(rv.includes("produtoBlingId: estoque?.encontrado && !estoque?.ambiguo ? estoque?.produto?.id"));
 });
 
-test("vínculo ML → Bling continua MANUAL; nenhum texto de vínculo automático", () => {
+test("vínculo ML → Bling MANUAL nas outras lojas; automático pelo SKU só na LojaOnlineSP (aprovado 01/11/2026)", () => {
   assert.equal(AVISO_VINCULO_MANUAL, "VÍNCULO MANUAL NO BLING — NÃO USAR IMPORTAÇÃO/VÍNCULO AUTOMÁTICO.");
   assert.equal(AVISO_AUTOMATICA, AVISO_VINCULO_MANUAL);
   const p = passosBling({ lojaNome: "LojaOnlineSP", sku: "8200442891" });
@@ -212,7 +212,10 @@ test("vínculo ML → Bling continua MANUAL; nenhum texto de vínculo automátic
   assert.match(p.at(-1), /Já trouxe — verificar agora/);
   for (const t of [...p, ...PASSOS_BLING]) assert.equal(/Vínculo automático|Mesmo código SKU →/i.test(t), false, t);
   const painel = ler("src/components/PainelIntegracaoBling.jsx");
-  assert.ok(painel.includes("data-paiia-vinculo-manual") && painel.includes("AVISO_VINCULO_MANUAL"));
+  assert.ok(painel.includes("data-paiia-vinculo-manual") && painel.includes("avisoVinculoBling"));
+  assert.equal(avisoVinculoBling("204883484"), AVISO_VINCULO_AUTOMATICO_SKU);
+  for (const outra of ["", "123", undefined]) assert.equal(avisoVinculoBling(outra), AVISO_VINCULO_MANUAL);
+  assert.deepEqual(LOJAS_ML_BLING.filter((l) => l.vinculo_automatico).map((l) => l.bling_loja_id), ["204883484"]);
   for (const f of ["src/components/PainelIntegracaoBling.jsx", "src/components/FichaPublicadaPAIIA.jsx", "src/services/vinculoBlingPublicacao.js"]) {
     assert.equal(/vinculo_loja_criar/.test(ler(f)), false, `${f} não cria vínculo`);
   }

@@ -36,7 +36,7 @@ export const TEXTO_ESTADO = Object.freeze({
 
 /** Conta Mercado Livre → loja Bling (mesma tabela da função bling-integracao). Nunca adivinha. */
 export const LOJAS_ML_BLING = Object.freeze([
-  Object.freeze({ ml_user_id: "1729335019", nome: "LOJA ONLINE", bling_loja_id: "204883484", bling_loja_nome: "LojaOnlineSP" }),
+  Object.freeze({ ml_user_id: "1729335019", nome: "LOJA ONLINE", bling_loja_id: "204883484", bling_loja_nome: "LojaOnlineSP", vinculo_automatico: true }),
 ]);
 export function lojaBlingDaConta(mlUserId) {
   const id = String(mlUserId ?? "").replace(/\D/g, "");
@@ -65,6 +65,27 @@ export function passosBling({ lojaNome = "", sku = "" } = {}) {
   ];
 }
 export const PASSOS_BLING = Object.freeze(passosBling({ lojaNome: "LojaOnlineSP" }));
+/**
+ * (01/11/2026) LojaOnlineSP: no Bling está ligado "Trazer e vincular novos anúncios de forma automática"
+ * (mesmo SKU, sem criar produto). Nas demais lojas o vínculo continua manual.
+ */
+export const AVISO_VINCULO_AUTOMATICO_SKU = "VÍNCULO AUTOMÁTICO PELO SKU NO BLING (só LojaOnlineSP): o Bling traz o anúncio e liga ao produto com o mesmo SKU, sem criar produto. O PAIIA só confere.";
+export function vinculoAutomaticoDaLoja(blingLojaId) {
+  const id = String(blingLojaId ?? "").trim();
+  return Boolean(id) && LOJAS_ML_BLING.some((l) => l.bling_loja_id === id && l.vinculo_automatico === true);
+}
+export function avisoVinculoBling(blingLojaId) {
+  return vinculoAutomaticoDaLoja(blingLojaId) ? AVISO_VINCULO_AUTOMATICO_SKU : AVISO_VINCULO_MANUAL;
+}
+export function passosBlingAutomatico({ sku = "" } = {}) {
+  const t = String(sku ?? "").trim();
+  return [
+    `O Bling traz este anúncio sozinho e o liga ao produto com o mesmo SKU${t ? ` (${t})` : ""} — sem criar produto novo.`,
+    "Aguarde alguns minutos e toque em \"🔎 Já trouxe — verificar agora\".",
+    "Se não aparecer: no Bling, Trazer anúncios → Pelo MLB ou link → cole este MLB (o mesmo caminho manual de antes).",
+  ];
+}
+
 // Compatibilidade com quem importava o aviso antigo: agora é o aviso do vínculo manual.
 export const AVISO_AUTOMATICA = AVISO_VINCULO_MANUAL;
 
