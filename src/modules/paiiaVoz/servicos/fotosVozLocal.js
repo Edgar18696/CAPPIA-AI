@@ -154,7 +154,7 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
   async function substituir(id, arquivo) {
     if (!ehImagem(arquivo)) throw new Error("não é imagem");
     // foto nova = tratamento novo (a chave antiga não vale para outra imagem)
-    return atualizar(id, (reg) => ({ ...reg, nome: arquivo.name || reg.nome, tipo: arquivo.type, tamanho: Number(arquivo.size) || 0, blob: arquivo, usarNoAnuncio: usarPorPadrao(arquivo), criadaEm: agora(), tratada: null, versao: "original", ia: null, iaEnviado: null, iaRecorte: null }));
+    return atualizar(id, (reg) => ({ ...reg, nome: arquivo.name || reg.nome, tipo: arquivo.type, tamanho: Number(arquivo.size) || 0, blob: arquivo, usarNoAnuncio: usarPorPadrao(arquivo), criadaEm: agora(), tratada: null, versao: "original", versaoManual: false, ia: null, iaEnviado: null, iaRecorte: null, nuvem: null }));
   }
 
   /** Guarda a versão com fundo branco (a original NUNCA é trocada). */
@@ -169,7 +169,17 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
 
   /** Escolhe qual versão vai ao anúncio: "original" ou "tratada". */
   async function escolherVersao(id, versao) {
-    return atualizar(id, (reg) => ({ ...reg, versao: versao === "tratada" && reg.tratada?.blob ? "tratada" : "original" }));
+    return atualizar(id, (reg) => ({ ...reg, versao: versao === "tratada" && reg.tratada?.blob ? "tratada" : "original", versaoManual: true }));
+  }
+
+  /** (31/10/2026) Fundo branco pronto: entra sozinho no anúncio, a não ser que você tenha escolhido a original. */
+  async function usarTratadaAutomatica(id) {
+    return atualizar(id, (reg) => (reg.versaoManual || !reg.tratada?.blob ? reg : { ...reg, versao: "tratada" }));
+  }
+
+  /** (31/10/2026) Onde a foto está na conta (original / fundo branco). Nunca apaga a foto do aparelho. */
+  async function salvarNuvem(id, parcial) {
+    return atualizar(id, (reg) => ({ ...reg, nuvem: { ...(reg.nuvem || {}), ...(parcial || {}) } }));
   }
 
   /** Apaga as fotos da ficha (Nova ficha). */
@@ -207,5 +217,5 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
     return comoArquivo(reg);
   }
 
-  return { tipo: arm.tipo, listar, adicionar, marcarUso, remover, substituir, salvarTratada, salvarIA, escolherVersao, arquivoEscolhido, limparFicha, faxina, comoArquivo };
+  return { tipo: arm.tipo, listar, adicionar, marcarUso, remover, substituir, salvarTratada, salvarIA, escolherVersao, usarTratadaAutomatica, salvarNuvem, arquivoEscolhido, limparFicha, faxina, comoArquivo };
 }

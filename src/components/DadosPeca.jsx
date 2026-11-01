@@ -24,6 +24,9 @@ export default function DadosPeca({
   // de busca e sem busca pelo Enter (evita trocar título/descrição por
   // acidente). Os campos continuam editáveis. Outros fluxos: igual a antes.
   fichaPaiiaVoz = false,
+  // (23/10 - E6) Padroniza as maiúsculas quando o campo perde o foco.
+  aoSairDoTitulo,
+  aoSairDaDescricao,
 }) {
   const buscar = fichaPaiiaVoz ? () => {} : buscarEMontarAnuncio;
   return (
@@ -81,6 +84,8 @@ export default function DadosPeca({
         setTitulo={setTitulo}
         descricao={descricao}
         setDescricao={setDescricao}
+        aoSairDoTitulo={aoSairDoTitulo}
+        aoSairDaDescricao={aoSairDaDescricao}
         preco={preco}
         setPreco={setPreco}
         tipoAnuncio={tipoAnuncio}

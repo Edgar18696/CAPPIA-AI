@@ -45,12 +45,13 @@ function fotoIAFalsa({ atraso = 30, falhas = {} } = {}) {
   };
 }
 
-test("modos: real nunca é padrão e só existe com autorização no build", () => {
+test("modos: real só existe com autorização no build; autorizado, começa sozinho (31/10/2026)", () => {
   assert.deepEqual(IA.modosDisponiveis({ modoTeste: true }), ["desligado", "simulacao"]);
   assert.deepEqual(IA.modosDisponiveis({ modoTeste: false }), ["desligado"]);
   assert.deepEqual(IA.modosDisponiveis({ modoTeste: false, realLiberado: true }), ["desligado", "real"]);
   assert.equal(IA.modoPadrao({ modoTeste: true }), "simulacao");
-  assert.equal(IA.modoPadrao({ modoTeste: false, realLiberado: true }), "desligado");
+  assert.equal(IA.modoPadrao({ modoTeste: false }), "desligado", "sem autorização: desligado");
+  assert.equal(IA.modoPadrao({ modoTeste: false, realLiberado: true }), "real", "(31/10) autorizado: o fundo branco começa sozinho");
   const arm = { m: new Map(), getItem(k) { return this.m.get(k) ?? null; }, setItem(k, v) { this.m.set(k, v); } };
   arm.setItem("paiiaVozFotoIAModo", "real");
   assert.equal(IA.lerModo({ modoTeste: false }, arm), "desligado", "‘real’ guardado não vale sem autorização");
@@ -73,7 +74,7 @@ test("1, 3 e 5 fotos: todas tratadas, no máximo 3 ao mesmo tempo, cada uma cobr
     assert.ok(regs.every((r) => r.usarNoAnuncio), "todas marcadas para o anúncio");
     assert.ok(regs.every((r) => r.tratada?.blob?.size === 7 && r.tratada.origem === "fotoIA"));
     assert.ok(regs.every((r) => r.blob.size === 10), "originais intactas");
-    assert.ok(regs.every((r) => r.versao === "original"), "a escolha continua sendo do usuário");
+    assert.ok(regs.every((r) => r.versao === "tratada"), "(31/10) pronto: o fundo branco entra sozinho (a original fica guardada)");
     assert.equal(falsa.c.cobradas.size, n);
     assert.equal(falsa.c.envios, n);
     assert.ok(falsa.c.maxSimultaneas <= 3, `simultâneas: ${falsa.c.maxSimultaneas}`);

@@ -56,13 +56,17 @@ import TesteMicrofone from "./TesteMicrofone";
 import { consultarBaseVoz } from "./servicos/consultaBaseVoz";
 import { candidatosDeCodigo, lerTextoDaFoto } from "./servicos/codigoNaFoto";
 import { armazenamentoIndexedDB, armazenamentoMemoria, criarGuardaFotos, MAX_FOTOS_POR_FICHA } from "./servicos/fotosVozLocal";
-import { criarExecutorFotoIA, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
+import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
+// (31/10/2026) Ficha na conta: fotos e dados do Voz na MESMA ficha do Novo Anúncio (celular ⇄ computador).
+import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
+import { salvarFichaNovoAnuncio, lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
+import { rascunhoDaFicha } from "../../services/fichaNovoAnuncio";
 // Foto IA OFICIAL, sem alteração (mesmas funções da tela Foto IA):
 import { enviarOriginalFotoIA, recortarFotoIA } from "../../services/fotoIA/pipelineFotoIA";
 import { comporFotoFinal } from "../../services/fotoIA/composicaoFotoIA";
 import { supabase } from "../../supabase";
 import { consumirAcaoPaiiaVoz } from "./servicos/acaoInicial";
-import { iniciarAnuncioNovo } from "../../services/aberturaNovoAnuncio";
+import { iniciarAnuncioNovo, abrirFichaNoNovoAnuncio } from "../../services/aberturaNovoAnuncio";
 import { buscarConhecimentoValidado } from "../../services/paizinhoPesquisa/conhecimentoValidado";
 import { pesquisarCatalogo } from "../../services/catalogoService";
 
@@ -107,7 +111,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const r = estadoRapido(ficha);
   const etapa = r.etapa;
 
-  const mudarFicha = useCallback((nova) => {
+  const mudarFicha = useCallback((nova0) => {
+    // (31/10/2026) o vínculo com a ficha da conta nunca se perde (evita criar outra ficha)
+    const ant = fichaRef.current;
+    const nova = nova0 && ant?.fichaIdPAIIA && !nova0.fichaIdPAIIA && nova0.id === ant.id ? { ...nova0, fichaIdPAIIA: ant.fichaIdPAIIA } : nova0;
     fichaRef.current = nova;
     setFicha(nova);
     guardarFichaVoz(nova);
@@ -140,6 +147,62 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     }
   }, [guarda, paraTela]);
   const fichaId = ficha.id;
+
+  // ---------------- Ficha na conta (celular ⇄ computador) ----------------
+  // Cada mudança (código, título, descrição, fotos, fundo branco pronto) vai
+  // para a MESMA ficha do Novo Anúncio. Uma gravação por vez; se algo mudar
+  // durante a gravação, grava de novo no fim. Falha não apaga nada.
+  const [nuvem, setNuvem] = useState({ estado: "", texto: "" });
+  const depsNuvem = useMemo(() => ({
+    usuarioId: usuario?.id || "",
+    guarda,
+    enviarOriginal: (reg) => enviarOriginalFotoIA({ supabase, usuarioId: usuario?.id, arquivo: guarda.comoArquivo(reg) }),
+    enviarTratada: async (reg) => {
+      const caminho = `${usuario?.id}/prontas/1200x1200-voz-${reg.id}-${Date.now()}.png`;
+      const { error } = await supabase.storage.from("imagens").upload(caminho, reg.tratada.blob, { upsert: false, contentType: reg.tratada.blob.type || "image/png" });
+      if (error) throw new Error(error.message || "falha no envio da foto com fundo branco");
+      const { data } = supabase.storage.from("imagens").getPublicUrl(caminho);
+      if (!data?.publicUrl) throw new Error("sem endereço público");
+      return { caminho, url: data.publicUrl };
+    },
+    lerFicha: lerFichaNovoAnuncio,
+    salvarFicha: salvarFichaNovoAnuncio,
+  }), [usuario?.id, guarda]);
+  const depsNuvemRef = useRef(depsNuvem);
+  useEffect(() => { depsNuvemRef.current = depsNuvem; }, [depsNuvem]);
+  const sincRef = useRef({ rodando: false, deNovo: false });
+  const sincronizar = useCallback(async () => {
+    const st = sincRef.current;
+    if (st.rodando) { st.deNovo = true; return null; }
+    const f = fichaRef.current;
+    if (!usuario?.id || f.enviadaEm) return null;
+    st.rodando = true;
+    let res = null;
+    try {
+      const rr = estadoRapido(f);
+      const { dados } = mapearRapidoParaNovoAnuncio(f);
+      const regs = await guarda.listar(f.id);
+      setNuvem((n) => ({ ...n, estado: "salvando" }));
+      res = await sincronizarFichaVoz({ fichaVozId: f.id, fichaIdPAIIA: f.fichaIdPAIIA || "", codigo: dados.codigo, titulo: rr.titulo.valor, descricao: dados.descricao, preco: dados.preco, oem: dados.oem }, regs, depsNuvemRef.current);
+      if (res.ok && res.fichaIdPAIIA && res.fichaIdPAIIA !== fichaRef.current.fichaIdPAIIA) {
+        const comId = { ...fichaRef.current, fichaIdPAIIA: res.fichaIdPAIIA };
+        fichaRef.current = comId;
+        setFicha(comId);
+        guardarFichaVoz(comId);
+      }
+      const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      setNuvem(res.ok
+        ? { estado: "salva", texto: `☁️ Ficha salva na sua conta às ${hora} · ${res.fotosNaFicha} foto(s) na ficha${res.conflitos.length ? ` · ${res.conflitos.join(", ")} editado(s) no computador: mantido o do computador` : ""}${res.erros.length ? ` · ⚠️ ${res.erros.length} foto(s) ainda não enviada(s) — tento de novo sozinho` : ""}` }
+        : { estado: res.estado, texto: res.estado === "aguardando-codigo" ? "☁️ As fotos e os dados vão para a sua conta assim que o código for informado (até lá ficam guardados neste aparelho)." : res.estado === "sem-login" ? `⚠️ ${res.erro}` : `⚠️ ${res.erro}` });
+      if (res.ok || res.erros?.length) await recarregarFotos();
+    } catch (e) {
+      setNuvem({ estado: "erro", texto: `⚠️ Não consegui salvar na conta agora (${e?.message || e}). Nada foi perdido: tento de novo.` });
+    } finally {
+      st.rodando = false;
+      if (st.deNovo) { st.deNovo = false; setTimeout(() => { sincronizar(); }, 300); }
+    }
+    return res;
+  }, [usuario?.id, guarda, recarregarFotos]);
   useEffect(() => {
     guarda.faxina(fichaId).catch(() => {}).finally(() => recarregarFotos());
   }, [fichaId, guarda, recarregarFotos]);
@@ -158,7 +221,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     let espera = null;
     const f = criarFilaFotoIA({
       guarda,
-      executar: criarExecutorFotoIA({ supabase, usuarioId: usuario.id, enviarOriginalFotoIA, recortarFotoIA, comporFotoFinal }),
+      executar: modoIA === "real"
+        ? criarExecutorFotoIA({ supabase, usuarioId: usuario.id, enviarOriginalFotoIA, recortarFotoIA, comporFotoFinal, garantirOriginal: (reg) => garantirOriginalNaNuvem(reg, depsNuvemRef.current) })
+        : criarExecutorSimulado(),
       aoMudar: () => {
         clearTimeout(espera);
         espera = setTimeout(() => recarregarFotos(), 150);
@@ -176,6 +241,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   useEffect(() => {
     if (filaRef.current && idsFotos) filaRef.current.enfileirarNovas(fichaId).catch(() => {});
   }, [modoIA, usuario?.id, idsFotos, fichaId]);
+  const marcaFotos = fotos.map((f) => `${f.id}:${f.versao}:${f.usarNoAnuncio ? 1 : 0}:${f.ia?.estado || ""}:${f.reg?.nuvem?.original ? 1 : 0}:${f.reg?.nuvem?.tratada ? 1 : 0}`).join(",");
+  const r0 = estadoRapido(ficha);
+  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}`;
+  useEffect(() => {
+    if (!usuario?.id) return undefined;
+    const t = setTimeout(() => { sincronizar(); }, 1200);
+    return () => clearTimeout(t);
+  }, [marcaFicha, marcaFotos, usuario?.id, sincronizar]);
   function trocarModoIA(m) {
     gravarModo(m);
     setModoIA(m);
@@ -404,6 +477,32 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const v = validarRapido(f, { fotos: fotosUsadas.length });
     if (!v.pronto) { setConfirmandoEnvio(false); setAviso(`Ainda falta: ${v.faltando.join(", ")}.`); return; }
     const { dados, complemento } = mapearRapidoParaNovoAnuncio(f);
+    // (31/10/2026) Ficha já na conta: o Novo Anúncio abre ESSA ficha (com as fotos dela).
+    if (usuario?.id) {
+      const res = await sincronizar();
+      const id = res?.fichaIdPAIIA || fichaRef.current.fichaIdPAIIA;
+      if (id) {
+        const lida = await lerFichaNovoAnuncio(id);
+        const rasc = lida.ok ? rascunhoDaFicha(lida.ficha) : null;
+        if (rasc) {
+          const pm = dados.pesoMedidasVoz;
+          const extra = { origemPaiiaVoz: dados.origemPaiiaVoz };
+          if (pm?.campos && typeof pm.campos === "object") {
+            const preenchidos = [];
+            for (const [c, v] of Object.entries(pm.campos)) if (typeof v === "string" && v.trim() && !String(rasc[c] ?? "").trim()) { extra[c] = v; preenchidos.push(c); }
+            if (preenchidos.length) extra.vozPesoMedidas = { campos: preenchidos, texto: String(pm.texto || ""), frases: Array.isArray(pm.frases) ? pm.frases.slice(0, 6) : [], duvidas: Array.isArray(pm.duvidas) ? pm.duvidas.slice(0, 4) : [], conferido: false };
+          }
+          try { localStorage.setItem(CHAVE_COMPLEMENTO_VOZ, JSON.stringify(complemento)); } catch { /* sem espaço */ }
+          abrirFichaNoNovoAnuncio({ ...rasc, ...extra });
+          globalThis.__paiiaVozFotosPendentes = null;
+          const enviada = { ...fichaRef.current, enviadaEm: Date.now(), versao: (Number(f.versao) || 0) + 1 };
+          fichaRef.current = enviada;
+          guardarFichaVoz(enviada);
+          setScreen?.("novoAnuncio");
+          return;
+        }
+      }
+    }
     iniciarAnuncioNovo({ dados });
     try { localStorage.setItem(CHAVE_COMPLEMENTO_VOZ, JSON.stringify(complemento)); } catch { /* sem espaço */ }
     const regs = await guarda.listar(f.id).catch(() => []);
@@ -496,6 +595,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
                   <label className="pr-check"><input type="radio" name={`v-${f.id}`} checked={f.versao === "tratada"} disabled={!f.tratada?.aplicavel} onChange={() => escolherVersao(f.id, "tratada")} data-pr-tratada /> Fundo branco</label>
                 </div>
                 <EstadoFotoIA f={f} modoIA={modoIA} onRepetir={() => repetirIA(f.id)} />
+                <span className="pr-status" data-pr-na-conta={f.reg?.nuvem?.original ? (f.versao === "tratada" ? (f.reg?.nuvem?.tratada ? "tratada" : "enviando") : "original") : "nao"}>{f.reg?.nuvem?.original ? (f.versao === "tratada" ? (f.reg?.nuvem?.tratada ? "☁️ Na ficha: fundo branco" : "☁️ Enviando o fundo branco…") : "☁️ Na ficha: original") : "📱 Só neste aparelho (vai para a ficha com o código)"}</span>
                 {f.urlTratada && f.versao === "original" && <img className="pr-mini" src={f.urlTratada} alt="Prévia com fundo branco" />}
                 <label className="pr-check"><input type="checkbox" checked={f.usarNoAnuncio} onChange={(e) => marcarUso(f.id, e.target.checked)} /> usar no anúncio</label>
                 <div className="pr-linha">
@@ -511,12 +611,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             {modosDisponiveis(ambienteIA).map((m) => (
               <label key={m} className="pr-check">
                 <input type="radio" name="modo-ia" checked={modoIA === m} onChange={() => trocarModoIA(m)} data-pr-modo-ia-opcao={m} />
-                {m === "desligado" ? "Desligado (só a foto original)" : m === "simulacao" ? "Simulação de teste — gratuita, sem Replicate" : "Real — Foto IA oficial (conta no limite de 50 por mês)"}
+                {m === "desligado" ? "Desligado (só a foto original)" : m === "simulacao" ? "Simulação de teste — gratuita, sem Replicate (não remove o fundo de verdade)" : "Real — Foto IA oficial (conta no limite de 50 por mês)"}
               </label>
             ))}
             {!modosDisponiveis(ambienteIA).includes("real") && <p className="pr-fonte">Tratamento real (Foto IA oficial, Replicate/Recraft, pago): desligado — aguardando sua autorização.</p>}
             {modoIA !== "desligado" && !usuario?.id && <p className="pr-aviso">⚠️ Entre na sua conta para tratar as fotos.</p>}
           </div>
+          {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
           <p className="pr-dica">Todas as fotos vão para o anúncio na versão escolhida. A original fica sempre guardada; o fundo branco é preparado enquanto você preenche código, título e descrição.</p>
           <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>
         </section>

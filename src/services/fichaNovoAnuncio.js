@@ -119,7 +119,7 @@ export function montarNovoAnuncioParaFicha(estado, fichaId = "") {
  * Preserva tudo o que é de outras etapas (ficha da Conferência, Bling,
  * Base PAIIA, versão). Antes da Conferência marca etapa_fluxo "novo_anuncio".
  */
-export function mesclarNovoAnuncio(dadosAtuais, montado, agora = new Date().toISOString()) {
+export function mesclarNovoAnuncio(dadosAtuais, montado, agora = new Date().toISOString(), { paiiaVoz } = {}) {
   const atual = dadosAtuais && typeof dadosAtuais === "object" ? dadosAtuais : {};
   const temConferencia = Boolean(atual.ficha && (atual.ficha.campos || atual.ficha.anuncioConferido));
   const saida = {
@@ -128,6 +128,9 @@ export function mesclarNovoAnuncio(dadosAtuais, montado, agora = new Date().toIS
     anuncio: { ...(atual.anuncio || {}), ...(montado?.anuncio || {}) },
     novo_anuncio: { ...(montado?.novo_anuncio || {}), salvo_em: agora },
   };
+  // (31/10/2026) PAIIA Voz: originais, versão de cada foto e o que o Voz gravou
+  // (para nunca sobrescrever o que foi editado no computador).
+  if (paiiaVoz && typeof paiiaVoz === "object") saida.paiia_voz = { ...paiiaVoz, salvo_em: agora };
   if (!temConferencia) saida.etapa_fluxo = ETAPA_NOVO_ANUNCIO;
   else delete saida.etapa_fluxo;
   return saida;
@@ -164,6 +167,7 @@ export function rascunhoDaFicha(row) {
     fotos: fotos.map((u, i) => ({ imagem_processada: u, imagem_original: "", ordem: i, capa: i === 0 })),
     clip: txt(fonte.clip),
     canalVenda: txt(na?.canalVenda), categoriaConcorrencia: txt(na?.categoriaConcorrencia),
+    ...(txt(na?.origemPaiiaVoz) ? { origemPaiiaVoz: txt(na.origemPaiiaVoz) } : {}),
     ...(na?.precificacao || {}), ...(na?.embalagem || {}),
     ...dadosTecnicosDaFicha(d),
     rascunhoLeve: 1,

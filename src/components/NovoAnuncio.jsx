@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -54,6 +55,8 @@ import {
   precificacaoDoAnuncioEmAndamento,
 } from "../services/aberturaNovoAnuncio";
 import { enderecoDaFicha } from "../services/fichasCentral";
+// (23/10 - E6) Inicial maiúscula em cada palavra do título e da descrição.
+import { padronizarTitulo, padronizarDescricao } from "../services/padronizarTextoAnuncio";
 import useFichaNovoAnuncio from "../hooks/useFichaNovoAnuncio";
 import { OPCOES_TIPO_VEICULO, TIPO_CARRO, normalizarTipoVeiculo } from "../services/tipoVeiculoAnuncio";
 import { kgParaG, medidaDoNovoAnuncio, textoMedida } from "../services/dadosTecnicosAnuncio";
@@ -901,8 +904,14 @@ useEffect(() => {
 
   const [codigo, setCodigo] = useState("");
 const [oem, setOem] = useState("");
-const [titulo, setTitulo] = useState("");
-const [descricao, setDescricao] = useState("");
+const [titulo, setTituloDigitado] = useState("");
+const [descricao, setDescricaoDigitada] = useState("");
+// (23/10 - E6) Todo título/descrição que ENTRA no anúncio (catálogo, PAIIA Voz,
+// base PAIIA, rascunho) sai com inicial maiúscula em cada palavra, preservando
+// códigos, siglas, acentos, aplicações e os textos fixos do modelo da loja.
+// O que é digitado é padronizado ao sair do campo (sem pular o cursor).
+const setTitulo = useCallback((v) => setTituloDigitado((ant) => padronizarTitulo(typeof v === "function" ? v(ant) : v)), []);
+const setDescricao = useCallback((v) => setDescricaoDigitada((ant) => padronizarDescricao(typeof v === "function" ? v(ant) : v)), []);
 const [preco, setPreco] = useState("");
 const [tipoAnuncio, setTipoAnuncio] =
   useState("classico");
@@ -4913,19 +4922,20 @@ marcarAnuncioPronto({
       dadosSalvos = {};
     }
 
+    // (E6) Conferência final da padronização antes de seguir para a Publicação.
     const tituloFinal =
-      String(
+      padronizarTitulo(String(
         titulo ||
         dadosSalvos?.titulo ||
         ""
-      ).trim();
+      ).trim());
 
     const descricaoFinal =
-      String(
+      padronizarDescricao(String(
         descricao ||
         dadosSalvos?.descricao ||
         ""
-      ).trim();
+      ).trim());
 
     const precoOrigem =
       preco ||
@@ -5288,9 +5298,11 @@ marcarAnuncioPronto({
   oem={oem}
   setOem={setOem}
   titulo={titulo}
-  setTitulo={setTitulo}
+  setTitulo={setTituloDigitado}
+  aoSairDoTitulo={() => setTitulo((t) => t)}
   descricao={descricao}
-  setDescricao={setDescricao}
+  setDescricao={setDescricaoDigitada}
+  aoSairDaDescricao={() => setDescricao((d) => d)}
   preco={preco}
   setPreco={setPreco}
   tipoAnuncio={tipoAnuncio}

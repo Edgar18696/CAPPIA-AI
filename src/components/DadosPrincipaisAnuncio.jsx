@@ -7,6 +7,9 @@ export default function DadosPrincipaisAnuncio({
   setTitulo,
   descricao,
   setDescricao,
+  // (23/10 - E6) Ao sair do campo: inicial maiúscula em cada palavra.
+  aoSairDoTitulo,
+  aoSairDaDescricao,
   pecaEncontrada,
   buscarEMontarAnuncio,
   processando,
@@ -104,6 +107,7 @@ export default function DadosPrincipaisAnuncio({
         onChange={(e) =>
           setTitulo(e.target.value)
         }
+        onBlur={() => aoSairDoTitulo?.()}
         placeholder="Título do anúncio"
         maxLength={60}
         style={inputStyle}
@@ -114,6 +118,7 @@ export default function DadosPrincipaisAnuncio({
         onChange={(e) =>
           setDescricao(e.target.value)
         }
+        onBlur={() => aoSairDaDescricao?.()}
         placeholder="Descrição do anúncio"
         rows={8}
         style={{

@@ -67,15 +67,16 @@ test("diálogo do Samsung, na ordem em que foi falado de verdade", () => {
 
 test("título e descrição: detalhes da peça, sem montadora, só aplicação conferida, até 60", () => {
   const { f } = dialogo(["Tenho uma lanterna dianteira de ônibus Neobus Mega Plus", "2013 e 2014", "Esquerdo, cristal, LED, 12 e 24 volts", "código ABC123"]);
-  assert.equal(F.montarTitulo(f), "Lanterna dianteira esquerda cristal LED 12V/24V - ABC123", "sem aplicação conferida, sem modelo");
+  // (E6) inicial maiúscula em cada palavra; LED, 12V/24V e o código ficam como estão
+  assert.equal(F.montarTitulo(f), "Lanterna Dianteira Esquerda Cristal LED 12V/24V - ABC123", "sem aplicação conferida, sem modelo");
   const conferida = F.confirmarAplicacao(f, f.aplicacoes[0].id, true);
   const t = F.montarTitulo(conferida);
   assert.ok(t.length <= 60, t);
   assert.ok(t.endsWith("- ABC123"));
-  assert.ok(/Mega Plus/.test(t) && /esquerda/.test(t), t);
+  assert.ok(/Mega Plus/.test(t) && /Esquerda/.test(t), t); // (E6)
   assert.ok(!/neobus|torken|original/i.test(t), t);
   const d = F.montarDescricao(conferida);
-  assert.equal(d.split("\n")[0], "Lanterna dianteira esquerda cristal LED 12V/24V");
+  assert.equal(d.split("\n")[0], "Lanterna Dianteira Esquerda Cristal LED 12V/24V"); // (E6)
   assert.ok(d.includes("Compatível com os veículos:\nMega Plus 2013 à 2014"));
   assert.ok(d.includes("Especificações Técnicas:\nCondição do item: Produto novo\n"), "especificações só com Produto novo");
   assert.ok(!/neobus/i.test(d));
@@ -87,7 +88,7 @@ test("título longo: sai primeiro tensão, lente e tecnologia; nunca passa de 60
   f = F.confirmarAplicacao(f, f.aplicacoes[0].id, true);
   const t = F.montarTitulo(f);
   assert.ok(t.length <= 60, `${t} (${t.length})`);
-  assert.ok(t.startsWith("Lanterna traseira esquerda"), t);
+  assert.ok(t.startsWith("Lanterna Traseira Esquerda"), t); // (E6) iniciais maiúsculas
   assert.ok(t.endsWith("- 9876543210ABC"), t);
 });
 

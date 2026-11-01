@@ -50,7 +50,10 @@ export function modosDisponiveis({ modoTeste = false, realLiberado = false } = {
   return realLiberado ? ["desligado", "real"] : ["desligado"];
 }
 export function modoPadrao(amb) {
-  return amb?.modoTeste ? "simulacao" : "desligado"; // real NUNCA é padrão
+  // (31/10/2026) Com o modo real AUTORIZADO no build, o fundo branco começa
+  // sozinho (sem abrir a Foto IA). Sem a autorização, nunca há modo real.
+  if (amb?.modoTeste) return "simulacao";
+  return amb?.realLiberado ? "real" : "desligado";
 }
 export function lerModo(amb, storage = globalThis.localStorage) {
   const disp = modosDisponiveis(amb);
@@ -89,10 +92,16 @@ export function criarExecutorFotoIA(deps) {
     let ia = { ...(reg.ia || {}) };
     if (!ia.chave) ia.chave = novaChave();
     let enviado = reg.iaEnviado || null;
+    // (31/10/2026) A original já enviada para a ficha é reaproveitada (sem envio duplicado).
+    if (!ia.caminhoOriginal && reg.nuvem?.original?.caminho) {
+      ia = { ...ia, caminhoOriginal: reg.nuvem.original.caminho, urlOriginal: reg.nuvem.original.url };
+    }
     if (!ia.caminhoOriginal) {
       ia = { ...ia, estado: "enviando" };
       await salvar(ia);
-      const envio = await enviarOriginalFotoIA({ supabase, usuarioId, arquivo: arquivoDe(reg) });
+      const envio = deps.garantirOriginal
+        ? { ...(await deps.garantirOriginal(reg)), arquivoEnviado: null }
+        : await enviarOriginalFotoIA({ supabase, usuarioId, arquivo: arquivoDe(reg) });
       enviado = envio.arquivoEnviado || null;
       ia = { ...ia, caminhoOriginal: envio.caminho, urlOriginal: envio.url, estado: "recortando" };
       await salvar(ia, { iaEnviado: enviado });
@@ -183,6 +192,8 @@ export function criarFilaFotoIA({ guarda, executar, concorrencia = CONCORRENCIA_
         try {
           const { ia, tratada } = await executar(reg, (parcial, extras) => salvarIA(reg.id, parcial, extras));
           await guarda.salvarTratada(reg.id, tratada).catch(() => {});
+          // (31/10/2026) pronto: a versão com fundo branco entra sozinha (a original fica guardada)
+          if (tratada?.blob) await guarda.usarTratadaAutomatica?.(reg.id).catch(() => {});
           await salvarIA(reg.id, ia);
         } catch (e) {
           const atual = (await guarda.listar(fichaId).catch(() => [])).find((r) => r.id === reg.id);
@@ -220,4 +231,34 @@ export function resumoFotos(regs) {
     if (x.usarNoAnuncio && x.versao === "tratada" && x.tratada?.blob) r.comFundoBranco++;
   }
   return r;
+}
+
+/**
+ * (31/10/2026) Executor de SIMULAÇÃO (modo teste): não chama o Foto IA nem o
+ * Replicate — nada é cobrado. Monta no aparelho uma foto 1200×1200 sobre
+ * fundo branco (peça ~80%, sem recorte) só para testar o fluxo completo.
+ * `compor(blob)` é injetável (testes); no navegador usa canvas.
+ */
+export function criarExecutorSimulado({ compor = comporSimuladoCanvas, espera = 300 } = {}) {
+  return async function executar(reg, salvar) {
+    let ia = { ...(reg.ia || {}), estado: "compondo", simulacao: true };
+    await salvar(ia);
+    await new Promise((ok) => setTimeout(ok, espera));
+    const blob = await compor(reg.blob);
+    return { ia: { ...ia, estado: "pronta", erro: "" }, tratada: { blob, origem: "simulacao", baixaResolucao: false, em: Date.now() } };
+  };
+}
+
+async function comporSimuladoCanvas(blob) {
+  const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  const lado = 1200;
+  const c = document.createElement("canvas");
+  c.width = lado; c.height = lado;
+  const g = c.getContext("2d");
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, lado, lado);
+  const esc = Math.min((lado * 0.8) / bmp.width, (lado * 0.8) / bmp.height);
+  const w = Math.round(bmp.width * esc), h = Math.round(bmp.height * esc);
+  g.drawImage(bmp, Math.round((lado - w) / 2), Math.round((lado - h) / 2), w, h);
+  bmp.close?.();
+  return new Promise((ok, falha) => c.toBlob((b) => (b ? ok(b) : falha(new Error("Não foi possível montar a foto."))), "image/png"));
 }

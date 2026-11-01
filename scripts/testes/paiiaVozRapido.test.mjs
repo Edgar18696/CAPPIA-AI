@@ -148,11 +148,11 @@ test("título: sugestões nunca são aplicadas sozinhas", () => {
   let f = comCodigo(nova(), "0280158276");
   f = F.incorporarResultadoBase(f, { encontrado: true, origem: "base_validada", rotulo: "Base validada PAIIA", descricao: "Bico injetor", aplicacoes: [{ texto: "Nissan March 1.6 16V 2012 2019", montadora: "Nissan", modelos: ["March"], motores: ["1.6 16V"], anoInicio: 2012, anoFim: 2019, fonte: "Catálogo" }], codigos: [] }).ficha;
   const s1 = R.sugestoesTitulo(f);
-  assert.ok(s1.includes("Bico injetor - 0280158276"), s1.join(" | "));
+  assert.ok(s1.includes("Bico Injetor - 0280158276"), s1.join(" | ")); // (E6)
   assert.ok(!s1.some((s) => /March/.test(s)), "aplicação não conferida não entra na sugestão");
   assert.equal(R.estadoRapido(f).titulo.valor, "", "nada aplicado sozinho");
   f = F.confirmarAplicacao(f, f.aplicacoes[0].id, true);
-  assert.ok(R.sugestoesTitulo(f).includes("Bico injetor March 1.6 16V - 0280158276"));
+  assert.ok(R.sugestoesTitulo(f).includes("Bico Injetor March 1.6 16V - 0280158276")); // (E6)
 });
 
 test("edição por voz: substituir, trocar, tirar, acrescentar, apagar e desfazer", () => {
@@ -183,10 +183,11 @@ test("descrição: preserva o que foi dito, tira marca/original, separa medidas,
   const o = R.organizarDescricao(f);
   const linhas = o.texto.split("\n");
   assert.equal(linhas[0], "Lanterna Dianteira Esquerda Cristal LED", "1ª linha = nome do produto (título sem o código)");
-  assert.ok(o.informacoes.includes("Lanterna dianteira lado esquerdo lente cristal com LED."));
-  assert.ok(o.informacoes.includes("Funciona em 12 e 24 volts."));
-  assert.ok(!/30 cm|800 gramas/.test(o.texto), "medidas fora da descrição");
-  assert.deepEqual(o.medidas, ["Mede 30 cm de comprimento e pesa 800 gramas."]);
+  // (E6) o quadro guarda o texto já com as maiúsculas da E6
+  assert.ok(o.informacoes.includes("Lanterna Dianteira Lado Esquerdo Lente Cristal Com LED."));
+  assert.ok(o.informacoes.includes("Funciona Em 12 E 24 Volts."));
+  assert.ok(!/30 cm|800 gramas/i.test(o.texto), "medidas fora da descrição");
+  assert.deepEqual(o.medidas, ["Mede 30 cm De Comprimento E Pesa 800 Gramas."]);
   assert.ok(!/original|torken/i.test(o.texto));
   assert.ok(o.avisos.some((a) => /Torken/.test(a)) && o.avisos.some((a) => /original/.test(a)));
   assert.ok(o.texto.includes("Especificações Técnicas:\nCondição do item: Produto novo\n"));
@@ -205,9 +206,9 @@ test("descrição: aplicações só as conferidas; texto final editado à mão �
   f = F.confirmarAplicacao(f, id, true);
   assert.ok(R.organizarDescricao(f).texto.includes("Compatível com os veículos:\nMarch 1.6 16V 2012 à 2019"));
   f = R.definirDescricaoFinal(f, "Texto final que eu escrevi.");
-  assert.equal(R.descricaoParaEnvio(f), "Texto final que eu escrevi.");
+  assert.equal(R.descricaoParaEnvio(f), "Texto Final Que Eu Escrevi."); // (E6) o texto é respeitado; só as iniciais ficam maiúsculas
   f = R.definirDescricaoFinal(f, null);
-  assert.ok(R.descricaoParaEnvio(f).startsWith("Bico injetor"));
+  assert.ok(R.descricaoParaEnvio(f).startsWith("Bico Injetor")); // (E6)
 });
 
 // ---------------------------------------------------------------
@@ -234,8 +235,8 @@ test("envio: dados para o Novo Anúncio (título e descrição do rascunho, marc
   f = R.definirTextoDescricao(f, "lente cristal\npeso 1 kg");
   const { dados, complemento } = R.mapearRapidoParaNovoAnuncio(f, { agora: 5 });
   assert.equal(dados.codigo, "ABC123");
-  assert.equal(dados.titulo, "Lanterna dianteira esquerda - ABC123");
-  assert.ok(dados.descricao.startsWith("Lanterna dianteira esquerda\n\nLente cristal."));
+  assert.equal(dados.titulo, "Lanterna Dianteira Esquerda - ABC123"); // (E6)
+  assert.ok(dados.descricao.startsWith("Lanterna Dianteira Esquerda\n\nLente Cristal.")); // (E6)
   assert.equal(dados.preco, "");
   assert.equal(dados.origemPaiiaVoz, "rap");
   assert.equal(complemento.marca, "Torken");
@@ -253,7 +254,7 @@ test("etapas: navegação e estado guardado na ficha (F5)", () => {
   F.guardarFichaVoz(f, arm);
   const lida = F.lerFichaVoz(arm);
   assert.equal(R.estadoRapido(lida).etapa, "titulo");
-  assert.equal(R.estadoRapido(lida).titulo.valor, "Farol direito");
+  assert.equal(R.estadoRapido(lida).titulo.valor, "Farol Direito"); // (E6)
   assert.equal(R.estadoRapido(F.criarFichaVoz()).etapa, "fotos", "ficha nova começa nas fotos");
 });
 

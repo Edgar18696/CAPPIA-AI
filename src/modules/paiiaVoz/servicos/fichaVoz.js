@@ -17,6 +17,8 @@
 import { normalizarCodigo } from "../../../services/paizinhoPesquisa/codigoPaizinho.js";
 import { semAcento } from "./numerosFalados.js";
 import { MONTADORAS } from "./interpretarFala.js";
+// (23/10 - E6) Inicial maiúscula em cada palavra (preserva códigos, siglas, acentos e aplicações).
+import { padronizarTitulo, padronizarDescricao } from "../../../services/padronizarTextoAnuncio.js";
 
 export const CHAVE_FICHA_VOZ = "paiiaVozFicha";
 export const CHAVE_COMPLEMENTO_VOZ = "paiiaVozComplemento";
@@ -398,7 +400,7 @@ export function montarTitulo(ficha, limite = 60) {
     const espaco = Math.max(10, limite - sufixo.length);
     t = peca.slice(0, espaco).replace(/\s+\S*$/, "").trim() + sufixo;
   }
-  return t.slice(0, limite).trim();
+  return padronizarTitulo(t.slice(0, limite).trim());
 }
 
 export const TEXTO_ATENCAO = "ATENÇÃO: Antes de efetuar a compra, verifique o código da peça instalada em seu veículo. A compatibilidade deve ser confirmada comparando o código informado neste anúncio com o código da peça do veículo.";
@@ -427,7 +429,7 @@ export function montarDescricao(ficha) {
   const codigos = (ficha?.codigos || []).filter((c) => c.conferido !== false).map((c) => c.codigo);
   if (codigos.length) linhas.push("Código de Referência:", codigos.join(" / "), "");
   linhas.push("Garantia: 3 Meses", "", TEXTO_ATENCAO, "", TEXTO_IMPORTANTE);
-  return linhas.join("\n");
+  return padronizarDescricao(linhas.join("\n"));
 }
 
 // ---------------------------------------------------------------

@@ -22,6 +22,8 @@ import {
   TEXTO_IMPORTANTE,
 } from "./fichaVoz.js";
 import { lerPesoEMedidas, camposDadosTecnicos, textoPesoMedidas } from "./pesoMedidasVoz.js";
+// (23/10 - E6) Inicial maiúscula em cada palavra (preserva códigos, siglas, acentos e aplicações).
+import { padronizarTitulo, padronizarDescricao } from "../../../services/padronizarTextoAnuncio.js";
 
 export const ETAPAS = ["fotos", "codigo", "titulo", "descricao", "enviar"];
 export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", titulo: "Título", descricao: "Descrição", enviar: "Enviar" };
@@ -132,6 +134,7 @@ export function avaliarTitulo(titulo, ficha) {
 export function ajustarTitulo(titulo, ficha) {
   let t = limparTextoAnuncio(txt(titulo).replace(RE_ORIGINAL, " "), { marca: txt(ficha?.campos?.marca?.valor) });
   t = t.replace(new RegExp(`(?<![\\p{L}\\p{N}])${MARCA_PADRAO}(?![\\p{L}\\p{N}])`, "giu"), " ").replace(/\s{2,}/g, " ").replace(/\s+-\s*$/, "").trim();
+  t = padronizarTitulo(t); // (E6) sugestões já com iniciais maiúsculas
   if (t.length <= LIMITE_TITULO) return t;
   const sufixo = t.match(/\s-\s[\w./-]+$/)?.[0] || "";
   let corpo = sufixo ? t.slice(0, -sufixo.length) : t;
@@ -142,7 +145,7 @@ export function ajustarTitulo(titulo, ficha) {
 
 export function definirTitulo(ficha, valor, { origem = "voz", agora = Date.now() } = {}) {
   return comRapido(ficha, (r) => {
-    r.titulo = { valor: txt(valor).replace(/\s{2,}/g, " "), origem, anterior: r.titulo.valor };
+    r.titulo = { valor: padronizarTitulo(txt(valor).replace(/\s{2,}/g, " ")), origem, anterior: r.titulo.valor };
   }, agora);
 }
 
@@ -237,23 +240,23 @@ export function organizarDescricao(ficha) {
   const codigos = (ficha?.codigos || []).filter((c) => c.conferido !== false).map((c) => c.codigo);
   if (codigos.length) linhas.push("Código de Referência:", codigos.join(" / "), "");
   linhas.push("Garantia: 3 Meses", "", TEXTO_ATENCAO, "", TEXTO_IMPORTANTE);
-  return { texto: linhas.join("\n"), informacoes, medidas, avisos: [...new Set(avisos)] };
+  return { texto: padronizarDescricao(linhas.join("\n")), informacoes, medidas, avisos: [...new Set(avisos)] };
 }
 
 export function definirTextoDescricao(ficha, texto, { agora = Date.now() } = {}) {
   return comRapido(ficha, (r) => {
-    r.descricao = { ...r.descricao, anterior: r.descricao.texto, texto: String(texto ?? "") };
+    r.descricao = { ...r.descricao, anterior: r.descricao.texto, texto: padronizarDescricao(String(texto ?? "")) };
   }, agora);
 }
 
 /** Texto final editado à mão (null = volta a organizar automaticamente). */
 export function definirDescricaoFinal(ficha, texto, { agora = Date.now() } = {}) {
-  return comRapido(ficha, (r) => { r.descricao = { ...r.descricao, final: texto === null ? null : String(texto) }; }, agora);
+  return comRapido(ficha, (r) => { r.descricao = { ...r.descricao, final: texto === null ? null : padronizarDescricao(String(texto)) }; }, agora);
 }
 
 export function descricaoParaEnvio(ficha) {
   const r = estadoRapido(ficha);
-  return r.descricao.final !== null && r.descricao.final !== undefined ? r.descricao.final : organizarDescricao(ficha).texto;
+  return r.descricao.final !== null && r.descricao.final !== undefined ? padronizarDescricao(r.descricao.final) : organizarDescricao(ficha).texto;
 }
 
 // ---------------------------------------------------------------

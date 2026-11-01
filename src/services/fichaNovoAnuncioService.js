@@ -37,7 +37,7 @@ export async function lerFichaNovoAnuncio(fichaId) {
  * - status_fluxo não é mudado numa ficha existente (aprovação/publicação
  *   continuam sendo da Conferência/Publicação).
  */
-export async function salvarFichaNovoAnuncio({ fichaId = "", codigo, titulo, montado }) {
+export async function salvarFichaNovoAnuncio({ fichaId = "", codigo, titulo, montado, paiiaVoz = null }) {
   const usuarioId = await usuarioAtual();
   if (!usuarioId) return { ok: false, erro: "Sessão expirada: entre de novo no PAIIA." };
   const agora = new Date().toISOString();
@@ -55,7 +55,7 @@ export async function salvarFichaNovoAnuncio({ fichaId = "", codigo, titulo, mon
     if (!r.ok) return { ok: false, fechada: true, excluida: true, naoEncontrada: true, fichaId, erro: TEXTO_FICHA_EXCLUIDA };
     if (r.ok) {
       if (fichaFechada(r.ficha)) return { ok: false, fechada: true, fichaId, erro: "Esta ficha já foi publicada ou cancelada: o Novo Anúncio não altera ela." };
-      const dados = mesclarNovoAnuncio(r.ficha.dados_conferencia, montado, agora);
+      const dados = mesclarNovoAnuncio(r.ficha.dados_conferencia, montado, agora, { paiiaVoz });
       const somenteNovo = dados.etapa_fluxo === "novo_anuncio";
       const { error } = await supabase
         .from(T)
@@ -81,7 +81,7 @@ export async function salvarFichaNovoAnuncio({ fichaId = "", codigo, titulo, mon
       titulo: titulo || null,
       marketplace: "mercado_livre",
       status_fluxo: "rascunho",
-      dados_conferencia: mesclarNovoAnuncio({}, montado, agora),
+      dados_conferencia: mesclarNovoAnuncio({}, montado, agora, { paiiaVoz }),
     })
     .select("id")
     .single();
