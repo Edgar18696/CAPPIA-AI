@@ -61,6 +61,8 @@ import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, g
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
 // (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
 import { dadosCompletosVoz } from "./servicos/fichaCompletaVoz";
+// (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
+import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 import { salvarFichaNovoAnuncio, lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
 import { rascunhoDaFicha } from "../../services/fichaNovoAnuncio";
 // Foto IA OFICIAL, sem alteração (mesmas funções da tela Foto IA):
@@ -765,6 +767,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Para enviar falta: {validacao.faltando.join(", ")}.</p>}
           {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para o Novo Anúncio salvar o anúncio e as fotos.</p>}
+          {usuario && <PreparoPublicacaoVoz fichaId={ficha.fichaIdPAIIA || ""} />}
           {confirmandoEnvio ? (
             <div className="pr-cartao" data-pv-confirmacao-envio>
               <p>O Novo Anúncio será aberto com código, título, descrição e as fotos marcadas. Lá você confere tudo (SKU, fotos, compatibilidade, peso, medidas, frete, preço, estoque e duplicidade) e aprova antes de qualquer publicação.</p>

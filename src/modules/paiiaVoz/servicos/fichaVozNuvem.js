@@ -208,6 +208,9 @@ export async function sincronizarFichaVoz(voz, regs, deps) {
       pendencias: Array.isArray(c.pendencias) ? c.pendencias : [],
       completa: Boolean(c.completa),
     } : {}),
+    // (Etapa 2) o preparo da Conferência gravado na ficha é preservado; se os dados
+    // mudarem, ele aparece como desatualizado (assinatura) e é refeito.
+    ...(meta.preparo ? { preparo: meta.preparo } : {}),
   };
 
   const montado = {
