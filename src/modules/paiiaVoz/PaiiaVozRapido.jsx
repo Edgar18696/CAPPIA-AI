@@ -767,7 +767,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Para enviar falta: {validacao.faltando.join(", ")}.</p>}
           {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para o Novo Anúncio salvar o anúncio e as fotos.</p>}
-          {usuario && <PreparoPublicacaoVoz fichaId={ficha.fichaIdPAIIA || ""} />}
+          {usuario && <PreparoPublicacaoVoz fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
           {confirmandoEnvio ? (
             <div className="pr-cartao" data-pv-confirmacao-envio>
               <p>O Novo Anúncio será aberto com código, título, descrição e as fotos marcadas. Lá você confere tudo (SKU, fotos, compatibilidade, peso, medidas, frete, preço, estoque e duplicidade) e aprova antes de qualquer publicação.</p>

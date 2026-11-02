@@ -1,89 +1,130 @@
 // =============================================================
-// PAIIA Voz — Etapa 2: "Conferir para publicar" no celular.
-// Roda as conferências oficiais (somente leitura) sobre a ficha da conta,
-// grava o resultado na ficha e mostra perguntas curtas. NÃO publica.
+// PAIIA Voz — Etapas 2 e 3: conferir e REVISAR no celular.
+// Etapa 2: roda as conferências oficiais (só leitura) e grava na ficha.
+// Etapa 3: revisão simples (fotos, título, descrição, SKU, marca, aplicações,
+// categoria, preço, modalidade, estoque, peso/medidas) mostrando SÓ o que
+// precisa de correção, e a APROVAÇÃO gravada na ficha. NÃO publica.
 // =============================================================
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useContasML, contasMLConectadas } from "../../services/contaMLAtiva";
 import { nomeDaLoja } from "../../services/duplicidadeML";
 import { lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
-import { preparoAtual } from "./servicos/preparoConferenciaVoz";
-import { prepararEGravar, confirmarCategoriaEGravar } from "./servicos/preparoVozService";
+import { montarRevisao } from "./servicos/revisaoCelularVoz";
+import { prepararEGravar, confirmarCategoriaEGravar, definirModalidadeEGravar, aprovarRevisaoEGravar } from "./servicos/preparoVozService";
 
-const ICONE = { ok: "✅", pergunta: "❓", bloqueio: "⛔", erro: "⚠️", aguardando: "⏳" };
-const ORDEM = ["conta", "sku", "marca", "fotos", "categoria", "compatibilidade", "duplicidade", "bling", "frete"];
+const ICONE = { pergunta: "❓", bloqueio: "⛔", erro: "⚠️", aguardando: "⏳", conferir: "🔎", aviso: "ℹ️" };
 
-export default function PreparoPublicacaoVoz({ fichaId }) {
+export default function PreparoPublicacaoVoz({ fichaId, usuarioId = "" }) {
   const estadoContas = useContasML();
   const contas = contasMLConectadas(estadoContas).filter((c) => String(c.ml_user_id || "").trim());
   const [conta, setConta] = useState("");
-  const [preparo, setPreparo] = useState(null);
-  const [desatualizado, setDesatualizado] = useState("");
-  const [rodando, setRodando] = useState(false);
+  const [row, setRow] = useState(null);
+  const [rodando, setRodando] = useState("");
   const [erro, setErro] = useState("");
 
-  // Reabrir: mostra o último preparo gravado na ficha (e se ainda vale).
+  const recarregar = useCallback(async () => {
+    if (!fichaId) return null;
+    const r = await lerFichaNovoAnuncio(fichaId);
+    if (r.ok) {
+      setRow(r.ficha);
+      const c = r.ficha?.dados_conferencia?.paiia_voz?.preparo?.conta;
+      if (c) setConta((x) => x || c);
+    }
+    return r;
+  }, [fichaId]);
+  // Abrir/reabrir: lê a ficha da conta (preparo e aprovação gravados nela).
   useEffect(() => {
     let ativo = true;
     (async () => {
       if (!fichaId) return;
       const r = await lerFichaNovoAnuncio(fichaId);
       if (!ativo || !r.ok) return;
-      const p = preparoAtual(r.ficha);
-      if (p.preparo) {
-        setPreparo(p.preparo);
-        setConta((c) => c || p.preparo.conta || "");
-        setDesatualizado(p.valido ? "" : p.motivo);
-      }
+      setRow(r.ficha);
+      const c = r.ficha?.dados_conferencia?.paiia_voz?.preparo?.conta;
+      if (c) setConta((x) => x || c);
     })();
     return () => { ativo = false; };
   }, [fichaId]);
 
-  async function conferir() {
-    if (!fichaId || rodando) return;
-    setRodando(true);
+  async function acao(nome, fn) {
+    if (rodando) return;
+    setRodando(nome);
     setErro("");
-    const r = await prepararEGravar(fichaId, { conta });
-    setRodando(false);
-    if (r.preparo) { setPreparo(r.preparo); setDesatualizado(""); }
-    if (!r.ok) setErro(r.erro || "Não consegui gravar a conferência na ficha.");
+    const r = await fn();
+    setRodando("");
+    if (r && !r.ok) setErro(r.erro || "Não consegui gravar na ficha.");
+    await recarregar();
   }
-  async function confirmarCategoria() {
-    if (!preparo || rodando) return;
-    setRodando(true);
-    const r = await confirmarCategoriaEGravar(fichaId, preparo);
-    setRodando(false);
-    if (!r.ok) { setErro(r.erro || "Não consegui confirmar a categoria."); return; }
-    await conferir(); // reconfere com a categoria confirmada
-  }
+  const conferir = () => acao("conferir", () => prepararEGravar(fichaId, { conta }));
+  const confirmarCategoria = () => acao("categoria", async () => {
+    const p = row?.dados_conferencia?.paiia_voz?.preparo;
+    const r = await confirmarCategoriaEGravar(fichaId, p);
+    return r.ok ? prepararEGravar(fichaId, { conta }) : r;
+  });
+  const premium = () => acao("modalidade", async () => {
+    const r = await definirModalidadeEGravar(fichaId, "premium");
+    return r.ok ? prepararEGravar(fichaId, { conta }) : r; // frete muda com a modalidade
+  });
+  const aprovar = () => acao("aprovar", () => aprovarRevisaoEGravar(fichaId, { usuario: usuarioId }));
 
-  if (!fichaId) return <p className="pr-aviso" data-pv-preparo-sem-ficha>☁️ Salve a ficha na conta (informe o código) para conferir a publicação.</p>;
-  const v = preparo?.verificacoes || {};
+  if (!fichaId) return <p className="pr-aviso" data-pv-preparo-sem-ficha>☁️ Salve a ficha na conta (informe o código) para revisar e publicar.</p>;
+  const rev = row ? montarRevisao(row) : null;
+  const d = rev?.dados;
+  const temPreparo = Boolean(row?.dados_conferencia?.paiia_voz?.preparo);
+
   return (
-    <div className="pr-cartao" data-pv-preparo={preparo ? (preparo.pronto ? "pronto" : "pendente") : "nao"}>
-      <p><b>🔎 Conferir para publicar</b> — as mesmas conferências da Publicação, só leitura. Nada é publicado aqui.</p>
+    <div className="pr-cartao" data-pv-revisao={rev ? (rev.aprovada ? "aprovada" : rev.podeAprovar ? "pronta" : "pendente") : "carregando"}>
+      <p><b>📋 Revisão no celular</b> — as mesmas conferências da Publicação, só leitura. Nada é publicado aqui.</p>
       <label className="pr-fonte">Conta Mercado Livre:{" "}
         <select value={conta} onChange={(e) => setConta(e.target.value)} data-pv-preparo-conta>
           <option value="">— escolha —</option>
           {contas.map((c) => <option key={c.ml_user_id} value={String(c.ml_user_id)}>{nomeDaLoja(c.ml_user_id, c.nickname)}</option>)}
         </select>
       </label>
-      <button type="button" className="pr-botao" disabled={rodando} onClick={conferir} data-pv-preparo-conferir>{rodando ? "⏳ Conferindo..." : preparo ? "🔄 Conferir de novo" : "🔎 Conferir agora"}</button>
-      {desatualizado && <p className="pr-aviso" data-pv-preparo-desatualizado>⚠️ Conferência anterior desatualizada ({desatualizado}): confira de novo.</p>}
+      <button type="button" className="pr-botao" disabled={Boolean(rodando) || !conta} onClick={conferir} data-pv-preparo-conferir>{rodando === "conferir" ? "⏳ Conferindo..." : temPreparo ? "🔄 Conferir de novo" : "🔎 Conferir agora"}</button>
       {erro && <p className="pr-aviso" data-pv-preparo-erro>⚠️ {erro}</p>}
-      {preparo && (
-        <ul className="pr-fonte" data-pv-preparo-lista>
-          {ORDEM.filter((k) => v[k]).map((k) => (
-            <li key={k} data-pv-preparo-item={k} data-estado={v[k].estado}>
-              {ICONE[v[k].estado] || "•"} {v[k].texto}
-              {k === "categoria" && v[k].estado === "pergunta" && v[k].sugerida && (
-                <> <button type="button" className="pr-link" disabled={rodando} onClick={confirmarCategoria} data-pv-preparo-confirmar-categoria>Confirmar {v[k].sugerida}</button></>
-              )}
-            </li>
-          ))}
-        </ul>
+
+      {d && (
+        <>
+          {d.fotos.length > 0 && (
+            <div className="pr-fotos-revisao" data-pv-revisao-fotos style={{ display: "flex", gap: 6, overflowX: "auto", margin: "8px 0" }}>
+              {d.fotos.map((u, i) => <img key={u} src={u} alt={`Foto ${i + 1}`} style={{ width: 72, height: 72, objectFit: "contain", background: "#fff", borderRadius: 6 }} />)}
+            </div>
+          )}
+          <dl className="pr-resumo" data-pv-revisao-dados>
+            <dt>Título</dt><dd>{d.titulo || "—"}</dd>
+            <dt>SKU</dt><dd>{d.sku || "—"}</dd>
+            <dt>Marca</dt><dd>{d.marca || "—"}</dd>
+            <dt>Aplicações</dt><dd>{d.aplicacoes.length ? d.aplicacoes.join(" · ") : "—"}</dd>
+            <dt>Categoria</dt><dd>{d.categoria || "—"}</dd>
+            <dt>Preço</dt><dd>{d.preco} · {d.modalidade}</dd>
+            <dt>Estoque</dt><dd>{d.estoque || "—"}</dd>
+            <dt>Peso/medidas</dt><dd>{d.medida || "—"}</dd>
+            {d.frete && <><dt>Frete</dt><dd>{d.frete}</dd></>}
+          </dl>
+          <details className="pr-fonte"><summary>Descrição</summary><pre className="pr-previa" data-pv-revisao-descricao>{d.descricao}</pre></details>
+
+          {rev.pendencias.length > 0 && (
+            <ul className="pr-fonte" data-pv-revisao-pendencias>
+              {rev.pendencias.map((x) => (
+                <li key={x.id} data-pv-pendencia={x.id} data-tipo={x.tipo}>
+                  {ICONE[x.tipo] || "•"} {x.texto}
+                  {x.id === "categoria" && x.sugerida && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={confirmarCategoria} data-pv-preparo-confirmar-categoria>Confirmar {x.sugerida}</button></>}
+                  {x.id === "modalidade" && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={premium} data-pv-revisao-premium>Usar Premium</button></>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {rev.revisaoAnteriorInvalida && <p className="pr-aviso" data-pv-revisao-invalida>⚠️ A ficha mudou depois da aprovação anterior: revise de novo.</p>}
+          {rev.aprovada ? (
+            <p data-pv-revisao-aprovada>✅ Revisão aprovada e gravada na ficha. O botão Publicar vem na próxima etapa.</p>
+          ) : (
+            <button type="button" className="pr-botao pr-grande" disabled={!rev.podeAprovar || Boolean(rodando)} onClick={aprovar} data-pv-revisao-aprovar>
+              {rodando === "aprovar" ? "⏳ Gravando..." : rev.podeAprovar ? "✅ Aprovar revisão" : `Aprovar (${rev.motivoNaoAprova})`}
+            </button>
+          )}
+        </>
       )}
-      {preparo?.pronto && <p data-pv-preparo-pronto>✅ Tudo conferido. A revisão final e o botão Publicar vêm na próxima etapa.</p>}
     </div>
   );
 }

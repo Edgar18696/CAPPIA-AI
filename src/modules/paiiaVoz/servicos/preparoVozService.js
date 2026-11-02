@@ -12,6 +12,7 @@ import { listarAnunciosDoCodigo, conferirDuplicidadeBase } from "../../../servic
 import { modalidadesDaConta } from "../../../services/consultaMLLeitura";
 import { prepararConferenciaVoz, confirmarCategoriaSugerida } from "./preparoConferenciaVoz";
 import { mesclarPreparo } from "./preparoFicha";
+import { aprovarRevisao, comModalidade, comRevisao } from "./revisaoCelularVoz";
 
 async function chamarPublicacao(corpo) {
   if (!corpo?.conta_ml) return { ok: false, erro: "Sem conta Mercado Livre selecionada." };
@@ -26,12 +27,14 @@ async function lerSaldoBling(sku) {
 }
 export const depsReais = { lerJson: lerJsonPublico, chamarPublicacao, listarFichas: listarAnunciosDoCodigo, conferirDuplicidadeBase, lerSaldoBling, modalidadesDaConta };
 
-async function gravar(fichaId, mudar) {
+/** mudar(row) → novo preparo (atalho) ; transformar(dados,row) → novo dados_conferencia. */
+async function gravar(fichaId, mudar, transformar = (dados, row) => mesclarPreparo(dados, mudar(row))) {
   const r = await lerFichaNovoAnuncio(fichaId);
   if (!r.ok) return { ok: false, erro: r.erro || "Ficha não encontrada." };
   if (fichaFechada(r.ficha)) return { ok: false, erro: "Esta ficha já foi publicada ou cancelada." };
   if (!fichaSoNoNovoAnuncio(r.ficha)) return { ok: false, erro: "Esta ficha já está na Conferência do computador: o PAIIA Voz não altera mais." };
-  const dados = mesclarPreparo(r.ficha.dados_conferencia, mudar(r.ficha));
+  const dados = transformar(r.ficha.dados_conferencia, r.ficha);
+  if (!dados || dados.erro) return { ok: false, erro: dados?.erro || "Nada para gravar." };
   // Só grava se ninguém mexeu na ficha desde a leitura (celular × computador).
   const { data, error } = await supabase.from("paiia_anuncios").update({ dados_conferencia: dados, updated_at: new Date().toISOString() }).eq("id", fichaId).eq("updated_at", r.ficha.updated_at).select("id");
   if (error) return { ok: false, erro: error.message || "Falha ao gravar." };
@@ -53,4 +56,17 @@ export async function confirmarCategoriaEGravar(fichaId, preparo) {
   const c = confirmarCategoriaSugerida(preparo);
   if (!c.ok) return c;
   return gravar(fichaId, () => ({ ...preparo, categoria: { decisao: c.decisao } }));
+}
+
+/** (Etapa 3) Modalidade escolhida na revisão do celular (mesmo campo do Novo Anúncio). */
+export async function definirModalidadeEGravar(fichaId, tipo) {
+  return gravar(fichaId, null, (dados) => comModalidade(dados, tipo));
+}
+
+/** (Etapa 3) Aprova a revisão do celular: só grava se TUDO estiver conferido agora. */
+export async function aprovarRevisaoEGravar(fichaId, { usuario = "" } = {}) {
+  return gravar(fichaId, null, (dados, row) => {
+    const a = aprovarRevisao({ ...row, dados_conferencia: dados }, { usuario });
+    return a.ok ? comRevisao(dados, a.revisao) : { erro: a.erro };
+  });
 }

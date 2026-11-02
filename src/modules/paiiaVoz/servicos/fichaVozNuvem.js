@@ -211,6 +211,8 @@ export async function sincronizarFichaVoz(voz, regs, deps) {
     // (Etapa 2) o preparo da Conferência gravado na ficha é preservado; se os dados
     // mudarem, ele aparece como desatualizado (assinatura) e é refeito.
     ...(meta.preparo ? { preparo: meta.preparo } : {}),
+    // (Etapa 3) a aprovação da revisão é preservada; ela só vale enquanto a assinatura bater.
+    ...(meta.revisao ? { revisao: meta.revisao } : {}),
   };
 
   const montado = {
