@@ -111,7 +111,11 @@ export function juntarTexto(atual, gravadoAntes, voz) {
 /**
  * Sincroniza a ficha do Voz com a ficha da conta.
  * deps: { guarda, enviarOriginal(reg), enviarTratada(reg), lerFicha(id), salvarFicha(args), usuarioId }
- * voz:  { fichaVozId, fichaIdPAIIA, codigo, titulo, descricao, preco, oem }
+ * voz:  { fichaVozId, fichaIdPAIIA, codigo, titulo, descricao, preco, oem, completos? }
+ *   completos (Etapa 1, 02/11/2026 — dadosCompletosVoz): marca, quantidade, tipoVeiculo,
+ *   medida (g/cm), aplicações confirmadas estruturadas e pendências. Tipo e medida vão para
+ *   o Novo Anúncio (mesmos campos que ele já usa); marca, estoque e aplicações ficam em
+ *   paiia_voz (o Novo Anúncio preserva esse bloco). Edição feita no computador vence.
  */
 export async function sincronizarFichaVoz(voz, regs, deps) {
   if (!deps?.usuarioId) return { ok: false, estado: "sem-login", erro: "Entre na sua conta para salvar a ficha e as fotos." };
@@ -163,23 +167,56 @@ export async function sincronizarFichaVoz(voz, regs, deps) {
   const novoPreco = campo("preco", voz.preco);
   const novoOem = campo("oem", voz.oem);
   const fotosJ = juntarFotos(na.fotos, antes.fotos, vozFotos);
+  const c = voz.completos && typeof voz.completos === "object" ? voz.completos : null;
+  // Tipo e medida: só contam como "editado no computador" quando o Novo Anúncio
+  // registrou a edição (edicoes.tipoVeiculo / edicoes.embalagem); o valor padrão não conta.
+  const edNA = na.edicoes && typeof na.edicoes === "object" ? na.edicoes : {};
+  let novoTipo = txt(na.tipoVeiculo);
+  if (c && txt(c.tipoVeiculo) && txt(c.tipoVeiculo) !== novoTipo) {
+    if (!novoTipo || !edNA.tipoVeiculo || novoTipo === txt(antes.tipoVeiculo)) novoTipo = txt(c.tipoVeiculo);
+    else conflitos.push("tipo de veículo");
+  }
+  let novaMedida = na.medida || null;
+  if (c?.medida) {
+    const igual = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+    if (!na.medida || !edNA.embalagem || igual(na.medida, antes.medida) || igual(na.medida, c.medida)) novaMedida = c.medida;
+    else conflitos.push("peso e medidas");
+  }
 
   const novoAnuncio = {
     ...na,
     codigo: novoCodigo, oem: novoOem, titulo: novoTitulo, descricao: novaDescricao, preco: novoPreco,
     fotos: fotosJ.fotos,
     origemPaiiaVoz: txt(voz.fichaVozId) || txt(na.origemPaiiaVoz),
+    ...(c && novoTipo ? { tipoVeiculo: novoTipo } : {}),
+    ...(c && novaMedida ? { medida: novaMedida } : {}),
   };
   if (!novoAnuncio.tipoAnuncio) novoAnuncio.tipoAnuncio = "classico";
   const paiiaVoz = {
     fichaVozId: txt(voz.fichaVozId),
     // originais SEMPRE registradas (a ficha pode usar a tratada)
     fotos: vozFotos.filter((f) => f.original).map(({ id, original, tratada, versao, usar }) => ({ id, original, tratada, versao, usar })),
-    sinc: { codigo: novoCodigo, titulo: novoTitulo, descricao: novaDescricao, preco: novoPreco, oem: novoOem, fotos: fotosJ.sinc },
+    sinc: {
+      codigo: novoCodigo, titulo: novoTitulo, descricao: novaDescricao, preco: novoPreco, oem: novoOem, fotos: fotosJ.sinc,
+      ...(c ? { tipoVeiculo: novoTipo, medida: novaMedida } : {}),
+    },
+    ...(c ? {
+      // Ficha completa (Etapa 1): dados estruturados para a Conferência/Revisão.
+      complemento: { marca: txt(c.marca), quantidadeEstoque: txt(c.quantidade), codigoNormalizado: txt(voz.codigoNormalizado) },
+      aplicacoes: Array.isArray(c.aplicacoes) ? c.aplicacoes : [],
+      tipoVeiculoOrigem: novoTipo && novoTipo === txt(c.tipoVeiculo) ? txt(c.tipoVeiculoOrigem) : novoTipo ? "computador" : "",
+      pendencias: Array.isArray(c.pendencias) ? c.pendencias : [],
+      completa: Boolean(c.completa),
+    } : {}),
   };
 
   const montado = {
-    anuncio: { codigo: novoCodigo, oem: novoOem, titulo: novoTitulo, descricao: novaDescricao, preco: novoPreco, fotos: fotosJ.fotos, imagens: fotosJ.fotos, ...(atual ? {} : { tipoAnuncio: "classico" }) },
+    anuncio: {
+      codigo: novoCodigo, oem: novoOem, titulo: novoTitulo, descricao: novaDescricao, preco: novoPreco, fotos: fotosJ.fotos, imagens: fotosJ.fotos,
+      ...(atual ? {} : { tipoAnuncio: "classico" }),
+      ...(c && novoTipo ? { tipoVeiculo: novoTipo } : {}),
+      ...(c && novaMedida ? { embalagem: novaMedida } : {}),
+    },
     novo_anuncio: novoAnuncio,
   };
   const s = await deps.salvarFicha({ fichaId: voz.fichaIdPAIIA || "", codigo: novoCodigo, titulo: novoTitulo, montado, paiiaVoz });
@@ -192,6 +229,8 @@ export async function sincronizarFichaVoz(voz, regs, deps) {
     salvoEm: s.salvoEm,
     fotosNaFicha: fotosJ.fotos.length,
     fotosEnviadas: vozFotos.filter((f) => f.original).length,
+    pendencias: c ? paiiaVoz.pendencias : [],
+    completa: c ? paiiaVoz.completa : false,
     conflitos,
     erros,
   };

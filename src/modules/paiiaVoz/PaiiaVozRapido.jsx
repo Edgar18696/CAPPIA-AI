@@ -59,6 +59,8 @@ import { armazenamentoIndexedDB, armazenamentoMemoria, criarGuardaFotos, MAX_FOT
 import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
 // (31/10/2026) Ficha na conta: fotos e dados do Voz na MESMA ficha do Novo Anúncio (celular ⇄ computador).
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
+// (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
+import { dadosCompletosVoz } from "./servicos/fichaCompletaVoz";
 import { salvarFichaNovoAnuncio, lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
 import { rascunhoDaFicha } from "../../services/fichaNovoAnuncio";
 // Foto IA OFICIAL, sem alteração (mesmas funções da tela Foto IA):
@@ -183,7 +185,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       const { dados } = mapearRapidoParaNovoAnuncio(f);
       const regs = await guarda.listar(f.id);
       setNuvem((n) => ({ ...n, estado: "salvando" }));
-      res = await sincronizarFichaVoz({ fichaVozId: f.id, fichaIdPAIIA: f.fichaIdPAIIA || "", codigo: dados.codigo, titulo: rr.titulo.valor, descricao: dados.descricao, preco: dados.preco, oem: dados.oem }, regs, depsNuvemRef.current);
+      const completos = dadosCompletosVoz(f, { fotos: regs.length });
+      res = await sincronizarFichaVoz({ fichaVozId: f.id, fichaIdPAIIA: f.fichaIdPAIIA || "", codigo: dados.codigo, codigoNormalizado: codigoPrincipal(f)?.normalizado || "", titulo: rr.titulo.valor, descricao: dados.descricao, preco: dados.preco, oem: dados.oem, completos }, regs, depsNuvemRef.current);
       if (res.ok && res.fichaIdPAIIA && res.fichaIdPAIIA !== fichaRef.current.fichaIdPAIIA) {
         const comId = { ...fichaRef.current, fichaIdPAIIA: res.fichaIdPAIIA };
         fichaRef.current = comId;
@@ -192,7 +195,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       }
       const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
       setNuvem(res.ok
-        ? { estado: "salva", texto: `☁️ Ficha salva na sua conta às ${hora} · ${res.fotosNaFicha} foto(s) na ficha${res.conflitos.length ? ` · ${res.conflitos.join(", ")} editado(s) no computador: mantido o do computador` : ""}${res.erros.length ? ` · ⚠️ ${res.erros.length} foto(s) ainda não enviada(s) — tento de novo sozinho` : ""}` }
+        ? { estado: "salva", pendencias: res.pendencias || [], texto: `☁️ Ficha salva na sua conta às ${hora} · ${res.fotosNaFicha} foto(s) na ficha${res.completa ? " · ficha completa ✔" : res.pendencias?.length ? ` · falta(m) ${res.pendencias.length} item(ns)` : ""}${res.conflitos.length ? ` · ${res.conflitos.join(", ")} editado(s) no computador: mantido o do computador` : ""}${res.erros.length ? ` · ⚠️ ${res.erros.length} foto(s) ainda não enviada(s) — tento de novo sozinho` : ""}` }
         : { estado: res.estado, texto: res.estado === "aguardando-codigo" ? "☁️ As fotos e os dados vão para a sua conta assim que o código for informado (até lá ficam guardados neste aparelho)." : res.estado === "sem-login" ? `⚠️ ${res.erro}` : `⚠️ ${res.erro}` });
       if (res.ok || res.erros?.length) await recarregarFotos();
     } catch (e) {
@@ -618,6 +621,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             {modoIA !== "desligado" && !usuario?.id && <p className="pr-aviso">⚠️ Entre na sua conta para tratar as fotos.</p>}
           </div>
           {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
+          {nuvem.pendencias?.length > 0 && (
+            <ul className="pr-fonte" data-pr-pendencias-ficha>{nuvem.pendencias.map((p) => <li key={p}>{p}</li>)}</ul>
+          )}
           <p className="pr-dica">Todas as fotos vão para o anúncio na versão escolhida. A original fica sempre guardada; o fundo branco é preparado enquanto você preenche código, título e descrição.</p>
           <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>
         </section>
