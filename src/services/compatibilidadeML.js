@@ -506,6 +506,16 @@ export function compatibilidadeNaoExigivel(tipoVeiculo) {
   return semAcento(tipoVeiculo).replace(/\s+/g, " ").trim() === "linha pesada";
 }
 
+/**
+ * (02/11/2026) Verificação pós-publicação: havia aplicações aprovadas e nenhum veículo foi vinculado?
+ * Linha Pesada sem veículos no catálogo do ML → não é pendência (mesma regra de compatibilidadeNaoExigivel).
+ * Carro/Caminhonete, tipo vazio e demais tipos → continua pendência.
+ */
+export function pendenciaSemVeiculosVinculados({ aplicacoes = 0, vinculados = 0, tipoVeiculo = "" } = {}) {
+  if (!(Number(aplicacoes) > 0) || Number(vinculados) > 0) return false;
+  return !compatibilidadeNaoExigivel(tipoVeiculo);
+}
+
 export function conferirPublicacao({ itemId, esperado = {}, item, compat }) {
   const itens = [];
   const add = (nome, esp, rec, ok, obrigatorio = true) => itens.push({ item: nome, esperado: esp, recebido: rec, ok: Boolean(ok), obrigatorio });

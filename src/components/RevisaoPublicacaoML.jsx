@@ -48,7 +48,7 @@ import {
   situacaoCompatibilidade,
   textoSoModelosSemDetalhes,
   TEXTO_SEM_APLICACAO,
-  TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel } from "../services/compatibilidadeML";
+  TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
@@ -1207,7 +1207,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
         descartados_antes: (compatML?.descartados || []).map((d) => ({ id: d.id, nome: d.nome, motivo: d.motivo })),
         sem_catalogo: (compatML?.semCatalogo || []).map((s) => ({ aplicacao: s.aplicacao, motivo: s.motivo })),
       };
-      if (aplicacoes.length && !idsCompat.length && !verificacao.pendencias.some((t) => t.startsWith("Compatibilidades"))) {
+      // (02/11/2026) Linha Pesada sem veículos no catálogo do ML: compatibilidade não exigível
+      // (mesma regra da Revisão e da conferência). Carro/Caminhonete e demais tipos: inalterado.
+      if (pendenciaSemVeiculosVinculados({ aplicacoes: aplicacoes.length, vinculados: idsCompat.length, tipoVeiculo: tipoVeiculoPub?.tipoFicha || tipoVeiculoPub?.nome }) && !verificacao.pendencias.some((t) => t.startsWith("Compatibilidades"))) {
         verificacao.pendencias.push("Compatibilidades: havia aplicações aprovadas e nenhum veículo foi vinculado.");
       }
       // Nunca "sucesso" com zero (ou parte) aceitos pelo ML (19/10/2026).
