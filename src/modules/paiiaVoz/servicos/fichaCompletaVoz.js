@@ -14,7 +14,8 @@
 //  - o que faltar vira PENDÊNCIA (o Voz pergunta; nada é preenchido sozinho).
 // =============================================================
 
-import { codigoPrincipal } from "./fichaVoz.js";
+import { codigoPrincipal, formatarValor, ROTULOS } from "./fichaVoz.js";
+import { interpretarFala } from "./interpretarFala.js";
 import { estadoRapido, pesoMedidasParaEnvio } from "./rascunhoRapido.js";
 import { sugestaoPorAplicacoes, TIPO_CARRO, TIPO_PESADA } from "../../../services/tipoVeiculoAnuncio.js";
 
@@ -132,5 +133,21 @@ export function dadosCompletosVoz(ficha, { fotos = 0 } = {}) {
     aplicacoes,
     pendencias,
     completa: pendencias.filter((x) => !/^\d+ aplicação\(ões\) ainda não conferida/.test(x)).length === 0,
+  };
+}
+
+const CAMPOS_DA_FICHA = ["marca", "preco", "custo", "quantidade"];
+/**
+ * (02/11/2026) Frase do anúncio rápido que é SÓ de campos ("marca Torken preço 97,92
+ * quantidade 10") → { interpretacao, resumo } para gravar nos campos; senão null
+ * (a frase segue para a descrição, como antes). Nada é deduzido: só o que foi dito.
+ */
+export function camposDitosNaFala(texto) {
+  const r = interpretarFala(texto);
+  const itens = r.itens.filter((i) => CAMPOS_DA_FICHA.includes(i.campo));
+  if (!itens.length || itens.length !== r.itens.length || r.naoEntendido.length) return null;
+  return {
+    interpretacao: { itens, naoEntendido: [], avisos: r.avisos },
+    resumo: itens.map((i) => `${ROTULOS[i.campo] || i.campo}: ${formatarValor(i.campo, i.valor)}`).join(" · "),
   };
 }

@@ -11,6 +11,9 @@ import { nomeDaLoja } from "../../services/duplicidadeML";
 import { lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
 import { prepararEGravar, confirmarCategoriaEGravar, definirModalidadeEGravar, aprovarRevisaoEGravar } from "./servicos/preparoVozService";
+// (02/11/2026) Etapa 4: publicar pela rotina EXISTENTE (RevisaoPublicacaoML em modo simples).
+import { prepararPublicacaoVoz } from "./servicos/publicarVozService";
+import RevisaoPublicacaoML from "../../components/RevisaoPublicacaoML";
 
 const ICONE = { pergunta: "❓", bloqueio: "⛔", erro: "⚠️", aguardando: "⏳", conferir: "🔎", aviso: "ℹ️" };
 
@@ -21,6 +24,7 @@ export default function PreparoPublicacaoVoz({ fichaId, usuarioId = "" }) {
   const [row, setRow] = useState(null);
   const [rodando, setRodando] = useState("");
   const [erro, setErro] = useState("");
+  const [publicacao, setPublicacao] = useState(null); // { anuncioConferido, conta, quantidade }
 
   const recarregar = useCallback(async () => {
     if (!fichaId) return null;
@@ -66,6 +70,21 @@ export default function PreparoPublicacaoVoz({ fichaId, usuarioId = "" }) {
     return r.ok ? prepararEGravar(fichaId, { conta }) : r; // frete muda com a modalidade
   });
   const aprovar = () => acao("aprovar", () => aprovarRevisaoEGravar(fichaId, { usuario: usuarioId }));
+  // Publicar: entrega a revisão aprovada à publicação de sempre (nada é publicado neste toque).
+  async function abrirPublicacao() {
+    if (rodando) return;
+    setRodando("publicar");
+    setErro("");
+    let r;
+    try {
+      r = await prepararPublicacaoVoz(fichaId);
+    } catch (e) {
+      r = { ok: false, erro: `Não consegui preparar a publicação (${e?.message || e}).` };
+    }
+    setRodando("");
+    if (!r.ok) { setErro(r.erro || "Não consegui preparar a publicação."); return; }
+    setPublicacao({ anuncioConferido: r.anuncioConferido, conta: r.conta, quantidade: r.quantidade });
+  }
 
   if (!fichaId) return <p className="pr-aviso" data-pv-preparo-sem-ficha>☁️ Salve a ficha na conta (informe o código) para revisar e publicar.</p>;
   const rev = row ? montarRevisao(row) : null;
@@ -117,13 +136,34 @@ export default function PreparoPublicacaoVoz({ fichaId, usuarioId = "" }) {
           )}
           {rev.revisaoAnteriorInvalida && <p className="pr-aviso" data-pv-revisao-invalida>⚠️ A ficha mudou depois da aprovação anterior: revise de novo.</p>}
           {rev.aprovada ? (
-            <p data-pv-revisao-aprovada>✅ Revisão aprovada e gravada na ficha. O botão Publicar vem na próxima etapa.</p>
+            <>
+              <p data-pv-revisao-aprovada>✅ Revisão aprovada e gravada na ficha.</p>
+              {!publicacao && (
+                <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} onClick={abrirPublicacao} data-pv-publicar>
+                  {rodando === "publicar" ? "⏳ Preparando..." : "🚀 Publicar no Mercado Livre"}
+                </button>
+              )}
+            </>
           ) : (
             <button type="button" className="pr-botao pr-grande" disabled={!rev.podeAprovar || Boolean(rodando)} onClick={aprovar} data-pv-revisao-aprovar>
               {rodando === "aprovar" ? "⏳ Gravando..." : rev.podeAprovar ? "✅ Aprovar revisão" : `Aprovar (${rev.motivoNaoAprova})`}
             </button>
           )}
         </>
+      )}
+      {publicacao && (
+        <div data-pv-publicacao>
+          <RevisaoPublicacaoML
+            modoSimples
+            anuncio={publicacao.anuncioConferido}
+            titulo={publicacao.anuncioConferido.titulo}
+            contaDestino={publicacao.conta}
+            anuncioId={fichaId}
+            quantidadeFicha={String(publicacao.quantidade)}
+            onFechar={() => setPublicacao(null)}
+            onAbrirTelaFinal={(id) => { window.location.href = `/?tela=mercadoLivreTeste&ficha=${encodeURIComponent(id || fichaId)}`; }}
+          />
+        </div>
       )}
     </div>
   );

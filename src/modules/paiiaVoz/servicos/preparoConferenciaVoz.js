@@ -166,7 +166,7 @@ async function conferirFrete(e, deps, conta, categoriaId) {
   const consultar = (caminho) => deps.chamarPublicacao({ acao: "ml_consulta", conta_ml: txt(conta), metodo: "GET", caminho });
   const c = await cotarNoPreco({ params, preco: e.preco, consultar });
   if (!c.ok) return item("erro", `Frete: cotação oficial não obtida (${c.erro}).`);
-  return item("ok", `Frete: ${reais(c.custo_vendedor)} por envio (${c.faixa_rotulo}, peso cobrado ${c.peso_cobrado_g} g, ${e.tipoAnuncio === "premium" ? "Premium" : "Clássico"}). Preço ${reais(e.preco)}.`, { custo: c.custo_vendedor, faixa: c.faixa_rotulo, modalidade, cotado_em: c.cotado_em });
+  return item("ok", `Frete: ${reais(c.custo_vendedor)} por envio (${c.faixa_rotulo}, peso cobrado ${c.peso_cobrado_g} g, ${e.tipoAnuncio === "premium" ? "Premium" : "Clássico"}). Preço ${reais(e.preco)}.`, { custo: c.custo_vendedor, faixa: c.faixa_rotulo, modalidade, cotado_em: c.cotado_em, cotacao: c, params });
 }
 
 /**

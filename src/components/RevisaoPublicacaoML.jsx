@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { useContasML, contasMLConectadas } from "../services/contaMLAtiva";
 import { conferirLogistica } from "../services/logistica/logisticaMercadoLivre";
@@ -309,7 +309,7 @@ async function chamar(acao, extra = {}, contaML = "") {
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
 
-export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades }) {
+export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades, modoSimples = false }) {
   const [conexao, setConexao] = useState(null);
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
@@ -1358,6 +1358,37 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           ? "Crie o produto no Bling (botão acima) ou escolha publicar sem Bling."
           : "Consulte o Bling (ou escolha publicar sem Bling) antes de validar no Mercado Livre."
       : "";
+  // (02/11/2026) PAIIA Voz — modo simples (celular): as LEITURAS que hoje são
+  // botões rodam sozinhas — consultar o SKU no Bling e validar no Mercado Livre
+  // (nada é gravado no ML/Bling). Publicar continua exigindo o toque do usuário
+  // e a confirmação. Fora do modo simples nada muda.
+  const autoSimplesRef = useRef({ bling: false, validar: false });
+  useEffect(() => {
+    if (!modoSimples || !contaOk || autoSimplesRef.current.bling) return;
+    if (blingConectado === null) return; // ainda verificando a conexão do Bling
+    if ((usoBling === null && blingConectado !== false) || (usoBling === "usar" && !estoque && !lendoBlingPub)) {
+      autoSimplesRef.current.bling = true;
+      (async () => { await usarBlingNesteAnuncio(); })(); // leitura do SKU no Bling (nada é gravado)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoSimples, contaOk, blingConectado, usoBling, estoque, lendoBlingPub]);
+  useEffect(() => {
+    if (!modoSimples || autoSimplesRef.current.validar || ocupado || validacao) return;
+    if (!contaOk || !campos.categoria_id || faltandoSemValorRef.current > 0 || motivoSemValidar) return;
+    autoSimplesRef.current.validar = true;
+    (async () => { await validarNoML(); })(); // validação no ML (não publica)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoSimples, contaOk, ocupado, validacao, campos.categoria_id, motivoSemValidar]);
+  const faltandoSemValorRef = useRef(0);
+  function tocarPublicarSimples() {
+    // Primeiro toque = autorização explícita (conta mostrada no botão); segundo = confirmação.
+    if (!autorizado) {
+      setAutorizado(true);
+      setArmado(true);
+      return;
+    }
+    publicar();
+  }
   // Marca, código e GTIN já têm campo próprio acima.
   const cobertosPelosCampos = {
     BRAND: campos.marca.trim(),
@@ -1368,6 +1399,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     (a) => !a.preenchido && !cobertosPelosCampos[a.id] && a.id !== "VEHICLE_TYPE"
   );
   const faltandoSemValor = faltando.filter((a) => !(extras[a.id]?.value_id || extras[a.id]?.value_name));
+  faltandoSemValorRef.current = faltandoSemValor.length;
 
   return (
     <section data-paiia-revisao-ml style={painel}>
@@ -1888,7 +1920,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 Conferi no Mercado Livre: {duplicidadeML.possiveis.map((d) => d.id).join(", ")} NÃO é o mesmo produto deste anúncio.
               </label>
             )}
-            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#e2e8f0", fontSize: 14, margin: "8px 0" }}>
+            {!modoSimples && (<label style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#e2e8f0", fontSize: 14, margin: "8px 0" }}>
               <input
                 type="checkbox"
                 data-paiia-autorizo-ml
@@ -1899,19 +1931,20 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 }}
               />
               Revisei os dados e autorizo publicar este anúncio na conta <b>{conexao.nickname}</b> (ID {conexao.ml_user_id}) do Mercado Livre.
-            </label>
+            </label>)}
             <button
               type="button"
               data-paiia-publicar-ml
-              onClick={publicar}
-              disabled={!autorizado || !validacao?.valido || !!ocupado || resultado?.publicado || bloqueios.length > 0}
-              style={{ ...botaoVerde, opacity: !autorizado || !validacao?.valido ? 0.5 : 1 }}
+              data-paiia-modo-simples={modoSimples ? "1" : undefined}
+              onClick={modoSimples ? tocarPublicarSimples : publicar}
+              disabled={(!modoSimples && !autorizado) || !validacao?.valido || !!ocupado || resultado?.publicado || bloqueios.length > 0}
+              style={{ ...botaoVerde, opacity: (!modoSimples && !autorizado) || !validacao?.valido ? 0.5 : 1 }}
             >
               {ocupado === "publicar"
                 ? "⏳ Publicando..."
                 : armado
-                  ? "⚠ Clique de novo para CONFIRMAR a publicação"
-                  : "🚀 Publicar no Mercado Livre"}
+                  ? modoSimples ? `⚠ Toque de novo para CONFIRMAR a publicação na ${conexao.nickname}` : "⚠ Clique de novo para CONFIRMAR a publicação"
+                  : modoSimples ? `🚀 Publicar no Mercado Livre — conta ${conexao.nickname}` : "🚀 Publicar no Mercado Livre"}
             </button>
             {mostrarOpcaoSemCompat && (
               <div data-paiia-opcao-sem-compat style={{ margin: "10px 0", padding: "10px", borderRadius: 8, border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontSize: 13 }}>

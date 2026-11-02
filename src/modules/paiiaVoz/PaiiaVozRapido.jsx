@@ -60,7 +60,7 @@ import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, g
 // (31/10/2026) Ficha na conta: fotos e dados do Voz na MESMA ficha do Novo Anúncio (celular ⇄ computador).
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
 // (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
-import { dadosCompletosVoz } from "./servicos/fichaCompletaVoz";
+import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVoz";
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
 import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 import { salvarFichaNovoAnuncio, lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
@@ -248,7 +248,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   }, [modoIA, usuario?.id, idsFotos, fichaId]);
   const marcaFotos = fotos.map((f) => `${f.id}:${f.versao}:${f.usarNoAnuncio ? 1 : 0}:${f.ia?.estado || ""}:${f.reg?.nuvem?.original ? 1 : 0}:${f.reg?.nuvem?.tratada ? 1 : 0}`).join(",");
   const r0 = estadoRapido(ficha);
-  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}`;
+  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}|${ficha?.campos?.marca?.valor ?? ""}|${ficha?.campos?.quantidade?.valor ?? ""}`; // (02/11) marca/estoque também salvam na conta
   useEffect(() => {
     if (!usuario?.id) return undefined;
     const t = setTimeout(() => { sincronizar(); }, 1200);
@@ -405,6 +405,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       return;
     }
     if (rr.etapa === "descricao") {
+      // (02/11/2026) "marca …, preço …, quantidade …" ditos aqui vão para os CAMPOS
+      // (não para o texto da descrição). Só quando a frase é inteira de campos.
+      const campos = camposDitosNaFala(t);
+      if (campos) {
+        mudarFicha(aplicarInterpretacao(f, campos.interpretacao, { origem, textoOriginal: t }).ficha);
+        setAviso(`Anotei: ${campos.resumo}. Diga “próximo” quando terminar.`);
+        return;
+      }
       const e = editarPorVoz(rr.descricao.texto, t, { padrao: "acrescentar", separador: "\n", anterior: rr.descricao.anterior, campo: "descricao" });
       if (e.aviso) setAviso(e.aviso);
       if (["nada", "nao-achou", "nao-entendeu", "nao-parece"].includes(e.acao)) return;
