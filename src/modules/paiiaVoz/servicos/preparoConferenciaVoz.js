@@ -145,10 +145,33 @@ async function conferirDuplicidade(e, deps, conta) {
   return item("ok", `Duplicidade: nenhum anúncio deste SKU na ${nomeDaLoja(conta)} (${ml.buscas} buscas).${av.anteriores.length ? ` ${av.anteriores.map((a) => a.texto).join(" ")}` : ""}`);
 }
 
+/**
+ * (03/11/2026) Outras grafias do mesmo código para PROCURAR no Bling (só leitura):
+ * sem traços/espaços/pontos e com espaços trocados por traço. Nunca muda o SKU.
+ */
+export function grafiasAlternativasSKU(codigo) {
+  const t = txt(codigo).toUpperCase();
+  if (!t) return [];
+  const semSep = t.replace(/[^A-Z0-9]/g, "");
+  const comTraco = t.replace(/\s+/g, "-");
+  return [...new Set([semSep, comTraco])].filter((v) => v && v !== t && v !== txt(codigo));
+}
+
 async function conferirBling(e, deps) {
   if (!e.codigo) return item("pergunta", "Bling: falta o SKU.");
   let bling;
   try { bling = await deps.lerSaldoBling(e.codigo); } catch { bling = { ok: false }; }
+  // Não achou com a grafia da ficha: procura as outras grafias (só leitura) e PERGUNTA.
+  if (bling?.encontrado === false) {
+    for (const g of grafiasAlternativasSKU(e.codigo)) {
+      let alt;
+      try { alt = await deps.lerSaldoBling(g); } catch { alt = null; }
+      const skuBling = txt(alt?.produto?.codigo) || g;
+      if (alt?.encontrado && !alt.ambiguo) {
+        return item("pergunta", `Bling: o SKU ${e.codigo} não existe com essa grafia, mas existe como ${skuBling} (produto ${alt.produto?.id || "?"}). Para usar esse produto, corrija o código da ficha para ${skuBling}. Nada é alterado sozinho.${num(e.quantidade) > 0 ? "" : " Falta também o estoque."}`, { encontrado: false, grafiaBling: skuBling, produtoId: alt.produto?.id || null });
+      }
+    }
+  }
   const q = num(e.quantidade);
   if (!(q > 0)) return item("pergunta", "Estoque: diga a quantidade (o PAIIA não assume nenhum valor).", { encontrado: Boolean(bling?.encontrado) });
   const r = conferirEstoque({ quantidade: e.quantidade, confirmada: true, bling });

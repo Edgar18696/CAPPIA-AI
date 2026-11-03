@@ -85,6 +85,16 @@ function adicionarCodigo(f, codigo, { origem, principal = false, soletrado = fal
     f.codigos.push(existente);
     mudou = true;
   }
+  // (03/11/2026) Correção explícita do código principal com a MESMA forma normalizada
+  // (ex.: 2421-01345R → 242101345R): vale a grafia que o usuário informou agora.
+  // A anterior fica só no histórico; Bling e Mercado Livre não são tocados.
+  if (principal && existente.codigo !== original) {
+    existente.grafiasAnteriores = [...new Set([...(existente.grafiasAnteriores || []), existente.codigo])];
+    existente.codigo = original;
+    existente.origem = origem;
+    existente.em = agora;
+    mudou = true;
+  }
   if (principal || !f.codigos.some((c) => c.principal)) {
     f.codigos.forEach((c) => { c.principal = c === existente; });
     mudou = true;

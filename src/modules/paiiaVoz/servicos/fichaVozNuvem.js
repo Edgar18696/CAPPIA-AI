@@ -60,6 +60,30 @@ export async function garantirTratadaNaNuvem(reg, { guarda, enviarTratada }) {
   return tratada;
 }
 
+/**
+ * (03/11/2026) Situação do envio das fotos para a ficha da conta (para o aviso
+ * único "em segundo plano", visível em TODAS as etapas). Só leitura do que já
+ * está no aparelho: não envia, não trata e não cobra nada.
+ * fotos: [{ usar, original:bool, versao:"tratada"|"original", tratadaPronta:bool, tratadaEnviada:bool, tratando:bool }]
+ */
+export function situacaoEnvioFotos(fotos, { logado = true, temCodigo = true, falhou = false } = {}) {
+  const usadas = (Array.isArray(fotos) ? fotos : []).filter((f) => f && f.usar !== false);
+  const tratando = usadas.filter((f) => f.tratando).length;
+  const enviando = usadas.filter((f) => !f.original || (f.versao === "tratada" && f.tratadaPronta && !f.tratadaEnviada)).length;
+  if (!usadas.length) return { estado: "", texto: "", enviando: 0, tratando: 0 };
+  if (!logado) return { estado: "sem-login", texto: "", enviando, tratando };
+  if (!temCodigo && enviando) return { estado: "aguardando-codigo", texto: `📱 ${enviando} foto(s) guardada(s) neste aparelho: vão para a ficha assim que o código for informado.`, enviando, tratando };
+  const partes = [];
+  if (enviando) partes.push(`${enviando} foto(s) enviando para a ficha`);
+  if (tratando) partes.push(`${tratando} com fundo branco em preparo`);
+  if (!partes.length) return { estado: "ok", texto: "", enviando: 0, tratando: 0 };
+  return {
+    estado: falhou ? "repetindo" : "enviando",
+    texto: `☁️ ${partes.join(" · ")} — em segundo plano, pode continuar preenchendo.${falhou ? " A conexão falhou: tento de novo sozinho." : ""} Mantenha o PAIIA Voz aberto até terminar.`,
+    enviando, tratando,
+  };
+}
+
 /** Endereço que vai ao anúncio: tratada (se escolhida/automática e enviada) ou original. */
 export function urlNoAnuncio(reg) {
   const usarTratada = reg?.versao === "tratada" && reg?.tratada?.blob && reg?.nuvem?.tratada?.url;
