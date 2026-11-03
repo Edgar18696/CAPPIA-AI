@@ -308,7 +308,7 @@ export function entenderTrecho(texto, ctx = {}) {
  * @returns {{ itens[], naoEntendido[], avisos[] }} no formato de interpretarFala,
  *   com campos extras: peca, atributo, veiculo, anos, pular.
  */
-export function interpretarConversa(texto, ficha) {
+export function interpretarConversa(texto, ficha, { falado = false } = {}) {
   const conversa = ficha?.conversa || novaConversa();
   const pendente = conversa.pendente;
   const original = String(texto ?? "").replace(/\s+/g, " ").trim();
@@ -324,11 +324,11 @@ export function interpretarConversa(texto, ficha) {
   if (!temChave) {
     const ehDetalhe = pendente === "codigo" && entenderTrecho(original, { pendente: null }).itens.length > 0;
     if (pendente === "codigo" && !ehDetalhe && pareceCodigo(original)) {
-      const c = lerCodigoFalado(original);
+      const c = lerCodigoFalado(original, { falado });
       if (c.codigo) return { ...vazio, itens: [{ campo: "codigo", valor: c.codigo, bruto: original, soletrado: c.soletrado, duvidas: c.duvidas }] };
     }
     if (pendente === "codigo" && !ehDetalhe && !pareceAno(original)) {
-      const c = lerCodigoFalado(original);
+      const c = lerCodigoFalado(original, { falado });
       if (c.codigo && /\d/.test(c.codigo) && c.soletrado) return { ...vazio, itens: [{ campo: "codigo", valor: c.codigo, bruto: original, soletrado: true, duvidas: c.duvidas }] };
     }
     if (pendente === "preco") {
@@ -351,14 +351,14 @@ export function interpretarConversa(texto, ficha) {
     }
     const podeSerCodigo = !["anos", "veiculo", "modelo", "preco", "quantidade"].includes(pendente);
     if (!r.itens.length && podeSerCodigo && pareceCodigo(original)) {
-      const c = lerCodigoFalado(original);
+      const c = lerCodigoFalado(original, { falado });
       if (c.codigo) return { ...vazio, itens: [{ campo: "codigo", valor: c.codigo, bruto: original, soletrado: c.soletrado, duvidas: c.duvidas, semPalavraChave: true }] };
     }
     return { itens: r.itens, naoEntendido: r.sobras ? [r.sobras] : [], avisos: [] };
   }
 
   // Palavras-chave de sempre.
-  const base = interpretarFala(original);
+  const base = interpretarFala(original, { falado });
   const resultado = { itens: [], naoEntendido: [], avisos: [...base.avisos] };
   for (const it of base.itens) {
     // "Código" sem palavra-chave que na verdade é ano já foi barrado em pareceCodigo.
@@ -609,7 +609,7 @@ export function responderConversa(ficha, interp, aplicado) {
 
 /** Atalho: fala → ficha nova + resposta. */
 export function conversar(ficha, texto, opcoes = {}) {
-  const interp = interpretarConversa(texto, ficha);
+  const interp = interpretarConversa(texto, ficha, { falado: opcoes.origem === "voz" });
   const aplicado = aplicarConversa(ficha, interp, { ...opcoes, textoOriginal: texto });
   const resposta = responderConversa(aplicado.ficha, interp, aplicado);
   return { ficha: resposta.ficha, texto: resposta.texto, avisos: aplicado.avisos, interp, mudancas: aplicado.mudancas, pergunta: resposta.pergunta };

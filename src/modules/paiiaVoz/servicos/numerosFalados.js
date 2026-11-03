@@ -133,8 +133,25 @@ const SEPARADORES = { traco: "-", "traço": "-", hifen: "-", "hífen": "-", barr
  * Devolve { codigo, soletrado, duvidas[] }: "soletrado" indica que houve
  * conversão de palavras (o usuário deve conferir letra a letra).
  */
-export function lerCodigoFalado(texto) {
-  const original = String(texto ?? "").trim();
+/**
+ * (03/11/2026) Regra dos códigos FALADOS: o reconhecimento de voz do navegador
+ * formata números sozinho (ex.: “dois quatro dois um zero um…” → “2421-01345 R”).
+ * Para código dito em voz, pontuação colada entre letras/números (- . / ,) que
+ * NÃO foi pronunciada é retirada. Hífen só entra quando a pessoa diz “traço”
+ * (ou “hífen”); um “-” solto entre espaços também conta como dito. Texto
+ * DIGITADO não passa por aqui (o hífen digitado é preservado).
+ */
+export function limparFormatacaoDoReconhecedor(texto) {
+  return String(texto ?? "")
+    .replace(/([A-Za-z0-9])[-‐‑–./,](?=[A-Za-z0-9])/g, "$1")
+    .replace(/([A-Za-z0-9])[-‐‑–./,](?=[A-Za-z0-9])/g, "$1")
+    .replace(/([A-Za-z0-9])[.,;:!?]+(?=\s|$)/g, "$1")
+    .replace(/\s[‐‑–]\s/g, " - ")
+    .trim();
+}
+
+export function lerCodigoFalado(texto, { falado = false } = {}) {
+  const original = (falado ? limparFormatacaoDoReconhecedor(texto) : String(texto ?? "")).trim();
   if (!original) return { codigo: "", soletrado: false, duvidas: [] };
   const tokens = original.split(/\s+/);
   let saida = "";
@@ -145,6 +162,12 @@ export function lerCodigoFalado(texto) {
     const limpo = semAcento(baixo).replace(/[^a-z0-9]/g, "");
     if (/^[a-z0-9][a-z0-9.\-/]*$/i.test(tk) && /\d/.test(tk)) {
       saida += tk.toUpperCase();
+      continue;
+    }
+    if (tk === "-") {
+      // “-” solto entre espaços: o traço foi dito (o reconhecedor trocou a palavra pelo sinal)
+      saida += "-";
+      soletrado = true;
       continue;
     }
     if (baixo in SEPARADORES || limpo in SEPARADORES) {

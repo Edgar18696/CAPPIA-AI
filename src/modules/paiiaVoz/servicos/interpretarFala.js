@@ -182,7 +182,7 @@ export function separarAplicacoes(texto) {
 /**
  * @returns {{ itens: Array<{campo, valor, bruto, soletrado?, duvidas?}>, naoEntendido: string[], avisos: string[] }}
  */
-export function interpretarFala(texto) {
+export function interpretarFala(texto, { falado = false } = {}) {
   const original = String(texto ?? "").replace(/\s+/g, " ").trim();
   const resultado = { itens: [], naoEntendido: [], avisos: [] };
   if (!original) return resultado;
@@ -204,7 +204,7 @@ export function interpretarFala(texto) {
   if (correcao) antes = "";
   if (antes) {
     if (pareceCodigo(antes)) {
-      const c = lerCodigoFalado(antes);
+      const c = lerCodigoFalado(antes, { falado });
       resultado.itens.push({ campo: "codigo", valor: c.codigo, bruto: antes, soletrado: c.soletrado, duvidas: c.duvidas, semPalavraChave: true });
     } else {
       resultado.naoEntendido.push(antes);
@@ -222,7 +222,7 @@ export function interpretarFala(texto) {
       case "codigo":
       case "codigoPrincipal":
       case "codigoAdicional": {
-        const c = lerCodigoFalado(bruto);
+        const c = lerCodigoFalado(bruto, { falado });
         if (!c.codigo) {
           resultado.naoEntendido.push(bruto);
           break;

@@ -85,7 +85,7 @@ function codigoCompactoPlausivel(codigo) {
   const c = String(codigo || "");
   return /^[A-Z0-9][A-Z0-9.\-/]{3,24}$/.test(c) && (c.match(/\d/g) || []).length >= 3;
 }
-export function lerCodigoDaFala(fala) {
+export function lerCodigoDaFala(fala, { falado = false } = {}) {
   let t = txt(fala).replace(/[.!?]+$/, "");
   const k = n(t);
   if (PULAR_CODIGO.test(k)) return { pular: true };
@@ -94,7 +94,7 @@ export function lerCodigoDaFala(fala) {
   t = t.trim();
   if (!t) return { erro: "Não ouvi o código. Fale de novo ou digite." };
   if (pareceAno(t)) return { erro: `“${t}” parece ano, não código. Se for mesmo o código, digite-o.` };
-  const c = lerCodigoFalado(t);
+  const c = lerCodigoFalado(t, { falado });
   const naoEntendeu = c.duvidas.some((d) => /não foi entendido/.test(d));
   const tokens = t.split(/\s+/).length;
   const aceito = c.codigo && /\d/.test(c.codigo) && !naoEntendeu && tokens <= 16 && (pareceCodigo(t) || c.soletrado || codigoCompactoPlausivel(c.codigo));

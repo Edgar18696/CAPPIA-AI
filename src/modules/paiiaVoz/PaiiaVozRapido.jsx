@@ -100,6 +100,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [confirmandoNova, setConfirmandoNova] = useState(false);
   const [editandoFinal, setEditandoFinal] = useState(false);
   const [manterMic, setManterMic] = useState(manterMicPadrao);
+  const [ouvidoCodigo, setOuvidoCodigo] = useState(null); // (03/11) o que o celular ouviu no código (diagnóstico)
   const fichaRef = useRef(ficha);
   const reconhecedorRef = useRef(null);
   const fotoRef = useRef(null);
@@ -341,13 +342,16 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     }
   }, [mudarFicha]);
 
-  const definirCodigo = useCallback((codigo, { soletrado = false, duvidas = [] } = {}) => {
+  const definirCodigo = useCallback((codigo, { soletrado = false, duvidas = [], ouvido = "" } = {}) => {
     const atual = codigoPrincipal(fichaRef.current);
     let base = fichaRef.current;
     if (atual && atual.normalizado !== String(codigo).replace(/[^0-9a-z]/gi, "").toUpperCase()) base = removerCodigo(base, atual.normalizado);
     const res = aplicarInterpretacao(base, { itens: [{ campo: "codigoPrincipal", valor: codigo, soletrado, duvidas }], naoEntendido: [], avisos: [] }, { origem: soletrado ? "voz" : "digitado", textoOriginal: `código: ${codigo}` });
     mudarFicha(res.ficha);
-    setAviso(`Código ${codigo} anotado.${soletrado ? " Foi ditado: confira letra por letra." : ""} Consultando a base PAIIA…`);
+    // Mostra o que o celular ouviu (diagnóstico: o reconhecedor às vezes formata números sozinho).
+    const ouviu = ouvido && ouvido.trim() !== codigo ? ` (ouvi “${ouvido.trim()}”)` : "";
+    setOuvidoCodigo(ouvido ? { ouvido: ouvido.trim(), codigo } : null);
+    setAviso(`Código ${codigo} anotado${ouviu}.${soletrado ? " Foi ditado: confira letra por letra. Para traço, diga “traço”." : ""} Consultando a base PAIIA…`);
     consultarBase(codigo);
   }, [consultarBase, mudarFicha]);
 
@@ -400,7 +404,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       return;
     }
     if (rr.etapa === "codigo") {
-      const c = lerCodigoDaFala(t);
+      // (03/11/2026) Código FALADO: sem traço/ponto que não foi pronunciado (o reconhecedor
+      // do celular formata números sozinho); hífen só com “traço”. Digitado: como foi digitado.
+      const c = lerCodigoDaFala(t, { falado: origem === "voz" });
       if (c.pular) {
         let g = irParaEtapa(f, "titulo");
         g = { ...g, rapido: { ...estadoRapido(g), codigoPulado: true } };
@@ -409,7 +415,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         return;
       }
       if (c.erro) { setAviso(c.erro); return; }
-      definirCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", duvidas: c.duvidas });
+      definirCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", duvidas: c.duvidas, ouvido: origem === "voz" ? t : "" });
       return;
     }
     if (rr.etapa === "titulo") {
@@ -665,6 +671,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         <section className="pr-bloco" data-pr-bloco="codigo">
           <label className="pr-rotulo" htmlFor="pr-codigo">Código da peça (SKU)</label>
           <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo" />
+          {ouvidoCodigo && ouvidoCodigo.codigo === (cp?.codigo || "") && <p className="pr-fonte" data-pr-ouvido>🎤 O celular ouviu: “{ouvidoCodigo.ouvido}” → anotei <b>{ouvidoCodigo.codigo}</b>. Traço só entra se você disser “traço”; para corrigir, digite acima.</p>}
           {cp && cp.conferido === false && (
             <label className="pr-check"><input type="checkbox" onChange={(e) => mudarFicha(conferirCodigo(fichaRef.current, cp.normalizado, e.target.checked))} /> Conferi o código letra por letra</label>
           )}
