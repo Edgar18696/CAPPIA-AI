@@ -62,6 +62,14 @@ export function aplicacoesEstruturadasVoz(ficha) {
 
 /** Tipo de veículo do anúncio: { valor, origem: "falado"|"aplicacoes"|"", texto }. */
 export function tipoVeiculoVoz(ficha, aplicacoes = aplicacoesEstruturadasVoz(ficha)) {
+  const r = tipoPelasAplicacoes(ficha, aplicacoes);
+  // (03/11/2026) Conversa “Completar”: o tipo DITO pelo usuário vale quando as aplicações não decidem.
+  const dito = ficha?.completar?.tipoVeiculo;
+  if (!r.valor && (dito === TIPO_CARRO || dito === TIPO_PESADA)) return { valor: dito, origem: "falado", texto: `${dito} (dito por você).` };
+  return r;
+}
+
+function tipoPelasAplicacoes(ficha, aplicacoes) {
   if (!aplicacoes.length) return { valor: "", origem: "", texto: "Sem aplicação confirmada: diga o tipo (carro ou linha pesada) ou confirme uma aplicação." };
   const falados = new Set();
   const semTipo = [];

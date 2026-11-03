@@ -64,6 +64,13 @@ import { situacaoEnvioFotos } from "./servicos/fichaVozNuvem"; // (03/11) aviso 
 import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVoz";
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
 import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
+// (03/11/2026) Pacote C: conversa “Completar a ficha” (só o que falta) na etapa final.
+import CompletarVoz from "./CompletarVoz";
+import { proximaPerguntaCompletar, responderCompletar, aberturaCompletar, fimCompletar, estadoCompletar, registrarConferencia, anotarFalaPaiia } from "./servicos/completarVoz";
+import { prepararEGravar, definirModalidadeEGravar, confirmarCategoriaEGravar } from "./servicos/preparoVozService";
+import { montarRevisao } from "./servicos/revisaoCelularVoz";
+import { useContasML, contasMLConectadas } from "../../services/contaMLAtiva";
+import { nomeDaLoja } from "../../services/duplicidadeML";
 import { salvarFichaNovoAnuncio, lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
 import { rascunhoDaFicha } from "../../services/fichaNovoAnuncio";
 // Foto IA OFICIAL, sem alteração (mesmas funções da tela Foto IA):
@@ -386,6 +393,70 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     }
   }
 
+  // ---------------- Completar (conversa) ----------------
+  // Pergunta só o que falta; as conferências/categoria/modalidade usam os
+  // serviços de sempre. Nada aqui aprova nem publica (isso continua na Revisão).
+  const estadoContasML = useContasML();
+  const contasCompletar = useMemo(() => contasMLConectadas(estadoContasML).filter((c) => String(c.ml_user_id || "").trim()).map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) })), [estadoContasML]);
+  const [completarOcupado, setCompletarOcupado] = useState("");
+  const [versaoRevisao, setVersaoRevisao] = useState(0);
+  const [falarPerguntas, setFalarPerguntas] = useState(() => { try { return localStorage.getItem("paiiaVozFalar") !== "0"; } catch { return true; } });
+  const micAntesDeFalar = useRef(false);
+  const aoFalarPergunta = useCallback((falando) => {
+    const rec = reconhecedorRef.current;
+    if (!rec) return;
+    if (falando) { micAntesDeFalar.current = Boolean(rec.ouvindo); if (rec.ouvindo) rec.parar(); }
+    else if (micAntesDeFalar.current) { micAntesDeFalar.current = false; setTimeout(() => { try { rec.iniciar(); } catch { /* precisa de toque */ } }, 250); }
+  }, []);
+  const contarFotos = () => fotosRef.current.filter((x) => x.usarNoAnuncio).length;
+  const idDaFichaNaConta = useCallback(async () => {
+    for (let i = 0; i < 4; i++) {
+      const res = await sincronizar();
+      if (res && fichaRef.current.fichaIdPAIIA) return fichaRef.current.fichaIdPAIIA;
+      await new Promise((ok) => setTimeout(ok, 1500));
+    }
+    return fichaRef.current.fichaIdPAIIA || "";
+  }, [sincronizar]);
+  const executarAcaoCompletar = useCallback(async (acao) => {
+    setCompletarOcupado(acao === "confirmarCategoria" ? "Confirmando a categoria e conferindo de novo…" : "Conferindo categoria, duplicidade, Bling e frete…");
+    try {
+      const id = await idDaFichaNaConta();
+      if (!id) { mudarFicha(anotarFalaPaiia(fichaRef.current, "Ainda não consegui salvar a ficha na sua conta. Confira a internet; eu tento de novo na próxima resposta.")); return; }
+      const c = estadoCompletar(fichaRef.current);
+      if (acao === "confirmarCategoria") {
+        const lida = await lerFichaNovoAnuncio(id);
+        const p = lida.ok ? lida.ficha?.dados_conferencia?.paiia_voz?.preparo : null;
+        const r = p ? await confirmarCategoriaEGravar(id, p) : { ok: false, erro: "conferência não encontrada" };
+        if (!r.ok) mudarFicha(anotarFalaPaiia(fichaRef.current, `Não consegui confirmar a categoria (${r.erro || "erro"}). Ela fica para a revisão.`));
+      } else if (c.modalidade) {
+        await definirModalidadeEGravar(id, c.modalidade);
+      }
+      await prepararEGravar(id, { conta: c.conta });
+      const lida = await lerFichaNovoAnuncio(id);
+      const rev = lida.ok ? montarRevisao(lida.ficha) : null;
+      const catV = lida.ok ? lida.ficha?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.categoria : null;
+      const idSug = rev?.pendencias.find((x) => x.id === "categoria")?.sugerida || "";
+      const sugerida = acao === "confirmarCategoria" || !idSug ? "" : `${idSug}${catV?.caminho ? ` — ${catV.caminho}` : ""}`;
+      let f = registrarConferencia(fichaRef.current, { fotos: contarFotos(), revisao: rev, sugerida });
+      const prox = proximaPerguntaCompletar(f, { fotos: contarFotos() });
+      f = anotarFalaPaiia(f, prox && !prox.acao ? prox.texto : fimCompletar(f, { fotos: contarFotos() }).texto);
+      mudarFicha(f);
+    } catch (e) {
+      mudarFicha(anotarFalaPaiia(fichaRef.current, `A conferência não respondeu agora (${e?.message || e}). Tente de novo com “conferir”.`));
+    } finally {
+      setCompletarOcupado("");
+      setVersaoRevisao((v) => v + 1); // a Revisão relê a ficha
+    }
+  }, [idDaFichaNaConta, mudarFicha]);
+  const responderNaConversa = useCallback((texto, origem = "digitado") => {
+    if (completarOcupado) return;
+    const k = String(texto || "").trim().toLowerCase();
+    if (/^(?:conferir|confere|conferir de novo)$/.test(k)) { executarAcaoCompletar("conferir"); return; }
+    const r = responderCompletar(fichaRef.current, texto, { fotos: contarFotos(), contas: contasCompletar, origem });
+    mudarFicha(r.ficha);
+    if (r.acao) executarAcaoCompletar(r.acao);
+  }, [completarOcupado, contasCompletar, executarAcaoCompletar, mudarFicha]);
+
   // ---------------- Fala/digitação ----------------
   const tratarFala = useCallback((fala, origem = "voz") => {
     const t = String(fala || "").trim();
@@ -458,8 +529,11 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       mudarFicha(g);
       return;
     }
-    if (rr.etapa === "enviar") setAviso("Toque em “Enviar ao Novo Anúncio” para conferir e confirmar.");
-  }, [definirCodigo, irPara, mudarFicha]);
+    if (rr.etapa === "enviar") {
+      if (proximaPerguntaCompletar(f, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }) || /^conferir/i.test(t)) { responderNaConversa(t, origem); return; }
+      setAviso("Toque em “Enviar ao Novo Anúncio” para conferir e confirmar.");
+    }
+  }, [definirCodigo, irPara, mudarFicha, responderNaConversa]);
 
   // Microfone
   useEffect(() => {
@@ -510,6 +584,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const pesoMedidas = useMemo(() => pesoMedidasParaEnvio(ficha), [ficha]);
   const avTitulo = useMemo(() => avaliarTitulo(estadoRapido(ficha).titulo.valor, ficha), [ficha]);
   const sugestoes = useMemo(() => sugestoesTitulo(ficha), [ficha]);
+  const perguntaCompletar = proximaPerguntaCompletar(ficha, { fotos: fotosUsadas.length });
+  const historicoCompletar = estadoCompletar(ficha).historico;
+  // Ao chegar na etapa final: o PAIIA diz o que já tem e faz a primeira pergunta.
+  useEffect(() => {
+    if (etapa !== "enviar" || !usuario?.id || historicoCompletar.length) return;
+    mudarFicha(anotarFalaPaiia(fichaRef.current, aberturaCompletar(fichaRef.current, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }).texto));
+  }, [etapa, usuario?.id, historicoCompletar.length, mudarFicha]);
 
   async function enviarAoNovoAnuncio() {
     const f = fichaRef.current;
@@ -593,7 +674,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </button>
           <div className="pr-pergunta">
             <span className="pr-quem">PAIIA</span>
-            <p data-pr-pergunta>{PERGUNTAS[etapa]}</p>
+            <p data-pr-pergunta>{etapa === "enviar" && usuario && perguntaCompletar ? perguntaCompletar.texto : PERGUNTAS[etapa]}</p>
             {parcial && <em className="pr-parcial">{parcial}</em>}
           </div>
         </div>
@@ -775,6 +856,19 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* ---------------- 5 Enviar ---------------- */}
       {etapa === "enviar" && (
         <section className="pr-bloco" data-pr-bloco="enviar">
+          {usuario && (
+            <CompletarVoz
+              historico={historicoCompletar}
+              pergunta={perguntaCompletar}
+              fim={perguntaCompletar ? null : fimCompletar(ficha, { fotos: fotosUsadas.length })}
+              contas={contasCompletar}
+              ocupado={completarOcupado}
+              falar={falarPerguntas}
+              onFalar={(v) => { setFalarPerguntas(v); try { localStorage.setItem("paiiaVozFalar", v ? "1" : "0"); } catch { /* sem localStorage */ } }}
+              onResponder={(t) => responderNaConversa(t, "digitado")}
+              aoFalar={aoFalarPergunta}
+            />
+          )}
           <span className="pr-rotulo">Fotos que vão para o Novo Anúncio</span>
           <div className="pr-envio-fotos" data-pr-envio-fotos>
             {fotos.map((f, i) => (
@@ -803,7 +897,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Para enviar falta: {validacao.faltando.join(", ")}.</p>}
           {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para o Novo Anúncio salvar o anúncio e as fotos.</p>}
-          {usuario && <PreparoPublicacaoVoz fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
+          {usuario && <PreparoPublicacaoVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
           {confirmandoEnvio ? (
             <div className="pr-cartao" data-pv-confirmacao-envio>
               <p>O Novo Anúncio será aberto com código, título, descrição e as fotos marcadas. Lá você confere tudo (SKU, fotos, compatibilidade, peso, medidas, frete, preço, estoque e duplicidade) e aprova antes de qualquer publicação.</p>
