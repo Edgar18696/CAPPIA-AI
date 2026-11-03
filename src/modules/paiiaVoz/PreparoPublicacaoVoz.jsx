@@ -90,6 +90,7 @@ export default function PreparoPublicacaoVoz({ fichaId, usuarioId = "" }) {
   const rev = row ? montarRevisao(row) : null;
   const d = rev?.dados;
   const temPreparo = Boolean(row?.dados_conferencia?.paiia_voz?.preparo);
+  const contaGravada = String(row?.dados_conferencia?.paiia_voz?.preparo?.conta || "");
 
   return (
     <div className="pr-cartao" data-pv-revisao={rev ? (rev.aprovada ? "aprovada" : rev.podeAprovar ? "pronta" : "pendente") : "carregando"}>
@@ -97,9 +98,12 @@ export default function PreparoPublicacaoVoz({ fichaId, usuarioId = "" }) {
       <label className="pr-fonte">Conta Mercado Livre:{" "}
         <select value={conta} onChange={(e) => setConta(e.target.value)} data-pv-preparo-conta>
           <option value="">— escolha —</option>
+          {/* (03/11/2026) A lista de contas chega depois da ficha: enquanto isso, mostra a conta já gravada (não fica "— escolha —"). */}
+          {conta && !contas.some((c) => String(c.ml_user_id) === conta) && <option value={conta} data-pv-conta-carregando>{nomeDaLoja(conta)} (carregando contas…)</option>}
           {contas.map((c) => <option key={c.ml_user_id} value={String(c.ml_user_id)}>{nomeDaLoja(c.ml_user_id, c.nickname)}</option>)}
         </select>
       </label>
+      {contaGravada && conta === contaGravada && <span className="pr-fonte" data-pv-conta-gravada> (conta gravada na ficha)</span>}
       <button type="button" className="pr-botao" disabled={Boolean(rodando) || !conta} onClick={conferir} data-pv-preparo-conferir>{rodando === "conferir" ? "⏳ Conferindo..." : temPreparo ? "🔄 Conferir de novo" : "🔎 Conferir agora"}</button>
       {erro && <p className="pr-aviso" data-pv-preparo-erro>⚠️ {erro}</p>}
 

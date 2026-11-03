@@ -28,7 +28,7 @@ import {
 import { conferirCategoriaParaPublicar } from "../services/categoriaML";
 import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
-import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
+import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services/registroMLBService";
 import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, reais as reaisFrete } from "../services/fretePrecificacao";
@@ -1576,7 +1576,12 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           <div data-paiia-bling-estado="encontrado" style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>
             <div>✅ Produto já existe no Bling: <b>{estoque.produto?.nome}</b> (ID {estoque.produto?.id}, SKU {estoque.produto?.codigo}).</div>
             <div data-paiia-bling-estoque>Estoque no Bling: físico <b>{estoque.saldoFisicoTotal ?? "—"}</b> · disponível <b>{estoque.saldoVirtualTotal ?? "—"}</b>{estoque.ok === false && estoque.mensagem ? ` — ${estoque.mensagem}` : ""}</div>
-            <div style={info}>Na publicação o anúncio é VINCULADO a este produto (nada é duplicado no Bling). Um produto Bling pode atender anúncios em várias contas Mercado Livre, cada um com o seu MLB.</div>
+            {/* (03/11/2026) Vínculo automático só nas contas com loja Bling mapeada (hoje só LojaOnlineSP). */}
+            {lojaBlingDaConta(contaEscolhida)?.vinculo_automatico ? (
+              <div style={info} data-paiia-bling-vinculo="automatico">Na publicação o anúncio é VINCULADO a este produto (nada é duplicado no Bling). Depois de publicar, o PAIIA confere sozinho o vínculo no Bling ({lojaBlingDaConta(contaEscolhida).bling_loja_nome}) pelo SKU. Um produto Bling pode atender anúncios em várias contas Mercado Livre, cada um com o seu MLB.</div>
+            ) : (
+              <div style={info} data-paiia-bling-vinculo="manual">Nesta conta o vínculo com o Bling NÃO é automático: depois de publicar, confira ou faça o vínculo no Bling separadamente. Nada é duplicado no Bling.</div>
+            )}
             {criacaoBling && !criacaoBling.ocupado && (
               <div data-paiia-bling-criacao={criacaoBling.ok ? "ok" : "conferir"} style={criacaoBling.ok ? { ...info, color: "#86efac" } : erro}>
                 {criacaoBling.jaExistia
