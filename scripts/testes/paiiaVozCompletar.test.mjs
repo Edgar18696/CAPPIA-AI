@@ -45,9 +45,9 @@ function fichaPresilha() {
 }
 const ROTEIRO = { marca: "Torken", preco: "39,90", quantidade: "10", peso: "200 gramas", medidas: "20 por 10 por 5", montadora: "Renault", confirmarAplicacao: "sim", aplicacaoDescricao: "sim", maisAplicacao: "não", tipoVeiculo: "carro", conta: "Loja Online", modalidade: "Premium" };
 
-test("interface conhecida: Fotos → Código → Título → Descrição (com os campos) → Enviar", () => {
-  assert.deepEqual(ETAPAS, ["fotos", "codigo", "titulo", "descricao", "enviar"]);
-  assert.equal(ROTULOS_ETAPAS.enviar, "Enviar");
+test("7 etapas aprovadas (04/11): Fotos, Código, Descrição/Título, Preço, Envio, Compat., Finalizar", () => {
+  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"]);
+  assert.equal(ROTULOS_ETAPAS.finalizar, "Finalizar");
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes('onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>'), "Continuar das fotos vai para o Código");
   assert.ok(!f.includes('rr.etapa === "fotos" && nav === "proximo" ? "enviar"'));
@@ -205,7 +205,7 @@ test("tela: cartão com microfone, situação (falando/ouvindo/processando/preen
   for (const t of ["data-pv-completar-mic", "data-pv-completar-situacao", "🔊 PAIIA falando", "🎤 Ouvindo", "⏳", "✅ Preenchido", "Aguardando sua resposta", "Voz indisponível neste aparelho: digite", "data-pv-completar-campos", "data-pv-completar-entrada", "speechSynthesis"]) assert.ok(c.includes(t), t);
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes("vozConversaRef.current"), "microfone volta sozinho depois de cada pergunta");
-  assert.ok(f.includes("perguntaCompletar && !verRevisaoAntes ?"), "revisão no fim");
+  assert.ok(f.includes("data-pv-conversa-opcional"), "conversa só opcional");
   assert.ok(f.includes("Ignorei o que o microfone ouviu enquanto o PAIIA falava"));
   assert.ok(!/publicar\(|salvarFichaAprovada|aprovarRevisaoEGravar/.test(c), "a conversa não aprova nem publica");
 });
@@ -250,7 +250,8 @@ test("tela: texto ditado aparece no próprio campo; campo ativo à vista; voz da
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes("const mostrado = ditando ? ditando : focado ? texto : valor;"), "campo mostra o que está sendo ditado");
   assert.ok(f.includes('ditando={ouvindo ? parcial : ""} onSalvar'), "código");
-  assert.ok(f.includes('ditando={ouvindo && !campoVoz ? parcial : ""} acrescentar'), "descrição");
+  assert.ok(f.includes('ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar'), "descrição");
+  assert.ok(f.includes('ditando={campoVoz === "titulo" && ouvindo ? parcial || " " : ""}'), "título");
   assert.ok(f.includes("data-pv-campo-mic") && f.includes("data-pv-dados-diretos"));
   assert.ok(f.includes('el.scrollIntoView?.({ block: "nearest" })') && f.includes("r.bottom > window.innerHeight"), "só rola se estiver fora da tela");
   assert.ok(f.includes("|${marcaCompletos(ficha)}`"), "custo/peso/medidas/aplicações salvam na conta");

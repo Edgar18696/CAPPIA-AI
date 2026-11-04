@@ -244,16 +244,19 @@ test("envio: dados para o Novo Anúncio (título e descrição do rascunho, marc
 });
 
 test("etapas: navegação e estado guardado na ficha (F5)", () => {
-  assert.deepEqual(R.ETAPAS, ["fotos", "codigo", "titulo", "descricao", "enviar"]);
+  assert.deepEqual(R.ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"]);
   assert.equal(R.proximaEtapa("fotos"), "codigo");
-  assert.equal(R.proximaEtapa("enviar"), "enviar");
+  assert.equal(R.proximaEtapa("finalizar"), "finalizar");
+  // ficha guardada com as etapas antigas abre na etapa nova equivalente
+  assert.equal(R.estadoRapido({ rapido: { etapa: "titulo" } }).etapa, "descricao");
+  assert.equal(R.estadoRapido({ rapido: { etapa: "enviar" } }).etapa, "finalizar");
   assert.equal(R.proximaEtapa("fotos", -1), "fotos");
-  let f = R.irParaEtapa(nova(), "titulo");
+  let f = R.irParaEtapa(nova(), "preco");
   f = R.definirTitulo(f, "Farol direito");
   const arm = { m: new Map(), getItem(k) { return this.m.get(k) ?? null; }, setItem(k, v) { this.m.set(k, v); }, removeItem(k) { this.m.delete(k); } };
   F.guardarFichaVoz(f, arm);
   const lida = F.lerFichaVoz(arm);
-  assert.equal(R.estadoRapido(lida).etapa, "titulo");
+  assert.equal(R.estadoRapido(lida).etapa, "preco");
   assert.equal(R.estadoRapido(lida).titulo.valor, "Farol Direito"); // (E6)
   assert.equal(R.estadoRapido(F.criarFichaVoz()).etapa, "fotos", "ficha nova começa nas fotos");
 });

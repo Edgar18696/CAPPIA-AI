@@ -171,6 +171,20 @@ export default function PainelFichasCentral({ setScreen }) {
   }
 
   const mostrarLocal = local && !rascunhoLocalJaNaBase(local, estado.fichas);
+
+  // (04/11/2026) “Finalizar anúncio”: a mesma tela única do PAIIA Voz (confere, mostra pendências e só executa o autorizado).
+  function finalizarFicha(id) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("ficha", id);
+      url.searchParams.set("tela", "finalizarAnuncio");
+      window.history.replaceState(window.history.state, "", url.toString());
+    } catch {
+      return;
+    }
+    setScreen?.("finalizarAnuncio");
+  }
+
   // Código que JÁ tem anúncio publicado: outra ficha do mesmo código é
   // sinalizada (uma ficha publicada nunca volta a parecer anúncio novo).
   const publicadosPorCodigo = new Map(
@@ -246,6 +260,9 @@ export default function PainelFichasCentral({ setScreen }) {
                     ? "🧩 Ver canais escolhidos"
                     : "▶ Continuar"}
           </button>
+          {!f.publicado && f.noNovoAnuncio && (
+            <button type="button" data-paiia-finalizar-ficha={f.id} onClick={() => finalizarFicha(f.id)} style={botao}>✅ Finalizar anúncio</button>
+          )}
           <button type="button" data-paiia-excluir-ficha={f.id} onClick={() => excluir(f)} disabled={Boolean(excluindo || arquivando)} style={botaoExcluir}>
             {excluindo === f.id || arquivando === f.id ? "⏳ Excluindo..." : "🗑 Excluir"}
           </button>

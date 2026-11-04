@@ -447,16 +447,18 @@ export function camposDaFicha(ficha, { fotos = 0 } = {}) {
 // ou digite). Mesmas regras da conversa: só o que foi dito; nada é inventado.
 // ---------------------------------------------------------------
 export const CAMPOS_DIRETOS = Object.freeze([
-  { id: "marca", rotulo: "Marca" },
-  { id: "preco", rotulo: "Preço de venda (R$)" },
-  { id: "custo", rotulo: "Custo (R$)", opcional: true },
-  { id: "quantidade", rotulo: "Estoque" },
-  { id: "peso", rotulo: "Peso embalado (gramas)" },
-  { id: "comprimento", rotulo: "Comprimento (cm)" },
-  { id: "largura", rotulo: "Largura (cm)" },
-  { id: "altura", rotulo: "Altura (cm)" },
-  { id: "aplicacoes", rotulo: "Aplicações (veículo e anos — confirme abaixo)" },
+  { id: "marca", rotulo: "Marca", etapa: "preco" },
+  { id: "preco", rotulo: "Preço de venda (R$)", etapa: "preco" },
+  { id: "custo", rotulo: "Custo (R$)", opcional: true, etapa: "preco" },
+  { id: "quantidade", rotulo: "Estoque (quantidade a anunciar)", etapa: "preco" },
+  { id: "peso", rotulo: "Peso embalado (gramas)", etapa: "envio" },
+  { id: "comprimento", rotulo: "Comprimento (cm)", etapa: "envio" },
+  { id: "largura", rotulo: "Largura (cm)", etapa: "envio" },
+  { id: "altura", rotulo: "Altura (cm)", etapa: "envio" },
+  { id: "aplicacoes", rotulo: "Veículo e anos (diga e marque abaixo)", etapa: "compat" },
 ]);
+/** Campos diretos de uma etapa (04/11: 7 etapas). */
+export const camposDaEtapa = (etapa) => CAMPOS_DIRETOS.filter((c) => c.etapa === etapa);
 
 const virg = (v) => String(v ?? "").replace(".", ",");
 
@@ -533,8 +535,14 @@ export function definirCampoDireto(ficha, campoId, texto, { origem = "voz", agor
 }
 
 /** Próximo campo direto ainda vazio, depois de `atual` (ou o primeiro). */
-export function proximoCampoDireto(ficha, atual = "") {
+export function proximoCampoDireto(ficha, atual = "", { etapa = "" } = {}) {
   const v = valoresCamposDiretos(ficha);
+  // (04/11) Com etapa: só os campos dela, na ordem, sem voltar ao começo (no fim da etapa → "").
+  if (etapa) {
+    const ids = camposDaEtapa(etapa).filter((c) => !c.opcional && c.id !== "aplicacoes").map((c) => c.id);
+    const i = ids.indexOf(atual);
+    return ids.slice(i + 1).find((id) => !txt(v[id])) || "";
+  }
   const ordem = CAMPOS_DIRETOS.map((c) => c.id);
   const i = ordem.indexOf(atual);
   const depois = [...ordem.slice(i + 1), ...ordem.slice(0, Math.max(0, i + 1))];
@@ -568,4 +576,31 @@ export function usarDadosDoBling(ficha, produto, { agora = Date.now() } = {}) {
     if (r.ok) { f = r.ficha; usados.push(id); }
   }
   return { ficha: f, usados };
+}
+
+/** (04/11) Tipo de veículo escolhido na etapa Compatibilidade (vale quando as aplicações não decidem). */
+export function definirTipoVeiculoVoz(ficha, tipo) {
+  const t = [TIPO_CARRO, TIPO_PESADA].includes(tipo) ? tipo : "";
+  return comCompletar(ficha, (c) => { c.tipoVeiculo = t; });
+}
+
+/**
+ * (04/11) Situação de cada etapa para a barra superior:
+ * "ok" (concluída), "pe" (passou sem completar) ou "" (ainda não).
+ */
+export function estadoEtapasVoz(ficha, { fotos = 0, etapaAtual = "", ordem = [] } = {}) {
+  const v = valoresCamposDiretos(ficha);
+  const r = estadoRapido(ficha);
+  const completos = dadosCompletosVoz(ficha, { fotos });
+  const feito = {
+    fotos: fotos > 0,
+    codigo: Boolean(codigoPrincipal(ficha)?.codigo),
+    descricao: Boolean(txt(r.titulo.valor) && txt(r.descricao.texto || r.descricao.final)),
+    preco: Boolean(txt(v.marca) && txt(v.preco) && txt(v.quantidade)),
+    envio: Boolean(txt(v.peso) && txt(v.comprimento) && txt(v.largura) && txt(v.altura)),
+    compat: (ficha?.aplicacoes || []).some((a) => a.confirmada) && Boolean(completos.tipoVeiculo),
+    finalizar: false,
+  };
+  const iAtual = ordem.indexOf(etapaAtual);
+  return Object.fromEntries(ordem.map((e, i) => [e, feito[e] ? "ok" : i < iAtual ? "pe" : ""]));
 }

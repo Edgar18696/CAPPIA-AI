@@ -25,17 +25,22 @@ import { lerPesoEMedidas, camposDadosTecnicos, textoPesoMedidas } from "./pesoMe
 // (23/10 - E6) Inicial maiúscula em cada palavra (preserva códigos, siglas, acentos e aplicações).
 import { padronizarTitulo, padronizarDescricao } from "../../../services/padronizarTextoAnuncio.js";
 
-export const ETAPAS = ["fotos", "codigo", "titulo", "descricao", "enviar"];
-export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", titulo: "Título", descricao: "Descrição", enviar: "Enviar" };
+// (04/11/2026) 7 etapas aprovadas: Fotos, Código, Descrição/Título, Preço/Custo/Estoque,
+// Peso/Medidas/Frete, Compatibilidade e Finalizar (as antigas “titulo”/“enviar” viram “descricao”/“finalizar”).
+export const ETAPAS = ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"];
+export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", descricao: "Descrição", preco: "Preço", envio: "Envio", compat: "Compat.", finalizar: "Finalizar" };
+const ETAPAS_ANTIGAS = { titulo: "descricao", enviar: "finalizar" };
 export const LIMITE_TITULO = 60;
 export const MARCA_PADRAO = "Torken";
 
 export const PERGUNTAS = {
   fotos: "Tire ou escolha até 5 fotos da peça. Pode continuar com menos. Quando terminar, toque em Continuar ou diga “próximo”.",
   codigo: "Qual é o código da peça? Fale ou digite. Se não tiver, diga “sem código”.",
-  titulo: "Qual é o título do anúncio? Fale ou digite (até 60 caracteres). Para corrigir: “troca … por …”, “tira …”, “acrescenta …”.",
-  descricao: "Descreva a peça do seu jeito (cada fala é acrescentada). Depois toque no 🎤 de cada campo — marca, preço, estoque, peso e medidas — e fale.",
-  enviar: "Confira o resumo. Se estiver certo, envie ao Novo Anúncio — lá vêm a Conferência e a aprovação antes de qualquer publicação.",
+  descricao: "Descreva a peça (cada fala é acrescentada). Para o título, toque no 🎤 do Título e fale.",
+  preco: "Toque no 🎤 e fale: marca, preço de venda, custo (opcional) e estoque. Ele passa sozinho para o próximo campo.",
+  envio: "Toque no 🎤 e fale o peso embalado (gramas) e as medidas — “20 por 10 por 5” preenche as três.",
+  compat: "Diga o veículo e os anos (ex.: Renault Master 2013 a 2022) e marque só as aplicações certas.",
+  finalizar: "Confira as pendências. A finalização confere no Bling e no Mercado Livre e só executa o que você autorizar.",
 };
 
 const txt = (v) => String(v ?? "").trim();
@@ -45,7 +50,7 @@ const copia = (o) => JSON.parse(JSON.stringify(o));
 export function estadoRapido(ficha) {
   const r = ficha?.rapido || {};
   return {
-    etapa: ETAPAS.includes(r.etapa) ? r.etapa : "fotos",
+    etapa: ETAPAS.includes(r.etapa) ? r.etapa : ETAPAS_ANTIGAS[r.etapa] || "fotos",
     titulo: { valor: txt(r.titulo?.valor), origem: r.titulo?.origem || "", anterior: r.titulo?.anterior ?? null },
     descricao: { texto: String(r.descricao?.texto ?? ""), anterior: r.descricao?.anterior ?? null, final: r.descricao?.final ?? null },
     codigoPulado: Boolean(r.codigoPulado),

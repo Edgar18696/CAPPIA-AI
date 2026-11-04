@@ -33,6 +33,7 @@ import {
 } from "./components/constants/apiConstants";
 import CentralPublicacaoScreen from "./components/screens/CentralPublicacaoScreen";
 import PaiiaVoz from "./modules/paiiaVoz/PaiiaVoz";
+import TelaFinalizarAnuncio from "./modules/paiiaVoz/TelaFinalizarAnuncio";
 import FotoIAScreen from "./components/screens/FotoIAScreen";
 import BannerStudio from "./components/BannerStudio";
 import useGaleriaState from "./hooks/useGaleriaState";
@@ -3169,6 +3170,11 @@ return (
     setScreen={setScreen}
     usuario={usuario}
   />
+)}
+
+{/* (04/11/2026) Finalizar anúncio — a mesma tela única do celular, no computador. */}
+{screen === "finalizarAnuncio" && (
+  <TelaFinalizarAnuncio setScreen={setScreen} usuario={usuario} />
 )}
 
 {screen === "centralPublicacao" && (

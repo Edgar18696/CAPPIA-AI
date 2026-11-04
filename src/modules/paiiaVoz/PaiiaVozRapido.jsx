@@ -63,10 +63,14 @@ import { situacaoEnvioFotos } from "./servicos/fichaVozNuvem"; // (03/11) aviso 
 // (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
 import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVoz";
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
-import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 // (03/11/2026) Pacote C: conversa “Completar a ficha” (só o que falta) na etapa final.
 import CompletarVoz from "./CompletarVoz";
-import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling } from "./servicos/completarVoz";
+import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling, camposDaEtapa, definirTipoVeiculoVoz, estadoEtapasVoz } from "./servicos/completarVoz";
+import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
+import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
+import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
+import { descartarRascunhoLocalDaFicha } from "../../services/exclusaoFicha";
+import { CHAVE_ANUNCIO_EM_ANDAMENTO, CHAVES_ANUNCIO_LOCAL } from "../../services/fichasCentral";
 import { proximaPerguntaCompletar, responderCompletar, aberturaCompletar, fimCompletar, estadoCompletar, registrarConferencia, anotarFalaPaiia } from "./servicos/completarVoz";
 import { prepararEGravar, definirModalidadeEGravar, confirmarCategoriaEGravar } from "./servicos/preparoVozService";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
@@ -431,7 +435,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const contasCompletar = useMemo(() => contasMLConectadas(estadoContasML).filter((c) => String(c.ml_user_id || "").trim()).map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) })), [estadoContasML]);
   const [completarOcupado, setCompletarOcupado] = useState("");
   const [versaoRevisao, setVersaoRevisao] = useState(0);
-  const [verRevisaoAntes, setVerRevisaoAntes] = useState(false);
+  const [removendo, setRemovendo] = useState(null); // (04/11) confirmação de “Remover ficha de teste”
   const [conversaAberta, setConversaAberta] = useState(false);
   const conversaAbertaRef = useRef(false);
   const [recenteCompletar, setRecenteCompletar] = useState("");
@@ -528,7 +532,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const rr = estadoRapido(f);
     const nav = comandoNavegacao(t);
     if (nav) {
-      if (rr.etapa === "enviar" && nav === "proximo") { setConfirmandoEnvio(true); return; }
+      if (rr.etapa === "finalizar" && nav === "proximo") { setAviso("Confira as pendências e use “Executar operações autorizadas”."); return; }
       // (03/11) Fluxo único: das fotos vai direto para a conversa (código, descrição e o resto).
       irPara(proximaEtapa(rr.etapa, nav === "proximo" ? 1 : -1));
       return;
@@ -542,7 +546,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       // do celular formata números sozinho); hífen só com “traço”. Digitado: como foi digitado.
       const c = lerCodigoDaFala(t, { falado: origem === "voz" });
       if (c.pular) {
-        let g = irParaEtapa(f, "titulo");
+        let g = irParaEtapa(f, "descricao");
         g = { ...g, rapido: { ...estadoRapido(g), codigoPulado: true } };
         mudarFicha(g);
         setAviso("Tudo bem, seguimos sem código. O SKU pode ser preenchido no Novo Anúncio.");
@@ -552,7 +556,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       definirCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", duvidas: c.duvidas, ouvido: origem === "voz" ? t : "" });
       return;
     }
-    if (rr.etapa === "titulo") {
+    if (rr.etapa === "descricao" && campoVozRef.current === "titulo") {
       const e = editarPorVoz(rr.titulo.valor, t, { padrao: "substituir", anterior: rr.titulo.anterior, campo: "titulo" });
       if (e.aviso) setAviso(e.aviso);
       // (22/10) Comando não entendido / fala de conversa: nada é alterado.
@@ -560,20 +564,27 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         mudarFicha(definirTitulo(f, e.texto, { origem }));
         const av = avaliarTitulo(e.texto, f);
         const voltar = (e.acao === "substituir" || e.acao === "limpar") && rr.titulo.valor && rr.titulo.valor !== e.texto ? " Se não era isso, diga “desfaz”." : "";
-        if (!e.aviso) setAviso((av.avisos.length ? av.avisos.join(" ") : `Título anotado (${e.texto.length}/${LIMITE_TITULO}). Diga “próximo” para a descrição.`) + voltar);
+        if (!e.aviso) setAviso((av.avisos.length ? av.avisos.join(" ") : `Título anotado (${e.texto.length}/${LIMITE_TITULO}). Diga “próximo” para o preço.`) + voltar);
       }
       return;
     }
-    if (rr.etapa === "descricao" && campoVozRef.current) {
-      const id = campoVozRef.current;
+    if (["preco", "envio", "compat"].includes(rr.etapa)) {
+      // (04/11) Compatibilidade: “carro” / “linha pesada” escolhem o tipo de veículo.
+      if (rr.etapa === "compat" && /^(carro|autom[oó]vel|linha pesada|pesad[ao]|caminh[aã]o|[oô]nibus)$/i.test(t)) {
+        const tipo = /^(carro|autom)/i.test(t) ? TIPO_CARRO : TIPO_PESADA;
+        mudarFicha(definirTipoVeiculoVoz(f, tipo));
+        setAviso(`✅ Tipo de veículo: ${tipo}`);
+        return;
+      }
+      const id = rr.etapa === "compat" ? "aplicacoes" : (campoVozRef.current && CAMPOS_DIRETOS.find((c) => c.id === campoVozRef.current)?.etapa === rr.etapa ? campoVozRef.current : proximoCampoDireto(f, "", { etapa: rr.etapa }) || camposDaEtapa(rr.etapa)[0]?.id);
       const rotulo = CAMPOS_DIRETOS.find((c) => c.id === id)?.rotulo || id;
       const res = definirCampoDireto(f, id, t, { origem });
       const rec = reconhecedorRef.current;
       const ouvirDeNovo = () => setTimeout(() => { try { if (rec && !rec.ouvindo && campoVozRef.current) rec.iniciar(); } catch { /* precisa de toque */ } }, 400);
       if (!res.ok) { setAviso(`⚠️ ${rotulo}: ${res.erro}`); if (origem === "voz") ouvirDeNovo(); return; }
       mudarFicha(res.ficha);
-      const prox = proximoCampoDireto(res.ficha, id);
-      setAviso(`✅ ${rotulo}: ${res.valor}${prox ? ` → agora ${CAMPOS_DIRETOS.find((c) => c.id === prox)?.rotulo}` : " · dados da peça completos"}`);
+      const prox = id === "aplicacoes" ? "" : proximoCampoDireto(res.ficha, id, { etapa: rr.etapa });
+      setAviso(`✅ ${rotulo}: ${res.valor}${prox ? ` → agora ${CAMPOS_DIRETOS.find((c) => c.id === prox)?.rotulo}` : id === "aplicacoes" ? " · marque abaixo se estiver certa" : " · etapa completa: diga “próximo”"}`);
       setCampoVoz(prox);
       if (prox && origem === "voz") ouvirDeNovo(); // avança e já escuta o próximo campo
       return;
@@ -606,9 +617,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       mudarFicha(g);
       return;
     }
-    if (rr.etapa === "enviar") {
+    if (rr.etapa === "finalizar") {
       if (conversaAbertaRef.current && (proximaPerguntaCompletar(f, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }) || /^conferir/i.test(t))) { responderNaConversa(t, origem); return; }
-      setAviso("Toque em “Enviar ao Novo Anúncio” para conferir e confirmar.");
+      setAviso("Na finalização, confira as pendências e use “Executar operações autorizadas”.");
     }
   }, [definirCodigo, irPara, mudarFicha, responderNaConversa, setCampoVoz]);
 
@@ -639,7 +650,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (04/11) O campo que está recebendo a fala fica sempre à vista (só rola se estiver fora da tela).
   useEffect(() => {
     if (!ouvindo) return;
-    const sel = campoVoz ? `[data-pv-campo-direto="${campoVoz}"]` : `[data-pr-bloco="${etapa}"] .pr-campo`;
+    const sel = campoVoz === "titulo" ? "#pr-titulo" : campoVoz ? `[data-pv-campo-direto="${campoVoz}"]` : `[data-pr-bloco="${etapa}"] .pr-campo`;
     const t = setTimeout(() => {
       try {
         const el = document.querySelector(sel);
@@ -725,6 +736,29 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setScreen?.("novoAnuncio");
   }
 
+  // (04/11) Remover ficha de teste: SÓ a ficha deste aparelho, não publicada, depois de UMA confirmação
+  // mostrando código, data e fotos. Na conta, quem confere e apaga é a exclusão de sempre
+  // (exclusaoFichaService: relê tudo, recusa ficha publicada/com MLB/Bling vinculado).
+  function pedirRemoverFicha() {
+    const f = fichaRef.current;
+    if (fichaPreservada(f.fichaIdPAIIA)) { setAviso("Esta ficha está preservada por decisão sua: não é removida por aqui."); return; }
+    setRemovendo({ codigo: codigoPrincipal(f)?.codigo || "", data: new Date(f.criadaEm || Date.now()).toLocaleString("pt-BR"), fotos: fotos.map((x) => (x.versao === "tratada" && x.urlTratada ? x.urlTratada : x.url)).filter(Boolean), ocupado: false });
+  }
+  async function removerFichaTeste() {
+    const f = fichaRef.current;
+    if (fichaPreservada(f.fichaIdPAIIA)) { setRemovendo(null); return; }
+    setRemovendo((r) => (r ? { ...r, ocupado: true } : r));
+    if (f.fichaIdPAIIA && usuario?.id) {
+      const res = await excluirFichaDefinitivamente(f.fichaIdPAIIA).catch((e) => ({ ok: false, erro: e?.message || String(e) }));
+      if (!res.apagada && !res.naoEncontrada) { setRemovendo(null); setAviso(`⛔ Ficha não removida: ${res.erro || res.motivo || "não passou nas conferências de segurança"}. Nada foi apagado.`); return; }
+      try { descartarRascunhoLocalDaFicha(globalThis.localStorage, f.fichaIdPAIIA, { chaveGuardada: CHAVE_ANUNCIO_EM_ANDAMENTO, chavesLocais: CHAVES_ANUNCIO_LOCAL }); } catch { /* sem localStorage */ }
+    }
+    try { localStorage.removeItem(CHAVE_COMPLEMENTO_VOZ); } catch { /* sem localStorage */ }
+    await novaFicha();
+    setRemovendo(null);
+    setAviso("🗑️ Ficha de teste removida. Começamos uma ficha nova, limpa.");
+  }
+
   async function novaFicha() {
     await guarda.limparFicha(fichaRef.current.id).catch(() => {});
     descartarFichaVoz();
@@ -738,7 +772,35 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   }
 
   const cp = codigoPrincipal(ficha);
-  const indice = ETAPAS.indexOf(etapa);
+  const estEtapas = estadoEtapasVoz(ficha, { fotos: fotosUsadas.length, etapaAtual: etapa, ordem: ETAPAS });
+
+  // (04/11) Microfone de um campo: toque e fale (o texto aparece no próprio campo).
+  const micCampo = (id, rotulo) => (suporta && !avisoVoz ? (
+    <button type="button" className={`pr-mic-campo ${campoVoz === id && ouvindo ? "pr-mic-ouvindo" : ""}`} aria-label={`Falar ${rotulo}`} aria-pressed={campoVoz === id && ouvindo} data-pv-campo-mic={id || "descricao"}
+      onClick={() => { const rec = reconhecedorRef.current; if (campoVoz === id && ouvindo) { rec?.parar(); return; } setCampoVoz(id); setErroVoz(""); try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* sem microfone */ } }}>🎤</button>
+  ) : null);
+  const renderCampo = (c) => {
+    const valores = valoresCamposDiretos(ficha);
+    const ativo = campoVoz === c.id || (!campoVoz && c.id === "aplicacoes");
+    const ehAplic = c.id === "aplicacoes";
+    return (
+      <div key={c.id} className={`pr-campo-direto ${ativo ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={c.id} data-estado={ativo ? (ouvindo ? "ouvindo" : "ativo") : valores[c.id] ? "ok" : "vazio"}>
+        <label htmlFor={`pr-dd-${c.id}`}>{c.rotulo}{c.opcional ? " — opcional" : ""}{ativo && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
+        <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }}>
+          <CampoTexto id={`pr-dd-${c.id}`} campoVoz={c.id} valor={ehAplic ? "" : valores[c.id]} ditando={ativo && ouvindo ? (parcial || " ") : ""} inputMode={["marca", "aplicacoes"].includes(c.id) ? "text" : "decimal"}
+            onSalvar={(v) => { if (!String(v).trim()) return; const res = definirCampoDireto(fichaRef.current, c.id, v, { origem: "digitado" }); if (res.ok) mudarFicha(res.ficha); else setAviso(`⚠️ ${c.rotulo}: ${res.erro}`); }} data={`dado-${c.id}`} />
+          {micCampo(c.id, c.rotulo)}
+        </div>
+        {ehAplic && valores.aplicacoes && <p className="pr-fonte" data-pv-aplicacoes-resumo>{valores.aplicacoes}</p>}
+      </div>
+    );
+  };
+  const navEtapa = (antes, depois) => (
+    <div className="pr-nav">
+      {antes ? <button type="button" className="pr-link" onClick={() => irPara(antes)}>← {ROTULOS_ETAPAS[antes]}</button> : <span />}
+      {depois ? <button type="button" className="pr-botao" onClick={() => irPara(depois)} data-pr-continuar>Próximo →</button> : <span />}
+    </div>
+  );
 
   return (
     <div className="pr" data-paiia-voz data-pr-etapa={etapa}>
@@ -751,8 +813,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
 
       <nav className="pr-etapas" aria-label="Etapas">
         {ETAPAS.map((e, i) => (
-          <button key={e} type="button" className={`pr-etapa ${e === etapa ? "pr-atual" : ""} ${i < indice ? "pr-feita" : ""}`} onClick={() => irPara(e)} aria-current={e === etapa ? "step" : undefined} data-pr-ir={e}>
-            <span>{i + 1}</span>{ROTULOS_ETAPAS[e]}
+          <button key={e} type="button" className={`pr-etapa ${e === etapa ? "pr-atual" : ""} ${estEtapas[e] === "ok" ? "pr-feita" : estEtapas[e] === "pe" ? "pr-pendente" : ""}`} onClick={() => irPara(e)} aria-current={e === etapa ? "step" : undefined} data-pr-ir={e} data-pr-estado={estEtapas[e] || "nao"}>
+            <span>{e !== etapa && estEtapas[e] === "ok" ? "✓" : e !== etapa && estEtapas[e] === "pe" ? "!" : i + 1}</span>{ROTULOS_ETAPAS[e]}
           </button>
         ))}
       </nav>
@@ -765,7 +827,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </button>
           <div className="pr-pergunta">
             <span className="pr-quem">PAIIA</span>
-            <p data-pr-pergunta>{etapa === "enviar" && usuario && conversaAberta && perguntaCompletar ? perguntaCompletar.texto : PERGUNTAS[etapa]}</p>
+            <p data-pr-pergunta>{etapa === "finalizar" && usuario && conversaAberta && perguntaCompletar ? perguntaCompletar.texto : PERGUNTAS[etapa]}</p>
             {parcial && <em className="pr-parcial">{parcial}</em>}
           </div>
         </div>
@@ -779,9 +841,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         )}
         {aviso && <p className="pr-aviso-geral" data-pr-aviso>{aviso}</p>}
         {erroVoz && <p className="pr-erro" role="alert">{erroVoz}</p>}
-        {etapa !== "fotos" && etapa !== "enviar" && (
+        {etapa !== "fotos" && etapa !== "finalizar" && (
           <form className="pr-entrada" onSubmit={enviarDigitado}>
-            <input value={entrada} onChange={(e) => setEntrada(e.target.value)} placeholder={etapa === "codigo" ? "Digite o código" : etapa === "titulo" ? "Digite o título ou um comando (troca … por …)" : "Digite uma informação da peça"} aria-label="Falar por texto" data-pr-entrada />
+            <input value={entrada} onChange={(e) => setEntrada(e.target.value)} placeholder={etapa === "codigo" ? "Digite o código" : etapa === "descricao" && campoVoz === "titulo" ? "Digite o título ou um comando (troca … por …)" : "Digite uma informação da peça"} aria-label="Falar por texto" data-pr-entrada />
             <button type="submit" className="pr-botao">OK</button>
           </form>
         )}
@@ -834,6 +896,25 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             <ul className="pr-fonte" data-pr-pendencias-ficha>{nuvem.pendencias.map((p) => <li key={p}>{p}</li>)}</ul>
           )}
           <p className="pr-dica">Todas as fotos vão para o anúncio na versão escolhida. A original fica sempre guardada; o fundo branco é preparado enquanto você preenche código, título e descrição.</p>
+          <div className="pr-cartao pr-cinza" data-pv-fichas>
+            <strong>Fichas</strong>
+            {removendo ? (
+              <div data-pv-remover-confirmacao>
+                <p>Remover <b>somente esta ficha</b> de teste? Código: <b>{removendo.codigo || "sem código"}</b> · criada em {removendo.data} · {removendo.fotos.length} foto(s).</p>
+                <div className="pr-linha">{removendo.fotos.map((u, i) => <img key={u} src={u} alt={`Foto ${i + 1}`} style={{ width: 48, height: 48, objectFit: "contain", background: "#fff", borderRadius: 6 }} />)}</div>
+                <p className="pr-fonte">Ficha publicada não é removida. Os demais anúncios, o Bling e o Mercado Livre não são alterados.</p>
+                <div className="pr-linha">
+                  <button type="button" className="pr-botao pr-claro pr-perigo" disabled={removendo.ocupado} onClick={removerFichaTeste} data-pv-remover-sim>{removendo.ocupado ? "⏳ Conferindo e removendo…" : "Sim, remover esta ficha"}</button>
+                  <button type="button" className="pr-link" disabled={removendo.ocupado} onClick={() => setRemovendo(null)}>Não</button>
+                </div>
+              </div>
+            ) : (
+              <div className="pr-linha">
+                <button type="button" className="pr-link pr-perigo" onClick={pedirRemoverFicha} data-pv-remover-ficha>🗑️ Remover ficha de teste</button>
+                <button type="button" className="pr-link" onClick={() => setConfirmandoNova(true)} data-pv-nova-limpa>＋ Nova ficha limpa</button>
+              </div>
+            )}
+          </div>
           <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>
         </section>
       )}
@@ -871,16 +952,28 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </div>
           <div className="pr-nav">
             <button type="button" className="pr-link" onClick={() => irPara("fotos")}>← Fotos</button>
-            <button type="button" className="pr-botao" onClick={() => irPara("titulo")} data-pr-continuar>Continuar →</button>
+            <button type="button" className="pr-botao" onClick={() => irPara("descricao")} data-pr-continuar>Continuar →</button>
           </div>
         </section>
       )}
 
-      {/* ---------------- 3 Título ---------------- */}
-      {etapa === "titulo" && (
-        <section className="pr-bloco" data-pr-bloco="titulo">
-          <label className="pr-rotulo" htmlFor="pr-titulo">Título ({r.titulo.valor.length}/{LIMITE_TITULO})</label>
-          <AreaTexto id="pr-titulo" valor={r.titulo.valor} onSalvar={(v) => mudarFicha(definirTitulo(fichaRef.current, v.replace(/\s*\n+\s*/g, " "), { origem: "digitado" }))} data="titulo" linhas={2} umaLinha erro={r.titulo.valor.length > LIMITE_TITULO} ditando={ouvindo ? parcial : ""} />
+      {/* ---------------- 3 Descrição e título ---------------- */}
+      {etapa === "descricao" && (
+        <section className="pr-bloco" data-pr-bloco="descricao">
+          <div className={`pr-campo-direto ${!campoVoz ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="descricao">
+            <label htmlFor="pr-desc">Descrição (cada fala é acrescentada; uma informação por linha){!campoVoz && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
+            <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
+              <AreaTexto id="pr-desc" valor={r.descricao.texto} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, v))} data="descricao-texto" ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar />
+              {micCampo("", "Descrição")}
+            </div>
+          </div>
+          <div className={`pr-campo-direto ${campoVoz === "titulo" ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="titulo">
+            <label htmlFor="pr-titulo">Título ({r.titulo.valor.length}/{LIMITE_TITULO}){campoVoz === "titulo" && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
+            <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
+              <AreaTexto id="pr-titulo" valor={r.titulo.valor} onSalvar={(v) => mudarFicha(definirTitulo(fichaRef.current, v.replace(/\s*\n+\s*/g, " "), { origem: "digitado" }))} data="titulo" linhas={2} umaLinha erro={r.titulo.valor.length > LIMITE_TITULO} ditando={campoVoz === "titulo" && ouvindo ? parcial || " " : ""} />
+              {micCampo("titulo", "Título")}
+            </div>
+          </div>
           {avTitulo.avisos.filter((a) => !/^Falta/.test(a)).map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           <div className="pr-linha">
             {r.titulo.valor && <button type="button" className="pr-link" onClick={() => mudarFicha(definirTitulo(fichaRef.current, ajustarTitulo(r.titulo.valor, fichaRef.current), { origem: "ajuste" }))} data-pr-ajustar>Ajustar ao padrão</button>}
@@ -888,65 +981,65 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </div>
           {sugestoes.length > 0 && (
             <div className="pr-sugestoes">
-              <span className="pr-rotulo">Sugestões (toque para usar)</span>
+              <span className="pr-rotulo">Sugestões de título (toque para usar)</span>
               {sugestoes.map((s) => <button key={s} type="button" className="pr-chip" onClick={() => mudarFicha(definirTitulo(fichaRef.current, s, { origem: "sugestao" }))} data-pr-sugestao>{s}</button>)}
             </div>
           )}
-          <div className="pr-nav">
-            <button type="button" className="pr-link" onClick={() => irPara("codigo")}>← Código</button>
-            <button type="button" className="pr-botao" onClick={() => irPara("descricao")} data-pr-continuar>Continuar →</button>
+          {organizada.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
+          <div className="pr-linha pr-entre">
+            <span className="pr-rotulo">Descrição organizada {r.descricao.final !== null ? "(editada à mão)" : "(automática)"}</span>
+            {r.descricao.final === null
+              ? <button type="button" className="pr-link" onClick={() => { mudarFicha(definirDescricaoFinal(fichaRef.current, organizada.texto)); setEditandoFinal(true); }} data-pr-editar-final>Editar texto final</button>
+              : <button type="button" className="pr-link" onClick={() => { mudarFicha(definirDescricaoFinal(fichaRef.current, null)); setEditandoFinal(false); }}>Voltar ao automático</button>}
           </div>
+          {r.descricao.final !== null && editandoFinal
+            ? <AreaTexto id="pr-final" valor={r.descricao.final} onSalvar={(v) => mudarFicha(definirDescricaoFinal(fichaRef.current, v))} data="descricao-final" linhas={14} />
+            : <pre className="pr-previa" data-pr-descricao>{descricaoParaEnvio(ficha)}</pre>}
+          {navEtapa("codigo", "preco")}
         </section>
       )}
 
-      {/* ---------------- 4 Descrição ---------------- */}
-      {etapa === "descricao" && (
-        <section className="pr-bloco" data-pr-bloco="descricao">
-          <label className="pr-rotulo" htmlFor="pr-desc">O que você falou ou digitou (uma informação por linha)</label>
-          <AreaTexto id="pr-desc" valor={r.descricao.texto} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, v))} data="descricao-texto" ditando={ouvindo && !campoVoz ? parcial : ""} acrescentar />
-          {/* (04/11) Dados da peça: toque no 🎤 do campo e fale (ou digite). O texto aparece no campo enquanto você dita; depois vai para o próximo. */}
+      {/* ---------------- 4 Preço, custo e estoque ---------------- */}
+      {etapa === "preco" && (
+        <section className="pr-bloco" data-pr-bloco="preco">
           <div className="pr-cartao" data-pv-dados-diretos>
-            <span className="pr-rotulo">Dados da peça — toque no 🎤 do campo e fale, ou digite</span>
             {cp?.codigo && (
-              <button type="button" className="pr-link" disabled={lendoBlingVoz} onClick={trazerDoBling} data-pv-dados-bling>{lendoBlingVoz ? "⏳ Lendo o cadastro Bling…" : "Usar dados do cadastro Bling (só nos campos vazios)"}</button>
+              <button type="button" className="pr-link" disabled={lendoBlingVoz} onClick={trazerDoBling} data-pv-dados-bling>{lendoBlingVoz ? "⏳ Lendo o cadastro Bling…" : "⬇️ Trazer do Bling (só leitura; preenche só o que está vazio)"}</button>
             )}
-            {CAMPOS_DIRETOS.map((c) => {
-              const valores = valoresCamposDiretos(ficha);
-              const ativo = campoVoz === c.id;
-              const ehAplic = c.id === "aplicacoes";
-              return (
-                <div key={c.id}>
-                  {ehAplic && (
-                    <p className="pr-fonte" data-pv-frete-info>🚚 <b>Frete:</b> calculado pelo Mercado Livre na conferência final, com o preço, o peso e as medidas acima. O PAIIA não estima frete.</p>
-                  )}
-                  <div className={`pr-campo-direto ${ativo ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={c.id} data-estado={ativo ? (ouvindo ? "ouvindo" : "ativo") : valores[c.id] ? "ok" : "vazio"}>
-                    <label htmlFor={`pr-dd-${c.id}`}>{c.rotulo}{c.opcional ? " — opcional" : ""}{ativo && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
-                    <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }}>
-                      <CampoTexto id={`pr-dd-${c.id}`} campoVoz={c.id} valor={ehAplic ? "" : valores[c.id]} ditando={ativo && ouvindo ? (parcial || " ") : ""} inputMode={["marca", "aplicacoes"].includes(c.id) ? "text" : "decimal"}
-                        onSalvar={(v) => { if (!String(v).trim()) return; const res = definirCampoDireto(fichaRef.current, c.id, v, { origem: "digitado" }); if (res.ok) mudarFicha(res.ficha); else setAviso(`⚠️ ${c.rotulo}: ${res.erro}`); }} data={`dado-${c.id}`} />
-                      {suporta && !avisoVoz && (
-                        <button type="button" className={`pr-mic-campo ${ativo && ouvindo ? "pr-mic-ouvindo" : ""}`} aria-label={`Falar ${c.rotulo}`} aria-pressed={ativo && ouvindo} data-pv-campo-mic={c.id}
-                          onClick={() => { const rec = reconhecedorRef.current; if (ativo && ouvindo) { setCampoVoz(""); rec?.parar(); return; } setCampoVoz(c.id); setErroVoz(""); try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* sem microfone */ } }}>🎤</button>
-                      )}
-                    </div>
-                    {ehAplic && valores.aplicacoes && <p className="pr-fonte" data-pv-aplicacoes-resumo>{valores.aplicacoes} — marque as certas na lista abaixo.</p>}
-                  </div>
-                </div>
-              );
-            })}
+            {camposDaEtapa("preco").map(renderCampo)}
+            <p className="pr-fonte" style={{ margin: 0 }}>O estoque aqui é a quantidade a anunciar; o estoque oficial continua o do Bling.</p>
           </div>
-          {organizada.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
+          {navEtapa("descricao", "envio")}
+        </section>
+      )}
+
+      {/* ---------------- 5 Peso, medidas e frete ---------------- */}
+      {etapa === "envio" && (
+        <section className="pr-bloco" data-pr-bloco="envio">
+          <div className="pr-cartao" data-pv-dados-diretos>
+            {camposDaEtapa("envio").map(renderCampo)}
+            <p className="pr-fonte" style={{ margin: 0 }}>“20 por 10 por 5” preenche as três medidas.</p>
+          </div>
+          <p className="pr-fonte" data-pv-frete-info>🚚 <b>Frete:</b> calculado pelo Mercado Livre na finalização, com o preço, o peso e as medidas acima. O PAIIA não estima frete.</p>
           {organizada.medidas.length > 0 && (
             <div className="pr-cartao pr-cinza" data-pr-medidas>
-              <strong>Para os campos da plataforma (não vão na descrição)</strong>
+              <strong>Ditos na descrição (vão só para os campos da plataforma)</strong>
               {organizada.medidas.map((m) => <p key={m}>{m}</p>)}
               {pesoMedidas ? (
                 <p data-pr-peso-medidas-envio>➡️ Vai para os Dados técnicos do Novo Anúncio (só nos campos vazios), para você conferir: <b>{pesoMedidas.texto}</b>{pesoMedidas.duvidas.length ? <span style={{ display: "block", color: "#fde68a" }}>⚠ {pesoMedidas.duvidas.join(" ")}</span> : null}</p>
               ) : <p className="pr-vazio">Não entendi peso ou medidas da embalagem aqui (ex.: “peso 350 gramas”, “medidas 20 por 10 por 10”).</p>}
             </div>
           )}
+          {navEtapa("preco", "compat")}
+        </section>
+      )}
+
+      {/* ---------------- 6 Compatibilidade ---------------- */}
+      {etapa === "compat" && (
+        <section className="pr-bloco" data-pr-bloco="compat">
+          {camposDaEtapa("compat").map(renderCampo)}
           <span className="pr-rotulo">Aplicações (marque só as certas)</span>
-          {!ficha.aplicacoes.length && <p className="pr-vazio">Nenhuma aplicação. Pode falar o veículo (ex.: “serve no ônibus Neobus Mega Plus 2013 e 2014”) ou deixar para a Conferência.</p>}
+          {!ficha.aplicacoes.length && <p className="pr-vazio">Nenhuma aplicação. Fale o veículo e os anos (ex.: “Renault Master 2013 a 2022”).</p>}
           <ul className="pr-lista">
             {ficha.aplicacoes.map((a) => (
               <li key={a.id} data-pv-aplicacao={a.chave}>
@@ -959,36 +1052,66 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </li>
             ))}
           </ul>
-          <div className="pr-linha pr-entre">
-            <span className="pr-rotulo">Descrição organizada {r.descricao.final !== null ? "(editada à mão)" : "(automática)"}</span>
-            {r.descricao.final === null
-              ? <button type="button" className="pr-link" onClick={() => { mudarFicha(definirDescricaoFinal(fichaRef.current, organizada.texto)); setEditandoFinal(true); }} data-pr-editar-final>Editar texto final</button>
-              : <button type="button" className="pr-link" onClick={() => { mudarFicha(definirDescricaoFinal(fichaRef.current, null)); setEditandoFinal(false); }}>Voltar ao automático</button>}
-          </div>
-          {r.descricao.final !== null && editandoFinal
-            ? <AreaTexto id="pr-final" valor={r.descricao.final} onSalvar={(v) => mudarFicha(definirDescricaoFinal(fichaRef.current, v))} data="descricao-final" linhas={14} />
-            : <pre className="pr-previa" data-pr-descricao>{descricaoParaEnvio(ficha)}</pre>}
-          <div className="pr-nav">
-            <button type="button" className="pr-link" onClick={() => irPara("titulo")}>← Título</button>
-            <button type="button" className="pr-botao" onClick={() => irPara("enviar")} data-pr-continuar>Continuar →</button>
-          </div>
+          {(() => {
+            const tipo = dadosCompletosVoz(ficha, { fotos: fotosUsadas.length });
+            return (
+              <div className="pr-cartao pr-cinza" data-pv-tipo-veiculo={tipo.tipoVeiculo || "nao"}>
+                <span className="pr-rotulo">Tipo de veículo{tipo.tipoVeiculo ? `: ${tipo.tipoVeiculo}` : ""}</span>
+                {tipo.tipoVeiculoOrigem !== "aplicacoes" && (
+                  <div className="pr-linha">
+                    {[TIPO_CARRO, TIPO_PESADA].map((t) => <button key={t} type="button" className={`pr-chip ${tipo.tipoVeiculo === t ? "pr-chip-on" : ""}`} onClick={() => mudarFicha(definirTipoVeiculoVoz(fichaRef.current, t))} data-pv-tipo={t}>{t}</button>)}
+                  </div>
+                )}
+                {tipo.tipoVeiculoOrigem === "aplicacoes" && <p className="pr-fonte">Definido pelas aplicações marcadas.</p>}
+              </div>
+            );
+          })()}
+          {navEtapa("envio", "finalizar")}
         </section>
       )}
 
-      {/* ---------------- 5 Enviar ---------------- */}
-      {etapa === "enviar" && (
-        <section className="pr-bloco" data-pr-bloco="enviar">
-          {/* (04/11) Pendências à vista; a conversa é OPCIONAL (fechada) e nunca substitui os campos. */}
+      {/* ---------------- 7 Finalizar ---------------- */}
+      {etapa === "finalizar" && (
+        <section className="pr-bloco" data-pr-bloco="finalizar">
           {(() => {
             const pend = dadosCompletosVoz(ficha, { fotos: fotosUsadas.length }).pendencias;
+            const etapaDa = (t) => /^Fotos/i.test(t) ? "fotos" : /^C[oó]digo|SKU/i.test(t) ? "codigo" : /^T[ií]tulo|^Descri/i.test(t) ? "descricao" : /^Marca|^Pre[cç]o|^Estoque|^Quantidade|^Custo/i.test(t) ? "preco" : /^Peso|^Medida|^Comprimento|^Largura|^Altura/i.test(t) ? "envio" : "compat";
             return pend.length ? (
               <div className="pr-cartao" data-pv-pendencias-envio>
                 <strong>Falta completar ({pend.length})</strong>
-                <ul className="pr-fonte">{pend.map((x) => <li key={x}>{x}</li>)}</ul>
-                <button type="button" className="pr-link" onClick={() => irPara("descricao")} data-pv-ir-campos>← Completar nos campos (Descrição)</button>
+                <ul className="pr-fonte" style={{ margin: 0, paddingLeft: 18 }}>{pend.map((x) => <li key={x}>{x} <button type="button" className="pr-link" onClick={() => irPara(etapaDa(x))} data-pv-ir-etapa={etapaDa(x)}>→ ir</button></li>)}</ul>
               </div>
-            ) : <p className="pr-ok" data-pv-ficha-completa>✅ Ficha completa: confira a revisão abaixo.</p>;
+            ) : <p className="pr-ok" data-pv-ficha-completa>✅ Ficha completa.</p>;
           })()}
+          <dl className="pr-resumo">
+            <dt>Fotos</dt><dd data-pr-resumo-fotos>{fotosUsadas.length} ({fotosUsadas.filter((f) => f.versao === "tratada").length} com fundo branco)</dd>
+            <dt>Código</dt><dd>{cp?.codigo || "—"}</dd>
+            <dt>Título</dt><dd data-pr-resumo-titulo>{r.titulo.valor || "—"} <small>({r.titulo.valor.length}/{LIMITE_TITULO})</small></dd>
+            <dt>Aplicações conferidas</dt><dd>{ficha.aplicacoes.filter((a) => a.confirmada).length}</dd>
+            <dt>Peso/medidas</dt><dd data-pr-resumo-peso-medidas>{pesoMedidas ? pesoMedidas.texto : "—"}</dd>
+          </dl>
+          <span className="pr-rotulo">Fotos que vão para o anúncio</span>
+          <div className="pr-envio-fotos" data-pr-envio-fotos>
+            {fotos.map((f, i) => (
+              <div key={f.id} className={`pr-envio-foto ${f.usarNoAnuncio ? "" : "pr-fora"}`} data-pr-envio-foto={f.usarNoAnuncio ? (f.versao === "tratada" ? "fundo-branco" : "original") : "fora"}>
+                <img src={f.versao === "tratada" && f.urlTratada ? f.urlTratada : f.url} alt={`Foto ${i + 1}`} />
+                <div>
+                  <strong>{i + 1}. {f.usarNoAnuncio ? (f.versao === "tratada" ? "Fundo branco" : "Original") : "Não vai ao anúncio"}</strong>
+                  <EstadoFotoIA f={f} modoIA={modoIA} onRepetir={() => repetirIA(f.id)} curto />
+                  {f.tratada?.aplicavel && f.usarNoAnuncio && f.versao !== "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "tratada")} data-pr-usar-tratada>Usar fundo branco</button>}
+                  {f.versao === "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "original")}>Usar original</button>}
+                </div>
+              </div>
+            ))}
+            {!fotos.length && <p className="pr-vazio">Nenhuma foto: volte à etapa Fotos.</p>}
+          </div>
+          {resumoFotosTela.interrompidas > 0 && <p className="pr-aviso" data-pr-aviso-interrompidas>⏸ {resumoFotosTela.interrompidas} foto(s) com o fundo branco interrompido. Toque em “Retomar” na foto, ou siga com a original.</p>}
+          {resumoFotosTela.tratando > 0 && <p className="pr-aviso" data-pr-aviso-tratando>⏳ {resumoFotosTela.tratando} foto(s) ainda em tratamento. Se seguir agora, elas vão como original (você pode aguardar).</p>}
+          {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Falta: {validacao.faltando.join(", ")}.</p>}
+          {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
+          {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
+          {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para finalizar.</p>}
+          {usuario && <FinalizarAnuncioVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
           {usuario && (
             <details className="pr-fonte" open={conversaAberta} onToggle={(e) => { conversaAbertaRef.current = e.currentTarget.open; setConversaAberta(e.currentTarget.open); }} data-pv-conversa-opcional>
               <summary>Completar conversando com o PAIIA (opcional)</summary>
@@ -1011,47 +1134,16 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             />
             </details>
           )}
-          <span className="pr-rotulo">Fotos que vão para o Novo Anúncio</span>
-          <div className="pr-envio-fotos" data-pr-envio-fotos>
-            {fotos.map((f, i) => (
-              <div key={f.id} className={`pr-envio-foto ${f.usarNoAnuncio ? "" : "pr-fora"}`} data-pr-envio-foto={f.usarNoAnuncio ? (f.versao === "tratada" ? "fundo-branco" : "original") : "fora"}>
-                <img src={f.versao === "tratada" && f.urlTratada ? f.urlTratada : f.url} alt={`Foto ${i + 1}`} />
-                <div>
-                  <strong>{i + 1}. {f.usarNoAnuncio ? (f.versao === "tratada" ? "Fundo branco" : "Original") : "Não vai ao anúncio"}</strong>
-                  <EstadoFotoIA f={f} modoIA={modoIA} onRepetir={() => repetirIA(f.id)} curto />
-                  {f.tratada?.aplicavel && f.usarNoAnuncio && f.versao !== "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "tratada")} data-pr-usar-tratada>Usar fundo branco</button>}
-                  {f.versao === "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "original")}>Usar original</button>}
-                </div>
-              </div>
-            ))}
-            {!fotos.length && <p className="pr-vazio">Nenhuma foto: adicione no Novo Anúncio.</p>}
-          </div>
-          {resumoFotosTela.interrompidas > 0 && <p className="pr-aviso" data-pr-aviso-interrompidas>⏸ {resumoFotosTela.interrompidas} foto(s) com o fundo branco interrompido. Toque em “Retomar” na foto, ou envie com a original.</p>}
-          {resumoFotosTela.tratando > 0 && <p className="pr-aviso" data-pr-aviso-tratando>⏳ {resumoFotosTela.tratando} foto(s) ainda em tratamento. Se enviar agora, elas vão como original (você pode aguardar).</p>}
-          <dl className="pr-resumo">
-            <dt>Fotos</dt><dd data-pr-resumo-fotos>{fotosUsadas.length} ({fotosUsadas.filter((f) => f.versao === "tratada").length} com fundo branco)</dd>
-            <dt>Código</dt><dd>{cp?.codigo || "— (preencher no Novo Anúncio)"}</dd>
-            <dt>Título</dt><dd data-pr-resumo-titulo>{r.titulo.valor || "—"} <small>({r.titulo.valor.length}/{LIMITE_TITULO})</small></dd>
-            <dt>Aplicações conferidas</dt><dd>{ficha.aplicacoes.filter((a) => a.confirmada).length}</dd>
-            <dt>Peso/medidas</dt><dd data-pr-resumo-peso-medidas>{pesoMedidas ? `${pesoMedidas.texto} (conferir no Novo Anúncio)` : "— (preencher no Novo Anúncio)"}</dd>
-          </dl>
-          <pre className="pr-previa">{descricaoParaEnvio(ficha)}</pre>
-          {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Para enviar falta: {validacao.faltando.join(", ")}.</p>}
-          {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
-          {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para o Novo Anúncio salvar o anúncio e as fotos.</p>}
-          {usuario && (conversaAberta && perguntaCompletar && !verRevisaoAntes ? (
-            <p className="pr-fonte" data-pv-revisao-depois>📋 A revisão aparece aqui quando a conversa terminar. <button type="button" className="pr-link" onClick={() => setVerRevisaoAntes(true)} data-pv-ver-revisao>Ver a revisão agora</button></p>
-          ) : <PreparoPublicacaoVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />)}
           {confirmandoEnvio ? (
             <div className="pr-cartao" data-pv-confirmacao-envio>
-              <p>O Novo Anúncio será aberto com código, título, descrição e as fotos marcadas. Lá você confere tudo (SKU, fotos, compatibilidade, peso, medidas, frete, preço, estoque e duplicidade) e aprova antes de qualquer publicação.</p>
+              <p>Abrir esta ficha no Novo Anúncio do computador para editar à mão? Nada é publicado.</p>
               <button type="button" className="pr-botao" onClick={enviarAoNovoAnuncio} data-pv-confirmar-envio>Abrir no Novo Anúncio</button>
               <button type="button" className="pr-link" onClick={() => setConfirmandoEnvio(false)}>Voltar</button>
             </div>
           ) : (
-            <button type="button" className="pr-botao pr-grande" disabled={!validacao.pronto} onClick={() => setConfirmandoEnvio(true)} data-pv-enviar-novo>➡️ Enviar ao Novo Anúncio</button>
+            <button type="button" className="pr-link" disabled={!validacao.pronto} onClick={() => setConfirmandoEnvio(true)} data-pv-enviar-novo>✏️ Editar no Novo Anúncio (computador)</button>
           )}
-          <div className="pr-nav"><button type="button" className="pr-link" onClick={() => irPara("descricao")}>← Descrição</button><span /></div>
+          {navEtapa("compat", "")}
         </section>
       )}
 
@@ -1143,6 +1235,13 @@ function AreaTexto({ id, valor, onSalvar, data, linhas = 5, umaLinha = false, er
   );
 }
 
+// (04/11) Fichas que você mandou preservar: nunca removidas por aqui.
+const FICHAS_PRESERVADAS = ["05b4911c"];
+function fichaPreservada(id) {
+  const t = String(id || "").toLowerCase();
+  return Boolean(t) && FICHAS_PRESERVADAS.some((p) => t.startsWith(p));
+}
+
 const CSS_RAPIDO = `
 .pr { max-width: 760px; margin: 0 auto 40px; text-align: left; color: #e2e8f0; }
 .pr *, .pr *::before, .pr *::after { box-sizing: border-box; }
@@ -1150,12 +1249,16 @@ const CSS_RAPIDO = `
 .pr-topo h1 { margin: 0; font-size: 22px !important; color: #fff; }
 .pr-sub { color: #94a3b8; font-size: 13px; }
 .pr-voltar { padding: 8px 12px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #cbd5e1; cursor: pointer; font-weight: 700; }
-.pr-etapas { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.pr-etapas { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
 .pr-etapa { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 10px; border: 1px solid #1e293b; background: #0b1220; color: #94a3b8; font-size: 11px; font-weight: 700; cursor: pointer; min-width: 0; }
 .pr-etapa span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #1e293b; color: #e2e8f0; font-size: 12px; }
 .pr-atual { border-color: #22d3ee; color: #fff; background: #082f49; }
 .pr-atual span { background: #0891b2; }
 .pr-feita span { background: #15803d; }
+.pr-pendente span { background: #b45309; }
+.pr-pendente { color: #fcd34d; }
+.pr-chip-on { background: #0e7490; color: #fff; }
+@media (max-width: 480px) { .pr-etapa { font-size: 9px; padding: 5px 0; } }
 .pr-assistente { position: sticky; top: 0; z-index: 5; padding: 10px; border-radius: 14px; background: linear-gradient(145deg, #0f172a, #082f49); border: 1px solid rgba(56,189,248,.35); margin-bottom: 10px; }
 .pr-mic-linha { display: flex; gap: 10px; align-items: center; }
 .pr-mic { width: 60px; height: 60px; flex: none; border-radius: 50%; border: 0; cursor: pointer; color: #fff; display: grid; place-items: center; background: radial-gradient(circle at 30% 25%, #22d3ee, #0284c7 55%, #1d4ed8); box-shadow: 0 8px 20px rgba(14,165,233,.4); }
