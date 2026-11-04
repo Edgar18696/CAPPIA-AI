@@ -66,6 +66,7 @@ import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVo
 import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 // (03/11/2026) Pacote C: conversa “Completar a ficha” (só o que falta) na etapa final.
 import CompletarVoz from "./CompletarVoz";
+import { camposDaFicha } from "./servicos/completarVoz";
 import { proximaPerguntaCompletar, responderCompletar, aberturaCompletar, fimCompletar, estadoCompletar, registrarConferencia, anotarFalaPaiia } from "./servicos/completarVoz";
 import { prepararEGravar, definirModalidadeEGravar, confirmarCategoriaEGravar } from "./servicos/preparoVozService";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
@@ -401,17 +402,24 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [completarOcupado, setCompletarOcupado] = useState("");
   const [versaoRevisao, setVersaoRevisao] = useState(0);
   const [verRevisaoAntes, setVerRevisaoAntes] = useState(false);
+  const [recenteCompletar, setRecenteCompletar] = useState("");
+  const vozConversaRef = useRef(false); // você ligou o microfone na conversa: ele volta sozinho depois de cada pergunta
   const [falarPerguntas, setFalarPerguntas] = useState(() => { try { return localStorage.getItem("paiiaVozFalar") !== "0"; } catch { return true; } });
   const micAntesDeFalar = useRef(false);
+  useEffect(() => {
+    if (!recenteCompletar) return undefined;
+    const t = setTimeout(() => setRecenteCompletar(""), 2500);
+    return () => clearTimeout(t);
+  }, [recenteCompletar]);
   // (03/11) Eco: enquanto o PAIIA fala (e logo depois), o que o microfone captar é ignorado.
   const falaPaiiaRef = useRef({ ate: 0, texto: "" });
   const aoFalarPergunta = useCallback((falando, texto = "") => {
     if (falando) falaPaiiaRef.current = { ate: Number.POSITIVE_INFINITY, texto: String(texto || falaPaiiaRef.current.texto) };
-    else falaPaiiaRef.current = { ...falaPaiiaRef.current, ate: Date.now() + 800 };
+    else falaPaiiaRef.current = { ...falaPaiiaRef.current, ate: Date.now() + 350 };
     const rec = reconhecedorRef.current;
     if (!rec) return;
     if (falando) { micAntesDeFalar.current = Boolean(rec.ouvindo); if (rec.ouvindo) rec.parar(); }
-    else if (micAntesDeFalar.current) { micAntesDeFalar.current = false; setTimeout(() => { try { rec.iniciar(); } catch { /* precisa de toque */ } }, 250); }
+    else if (micAntesDeFalar.current || vozConversaRef.current) { micAntesDeFalar.current = false; setTimeout(() => { try { if (!rec.ouvindo) rec.iniciar(); } catch { /* precisa de toque */ } }, 300); }
   }, []);
   const contarFotos = () => fotosRef.current.filter((x) => x.usarNoAnuncio).length;
   const idDaFichaNaConta = useCallback(async () => {
@@ -457,8 +465,15 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     if (completarOcupado) return;
     const k = String(texto || "").trim().toLowerCase();
     if (/^(?:conferir|confere|conferir de novo)$/.test(k)) { executarAcaoCompletar("conferir"); return; }
+    const antes = proximaPerguntaCompletar(fichaRef.current, { fotos: contarFotos() })?.texto || "";
     const r = responderCompletar(fichaRef.current, texto, { fotos: contarFotos(), contas: contasCompletar, origem });
     mudarFicha(r.ficha);
+    if (r.anotado?.length) setRecenteCompletar(r.anotado.join(", "));
+    else setAviso(r.resposta);
+    // Mesma pergunta (não entendeu ou faltou parte): não há fala nova, então o microfone volta a ouvir sozinho.
+    if (vozConversaRef.current && !r.acao && (r.pergunta?.texto || "") === antes) {
+      setTimeout(() => { const rec = reconhecedorRef.current; try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* precisa de toque */ } }, 600);
+    }
     if (r.acao) executarAcaoCompletar(r.acao);
   }, [completarOcupado, contasCompletar, executarAcaoCompletar, mudarFicha]);
 
@@ -469,8 +484,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     if (origem === "voz") {
       const eco = falaPaiiaRef.current;
       const sem = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
-      if (Date.now() < eco.ate || (sem(t).length > 12 && sem(eco.texto).includes(sem(t)))) {
+      if (Date.now() < eco.ate || (sem(t).length >= 30 && sem(eco.texto).includes(sem(t)))) {
         setAviso("🔇 Ignorei o que o microfone ouviu enquanto o PAIIA falava. Responda depois da pergunta.");
+        // a conversa não pode parar: volta a ouvir logo depois que o PAIIA terminar
+        if (vozConversaRef.current) setTimeout(() => { const rec = reconhecedorRef.current; try { if (rec && !rec.ouvindo && Date.now() >= falaPaiiaRef.current.ate) rec.iniciar(); } catch { /* precisa de toque */ } }, 600);
         return;
       }
     }
@@ -480,7 +497,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const nav = comandoNavegacao(t);
     if (nav) {
       if (rr.etapa === "enviar" && nav === "proximo") { setConfirmandoEnvio(true); return; }
-      irPara(proximaEtapa(rr.etapa, nav === "proximo" ? 1 : -1));
+      // (03/11) Fluxo único: das fotos vai direto para a conversa (código, descrição e o resto).
+      irPara(rr.etapa === "fotos" && nav === "proximo" ? "enviar" : proximaEtapa(rr.etapa, nav === "proximo" ? 1 : -1));
       return;
     }
     if (rr.etapa === "fotos") {
@@ -756,7 +774,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             <ul className="pr-fonte" data-pr-pendencias-ficha>{nuvem.pendencias.map((p) => <li key={p}>{p}</li>)}</ul>
           )}
           <p className="pr-dica">Todas as fotos vão para o anúncio na versão escolhida. A original fica sempre guardada; o fundo branco é preparado enquanto você preenche código, título e descrição.</p>
-          <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>
+          <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("enviar")} data-pr-continuar>Continuar →</button></div>
         </section>
       )}
 
@@ -880,6 +898,12 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               onFalar={(v) => { setFalarPerguntas(v); try { localStorage.setItem("paiiaVozFalar", v ? "1" : "0"); } catch { /* sem localStorage */ } }}
               onResponder={(t) => responderNaConversa(t, "digitado")}
               aoFalar={aoFalarPergunta}
+              campos={camposDaFicha(ficha, { fotos: fotosUsadas.length })}
+              ouvindo={ouvindo}
+              parcial={parcial}
+              vozDisponivel={Boolean(suporta) && !avisoVoz}
+              recente={recenteCompletar}
+              onMicrofone={() => { vozConversaRef.current = !ouvindo; ligarMicrofone(); }}
             />
           )}
           <span className="pr-rotulo">Fotos que vão para o Novo Anúncio</span>

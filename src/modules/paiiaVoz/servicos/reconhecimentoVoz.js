@@ -126,6 +126,8 @@ export function criarReconhecedor({ janela, idioma = "pt-BR", onParcial, onFinal
 
   function iniciar() {
     if (ouvindo) return;
+    // (03/11) Nova escuta pedida (toque ou pergunta nova): “sim” seguido de “sim” são duas respostas.
+    ultimo = { texto: "", em: 0 };
     querParar = false;
     fatal = false;
     semFala = 0;

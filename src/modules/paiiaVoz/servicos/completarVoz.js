@@ -79,7 +79,9 @@ export function aplicacaoNaDescricao(ficha) {
   for (const linha of String(estadoRapido(ficha).descricao.texto || "").split(/\n+/)) {
     const l = txt(linha);
     if (!l || norm(l).startsWith(norm(LINHA_MEDIDAS)) || !/\b(19|20)\d{2}\b/.test(l) || l.length > 80) continue;
-    const l2 = peca.length >= 4 ? l.replace(/^([^\s]+)\s+/, (m, w) => (norm(w) === peca ? "" : m)) : l;
+    // só o trecho com o ano (ex.: “presilha do acabamento lateral, Renault Master 3 2012 a 2026” → “Renault Master 3 2012 a 2026”)
+    const trecho = txt(l.split(/[,;]/).find((x) => /\b(19|20)\d{2}\b/.test(x)) || l);
+    const l2 = peca.length >= 4 ? trecho.replace(/^([^\s]+)\s+/, (m, w) => (norm(w) === peca ? "" : m)) : trecho;
     if ([l, l2].some((x) => recusadas.includes(norm(x)) || (ficha?.aplicacoes || []).some((a) => norm(a.texto) === norm(x)))) continue;
     const ap = interpretarAplicacao(l2);
     if (ap && ap.modelos.length && ap.modelos.join(" ").length <= 30) return { ...ap, texto: l2 };
@@ -98,9 +100,18 @@ export function proximaPerguntaCompletar(ficha, { fotos = 0 } = {}) {
   const d = dadosCompletosVoz(ficha, { fotos });
   if (!codigoPrincipal(ficha) && !pulou("codigo")) return { campo: "codigo", texto: "Qual é o código da peça? Fale ou digite; para traço, diga “traço”." };
   if (!estadoRapido(ficha).titulo.valor && !pulou("titulo")) return { campo: "titulo", texto: "Qual é o título do anúncio? (até 60 caracteres)" };
+  // (03/11) Fluxo único: código → título → descrição → marca, preço, estoque → peso → medidas → aplicações.
+  if (!txt(estadoRapido(ficha).descricao.texto) && !pulou("descricao")) return { campo: "descricao", texto: "Descreva a peça em poucas palavras (o que é, lado, detalhes)." };
   if (!d.marca && !pulou("marca")) return { campo: "marca", texto: "Qual é a marca da peça?" };
-  if (!d.quantidade && !pulou("quantidade")) return { campo: "quantidade", texto: "Quantas unidades você tem em estoque?" };
   if (!d.preco && !pulou("preco")) return { campo: "preco", texto: "Qual é o preço de venda?" };
+  if (!d.quantidade && !pulou("quantidade")) return { campo: "quantidade", texto: "Quantas unidades você tem em estoque?" };
+  // Peso e as 3 medidas da embalagem: perguntas separadas (o que já foi dito, em qualquer lugar, conta).
+  if (!d.medida && !pulou("pesoMedidas")) {
+    const pm = pesoMedidasParaEnvio(ficha)?.campos || {};
+    if (!pm.pesoFreteML && !pulou("peso")) return { campo: "peso", texto: "Qual é o peso da peça já embalada? Ex.: 200 gramas ou 1,2 quilo." };
+    const faltam = [["comprimentoFreteML", "comprimento"], ["larguraFreteML", "largura"], ["alturaFreteML", "altura"]].filter(([k]) => !pm[k]).map(([, r]) => r);
+    if (faltam.length && !pulou("medidas")) return { campo: "medidas", texto: faltam.length === 3 ? "Quais são as medidas da embalagem: comprimento, largura e altura? Ex.: 20 por 10 por 5 centímetros." : `Falta ${faltam.join(" e ")} da embalagem (em centímetros).` };
+  }
   const cand = candidataAplicacao(ficha);
   if (cand && !pulou("aplicacao")) {
     const resumo = resumoAplicacao(cand);
@@ -112,13 +123,6 @@ export function proximaPerguntaCompletar(ficha, { fotos = 0 } = {}) {
   if (!d.aplicacoes.length && !pulou("aplicacao")) return { campo: "aplicacao", texto: "Para qual veículo é a peça? Diga montadora, modelo e anos (ex.: Renault Master 2013 a 2022). Se não tiver, diga “sem aplicação”." };
   if (d.aplicacoes.length && !c.aplicacoesFim && !pulou("aplicacao")) return { campo: "maisAplicacao", texto: "Tem mais alguma aplicação? Diga o veículo ou “não”." };
   if (!d.tipoVeiculo && !pulou("tipoVeiculo")) return { campo: "tipoVeiculo", texto: "É peça de carro (ou caminhonete) ou de linha pesada?" };
-  // Peso e as 3 medidas da embalagem: perguntas separadas (o que já foi dito, em qualquer lugar, conta).
-  if (!d.medida && !pulou("pesoMedidas")) {
-    const pm = pesoMedidasParaEnvio(ficha)?.campos || {};
-    if (!pm.pesoFreteML && !pulou("peso")) return { campo: "peso", texto: "Qual é o peso da peça já embalada? Ex.: 200 gramas ou 1,2 quilo." };
-    const faltam = [["comprimentoFreteML", "comprimento"], ["larguraFreteML", "largura"], ["alturaFreteML", "altura"]].filter(([k]) => !pm[k]).map(([, r]) => r);
-    if (faltam.length && !pulou("medidas")) return { campo: "medidas", texto: faltam.length === 3 ? "Quais são as medidas da embalagem: comprimento, largura e altura? Ex.: 20 por 10 por 5 centímetros." : `Falta ${faltam.join(" e ")} da embalagem (em centímetros).` };
-  }
   if (!c.conta && !pulou("conta")) return { campo: "conta", texto: "Em qual conta vai publicar: Loja Online, CIEBR ou Revelação?" };
   if (!c.modalidade && !pulou("modalidade")) return { campo: "modalidade", texto: "Premium ou Clássico? A loja usa Premium." };
   if (!c.conta) return null;
@@ -154,7 +158,7 @@ export function fimCompletar(ficha, { fotos = 0 } = {}) {
   return { pronto: false, texto: `Quase pronto. Ainda falta: ${faltam.join("; ") || d.pendencias.join("; ")}` };
 }
 
-const ROTULO = { compatModelo: "modelo no catálogo", codigo: "código", titulo: "título", marca: "marca", quantidade: "estoque", preco: "preço", aplicacao: "aplicações", tipoVeiculo: "tipo de veículo", pesoMedidas: "peso/medidas", peso: "peso", medidas: "medidas da embalagem", tipoCategoria: "tipo de veículo (categoria)", conta: "conta", modalidade: "modalidade", categoria: "categoria" };
+const ROTULO = { descricao: "descrição", compatModelo: "modelo no catálogo", codigo: "código", titulo: "título", marca: "marca", quantidade: "estoque", preco: "preço", aplicacao: "aplicações", tipoVeiculo: "tipo de veículo", pesoMedidas: "peso/medidas", peso: "peso", medidas: "medidas da embalagem", tipoCategoria: "tipo de veículo (categoria)", conta: "conta", modalidade: "modalidade", categoria: "categoria" };
 
 /** Abertura: o que já tem + a primeira pergunta. */
 export function aberturaCompletar(ficha, { fotos = 0 } = {}) {
@@ -271,7 +275,11 @@ export function responderCompletar(ficha, texto, { fotos = 0, contas = [], agora
     }
     // 3) Resposta à pergunta atual.
     const campo = atual?.campo;
-    if (campo === "codigo" && !itens.length) {
+    if (campo === "descricao" && !itens.length && !temMedida) {
+      const atualTxt = String(estadoRapido(f).descricao.texto || "");
+      f = definirTextoDescricao(f, [atualTxt.trim(), fala].filter(Boolean).join("\n"));
+      anotado.push("descrição");
+    } else if (campo === "codigo" && !itens.length) {
       const c = lerCodigoDaFala(fala, { falado: origem === "voz" });
       if (c.codigo) {
         f = aplicarInterpretacao(f, { itens: [{ campo: "codigoPrincipal", valor: c.codigo, soletrado: c.soletrado, duvidas: c.duvidas }], naoEntendido: [], avisos: [] }, { origem, agora, textoOriginal: fala }).ficha;
@@ -398,4 +406,38 @@ export function registrarConferencia(ficha, { fotos = 0, revisao, sugerida = "" 
 /** Acrescenta uma fala do PAIIA ao histórico (abertura/resultado das ações). */
 export function anotarFalaPaiia(ficha, texto) {
   return comCompletar(ficha, (c) => { c.historico = [...c.historico, { quem: "paiia", texto: txt(texto) }].slice(-12); });
+}
+
+/**
+ * (03/11) Campos visíveis da ficha, na ordem do fluxo, com o valor atual (ou vazio)
+ * e qual está sendo perguntado agora. Só leitura.
+ */
+export function camposDaFicha(ficha, { fotos = 0 } = {}) {
+  const d = dadosCompletosVoz(ficha, { fotos });
+  const c = estadoCompletar(ficha);
+  const r = estadoRapido(ficha);
+  const pm = pesoMedidasParaEnvio(ficha)?.campos || {};
+  const atual = proximaPerguntaCompletar(ficha, { fotos })?.campo || "";
+  const grupo = { aplicacaoDescricao: "aplicacoes", aplicacao: "aplicacoes", montadora: "aplicacoes", confirmarAplicacao: "aplicacoes", maisAplicacao: "aplicacoes", compatModelo: "aplicacoes", tipoCategoria: "tipo", tipoVeiculo: "tipo", categoria: "categoria", conferir: "categoria" };
+  const desc = txt(r.descricao.texto).split("\n").filter((l) => !norm(l).startsWith(norm(LINHA_MEDIDAS))).join(" ").slice(0, 70);
+  const lista = [
+    ["fotos", "Fotos", fotos ? `${fotos}` : ""],
+    ["codigo", "Código", codigoPrincipal(ficha)?.codigo || ""],
+    ["titulo", "Título", r.titulo.valor],
+    ["descricao", "Descrição", desc],
+    ["marca", "Marca", d.marca],
+    ["preco", "Preço", d.preco ? `R$ ${d.preco}` : ""],
+    ["quantidade", "Estoque", d.quantidade],
+    ["peso", "Peso", pm.pesoFreteML ? `${pm.pesoFreteML} kg` : ""],
+    ["medidas", "Medidas (C × L × A)", [pm.comprimentoFreteML, pm.larguraFreteML, pm.alturaFreteML].some(Boolean) ? `${pm.comprimentoFreteML || "?"} × ${pm.larguraFreteML || "?"} × ${pm.alturaFreteML || "?"} cm` : ""],
+    ["aplicacoes", "Aplicações", d.aplicacoes.map((a) => [a.montadora, a.modelo, a.anoInicio && a.anoFim ? `${a.anoInicio}–${a.anoFim}` : a.anoInicio].filter(Boolean).join(" ")).join("; ")],
+    ["tipo", "Tipo de veículo", d.tipoVeiculo],
+    ["conta", "Conta", c.conta ? (c.conta === "1729335019" ? "LOJA ONLINE" : c.conta === "824312524" ? "CIEBR" : c.conta === "2412238242" ? "REVELAÇÃO" : c.conta) : ""],
+    ["modalidade", "Modalidade", c.modalidade === "premium" ? "Premium" : c.modalidade === "classico" ? "Clássico" : ""],
+  ];
+  return lista.map(([id, rotulo, valor]) => ({
+    id, rotulo, valor: txt(valor),
+    pendente: !txt(valor) && (c.pulados.includes(id) || (id === "aplicacoes" && c.pulados.includes("aplicacao")) || (id === "tipo" && (c.pulados.includes("tipoVeiculo") || c.pulados.includes("tipoCategoria"))) || (["peso", "medidas"].includes(id) && c.pulados.includes("pesoMedidas"))),
+    atual: (grupo[atual] || atual) === id,
+  }));
 }

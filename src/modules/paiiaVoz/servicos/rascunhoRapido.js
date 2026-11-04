@@ -26,7 +26,7 @@ import { lerPesoEMedidas, camposDadosTecnicos, textoPesoMedidas } from "./pesoMe
 import { padronizarTitulo, padronizarDescricao } from "../../../services/padronizarTextoAnuncio.js";
 
 export const ETAPAS = ["fotos", "codigo", "titulo", "descricao", "enviar"];
-export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", titulo: "Título", descricao: "Descrição", enviar: "Enviar" };
+export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", titulo: "Título", descricao: "Descrição", enviar: "Completar" };
 export const LIMITE_TITULO = 60;
 export const MARCA_PADRAO = "Torken";
 

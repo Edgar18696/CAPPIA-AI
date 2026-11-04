@@ -39,17 +39,21 @@ function falarTexto(texto, { aoComecar, aoTerminar } = {}) {
   }
 }
 
-export default function CompletarVoz({ historico = [], pergunta = null, fim = null, contas = [], ocupado = "", falar = true, onFalar, onResponder, aoFalar }) {
+export default function CompletarVoz({ historico = [], pergunta = null, fim = null, contas = [], ocupado = "", falar = true, onFalar, onResponder, aoFalar, campos = [], ouvindo = false, parcial = "", vozDisponivel = true, onMicrofone, recente = "" }) {
   const [texto, setTexto] = useState("");
+  const [falando, setFalando] = useState(false);
   const ultimaFalada = useRef("");
+  const cartaoRef = useRef(null);
   const fala = pergunta?.texto || fim?.texto || "";
-  // Fala a pergunta nova (uma vez); o microfone pausa enquanto o PAIIA fala.
+  // Fala a pergunta nova (uma vez); o microfone pausa enquanto o PAIIA fala e volta depois.
   useEffect(() => {
     if (!falar || !fala || ocupado || ultimaFalada.current === fala) return;
     ultimaFalada.current = fala;
-    falarTexto(fala, { aoComecar: () => aoFalar?.(true, fala), aoTerminar: () => aoFalar?.(false) });
+    falarTexto(fala, { aoComecar: () => { setFalando(true); aoFalar?.(true, fala); }, aoTerminar: () => { setFalando(false); aoFalar?.(false); } });
   }, [fala, falar, ocupado, aoFalar]);
   useEffect(() => () => { try { globalThis.speechSynthesis?.cancel(); } catch { /* sem voz */ } }, []);
+  // Ao abrir: o cartão fica à vista (uma vez; depois a página não pula).
+  useEffect(() => { try { cartaoRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" }); } catch { /* sem rolagem */ } }, []);
 
   function enviar(e) {
     e?.preventDefault?.();
@@ -59,41 +63,64 @@ export default function CompletarVoz({ historico = [], pergunta = null, fim = nu
     onResponder?.(t);
   }
   const rapidos = pergunta?.campo === "conta" ? contas.map((c) => c.nome) : BOTOES[pergunta?.campo] || [];
+  // Situação: falando → ouvindo → processando → preenchido → aguardando
+  const situacao = ocupado ? ["processando", `⏳ ${ocupado}`]
+    : falando ? ["falando", "🔊 PAIIA falando…"]
+      : ouvindo ? ["ouvindo", `🎤 Ouvindo…${parcial ? ` “${parcial}”` : ""}`]
+        : recente ? ["preenchido", `✅ Preenchido: ${recente}`]
+          : pergunta ? ["aguardando", vozDisponivel ? "⌛ Aguardando sua resposta — toque no microfone ou digite." : "⌨️ Voz indisponível neste aparelho: digite a resposta."]
+            : ["fim", ""];
 
   return (
-    <div className="pr-cartao" data-pv-completar={pergunta ? pergunta.campo : fim?.pronto ? "pronto" : "fim"}>
-      <p><b>🗣️ Completar a ficha</b> — o PAIIA pergunta só o que falta. Responda falando ou digitando; para corrigir, é só dizer (ex.: “na verdade o preço é 42”).</p>
-      <label className="pr-check" data-pv-completar-falar>
-        <input type="checkbox" checked={falar} onChange={(e) => onFalar?.(e.target.checked)} /> PAIIA fala as perguntas
-      </label>
-      {historico.length > 0 && (
-        <ul className="pr-fonte" data-pv-completar-historico style={{ listStyle: "none", padding: 0, margin: "6px 0", maxHeight: 220, overflowY: "auto" }}>
-          {historico.slice(-8).map((h, i) => (
-            <li key={`${i}-${h.texto.slice(0, 12)}`} style={{ margin: "3px 0", textAlign: h.quem === "voce" ? "right" : "left" }}>
-              <span style={{ display: "inline-block", padding: "4px 8px", borderRadius: 8, background: h.quem === "voce" ? "#1e3a8a" : "#334155" }}>{h.quem === "voce" ? "Você: " : "PAIIA: "}{h.texto}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {ocupado ? (
-        <p className="pr-aviso" data-pv-completar-ocupado>⏳ {ocupado}</p>
-      ) : pergunta ? (
-        <p className="pr-pergunta-grande" data-pv-completar-pergunta style={{ fontSize: 18, fontWeight: 600 }}>{pergunta.texto}</p>
-      ) : fim ? (
-        <p data-pv-completar-fim style={{ fontWeight: 600 }}>{fim.pronto ? "✅ " : "ℹ️ "}{fim.texto}</p>
-      ) : null}
+    <div ref={cartaoRef} className="pr-cartao" data-pv-completar={pergunta ? pergunta.campo : fim?.pronto ? "pronto" : "fim"} style={{ scrollMarginTop: 8 }}>
+      <div className="pr-linha" style={{ alignItems: "center", gap: 8 }}>
+        {vozDisponivel && (
+          <button type="button" className={`pr-mic ${ouvindo ? "pr-mic-ouvindo" : ""}`} onClick={onMicrofone} aria-pressed={ouvindo} aria-label={ouvindo ? "Parar de ouvir" : "Falar"} data-pv-completar-mic style={{ width: 52, height: 52, flex: "0 0 auto" }}>🎤</button>
+        )}
+        <div style={{ flex: 1 }}>
+          {ocupado ? null : pergunta ? (
+            <p className="pr-pergunta-grande" data-pv-completar-pergunta style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{pergunta.texto}</p>
+          ) : fim ? (
+            <p data-pv-completar-fim style={{ fontWeight: 600, margin: 0 }}>{fim.pronto ? "✅ " : "ℹ️ "}{fim.texto}</p>
+          ) : null}
+          {situacao[1] && <p className="pr-fonte" data-pv-completar-situacao={situacao[0]} role="status" style={{ margin: "4px 0 0" }}>{situacao[1]}</p>}
+        </div>
+      </div>
       {pergunta && !ocupado && (
         <>
-          <div className="pr-linha" style={{ flexWrap: "wrap", gap: 6 }}>
-            {rapidos.map((b) => <button key={b} type="button" className="pr-botao pr-claro" onClick={() => onResponder?.(b)} data-pv-completar-rapido={b}>{b}</button>)}
-            {pergunta.campo !== "conferir" && <button type="button" className="pr-link" onClick={() => onResponder?.("pular")} data-pv-completar-pular>Não sei / deixar pendente</button>}
-          </div>
+          {rapidos.length > 0 && (
+            <div className="pr-linha" style={{ flexWrap: "wrap", gap: 6 }}>
+              {rapidos.map((b) => <button key={b} type="button" className="pr-botao pr-claro" onClick={() => onResponder?.(b)} data-pv-completar-rapido={b}>{b}</button>)}
+            </div>
+          )}
           <form className="pr-entrada" onSubmit={enviar}>
             <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Digite a resposta" aria-label="Resposta para o PAIIA" data-pv-completar-entrada />
             <button type="submit" className="pr-botao">OK</button>
           </form>
+          {pergunta.campo !== "conferir" && <button type="button" className="pr-link" onClick={() => onResponder?.("pular")} data-pv-completar-pular>Não sei / deixar pendente</button>}
         </>
       )}
+      {campos.length > 0 && (
+        <dl className="pr-resumo" data-pv-completar-campos style={{ margin: "8px 0 0" }}>
+          {campos.map((c) => (
+            <div key={c.id} data-pv-campo={c.id} data-estado={c.atual ? "atual" : c.valor ? "ok" : c.pendente ? "pendente" : "vazio"} style={{ display: "contents" }}>
+              <dt style={{ fontWeight: c.atual ? 700 : 400 }}>{c.atual ? "👉 " : ""}{c.rotulo}</dt>
+              <dd style={{ color: c.valor ? undefined : c.pendente ? "#fbbf24" : "#94a3b8" }}>{c.valor || (c.pendente ? "pendente" : "—")}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {historico.length > 0 && (
+        <details className="pr-fonte" data-pv-completar-historico>
+          <summary>Conversa ({historico.length})</summary>
+          <ul style={{ listStyle: "none", padding: 0, margin: "6px 0" }}>
+            {historico.slice(-12).map((h, i) => <li key={`${i}-${h.texto.slice(0, 12)}`}>{h.quem === "voce" ? "Você: " : "PAIIA: "}{h.texto}</li>)}
+          </ul>
+        </details>
+      )}
+      <label className="pr-check" data-pv-completar-falar>
+        <input type="checkbox" checked={falar} onChange={(e) => onFalar?.(e.target.checked)} /> PAIIA fala as perguntas
+      </label>
     </div>
   );
 }
