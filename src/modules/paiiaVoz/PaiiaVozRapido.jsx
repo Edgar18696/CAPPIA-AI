@@ -66,6 +66,7 @@ import { armazenamentoIndexedDB, armazenamentoMemoria, criarGuardaFotos, MAX_FOT
 import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
 // (31/10/2026) Ficha na conta: fotos e dados do Voz na MESMA ficha do Novo Anúncio (celular ⇄ computador).
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
+import { decidirPassoFinal, enderecoPublicacaoDaFicha } from "./servicos/passoFinalVoz";
 import { situacaoEnvioFotos } from "./servicos/fichaVozNuvem"; // (03/11) aviso das fotos em segundo plano
 // (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
 import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVoz";
@@ -808,6 +809,20 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setScreen?.("novoAnuncio");
   }
 
+  // (Passo 7) Abre a Publicação da MESMA ficha (chamado pela Finalizar depois da aprovação):
+  // endereço ?ficha=<ID> e, a partir daqui, o celular não regrava mais a ficha.
+  function abrirPublicacaoDaFicha(id) {
+    const destino = enderecoPublicacaoDaFicha(window.location.href, id);
+    if (!destino || id !== fichaRef.current.fichaIdPAIIA) { setAviso("⚠️ A Publicação não é desta ficha: nada foi aberto."); return; }
+    window.history.replaceState(window.history.state, "", destino);
+    if (!fichaRef.current.enviadaEm) {
+      const enviada = { ...fichaRef.current, enviadaEm: Date.now(), enviadaPara: "publicacao", versao: (Number(fichaRef.current.versao) || 0) + 1 };
+      fichaRef.current = enviada;
+      guardarFichaVoz(enviada);
+    }
+    setScreen?.("mercadoLivreTeste");
+  }
+
   // (04/11) Remover ficha de teste: SÓ a ficha deste aparelho, não publicada, depois de UMA confirmação
   // mostrando código, data e fotos. Na conta, quem confere e apaga é a exclusão de sempre
   // (exclusaoFichaService: relê tudo, recusa ficha publicada/com MLB/Bling vinculado).
@@ -934,7 +949,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* (04/11) Ficha antiga já enviada: avisa (nada é apagado sozinho). */}
       {ficha.enviadaEm && (
         <div className="pr-cartao pr-cinza" data-pr-enviada>
-          <p>Esta ficha ({cp?.codigo || "sem código"}) já foi enviada ao Novo Anúncio em {new Date(ficha.enviadaEm).toLocaleString("pt-BR")}. Os dados e as fotos continuam guardados aqui; mudanças feitas aqui não vão para aquela ficha.</p>
+          <p>Esta ficha ({cp?.codigo || "sem código"}) já foi enviada {ficha.enviadaPara === "publicacao" ? "à Publicação" : "ao Novo Anúncio"} em {new Date(ficha.enviadaEm).toLocaleString("pt-BR")}. Os dados e as fotos continuam guardados aqui; mudanças feitas aqui não vão para aquela ficha.</p>
           <p className="pr-fonte">Para continuar aquela ficha, use a etapa 7 (Finalizar) ou a Central no computador. Para outra peça, toque em “Nova ficha limpa” (na etapa Fotos).</p>
         </div>
       )}
@@ -1251,6 +1266,24 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* ---------------- 7 Finalizar ---------------- */}
       {etapa === "finalizar" && (
         <section className="pr-bloco" data-pr-bloco="finalizar">
+          {/* Passo 7: UM botão grande — completar a ficha (vai direto à etapa pendente) ou seguir para a Publicação. */}
+          {(() => {
+            const pf = decidirPassoFinal(ficha, { fotos: fotosUsadas.length });
+            return (
+              <div className="pr-cartao" data-pv-passo-final={pf.acao}>
+                {pf.acao === "completar" ? (
+                  <>
+                    <button type="button" className="pr-botao pr-grande" onClick={() => irPara(pf.etapa)} data-pv-completar-ficha={pf.etapa}>
+                      ✏️ Completar ficha
+                    </button>
+                    <p className="pr-fonte" data-pv-falta>{`Falta: ${pf.faltam.join(", ")}`.replace(/\.?$/, ".")} O botão leva direto a “{pf.rotulo}”.</p>
+                  </>
+                ) : (
+                  <p className="pr-fonte" data-pv-etapas-ok>✓ Etapas 1 a 6 completas. Agora é só seguir o próximo passo abaixo.</p>
+                )}
+              </div>
+            );
+          })()}
           {/* (04/11) Finalizar abre no topo: primeiro a conta de destino, depois os dados, pendências, operações e autorização. */}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para finalizar.</p>}
           {(() => {
@@ -1296,7 +1329,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </>
             );
             return usuario
-              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} />
+              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} aoIrEtapa={irPara} aoAbrirPublicacao={abrirPublicacaoDaFicha} />
               : blocoFicha;
           })()}
           {usuario && (
