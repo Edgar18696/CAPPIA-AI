@@ -400,9 +400,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const contasCompletar = useMemo(() => contasMLConectadas(estadoContasML).filter((c) => String(c.ml_user_id || "").trim()).map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) })), [estadoContasML]);
   const [completarOcupado, setCompletarOcupado] = useState("");
   const [versaoRevisao, setVersaoRevisao] = useState(0);
+  const [verRevisaoAntes, setVerRevisaoAntes] = useState(false);
   const [falarPerguntas, setFalarPerguntas] = useState(() => { try { return localStorage.getItem("paiiaVozFalar") !== "0"; } catch { return true; } });
   const micAntesDeFalar = useRef(false);
-  const aoFalarPergunta = useCallback((falando) => {
+  // (03/11) Eco: enquanto o PAIIA fala (e logo depois), o que o microfone captar é ignorado.
+  const falaPaiiaRef = useRef({ ate: 0, texto: "" });
+  const aoFalarPergunta = useCallback((falando, texto = "") => {
+    if (falando) falaPaiiaRef.current = { ate: Number.POSITIVE_INFINITY, texto: String(texto || falaPaiiaRef.current.texto) };
+    else falaPaiiaRef.current = { ...falaPaiiaRef.current, ate: Date.now() + 800 };
     const rec = reconhecedorRef.current;
     if (!rec) return;
     if (falando) { micAntesDeFalar.current = Boolean(rec.ouvindo); if (rec.ouvindo) rec.parar(); }
@@ -461,6 +466,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const tratarFala = useCallback((fala, origem = "voz") => {
     const t = String(fala || "").trim();
     if (!t) return;
+    if (origem === "voz") {
+      const eco = falaPaiiaRef.current;
+      const sem = (v) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+      if (Date.now() < eco.ate || (sem(t).length > 12 && sem(eco.texto).includes(sem(t)))) {
+        setAviso("🔇 Ignorei o que o microfone ouviu enquanto o PAIIA falava. Responda depois da pergunta.");
+        return;
+      }
+    }
     setAviso("");
     const f = fichaRef.current;
     const rr = estadoRapido(f);
@@ -897,7 +910,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Para enviar falta: {validacao.faltando.join(", ")}.</p>}
           {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para o Novo Anúncio salvar o anúncio e as fotos.</p>}
-          {usuario && <PreparoPublicacaoVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
+          {usuario && (perguntaCompletar && !verRevisaoAntes ? (
+            <p className="pr-fonte" data-pv-revisao-depois>📋 A revisão aparece aqui quando a conversa terminar. <button type="button" className="pr-link" onClick={() => setVerRevisaoAntes(true)} data-pv-ver-revisao>Ver a revisão agora</button></p>
+          ) : <PreparoPublicacaoVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />)}
           {confirmandoEnvio ? (
             <div className="pr-cartao" data-pv-confirmacao-envio>
               <p>O Novo Anúncio será aberto com código, título, descrição e as fotos marcadas. Lá você confere tudo (SKU, fotos, compatibilidade, peso, medidas, frete, preço, estoque e duplicidade) e aprova antes de qualquer publicação.</p>

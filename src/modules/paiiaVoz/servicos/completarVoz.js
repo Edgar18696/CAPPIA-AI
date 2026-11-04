@@ -21,7 +21,7 @@ import { interpretarFala, interpretarAplicacao, separarAplicacoes, MONTADORAS } 
 import { semAcento, lerPreco, lerInteiro } from "./numerosFalados.js";
 import { lerPesoEMedidas } from "./pesoMedidasVoz.js";
 import { dadosCompletosVoz } from "./fichaCompletaVoz.js";
-import { estadoRapido, definirTextoDescricao, definirTitulo, lerCodigoDaFala, LIMITE_TITULO } from "./rascunhoRapido.js";
+import { estadoRapido, definirTextoDescricao, definirTitulo, lerCodigoDaFala, LIMITE_TITULO, pesoMedidasParaEnvio } from "./rascunhoRapido.js";
 import { TIPO_CARRO, TIPO_PESADA } from "../../../services/tipoVeiculoAnuncio.js";
 
 export const VERSAO_COMPLETAR = "2026-11-03.1";
@@ -30,7 +30,7 @@ const norm = (v) => semAcento(String(v ?? "")).toLowerCase().replace(/[.!?]+$/, 
 const copia = (o) => JSON.parse(JSON.stringify(o));
 const cap = (s) => txt(s).replace(/\s+/g, " ").replace(/(^|\s)(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
 
-export const RE_PULAR = /^(?:pular|pula|pule|nao sei|depois|deixa pra depois|deixa para depois|mais tarde|passa|passar)$/;
+export const RE_PULAR = /^(?:pular|pula|pule|pula essa|nao sei|nao sei agora|nao sei ainda|sei la|nao tenho|nao tenho agora|nao lembro|nao sei dizer|depois|depois eu vejo|deixa pra depois|deixa para depois|deixa pendente|fica pendente|mais tarde|passa|passar)$/;
 export const RE_SIM = /^(?:sim|s|isso|isso mesmo|confirmo|confirma|pode|pode sim|pode confirmar|certo|correto|ok|esta certo|ta certo|exato|positivo|beleza|claro)$/;
 export const RE_NAO = /^(?:nao|n|nao e|errado|esta errado|ta errado|negativo|nao tem|nenhuma|nenhum|so essa|so esse|so isso|acabou|mais nenhuma|nao tem mais)$/;
 const RE_SEM_APLICACAO = /^(?:sem aplicacao|nao tem aplicacao|nao sei a aplicacao|sem compatibilidade)$/;
@@ -73,12 +73,16 @@ function candidataAplicacao(ficha) {
 
 /** Veículo com ano escrito na descrição (ex.: “Master 3 2012 a 2026”) ainda não oferecido. Nunca vira aplicação sem o seu “sim”. */
 export function aplicacaoNaDescricao(ficha) {
-  const recusadas = estadoCompletarBruto(ficha).descricaoRecusadas || [];
+  const recusadas = (estadoCompletarBruto(ficha).descricaoRecusadas || []).map(norm);
+  // o nome da peça (1ª palavra do título, ex.: “Presilha”) não faz parte do modelo
+  const peca = norm(estadoRapido(ficha).titulo.valor.split(/\s+/)[0] || "");
   for (const linha of String(estadoRapido(ficha).descricao.texto || "").split(/\n+/)) {
     const l = txt(linha);
-    if (!l || norm(l).startsWith(norm(LINHA_MEDIDAS)) || !/\b(19|20)\d{2}\b/.test(l) || l.length > 80 || recusadas.includes(l) || (ficha?.aplicacoes || []).some((x) => norm(x.texto) === norm(l))) continue;
-    const ap = interpretarAplicacao(l);
-    if (ap && ap.modelos.length && ap.modelos.join(" ").length <= 30) return { ...ap, texto: l };
+    if (!l || norm(l).startsWith(norm(LINHA_MEDIDAS)) || !/\b(19|20)\d{2}\b/.test(l) || l.length > 80) continue;
+    const l2 = peca.length >= 4 ? l.replace(/^([^\s]+)\s+/, (m, w) => (norm(w) === peca ? "" : m)) : l;
+    if ([l, l2].some((x) => recusadas.includes(norm(x)) || (ficha?.aplicacoes || []).some((a) => norm(a.texto) === norm(x)))) continue;
+    const ap = interpretarAplicacao(l2);
+    if (ap && ap.modelos.length && ap.modelos.join(" ").length <= 30) return { ...ap, texto: l2 };
   }
   return null;
 }
@@ -108,10 +112,12 @@ export function proximaPerguntaCompletar(ficha, { fotos = 0 } = {}) {
   if (!d.aplicacoes.length && !pulou("aplicacao")) return { campo: "aplicacao", texto: "Para qual veículo é a peça? Diga montadora, modelo e anos (ex.: Renault Master 2013 a 2022). Se não tiver, diga “sem aplicação”." };
   if (d.aplicacoes.length && !c.aplicacoesFim && !pulou("aplicacao")) return { campo: "maisAplicacao", texto: "Tem mais alguma aplicação? Diga o veículo ou “não”." };
   if (!d.tipoVeiculo && !pulou("tipoVeiculo")) return { campo: "tipoVeiculo", texto: "É peça de carro (ou caminhonete) ou de linha pesada?" };
+  // Peso e as 3 medidas da embalagem: perguntas separadas (o que já foi dito, em qualquer lugar, conta).
   if (!d.medida && !pulou("pesoMedidas")) {
-    const p = c.peso;
-    const falta = [!(p.peso_g > 0) && "o peso", !(p.comprimento_cm > 0 && p.largura_cm > 0 && p.altura_cm > 0) && "as medidas (comprimento × largura × altura)"].filter(Boolean);
-    return { campo: "pesoMedidas", texto: falta.length === 2 ? "Qual é o peso e as medidas da embalagem? Ex.: 200 gramas, 10 por 8 por 5 centímetros." : `Falta ${falta.join(" e ")} da embalagem.` };
+    const pm = pesoMedidasParaEnvio(ficha)?.campos || {};
+    if (!pm.pesoFreteML && !pulou("peso")) return { campo: "peso", texto: "Qual é o peso da peça já embalada? Ex.: 200 gramas ou 1,2 quilo." };
+    const faltam = [["comprimentoFreteML", "comprimento"], ["larguraFreteML", "largura"], ["alturaFreteML", "altura"]].filter(([k]) => !pm[k]).map(([, r]) => r);
+    if (faltam.length && !pulou("medidas")) return { campo: "medidas", texto: faltam.length === 3 ? "Quais são as medidas da embalagem: comprimento, largura e altura? Ex.: 20 por 10 por 5 centímetros." : `Falta ${faltam.join(" e ")} da embalagem (em centímetros).` };
   }
   if (!c.conta && !pulou("conta")) return { campo: "conta", texto: "Em qual conta vai publicar: Loja Online, CIEBR ou Revelação?" };
   if (!c.modalidade && !pulou("modalidade")) return { campo: "modalidade", texto: "Premium ou Clássico? A loja usa Premium." };
@@ -119,6 +125,8 @@ export function proximaPerguntaCompletar(ficha, { fotos = 0 } = {}) {
   // Conferências automáticas (só leitura) — o componente executa e devolve o resultado.
   const assin = assinaturaCompletar(ficha, { fotos });
   if (!c.conferencia || c.conferencia.assinatura !== assin) return { campo: "conferir", acao: "conferir", texto: "Conferindo categoria, duplicidade, Bling e frete…" };
+  // Sem tipo de veículo o Mercado Livre não sugere categoria: pergunta de novo, uma vez.
+  if (!d.tipoVeiculo && !pulou("tipoCategoria") && (c.conferencia.pendencias || []).some((p) => /Categoria: diga o tipo/i.test(p))) return { campo: "tipoCategoria", texto: "Para achar a categoria preciso do tipo de veículo: carro (ou caminhonete) ou linha pesada?" };
   if (c.conferencia.sugerida && !pulou("categoria")) return { campo: "categoria", texto: `A categoria sugerida é ${c.conferencia.sugerida}. Confirmo?` };
   // Modelo que o catálogo de veículos do Mercado Livre não reconheceu: pergunta o nome como aparece lá.
   if (c.conferencia.compatSemCatalogo && !pulou("compatModelo")) {
@@ -132,13 +140,21 @@ export function proximaPerguntaCompletar(ficha, { fotos = 0 } = {}) {
 export function fimCompletar(ficha, { fotos = 0 } = {}) {
   const c = estadoCompletar(ficha);
   const d = dadosCompletosVoz(ficha, { fotos });
-  const faltam = [...(c.conferencia?.pendencias || [])];
-  if (c.pulados.length) faltam.unshift(`deixado para depois: ${c.pulados.map((p) => ROTULO[p] || p).join(", ")}`);
+  // O que você deixou pendente aparece uma vez só (sem repetir o mesmo assunto da conferência).
+  const pul = new Set(c.pulados);
+  const repetida = (t) => ((pul.has("peso") || pul.has("medidas") || pul.has("pesoMedidas")) && /^(Frete: falta|Peso e medidas)/i.test(t))
+    || (pul.has("aplicacao") && /^Compatibilidade: nenhuma aplica/i.test(t))
+    || ((pul.has("tipoVeiculo") || pul.has("tipoCategoria")) && /^(Tipo de veículo|Categoria: diga o tipo)/i.test(t));
+  const faltam = (c.conferencia?.pendencias || []).filter((t) => !repetida(t));
+  // pendente que depois foi respondido (ex.: tipo de veículo dito na categoria) não aparece
+  const respondido = { marca: d.marca, quantidade: d.quantidade, preco: d.preco, tipoVeiculo: d.tipoVeiculo, tipoCategoria: d.tipoVeiculo, aplicacao: d.aplicacoes.length, peso: d.medida, medidas: d.medida, pesoMedidas: d.medida, conta: c.conta, modalidade: c.modalidade };
+  const aindaPendentes = [...new Set(c.pulados.filter((p) => !respondido[p]).map((p) => ROTULO[p] || p))];
+  if (aindaPendentes.length) faltam.unshift(`você deixou pendente: ${aindaPendentes.join(", ")}`);
   if (!faltam.length && d.completa) return { pronto: true, texto: "Tudo conferido! Confira a revisão abaixo e toque em “Aprovar revisão”." };
   return { pronto: false, texto: `Quase pronto. Ainda falta: ${faltam.join("; ") || d.pendencias.join("; ")}` };
 }
 
-const ROTULO = { compatModelo: "modelo no catálogo", codigo: "código", titulo: "título", marca: "marca", quantidade: "estoque", preco: "preço", aplicacao: "aplicações", tipoVeiculo: "tipo de veículo", pesoMedidas: "peso/medidas", conta: "conta", modalidade: "modalidade", categoria: "categoria" };
+const ROTULO = { compatModelo: "modelo no catálogo", codigo: "código", titulo: "título", marca: "marca", quantidade: "estoque", preco: "preço", aplicacao: "aplicações", tipoVeiculo: "tipo de veículo", pesoMedidas: "peso/medidas", peso: "peso", medidas: "medidas da embalagem", tipoCategoria: "tipo de veículo (categoria)", conta: "conta", modalidade: "modalidade", categoria: "categoria" };
 
 /** Abertura: o que já tem + a primeira pergunta. */
 export function aberturaCompletar(ficha, { fotos = 0 } = {}) {
@@ -235,8 +251,10 @@ export function responderCompletar(ficha, texto, { fotos = 0, contas = [], agora
   if (!fala) return { ficha: f, resposta: "", pergunta: atual, anotado };
 
   if (RE_PULAR.test(k) && atual) {
-    f = comCompletar(f, (c) => { if (!c.pulados.includes(atual.campo === "maisAplicacao" ? "aplicacao" : atual.campo)) c.pulados.push(atual.campo === "maisAplicacao" ? "aplicacao" : atual.campo); });
-    anotado.push(`${ROTULO[atual.campo] || "isso"} fica para depois`);
+    // Todas as perguntas de aplicação contam como “aplicações” (senão a mesma pergunta voltaria).
+    const chave = ["maisAplicacao", "aplicacaoDescricao", "montadora", "confirmarAplicacao"].includes(atual.campo) ? "aplicacao" : atual.campo;
+    f = comCompletar(f, (c) => { if (!c.pulados.includes(chave)) c.pulados.push(chave); });
+    anotado.push(`${ROTULO[chave] || "isso"} fica pendente`);
   } else {
     // 1) Marca, preço e estoque ditos a qualquer momento (corrige o que já estava).
     const itens = camposDitos(fala, atual?.campo);
@@ -247,7 +265,7 @@ export function responderCompletar(ficha, texto, { fotos = 0, contas = [], agora
     // 2) Peso/medidas ditos a qualquer momento.
     const pm = lerPesoEMedidas([fala]);
     const temMedida = ["peso_g", "comprimento_cm", "largura_cm", "altura_cm"].some((x) => pm[x] > 0);
-    if (temMedida && (atual?.campo === "pesoMedidas" || /\b(g|gr|gramas?|kg|quilos?|cm|centimetros?|mm|milimetros?|peso|pesa|medidas?|embalagem)\b/.test(k))) {
+    if (temMedida && (["pesoMedidas", "peso", "medidas"].includes(atual?.campo) || /\b(g|gr|gramas?|kg|quilos?|cm|centimetros?|mm|milimetros?|peso|pesa|medidas?|embalagem)\b/.test(k))) {
       f = gravarMedidas(f, pm);
       anotado.push(`peso/medidas (${[pm.peso_g > 0 && `${pm.peso_g} g`, pm.comprimento_cm > 0 && `${pm.comprimento_cm} × ${pm.largura_cm || "?"} × ${pm.altura_cm || "?"} cm`].filter(Boolean).join(", ")})`);
     }
@@ -322,7 +340,7 @@ export function responderCompletar(ficha, texto, { fotos = 0, contas = [], agora
           anotado.push(`aplicação ${[ap.montadora, resumoAplicacao(ap)].filter(Boolean).join(" ")}`);
         }
       }
-    } else if (campo === "tipoVeiculo") {
+    } else if (campo === "tipoVeiculo" || campo === "tipoCategoria") {
       const t = tipoDaFala(k);
       if (t) { f = comCompletar(f, (c) => { c.tipoVeiculo = t; }); anotado.push(`tipo ${t}`); }
     } else if (campo === "conta") {

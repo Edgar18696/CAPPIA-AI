@@ -13,6 +13,7 @@ const BOTOES = {
   aplicacao: ["Sem aplicação"],
   aplicacaoDescricao: ["Sim", "Não"],
   tipoVeiculo: ["Carro", "Linha pesada"],
+  tipoCategoria: ["Carro", "Linha pesada"],
   modalidade: ["Premium", "Clássico"],
   conferir: ["Conferir"],
 };
@@ -46,7 +47,7 @@ export default function CompletarVoz({ historico = [], pergunta = null, fim = nu
   useEffect(() => {
     if (!falar || !fala || ocupado || ultimaFalada.current === fala) return;
     ultimaFalada.current = fala;
-    falarTexto(fala, { aoComecar: () => aoFalar?.(true), aoTerminar: () => aoFalar?.(false) });
+    falarTexto(fala, { aoComecar: () => aoFalar?.(true, fala), aoTerminar: () => aoFalar?.(false) });
   }, [fala, falar, ocupado, aoFalar]);
   useEffect(() => () => { try { globalThis.speechSynthesis?.cancel(); } catch { /* sem voz */ } }, []);
 
@@ -85,7 +86,7 @@ export default function CompletarVoz({ historico = [], pergunta = null, fim = nu
         <>
           <div className="pr-linha" style={{ flexWrap: "wrap", gap: 6 }}>
             {rapidos.map((b) => <button key={b} type="button" className="pr-botao pr-claro" onClick={() => onResponder?.(b)} data-pv-completar-rapido={b}>{b}</button>)}
-            {pergunta.campo !== "conferir" && <button type="button" className="pr-link" onClick={() => onResponder?.("pular")} data-pv-completar-pular>Pular</button>}
+            {pergunta.campo !== "conferir" && <button type="button" className="pr-link" onClick={() => onResponder?.("pular")} data-pv-completar-pular>Não sei / deixar pendente</button>}
           </div>
           <form className="pr-entrada" onSubmit={enviar}>
             <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Digite a resposta" aria-label="Resposta para o PAIIA" data-pv-completar-entrada />

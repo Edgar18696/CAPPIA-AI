@@ -35,7 +35,7 @@ test("abertura: diz o que já tem e pergunta só o que falta", () => {
 test("conversa completa da presilha: chega à conferência com a ficha completa, sem inventar nada", () => {
   let f = fichaPresilha();
   const passos = [];
-  const roteiro = { marca: "Torken", quantidade: "10", preco: "39,90", montadora: "Renault", confirmarAplicacao: "sim", maisAplicacao: "não", tipoVeiculo: "carro", pesoMedidas: "200 gramas, 20 por 10 por 5", conta: "Loja Online", modalidade: "Premium" };
+  const roteiro = { marca: "Torken", quantidade: "10", preco: "39,90", montadora: "Renault", confirmarAplicacao: "sim", maisAplicacao: "não", tipoVeiculo: "carro", peso: "200 gramas", medidas: "20 por 10 por 5", conta: "Loja Online", modalidade: "Premium" };
   for (let i = 0; i < 15; i++) {
     const p = C.proximaPerguntaCompletar(f, { fotos: 4 });
     if (!p || p.acao) { passos.push(p?.campo || "fim"); break; }
@@ -44,7 +44,7 @@ test("conversa completa da presilha: chega à conferência com a ficha completa,
     assert.ok(r.anotado.length, `entendeu a resposta de ${p.campo}`);
     f = r.ficha;
   }
-  assert.deepEqual(passos.filter((x) => x !== "tipoVeiculo"), ["marca", "quantidade", "preco", "montadora", "confirmarAplicacao", "maisAplicacao", "pesoMedidas", "conta", "modalidade", "conferir"]);
+  assert.deepEqual(passos.filter((x) => x !== "tipoVeiculo"), ["marca", "quantidade", "preco", "montadora", "confirmarAplicacao", "maisAplicacao", "peso", "medidas", "conta", "modalidade", "conferir"]);
   const d = dadosCompletosVoz(f, { fotos: 4 });
   assert.equal(d.marca, "Torken");
   assert.equal(d.quantidade, "10");
@@ -197,8 +197,8 @@ test("pular, sem aplicação e tipo de veículo dito", () => {
   assert.equal(r.pergunta.campo, "tipoVeiculo");
   r = dizer(r.ficha, "linha pesada");
   assert.equal(dadosCompletosVoz(r.ficha, { fotos: 4 }).tipoVeiculo, "Linha Pesada");
-  assert.equal(r.pergunta.campo, "pesoMedidas");
-  assert.match(C.fimCompletar(r.ficha, { fotos: 4 }).texto, /deixado para depois: marca, aplicações/);
+  assert.equal(r.pergunta.campo, "peso");
+  assert.match(C.fimCompletar(r.ficha, { fotos: 4 }).texto, /você deixou pendente: marca, aplicações/);
 });
 
 test("conferência: mudou algo depois → confere de novo; categoria sugerida só com sim", () => {
@@ -229,4 +229,89 @@ test("tela: conversa na etapa final, voz do navegador, ações pelos serviços d
   assert.ok(!/publicar\(|salvarFichaAprovada|aprovarRevisaoEGravar/.test(c + f.slice(f.indexOf("// ---------------- Completar"))), "a conversa não aprova nem publica");
   const r = ler("src/modules/paiiaVoz/servicos/rascunhoRapido.js");
   assert.ok(r.includes('export const ETAPAS = ["fotos", "codigo", "titulo", "descricao", "enviar"];'), "as 5 etapas continuam");
+});
+
+// ---------------- (03/11, teste no celular) a conversa vai até o fim ----------------
+/** Igual à ficha do teste no celular: SKU, título, marca, preço, estoque e fotos já preenchidos. */
+function fichaDoCelular() {
+  let f = criarFichaVoz({ agora: 1, id: "v-cel" });
+  f = aplicarInterpretacao(f, { itens: [{ campo: "codigoPrincipal", valor: "242101345R" }, { campo: "marca", valor: "Torken" }, { campo: "preco", valor: 18.6 }, { campo: "quantidade", valor: 1 }], naoEntendido: [], avisos: [] }, { origem: "voz", agora: 1 }).ficha;
+  f = definirTitulo(f, "Presilha Plástica Acabamento Lateral Master 3", { origem: "voz", agora: 2 });
+  return definirTextoDescricao(f, "Presilha Master 3 2012", { agora: 3 });
+}
+
+test("ficha do teste no celular: pergunta TODOS os dados que faltam antes de conferir (aplicação, tipo, peso, 3 medidas, conta, modalidade)", () => {
+  const f = fichaDoCelular();
+  const vistos = [];
+  let g = f;
+  for (let i = 0; i < 12; i++) {
+    const p = C.proximaPerguntaCompletar(g, { fotos: 5 });
+    if (!p || p.acao) { vistos.push(p?.campo || "fim"); break; }
+    vistos.push(p.campo);
+    g = C.responderCompletar(g, "não sei", { fotos: 5, contas: CONTAS, origem: "voz" }).ficha;
+  }
+  // “não sei” na aplicação vale para as aplicações (não volta a perguntar em loop)
+  assert.deepEqual(vistos, [C.aplicacaoNaDescricao(f) ? "aplicacaoDescricao" : "aplicacao", "tipoVeiculo", "peso", "medidas", "conta", "modalidade", "fim"]);
+  // tudo o que ficou sem resposta aparece no fim como pendência
+  assert.match(C.fimCompletar(g, { fotos: 5 }).texto, /aplicações.*tipo de veículo.*peso.*medidas da embalagem/);
+});
+
+test("“não sei” em qualquer pergunta de aplicação não entra em loop", () => {
+  for (const campoAlvo of ["montadora", "confirmarAplicacao", "aplicacaoDescricao"]) {
+    let f = dizer(fichaPresilha(), "marca Torken, 10 peças, 39,90").ficha;
+    if (campoAlvo === "confirmarAplicacao") f = dizer(f, "Renault").ficha;
+    if (campoAlvo === "aplicacaoDescricao") { f = dizer(f, "não").ficha; f = definirTextoDescricao(f, "Peça\nKangoo 2010 a 2015", { agora: 9 }); }
+    assert.equal(C.proximaPerguntaCompletar(f, { fotos: 4 }).campo, campoAlvo);
+    const r = dizer(f, "não sei");
+    assert.notEqual(r.pergunta.campo, campoAlvo, campoAlvo);
+    assert.ok(!["aplicacao", "aplicacaoDescricao", "montadora", "confirmarAplicacao", "maisAplicacao"].includes(r.pergunta.campo), campoAlvo);
+  }
+});
+
+test("“não sei” em várias formas registra pendência e segue", () => {
+  for (const t of ["não sei", "Não sei.", "sei lá", "não tenho", "não lembro", "deixa pendente", "depois eu vejo"]) {
+    const g = fichaPresilha();
+    const r = dizer(g, t);
+    assert.ok(C.estadoCompletar(r.ficha).pulados.includes("marca"), t);
+    assert.equal(r.pergunta.campo, "quantidade", t);
+  }
+});
+
+test("peso e medidas: perguntas separadas; parcial pergunta só o que falta; peso sem unidade não é inventado", () => {
+  let f = dizer(fichaPresilha(), "marca Torken, 10 peças, 39,90").ficha;
+  f = dizer(f, "não").ficha; // descarta aplicação da descrição
+  f = dizer(f, "sem aplicação").ficha;
+  f = dizer(f, "carro").ficha;
+  let p = C.proximaPerguntaCompletar(f, { fotos: 4 });
+  assert.equal(p.campo, "peso");
+  let r = dizer(f, "200");
+  assert.match(r.resposta, /^Não entendi/, "sem unidade: não chuta gramas nem quilos");
+  r = dizer(f, "200 gramas");
+  assert.equal(r.pergunta.campo, "medidas");
+  assert.match(r.pergunta.texto, /comprimento, largura e altura/);
+  r = dizer(r.ficha, "comprimento 20 centímetros");
+  assert.equal(r.pergunta.campo, "medidas");
+  assert.match(r.pergunta.texto, /Falta largura e altura/);
+  r = dizer(r.ficha, "largura 10 cm e altura 5 cm");
+  assert.equal(r.pergunta.campo, "conta");
+  assert.deepEqual(dadosCompletosVoz(r.ficha, { fotos: 4 }).medida, { peso_g: 200, comprimento_cm: 20, largura_cm: 10, altura_cm: 5 });
+});
+
+test("categoria sem tipo de veículo: depois da conferência pergunta o tipo de novo e segue para a categoria", () => {
+  let f = fichaDoCelular();
+  for (const t of ["não", "sem aplicação", "não sei", "200 gramas", "20 x 10 x 5 cm", "Loja Online", "Premium"]) f = C.responderCompletar(f, t, { fotos: 5, contas: CONTAS, origem: "digitado" }).ficha;
+  assert.equal(C.proximaPerguntaCompletar(f, { fotos: 5 }).acao, "conferir");
+  f = C.registrarConferencia(f, { fotos: 5, revisao: { pendencias: [{ id: "categoria", tipo: "pergunta", texto: "Categoria: diga o tipo de veículo (carro ou linha pesada)." }] }, sugerida: "" });
+  let p = C.proximaPerguntaCompletar(f, { fotos: 5 });
+  assert.equal(p.campo, "tipoCategoria");
+  const r = C.responderCompletar(f, "carro", { fotos: 5, contas: CONTAS, origem: "voz" });
+  assert.equal(dadosCompletosVoz(r.ficha, { fotos: 5 }).tipoVeiculo, "Carro/Caminhonete");
+  assert.equal(r.acao, "conferir", "confere de novo para sugerir a categoria");
+});
+
+test("tela: revisão só ao fim da conversa (ou se pedir); eco do PAIIA ignorado; botão “Não sei”", () => {
+  const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(f.includes("perguntaCompletar && !verRevisaoAntes ?") && f.includes("data-pv-revisao-depois"));
+  assert.ok(f.includes("Ignorei o que o microfone ouviu enquanto o PAIIA falava"));
+  assert.ok(ler("src/modules/paiiaVoz/CompletarVoz.jsx").includes("Não sei / deixar pendente"));
 });
