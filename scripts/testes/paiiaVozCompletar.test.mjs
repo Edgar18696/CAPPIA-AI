@@ -45,12 +45,12 @@ function fichaPresilha() {
 }
 const ROTEIRO = { marca: "Torken", preco: "39,90", quantidade: "10", peso: "200 gramas", medidas: "20 por 10 por 5", montadora: "Renault", confirmarAplicacao: "sim", aplicacaoDescricao: "sim", maisAplicacao: "não", tipoVeiculo: "carro", conta: "Loja Online", modalidade: "Premium" };
 
-test("fluxo único: das fotos vai direto para a conversa; etapa final chama “Completar”; as 5 etapas continuam", () => {
+test("interface conhecida: Fotos → Código → Título → Descrição (com os campos) → Enviar", () => {
   assert.deepEqual(ETAPAS, ["fotos", "codigo", "titulo", "descricao", "enviar"]);
-  assert.equal(ROTULOS_ETAPAS.enviar, "Completar");
+  assert.equal(ROTULOS_ETAPAS.enviar, "Enviar");
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(f.includes('onClick={() => irPara("enviar")} data-pr-continuar>Continuar →</button></div>'), "Continuar das fotos abre a conversa");
-  assert.ok(f.includes('rr.etapa === "fotos" && nav === "proximo" ? "enviar"'), "“próximo” nas fotos abre a conversa");
+  assert.ok(f.includes('onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>'), "Continuar das fotos vai para o Código");
+  assert.ok(!f.includes('rr.etapa === "fotos" && nav === "proximo" ? "enviar"'));
 });
 
 test("ficha nova só com fotos: pergunta na ordem do fluxo, uma por vez", () => {
@@ -202,7 +202,7 @@ test("código falado sem traço; digitado com traço preservado; sem fotos o fim
 
 test("tela: cartão com microfone, situação (falando/ouvindo/processando/preenchido/aguardando), campos visíveis e digitação", () => {
   const c = ler("src/modules/paiiaVoz/CompletarVoz.jsx");
-  for (const t of ["data-pv-completar-mic", "data-pv-completar-situacao", "🔊 PAIIA falando", "🎤 Ouvindo", "⏳", "✅ Preenchido", "Aguardando sua resposta", "Voz indisponível neste aparelho: digite", "data-pv-completar-campos", "data-pv-completar-entrada", "speechSynthesis", "scrollIntoView"]) assert.ok(c.includes(t), t);
+  for (const t of ["data-pv-completar-mic", "data-pv-completar-situacao", "🔊 PAIIA falando", "🎤 Ouvindo", "⏳", "✅ Preenchido", "Aguardando sua resposta", "Voz indisponível neste aparelho: digite", "data-pv-completar-campos", "data-pv-completar-entrada", "speechSynthesis"]) assert.ok(c.includes(t), t);
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes("vozConversaRef.current"), "microfone volta sozinho depois de cada pergunta");
   assert.ok(f.includes("perguntaCompletar && !verRevisaoAntes ?"), "revisão no fim");
@@ -220,4 +220,64 @@ test("microfone: “sim” e depois “sim” (duas perguntas) são duas respost
   assert.deepEqual(recebidas, ["sim"], "o celular entregou duas vezes na mesma escuta");
   fila.push(["sim"]); rec.iniciar(); await new Promise((r) => setTimeout(r, 5));
   assert.deepEqual(recebidas, ["sim", "sim"], "nova pergunta, nova escuta");
+});
+
+// ---------------- (04/11) campos diretos: toque no campo e fale ----------------
+test("campos diretos: marca, preço, estoque, peso (g) e medidas (cm) — e avança para o próximo vazio", () => {
+  let f = criarFichaVoz({ agora: 1, id: "dd" });
+  const passo = (c, t, o) => { const r = C.definirCampoDireto(f, c, t, o); assert.ok(r.ok, `${c}: ${r.erro}`); f = r.ficha; return r; };
+  assert.equal(C.proximoCampoDireto(f), "marca");
+  passo("marca", "Torken");
+  assert.equal(C.proximoCampoDireto(f, "marca"), "preco");
+  assert.equal(passo("preco", "39,90").valor, "39,90");
+  passo("quantidade", "10 peças");
+  assert.equal(passo("peso", "200").valor, "200", "campo em gramas");
+  assert.equal(passo("comprimento", "20 por 10 por 5").tres, true, "uma frase preenche as 3 medidas");
+  assert.equal(C.proximoCampoDireto(f, "comprimento"), "aplicacoes", "depois das medidas: aplicações (custo é opcional)");
+  passo("altura", "6");
+  { const v = C.valoresCamposDiretos(f); assert.deepEqual([v.marca, v.preco, v.quantidade, v.peso, v.comprimento, v.largura, v.altura], ["Torken", "39,90", "10", "200", "20", "10", "6"]); }
+  assert.deepEqual(dados(f, 1).medida, { peso_g: 200, comprimento_cm: 20, largura_cm: 10, altura_cm: 6 });
+  passo("peso", "1,2 quilo");
+  assert.equal(C.valoresCamposDiretos(f).peso, "1200");
+  assert.ok(!dados(f, 1).pendencias.some((p) => /dois pesos/.test(p)), "corrigir não cria dúvida");
+  // nada inventado
+  assert.equal(C.definirCampoDireto(f, "preco", "não sei").ok, false);
+  assert.equal(C.definirCampoDireto(f, "quantidade", "muitas").ok, false);
+  assert.equal(C.definirCampoDireto(f, "marca", "").ok, false);
+});
+
+test("tela: texto ditado aparece no próprio campo; campo ativo à vista; voz das perguntas opcional (desligada)", () => {
+  const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(f.includes("const mostrado = ditando ? ditando : focado ? texto : valor;"), "campo mostra o que está sendo ditado");
+  assert.ok(f.includes('ditando={ouvindo ? parcial : ""} onSalvar'), "código");
+  assert.ok(f.includes('ditando={ouvindo && !campoVoz ? parcial : ""} acrescentar'), "descrição");
+  assert.ok(f.includes("data-pv-campo-mic") && f.includes("data-pv-dados-diretos"));
+  assert.ok(f.includes('el.scrollIntoView?.({ block: "nearest" })') && f.includes("r.bottom > window.innerHeight"), "só rola se estiver fora da tela");
+  assert.ok(f.includes("|${marcaCompletos(ficha)}`"), "custo/peso/medidas/aplicações salvam na conta");
+  assert.ok(f.includes('localStorage.getItem("paiiaVozFalar") === "1"'), "perguntas faladas só se ligadas");
+  assert.ok(!ler("src/modules/paiiaVoz/CompletarVoz.jsx").includes("scrollIntoView"), "o cartão não puxa a página");
+});
+
+test("campos diretos: custo opcional, aplicações ditas ficam SEM confirmação; Bling só preenche o que está vazio", () => {
+  let f = criarFichaVoz({ agora: 1, id: "cb" });
+  let r = C.definirCampoDireto(f, "custo", "18,50"); assert.ok(r.ok); f = r.ficha;
+  assert.equal(C.valoresCamposDiretos(f).custo, "18,50");
+  assert.equal(dados(f, 1).custo, "18,50");
+  r = C.definirCampoDireto(f, "aplicacoes", "Gol 2010 a 2014"); assert.ok(r.ok, r.erro); f = r.ficha;
+  assert.ok(/0 confirmada/.test(C.valoresCamposDiretos(f).aplicacoes), "aplicação dita não é confirmada sozinha");
+  assert.equal(C.definirCampoDireto(f, "aplicacoes", "não sei").ok, false);
+  r = C.definirCampoDireto(f, "marca", "Torken"); f = r.ficha;
+  const b = C.usarDadosDoBling(f, { marca: "OUTRA", preco: 50, precoCusto: 20, peso_bruto: 0.3, profundidade: 12, largura: 8, altura: 4 });
+  assert.equal(C.valoresCamposDiretos(b.ficha).marca, "Torken", "não sobrescreve a marca já dita");
+  assert.equal(C.valoresCamposDiretos(b.ficha).custo, "18,50", "não sobrescreve o custo já dito");
+  assert.equal(C.valoresCamposDiretos(b.ficha).peso, "300");
+  assert.ok(b.usados.includes("preco") && !b.usados.includes("marca"));
+});
+
+test("tela: frete não estimado; envio mostra pendências e revisão; conversa só opcional", () => {
+  const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(f.includes("data-pv-frete-info") && f.includes("O PAIIA não estima frete"));
+  assert.ok(f.includes("data-pv-pendencias-envio") && f.includes("data-pv-ficha-completa"));
+  assert.ok(f.includes("data-pv-conversa-opcional") && f.includes("useState(false);\n  const conversaAbertaRef"), "conversa fechada por padrão");
+  assert.ok(f.includes("data-pv-dados-bling"), "Bling só quando pedido");
 });

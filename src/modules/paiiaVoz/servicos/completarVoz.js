@@ -441,3 +441,131 @@ export function camposDaFicha(ficha, { fotos = 0 } = {}) {
     atual: (grupo[atual] || atual) === id,
   }));
 }
+
+// ---------------------------------------------------------------
+// (04/11/2026) Campos da ficha preenchidos DIRETAMENTE (toque no campo e fale
+// ou digite). Mesmas regras da conversa: só o que foi dito; nada é inventado.
+// ---------------------------------------------------------------
+export const CAMPOS_DIRETOS = Object.freeze([
+  { id: "marca", rotulo: "Marca" },
+  { id: "preco", rotulo: "Preço de venda (R$)" },
+  { id: "custo", rotulo: "Custo (R$)", opcional: true },
+  { id: "quantidade", rotulo: "Estoque" },
+  { id: "peso", rotulo: "Peso embalado (gramas)" },
+  { id: "comprimento", rotulo: "Comprimento (cm)" },
+  { id: "largura", rotulo: "Largura (cm)" },
+  { id: "altura", rotulo: "Altura (cm)" },
+  { id: "aplicacoes", rotulo: "Aplicações (veículo e anos — confirme abaixo)" },
+]);
+
+const virg = (v) => String(v ?? "").replace(".", ",");
+
+/** Valores atuais dos campos diretos (para mostrar nos campos). */
+export function valoresCamposDiretos(ficha) {
+  const d = dadosCompletosVoz(ficha, { fotos: 1 });
+  const pm = pesoMedidasParaEnvio(ficha)?.campos || {};
+  const g = pm.pesoFreteML ? Math.round(Number(String(pm.pesoFreteML).replace(",", ".")) * 1000) : "";
+  const aps = ficha?.aplicacoes || [];
+  return {
+    marca: d.marca, preco: d.preco, custo: d.custo || "", quantidade: d.quantidade,
+    aplicacoes: aps.length ? `${aps.filter((a) => a.confirmada).length} confirmada(s) de ${aps.filter((a) => !a.recusada).length}: ${aps.filter((a) => !a.recusada).map((a) => [a.montadora, resumoAplicacao(a)].filter(Boolean).join(" ")).join("; ")}` : "",
+    peso: g ? String(g) : "",
+    comprimento: pm.comprimentoFreteML || "", largura: pm.larguraFreteML || "", altura: pm.alturaFreteML || "",
+  };
+}
+
+/**
+ * Grava UM campo a partir do que foi dito/digitado nele.
+ * @returns {{ ficha, ok, erro?, valor? }}
+ */
+export function definirCampoDireto(ficha, campoId, texto, { origem = "voz", agora = Date.now() } = {}) {
+  const t = txt(texto).replace(/[.!?]+$/, "");
+  if (!t) return { ficha, ok: false, erro: "Não ouvi nada. Fale de novo ou digite." };
+  let f = ficha;
+  const item = (campo, valor) => aplicarInterpretacao(f, { itens: [{ campo, valor }], naoEntendido: [], avisos: [] }, { origem, agora, textoOriginal: t }).ficha;
+  if (campoId === "marca") {
+    const m = cap(t.replace(/^(?:a\s+)?(?:marca\s+)?(?:[eé]\s+)?(?:da\s+)?/i, ""));
+    if (!m || m.length > 40) return { ficha, ok: false, erro: "Não entendi a marca." };
+    return { ficha: item("marca", m), ok: true, valor: m };
+  }
+  if (campoId === "preco") {
+    const v = lerPreco(t.replace(/^(?:o\s+)?(?:pre[cç]o\s+)?(?:[eé]\s+)?/i, "").replace(/\s*reais?\b/i, ""));
+    if (!(v > 0)) return { ficha, ok: false, erro: "Não entendi o preço (ex.: 39,90)." };
+    return { ficha: item("preco", v), ok: true, valor: Number(v).toFixed(2).replace(".", ",") };
+  }
+  if (campoId === "custo") {
+    const v = lerPreco(t.replace(/^(?:o\s+)?(?:pre[cç]o\s+de\s+)?(?:custo\s+)?(?:[eé]\s+)?/i, "").replace(/\s*reais?\b/i, ""));
+    if (!(v > 0)) return { ficha, ok: false, erro: "Não entendi o custo (ex.: 12,50)." };
+    return { ficha: item("custo", v), ok: true, valor: Number(v).toFixed(2).replace(".", ",") };
+  }
+  if (campoId === "aplicacoes") {
+    // anotadas DESMARCADAS: só entram no anúncio quando você marcar (confirmação)
+    const novas = /^(?:n[aã]o\s+sei|sei\s+l[aá]|sem\s+aplica|nenhum|pular|deixa)/i.test(t.trim()) ? [] : aplicacoesDitas(t);
+    if (!novas.length) return { ficha, ok: false, erro: "Não entendi o veículo (ex.: Renault Master 2013 a 2022)." };
+    const g = JSON.parse(JSON.stringify(f));
+    for (const ap of novas) incluirAplicacao(g, ap, { origem: "usuario", agora, confirmada: false });
+    return { ficha: g, ok: true, valor: novas.map((a) => [a.montadora, resumoAplicacao(a)].filter(Boolean).join(" ")).join("; "), confirmar: true };
+  }
+  if (campoId === "quantidade") {
+    const v = lerInteiro(t.replace(/^(?:tenho|s[aã]o|[eé]|estoque(?:\s+de)?)\s+/i, "").replace(/\s*(?:unidades?|pe[cç]as?|un|pcs?)$/i, ""));
+    if (!(Number.isInteger(v) && v > 0)) return { ficha, ok: false, erro: "Não entendi o estoque (ex.: 10)." };
+    return { ficha: item("quantidade", v), ok: true, valor: String(v) };
+  }
+  if (campoId === "peso") {
+    // campo em gramas: número sem unidade = gramas (é a unidade do campo); “1,2 quilo” também vale
+    const comUnidade = /\b(g|gr|grs|gramas?|kg|kgs|quilos?|kilos?|quilogramas?)\b/i.test(t) ? t : `${t} gramas`;
+    const pm = lerPesoEMedidas([comUnidade]);
+    if (!(pm.peso_g > 0)) return { ficha, ok: false, erro: "Não entendi o peso (ex.: 200 ou 1,2 quilo)." };
+    return { ficha: gravarMedidas(f, { peso_g: pm.peso_g }), ok: true, valor: String(pm.peso_g) };
+  }
+  if (["comprimento", "largura", "altura"].includes(campoId)) {
+    // “20 por 10 por 5” num campo preenche os três; senão só este (em cm se não disser a unidade)
+    const tripla = lerPesoEMedidas([/\b(cm|mm|m|centimetros?|milimetros?|metros?)\b/i.test(t) ? t : `${t} cm`]);
+    if (tripla.comprimento_cm > 0 && tripla.largura_cm > 0 && tripla.altura_cm > 0) {
+      return { ficha: gravarMedidas(f, tripla), ok: true, valor: `${virg(tripla.comprimento_cm)} × ${virg(tripla.largura_cm)} × ${virg(tripla.altura_cm)}`, tres: true };
+    }
+    const um = lerPesoEMedidas([`${campoId} ${/\b(cm|mm|m|centimetros?|milimetros?|metros?)\b/i.test(t) ? t : `${t} cm`}`]);
+    const v = um[`${campoId}_cm`];
+    if (!(v > 0)) return { ficha, ok: false, erro: `Não entendi ${campoId === "altura" ? "a altura" : `o ${campoId}`} (ex.: 20).` };
+    return { ficha: gravarMedidas(f, { [`${campoId}_cm`]: v }), ok: true, valor: virg(v) };
+  }
+  return { ficha, ok: false, erro: "Campo desconhecido." };
+}
+
+/** Próximo campo direto ainda vazio, depois de `atual` (ou o primeiro). */
+export function proximoCampoDireto(ficha, atual = "") {
+  const v = valoresCamposDiretos(ficha);
+  const ordem = CAMPOS_DIRETOS.map((c) => c.id);
+  const i = ordem.indexOf(atual);
+  const depois = [...ordem.slice(i + 1), ...ordem.slice(0, Math.max(0, i + 1))];
+  const opcional = new Set(CAMPOS_DIRETOS.filter((c) => c.opcional).map((c) => c.id));
+  return depois.find((id) => !txt(v[id]) && !opcional.has(id)) || "";
+}
+
+/**
+ * (04/11) Dados do cadastro Bling (bling-integracao:buscar_produto, só leitura) →
+ * preenche SÓ os campos ainda vazios da ficha. Nada é gravado no Bling.
+ * @returns {{ ficha, usados: string[] }}
+ */
+export function usarDadosDoBling(ficha, produto, { agora = Date.now() } = {}) {
+  if (!produto || typeof produto !== "object") return { ficha, usados: [] };
+  const v = valoresCamposDiretos(ficha);
+  const n = (x) => { const y = Number(String(x ?? "").replace(",", ".")); return Number.isFinite(y) && y > 0 ? y : 0; };
+  const candidatos = {
+    marca: txt(produto.marca),
+    preco: n(produto.preco) ? String(n(produto.preco)).replace(".", ",") : "",
+    custo: n(produto.precoCusto ?? produto.preco_custo ?? produto.custo) ? String(n(produto.precoCusto ?? produto.preco_custo ?? produto.custo)).replace(".", ",") : "",
+    peso: n(produto.peso_bruto ?? produto.pesoBruto ?? produto.peso_liquido ?? produto.pesoLiquido) ? String(Math.round(n(produto.peso_bruto ?? produto.pesoBruto ?? produto.peso_liquido ?? produto.pesoLiquido) * 1000)) : "",
+    comprimento: n(produto.profundidade) ? String(n(produto.profundidade)) : "",
+    largura: n(produto.largura) ? String(n(produto.largura)) : "",
+    altura: n(produto.altura) ? String(n(produto.altura)) : "",
+  };
+  let f = ficha;
+  const usados = [];
+  for (const [id, valor] of Object.entries(candidatos)) {
+    if (!valor || txt(v[id])) continue; // nunca sobrescreve o que já está na ficha
+    const r = definirCampoDireto(f, id, valor, { origem: "bling", agora });
+    if (r.ok) { f = r.ficha; usados.push(id); }
+  }
+  return { ficha: f, usados };
+}

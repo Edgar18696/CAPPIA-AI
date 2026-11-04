@@ -226,7 +226,7 @@ export async function sincronizarFichaVoz(voz, regs, deps) {
     },
     ...(c ? {
       // Ficha completa (Etapa 1): dados estruturados para a Conferência/Revisão.
-      complemento: { marca: txt(c.marca), quantidadeEstoque: txt(c.quantidade), codigoNormalizado: txt(voz.codigoNormalizado) },
+      complemento: { marca: txt(c.marca), quantidadeEstoque: txt(c.quantidade), codigoNormalizado: txt(voz.codigoNormalizado), ...(txt(c.custo) ? { custo: txt(c.custo) } : {}) },
       aplicacoes: Array.isArray(c.aplicacoes) ? c.aplicacoes : [],
       tipoVeiculoOrigem: novoTipo && novoTipo === txt(c.tipoVeiculo) ? txt(c.tipoVeiculoOrigem) : novoTipo ? "computador" : "",
       pendencias: Array.isArray(c.pendencias) ? c.pendencias : [],

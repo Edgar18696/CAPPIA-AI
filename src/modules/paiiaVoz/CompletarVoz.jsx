@@ -52,8 +52,6 @@ export default function CompletarVoz({ historico = [], pergunta = null, fim = nu
     falarTexto(fala, { aoComecar: () => { setFalando(true); aoFalar?.(true, fala); }, aoTerminar: () => { setFalando(false); aoFalar?.(false); } });
   }, [fala, falar, ocupado, aoFalar]);
   useEffect(() => () => { try { globalThis.speechSynthesis?.cancel(); } catch { /* sem voz */ } }, []);
-  // Ao abrir: o cartão fica à vista (uma vez; depois a página não pula).
-  useEffect(() => { try { cartaoRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" }); } catch { /* sem rolagem */ } }, []);
 
   function enviar(e) {
     e?.preventDefault?.();

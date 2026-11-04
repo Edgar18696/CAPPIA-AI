@@ -26,7 +26,7 @@ import { lerPesoEMedidas, camposDadosTecnicos, textoPesoMedidas } from "./pesoMe
 import { padronizarTitulo, padronizarDescricao } from "../../../services/padronizarTextoAnuncio.js";
 
 export const ETAPAS = ["fotos", "codigo", "titulo", "descricao", "enviar"];
-export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", titulo: "Título", descricao: "Descrição", enviar: "Completar" };
+export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", titulo: "Título", descricao: "Descrição", enviar: "Enviar" };
 export const LIMITE_TITULO = 60;
 export const MARCA_PADRAO = "Torken";
 
@@ -34,7 +34,7 @@ export const PERGUNTAS = {
   fotos: "Tire ou escolha até 5 fotos da peça. Pode continuar com menos. Quando terminar, toque em Continuar ou diga “próximo”.",
   codigo: "Qual é o código da peça? Fale ou digite. Se não tiver, diga “sem código”.",
   titulo: "Qual é o título do anúncio? Fale ou digite (até 60 caracteres). Para corrigir: “troca … por …”, “tira …”, “acrescenta …”.",
-  descricao: "Descreva a peça do seu jeito. Eu organizo no modelo da loja. Cada fala é acrescentada; para corrigir: “troca … por …”, “tira …”.",
+  descricao: "Descreva a peça do seu jeito (cada fala é acrescentada). Depois toque no 🎤 de cada campo — marca, preço, estoque, peso e medidas — e fale.",
   enviar: "Confira o resumo. Se estiver certo, envie ao Novo Anúncio — lá vêm a Conferência e a aprovação antes de qualquer publicação.",
 };
 

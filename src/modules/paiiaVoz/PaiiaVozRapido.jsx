@@ -66,7 +66,7 @@ import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVo
 import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 // (03/11/2026) Pacote C: conversa “Completar a ficha” (só o que falta) na etapa final.
 import CompletarVoz from "./CompletarVoz";
-import { camposDaFicha } from "./servicos/completarVoz";
+import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling } from "./servicos/completarVoz";
 import { proximaPerguntaCompletar, responderCompletar, aberturaCompletar, fimCompletar, estadoCompletar, registrarConferencia, anotarFalaPaiia } from "./servicos/completarVoz";
 import { prepararEGravar, definirModalidadeEGravar, confirmarCategoriaEGravar } from "./servicos/preparoVozService";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
@@ -94,6 +94,11 @@ function manterMicPadrao() {
   return Boolean(globalThis.matchMedia?.("(pointer: coarse)")?.matches);
 }
 
+// (04/11) Assinatura dos dados completos (custo, peso, medidas, aplicações) para salvar na conta quando mudarem.
+function marcaCompletos(ficha) {
+  try { const c = dadosCompletosVoz(ficha, { fotos: 1 }); return JSON.stringify([c.custo || "", c.medida || null, (c.aplicacoes || []).length, c.tipoVeiculo || ""]); } catch { return ""; }
+}
+
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
   const [aviso, setAviso] = useState("");
@@ -108,7 +113,12 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [confirmandoNova, setConfirmandoNova] = useState(false);
   const [editandoFinal, setEditandoFinal] = useState(false);
   const [manterMic, setManterMic] = useState(manterMicPadrao);
-  const [ouvidoCodigo, setOuvidoCodigo] = useState(null); // (03/11) o que o celular ouviu no código (diagnóstico)
+  const [ouvidoCodigo, setOuvidoCodigo] = useState(null);
+  // (04/11) Campo tocado para ditar (Marca, Preço, Estoque, Peso, Medidas): o texto aparece nele enquanto você fala.
+  const [campoVoz, setCampoVozEstado] = useState("");
+  const [lendoBlingVoz, setLendoBlingVoz] = useState(false);
+  const campoVozRef = useRef("");
+  const setCampoVoz = useCallback((id) => { campoVozRef.current = id; setCampoVozEstado(id); }, []); // (03/11) o que o celular ouviu no código (diagnóstico)
   const fichaRef = useRef(ficha);
   const reconhecedorRef = useRef(null);
   const fotoRef = useRef(null);
@@ -258,7 +268,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   }, [modoIA, usuario?.id, idsFotos, fichaId]);
   const marcaFotos = fotos.map((f) => `${f.id}:${f.versao}:${f.usarNoAnuncio ? 1 : 0}:${f.ia?.estado || ""}:${f.reg?.nuvem?.original ? 1 : 0}:${f.reg?.nuvem?.tratada ? 1 : 0}`).join(",");
   const r0 = estadoRapido(ficha);
-  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}|${ficha?.campos?.marca?.valor ?? ""}|${ficha?.campos?.quantidade?.valor ?? ""}`; // (02/11) marca/estoque também salvam na conta
+  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}|${ficha?.campos?.marca?.valor ?? ""}|${ficha?.campos?.quantidade?.valor ?? ""}|${marcaCompletos(ficha)}`; // (02/11) marca/estoque também salvam na conta; (04/11) custo, peso, medidas e aplicações também
   useEffect(() => {
     if (!usuario?.id) return undefined;
     const t = setTimeout(() => { sincronizar(); }, 1200);
@@ -329,6 +339,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
 
   // ---------------- Navegação ----------------
   const irPara = useCallback((e) => {
+    campoVozRef.current = ""; // saiu do passo: nenhum campo continua “ouvindo”
+    setCampoVozEstado("");
     setConfirmandoEnvio(false);
     setAviso("");
     mudarFicha(irParaEtapa(fichaRef.current, e));
@@ -379,6 +391,24 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     });
   }
 
+  // (04/11) Cadastro Bling: SÓ leitura e SÓ quando você pede; preenche apenas campos vazios.
+  async function trazerDoBling() {
+    const cod = codigoPrincipal(fichaRef.current)?.codigo;
+    if (!cod || lendoBlingVoz) return;
+    setLendoBlingVoz(true);
+    try {
+      const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "buscar_produto", codigo: cod } });
+      if (!data?.ok || !data.produto) { setAviso(data?.encontrado === false ? `O SKU ${cod} não foi encontrado no Bling. Preencha pelos campos.` : "Não consegui ler o Bling agora. Preencha pelos campos."); return; }
+      const r = usarDadosDoBling(fichaRef.current, data.produto);
+      if (r.usados.length) mudarFicha(r.ficha);
+      setAviso(r.usados.length ? `Do Bling (confira): ${r.usados.map((id) => CAMPOS_DIRETOS.find((c) => c.id === id)?.rotulo || id).join(", ")}. O que já estava na ficha não foi trocado.` : "O Bling não tem dados novos para os campos vazios.");
+    } catch {
+      setAviso("Não consegui ler o Bling agora. Preencha pelos campos.");
+    } finally {
+      setLendoBlingVoz(false);
+    }
+  }
+
   async function lerCodigoNasFotos() {
     const primeira = fotos[0];
     if (!primeira) { setAviso("Tire ou escolha uma foto primeiro."); return; }
@@ -402,9 +432,11 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [completarOcupado, setCompletarOcupado] = useState("");
   const [versaoRevisao, setVersaoRevisao] = useState(0);
   const [verRevisaoAntes, setVerRevisaoAntes] = useState(false);
+  const [conversaAberta, setConversaAberta] = useState(false);
+  const conversaAbertaRef = useRef(false);
   const [recenteCompletar, setRecenteCompletar] = useState("");
   const vozConversaRef = useRef(false); // você ligou o microfone na conversa: ele volta sozinho depois de cada pergunta
-  const [falarPerguntas, setFalarPerguntas] = useState(() => { try { return localStorage.getItem("paiiaVozFalar") !== "0"; } catch { return true; } });
+  const [falarPerguntas, setFalarPerguntas] = useState(() => { try { return localStorage.getItem("paiiaVozFalar") === "1"; } catch { return true; } });
   const micAntesDeFalar = useRef(false);
   useEffect(() => {
     if (!recenteCompletar) return undefined;
@@ -498,7 +530,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     if (nav) {
       if (rr.etapa === "enviar" && nav === "proximo") { setConfirmandoEnvio(true); return; }
       // (03/11) Fluxo único: das fotos vai direto para a conversa (código, descrição e o resto).
-      irPara(rr.etapa === "fotos" && nav === "proximo" ? "enviar" : proximaEtapa(rr.etapa, nav === "proximo" ? 1 : -1));
+      irPara(proximaEtapa(rr.etapa, nav === "proximo" ? 1 : -1));
       return;
     }
     if (rr.etapa === "fotos") {
@@ -532,6 +564,20 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       }
       return;
     }
+    if (rr.etapa === "descricao" && campoVozRef.current) {
+      const id = campoVozRef.current;
+      const rotulo = CAMPOS_DIRETOS.find((c) => c.id === id)?.rotulo || id;
+      const res = definirCampoDireto(f, id, t, { origem });
+      const rec = reconhecedorRef.current;
+      const ouvirDeNovo = () => setTimeout(() => { try { if (rec && !rec.ouvindo && campoVozRef.current) rec.iniciar(); } catch { /* precisa de toque */ } }, 400);
+      if (!res.ok) { setAviso(`⚠️ ${rotulo}: ${res.erro}`); if (origem === "voz") ouvirDeNovo(); return; }
+      mudarFicha(res.ficha);
+      const prox = proximoCampoDireto(res.ficha, id);
+      setAviso(`✅ ${rotulo}: ${res.valor}${prox ? ` → agora ${CAMPOS_DIRETOS.find((c) => c.id === prox)?.rotulo}` : " · dados da peça completos"}`);
+      setCampoVoz(prox);
+      if (prox && origem === "voz") ouvirDeNovo(); // avança e já escuta o próximo campo
+      return;
+    }
     if (rr.etapa === "descricao") {
       // (02/11/2026) "marca …, preço …, quantidade …" ditos aqui vão para os CAMPOS
       // (não para o texto da descrição). Só quando a frase é inteira de campos.
@@ -561,10 +607,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       return;
     }
     if (rr.etapa === "enviar") {
-      if (proximaPerguntaCompletar(f, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }) || /^conferir/i.test(t)) { responderNaConversa(t, origem); return; }
+      if (conversaAbertaRef.current && (proximaPerguntaCompletar(f, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }) || /^conferir/i.test(t))) { responderNaConversa(t, origem); return; }
       setAviso("Toque em “Enviar ao Novo Anúncio” para conferir e confirmar.");
     }
-  }, [definirCodigo, irPara, mudarFicha, responderNaConversa]);
+  }, [definirCodigo, irPara, mudarFicha, responderNaConversa, setCampoVoz]);
 
   // Microfone
   useEffect(() => {
@@ -589,6 +635,20 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     else reconhecedorRef.current.iniciar();
   }, []);
 
+  const temParcial = Boolean(parcial);
+  // (04/11) O campo que está recebendo a fala fica sempre à vista (só rola se estiver fora da tela).
+  useEffect(() => {
+    if (!ouvindo) return;
+    const sel = campoVoz ? `[data-pv-campo-direto="${campoVoz}"]` : `[data-pr-bloco="${etapa}"] .pr-campo`;
+    const t = setTimeout(() => {
+      try {
+        const el = document.querySelector(sel);
+        const r = el?.getBoundingClientRect?.();
+        if (r && (r.top < 0 || r.bottom > window.innerHeight)) el.scrollIntoView?.({ block: "nearest" });
+      } catch { /* sem rolagem */ }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [ouvindo, campoVoz, etapa, aviso, temParcial]);
   // Ação pedida pela página inicial (microfone/foto/digitar).
   useEffect(() => {
     const t = setTimeout(() => {
@@ -619,9 +679,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const historicoCompletar = estadoCompletar(ficha).historico;
   // Ao chegar na etapa final: o PAIIA diz o que já tem e faz a primeira pergunta.
   useEffect(() => {
-    if (etapa !== "enviar" || !usuario?.id || historicoCompletar.length) return;
+    if (etapa !== "enviar" || !usuario?.id || !conversaAberta || historicoCompletar.length) return;
     mudarFicha(anotarFalaPaiia(fichaRef.current, aberturaCompletar(fichaRef.current, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }).texto));
-  }, [etapa, usuario?.id, historicoCompletar.length, mudarFicha]);
+  }, [etapa, usuario?.id, conversaAberta, historicoCompletar.length, mudarFicha]);
 
   async function enviarAoNovoAnuncio() {
     const f = fichaRef.current;
@@ -705,7 +765,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </button>
           <div className="pr-pergunta">
             <span className="pr-quem">PAIIA</span>
-            <p data-pr-pergunta>{etapa === "enviar" && usuario && perguntaCompletar ? perguntaCompletar.texto : PERGUNTAS[etapa]}</p>
+            <p data-pr-pergunta>{etapa === "enviar" && usuario && conversaAberta && perguntaCompletar ? perguntaCompletar.texto : PERGUNTAS[etapa]}</p>
             {parcial && <em className="pr-parcial">{parcial}</em>}
           </div>
         </div>
@@ -774,7 +834,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             <ul className="pr-fonte" data-pr-pendencias-ficha>{nuvem.pendencias.map((p) => <li key={p}>{p}</li>)}</ul>
           )}
           <p className="pr-dica">Todas as fotos vão para o anúncio na versão escolhida. A original fica sempre guardada; o fundo branco é preparado enquanto você preenche código, título e descrição.</p>
-          <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("enviar")} data-pr-continuar>Continuar →</button></div>
+          <div className="pr-nav"><span /><button type="button" className="pr-botao" onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>
         </section>
       )}
 
@@ -782,7 +842,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {etapa === "codigo" && (
         <section className="pr-bloco" data-pr-bloco="codigo">
           <label className="pr-rotulo" htmlFor="pr-codigo">Código da peça (SKU)</label>
-          <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo" />
+          <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo ? parcial : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo" />
           {ouvidoCodigo && ouvidoCodigo.codigo === (cp?.codigo || "") && <p className="pr-fonte" data-pr-ouvido>🎤 O celular ouviu: “{ouvidoCodigo.ouvido}” → anotei <b>{ouvidoCodigo.codigo}</b>. Traço só entra se você disser “traço”; para corrigir, digite acima.</p>}
           {cp && cp.conferido === false && (
             <label className="pr-check"><input type="checkbox" onChange={(e) => mudarFicha(conferirCodigo(fichaRef.current, cp.normalizado, e.target.checked))} /> Conferi o código letra por letra</label>
@@ -820,7 +880,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {etapa === "titulo" && (
         <section className="pr-bloco" data-pr-bloco="titulo">
           <label className="pr-rotulo" htmlFor="pr-titulo">Título ({r.titulo.valor.length}/{LIMITE_TITULO})</label>
-          <AreaTexto id="pr-titulo" valor={r.titulo.valor} onSalvar={(v) => mudarFicha(definirTitulo(fichaRef.current, v.replace(/\s*\n+\s*/g, " "), { origem: "digitado" }))} data="titulo" linhas={2} umaLinha erro={r.titulo.valor.length > LIMITE_TITULO} />
+          <AreaTexto id="pr-titulo" valor={r.titulo.valor} onSalvar={(v) => mudarFicha(definirTitulo(fichaRef.current, v.replace(/\s*\n+\s*/g, " "), { origem: "digitado" }))} data="titulo" linhas={2} umaLinha erro={r.titulo.valor.length > LIMITE_TITULO} ditando={ouvindo ? parcial : ""} />
           {avTitulo.avisos.filter((a) => !/^Falta/.test(a)).map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           <div className="pr-linha">
             {r.titulo.valor && <button type="button" className="pr-link" onClick={() => mudarFicha(definirTitulo(fichaRef.current, ajustarTitulo(r.titulo.valor, fichaRef.current), { origem: "ajuste" }))} data-pr-ajustar>Ajustar ao padrão</button>}
@@ -843,7 +903,38 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {etapa === "descricao" && (
         <section className="pr-bloco" data-pr-bloco="descricao">
           <label className="pr-rotulo" htmlFor="pr-desc">O que você falou ou digitou (uma informação por linha)</label>
-          <AreaTexto id="pr-desc" valor={r.descricao.texto} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, v))} data="descricao-texto" />
+          <AreaTexto id="pr-desc" valor={r.descricao.texto} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, v))} data="descricao-texto" ditando={ouvindo && !campoVoz ? parcial : ""} acrescentar />
+          {/* (04/11) Dados da peça: toque no 🎤 do campo e fale (ou digite). O texto aparece no campo enquanto você dita; depois vai para o próximo. */}
+          <div className="pr-cartao" data-pv-dados-diretos>
+            <span className="pr-rotulo">Dados da peça — toque no 🎤 do campo e fale, ou digite</span>
+            {cp?.codigo && (
+              <button type="button" className="pr-link" disabled={lendoBlingVoz} onClick={trazerDoBling} data-pv-dados-bling>{lendoBlingVoz ? "⏳ Lendo o cadastro Bling…" : "Usar dados do cadastro Bling (só nos campos vazios)"}</button>
+            )}
+            {CAMPOS_DIRETOS.map((c) => {
+              const valores = valoresCamposDiretos(ficha);
+              const ativo = campoVoz === c.id;
+              const ehAplic = c.id === "aplicacoes";
+              return (
+                <div key={c.id}>
+                  {ehAplic && (
+                    <p className="pr-fonte" data-pv-frete-info>🚚 <b>Frete:</b> calculado pelo Mercado Livre na conferência final, com o preço, o peso e as medidas acima. O PAIIA não estima frete.</p>
+                  )}
+                  <div className={`pr-campo-direto ${ativo ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={c.id} data-estado={ativo ? (ouvindo ? "ouvindo" : "ativo") : valores[c.id] ? "ok" : "vazio"}>
+                    <label htmlFor={`pr-dd-${c.id}`}>{c.rotulo}{c.opcional ? " — opcional" : ""}{ativo && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
+                    <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <CampoTexto id={`pr-dd-${c.id}`} campoVoz={c.id} valor={ehAplic ? "" : valores[c.id]} ditando={ativo && ouvindo ? (parcial || " ") : ""} inputMode={["marca", "aplicacoes"].includes(c.id) ? "text" : "decimal"}
+                        onSalvar={(v) => { if (!String(v).trim()) return; const res = definirCampoDireto(fichaRef.current, c.id, v, { origem: "digitado" }); if (res.ok) mudarFicha(res.ficha); else setAviso(`⚠️ ${c.rotulo}: ${res.erro}`); }} data={`dado-${c.id}`} />
+                      {suporta && !avisoVoz && (
+                        <button type="button" className={`pr-mic-campo ${ativo && ouvindo ? "pr-mic-ouvindo" : ""}`} aria-label={`Falar ${c.rotulo}`} aria-pressed={ativo && ouvindo} data-pv-campo-mic={c.id}
+                          onClick={() => { const rec = reconhecedorRef.current; if (ativo && ouvindo) { setCampoVoz(""); rec?.parar(); return; } setCampoVoz(c.id); setErroVoz(""); try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* sem microfone */ } }}>🎤</button>
+                      )}
+                    </div>
+                    {ehAplic && valores.aplicacoes && <p className="pr-fonte" data-pv-aplicacoes-resumo>{valores.aplicacoes} — marque as certas na lista abaixo.</p>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
           {organizada.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {organizada.medidas.length > 0 && (
             <div className="pr-cartao pr-cinza" data-pr-medidas>
@@ -887,14 +978,27 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* ---------------- 5 Enviar ---------------- */}
       {etapa === "enviar" && (
         <section className="pr-bloco" data-pr-bloco="enviar">
+          {/* (04/11) Pendências à vista; a conversa é OPCIONAL (fechada) e nunca substitui os campos. */}
+          {(() => {
+            const pend = dadosCompletosVoz(ficha, { fotos: fotosUsadas.length }).pendencias;
+            return pend.length ? (
+              <div className="pr-cartao" data-pv-pendencias-envio>
+                <strong>Falta completar ({pend.length})</strong>
+                <ul className="pr-fonte">{pend.map((x) => <li key={x}>{x}</li>)}</ul>
+                <button type="button" className="pr-link" onClick={() => irPara("descricao")} data-pv-ir-campos>← Completar nos campos (Descrição)</button>
+              </div>
+            ) : <p className="pr-ok" data-pv-ficha-completa>✅ Ficha completa: confira a revisão abaixo.</p>;
+          })()}
           {usuario && (
+            <details className="pr-fonte" open={conversaAberta} onToggle={(e) => { conversaAbertaRef.current = e.currentTarget.open; setConversaAberta(e.currentTarget.open); }} data-pv-conversa-opcional>
+              <summary>Completar conversando com o PAIIA (opcional)</summary>
             <CompletarVoz
               historico={historicoCompletar}
               pergunta={perguntaCompletar}
               fim={perguntaCompletar ? null : fimCompletar(ficha, { fotos: fotosUsadas.length })}
               contas={contasCompletar}
               ocupado={completarOcupado}
-              falar={falarPerguntas}
+              falar={falarPerguntas && conversaAberta}
               onFalar={(v) => { setFalarPerguntas(v); try { localStorage.setItem("paiiaVozFalar", v ? "1" : "0"); } catch { /* sem localStorage */ } }}
               onResponder={(t) => responderNaConversa(t, "digitado")}
               aoFalar={aoFalarPergunta}
@@ -905,6 +1009,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               recente={recenteCompletar}
               onMicrofone={() => { vozConversaRef.current = !ouvindo; ligarMicrofone(); }}
             />
+            </details>
           )}
           <span className="pr-rotulo">Fotos que vão para o Novo Anúncio</span>
           <div className="pr-envio-fotos" data-pr-envio-fotos>
@@ -934,7 +1039,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Para enviar falta: {validacao.faltando.join(", ")}.</p>}
           {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para o Novo Anúncio salvar o anúncio e as fotos.</p>}
-          {usuario && (perguntaCompletar && !verRevisaoAntes ? (
+          {usuario && (conversaAberta && perguntaCompletar && !verRevisaoAntes ? (
             <p className="pr-fonte" data-pv-revisao-depois>📋 A revisão aparece aqui quando a conversa terminar. <button type="button" className="pr-link" onClick={() => setVerRevisaoAntes(true)} data-pv-ver-revisao>Ver a revisão agora</button></p>
           ) : <PreparoPublicacaoVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />)}
           {confirmandoEnvio ? (
@@ -995,15 +1100,19 @@ function EstadoFotoIA({ f, modoIA, onRepetir, curto = false }) {
 }
 
 /** Campo de uma linha: edita livre e salva ao sair (Enter também). */
-function CampoTexto({ id, valor, onSalvar, data, erro = false }) {
+function CampoTexto({ id, valor, onSalvar, data, erro = false, ditando = "", inputMode, campoVoz }) {
   const [texto, setTexto] = useState(valor);
   const [focado, setFocado] = useState(false);
-  const mostrado = focado ? texto : valor;
+  // (04/11) Enquanto você fala, o texto reconhecido aparece no próprio campo.
+  const mostrado = ditando ? ditando : focado ? texto : valor;
   return (
     <input
       id={id}
-      className={`pr-campo ${erro ? "pr-campo-erro" : ""}`}
+      className={`pr-campo ${erro ? "pr-campo-erro" : ""} ${ditando ? "pr-campo-ditando" : ""}`}
       value={mostrado}
+      readOnly={Boolean(ditando)}
+      inputMode={inputMode}
+      data-pv-campo-voz={campoVoz}
       onFocus={() => { setTexto(valor); setFocado(true); }}
       onChange={(e) => setTexto(e.target.value)}
       onBlur={() => { setFocado(false); if (texto !== valor) onSalvar(texto); }}
@@ -1013,16 +1122,19 @@ function CampoTexto({ id, valor, onSalvar, data, erro = false }) {
   );
 }
 
-function AreaTexto({ id, valor, onSalvar, data, linhas = 5, umaLinha = false, erro = false }) {
+function AreaTexto({ id, valor, onSalvar, data, linhas = 5, umaLinha = false, erro = false, ditando = "", acrescentar = false }) {
   const [texto, setTexto] = useState(valor);
   const [focado, setFocado] = useState(false);
+  // (04/11) Enquanto você fala, o texto reconhecido aparece no próprio campo (na descrição, como linha nova).
+  const mostrado = ditando ? (acrescentar && valor ? `${valor}\n${ditando}` : ditando) : focado ? texto : valor;
   return (
     <textarea
       id={id}
-      className={`pr-campo ${erro ? "pr-campo-erro" : ""}`}
+      className={`pr-campo ${erro ? "pr-campo-erro" : ""} ${ditando ? "pr-campo-ditando" : ""}`}
       rows={linhas}
+      readOnly={Boolean(ditando)}
       onKeyDown={umaLinha ? (e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } } : undefined}
-      value={focado ? texto : valor}
+      value={mostrado}
       onFocus={() => { setTexto(valor); setFocado(true); }}
       onChange={(e) => setTexto(e.target.value)}
       onBlur={() => { setFocado(false); if (texto !== valor) onSalvar(texto); }}
@@ -1102,6 +1214,12 @@ const CSS_RAPIDO = `
 .pr-resumo dt { color: #94a3b8; }
 .pr-resumo dd { margin: 0; overflow-wrap: anywhere; }
 .pr-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+.pr-campo-direto { margin: 6px 0; }
+.pr-campo-direto label { display: block; font-size: 14px; margin-bottom: 2px; }
+.pr-campo-ativo label { font-weight: 700; color: #7dd3fc; }
+.pr-campo-ditando { border-color: #38bdf8 !important; box-shadow: 0 0 0 2px rgba(56,189,248,.35); }
+.pr-mic-campo { flex: 0 0 auto; width: 46px; min-height: 42px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; font-size: 20px; }
+.pr-mic-campo.pr-mic-ouvindo { background: #0ea5e9; }
 .pr-rodape { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-bottom: 32px; color: #94a3b8; font-size: 13px; }
 @media (max-width: 480px) { .pr-topo h1 { font-size: 19px !important; } .pr-sub { display: none; } }
 `;

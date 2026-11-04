@@ -134,8 +134,10 @@ export function dadosCompletosVoz(ficha, { fotos = 0 } = {}) {
   if (naoConferidas) pendencias.push(`${naoConferidas} aplicação(ões) ainda não conferida(s): ficam de fora.`);
   for (const d of med.duvidas) pendencias.push(`Peso/medidas: ${d}`);
 
+  const cu = Number(campos.custo?.valor);
+  const custo = Number.isFinite(cu) && cu > 0 ? cu.toFixed(2).replace(".", ",") : ""; // (04/11) custo dito; nunca estimado
   return {
-    marca, quantidade, preco,
+    marca, quantidade, preco, custo,
     tipoVeiculo: tipo.valor, tipoVeiculoOrigem: tipo.origem,
     medida: med.medida,
     aplicacoes,
