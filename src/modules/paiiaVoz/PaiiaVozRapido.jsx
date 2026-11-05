@@ -24,6 +24,8 @@ import {
   removerCodigo,
   confirmarAplicacao,
   removerAplicacao,
+  editarAplicacao,
+  textoAplicacao,
   codigoPrincipal,
   codigosAdicionais,
   codigosParaDescricao,
@@ -105,7 +107,7 @@ function manterMicPadrao() {
 
 // (04/11) Assinatura dos dados completos (custo, peso, medidas, aplicações) para salvar na conta quando mudarem.
 function marcaCompletos(ficha) {
-  try { const c = dadosCompletosVoz(ficha, { fotos: 1 }); return JSON.stringify([c.custo || "", c.medida || null, (c.aplicacoes || []).length, c.tipoVeiculo || ""]); } catch { return ""; }
+  try { const c = dadosCompletosVoz(ficha, { fotos: 1 }); return JSON.stringify([c.custo || "", c.medida || null, c.aplicacoes || [], c.tipoVeiculo || ""]); } catch { return ""; } // (05/11) conteúdo das aplicações, não só a quantidade (corrigida também salva)
 }
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
@@ -124,6 +126,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ouvidoCodigo, setOuvidoCodigo] = useState(null);
   // (04/11) Campo tocado para ditar (Marca, Preço, Estoque, Peso, Medidas): o texto aparece nele enquanto você fala.
   const [campoVoz, setCampoVozEstado] = useState("");
+  const [editandoAp, setEditandoAp] = useState(""); // (05/11) aplicação em correção
   const [lendoBlingVoz, setLendoBlingVoz] = useState(false);
   const campoVozRef = useRef("");
   const setCampoVoz = useCallback((id) => { campoVozRef.current = id; setCampoVozEstado(id); }, []); // (03/11) o que o celular ouviu no código (diagnóstico)
@@ -185,6 +188,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // para a MESMA ficha do Novo Anúncio. Uma gravação por vez; se algo mudar
   // durante a gravação, grava de novo no fim. Falha não apaga nada.
   const [nuvem, setNuvem] = useState({ estado: "", texto: "" });
+  const [versaoNuvem, setVersaoNuvem] = useState(0); // (05/11) muda a cada gravação na conta: a Finalizar relê a ficha
   const depsNuvem = useMemo(() => ({
     usuarioId: usuario?.id || "",
     guarda,
@@ -224,6 +228,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         guardarFichaVoz(comId);
       }
       const hora = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      if (res.ok) setVersaoNuvem((v) => v + 1);
       setNuvem(res.ok
         ? { estado: "salva", repetir: res.erros.length > 0, pendencias: res.pendencias || [], texto: `☁️ Ficha salva na sua conta às ${hora} · ${res.fotosNaFicha} foto(s) na ficha${res.completa ? " · ficha completa ✔" : res.pendencias?.length ? ` · falta(m) ${res.pendencias.length} item(ns)` : ""}${res.conflitos.length ? ` · ${res.conflitos.join(", ")} editado(s) no computador: mantido o do computador` : ""}${res.erros.length ? ` · ⚠️ ${res.erros.length} foto(s) ainda não enviada(s) — tento de novo sozinho` : ""}` }
         : { estado: res.estado, repetir: res.estado === "erro" || Boolean(res.erros?.length), texto: res.estado === "aguardando-codigo" ? "☁️ As fotos e os dados vão para a sua conta assim que o código for informado (até lá ficam guardados neste aparelho)." : res.estado === "sem-login" ? `⚠️ ${res.erro}` : `⚠️ ${res.erro}` });
@@ -276,6 +281,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   }, [modoIA, usuario?.id, idsFotos, fichaId]);
   const marcaFotos = fotos.map((f) => `${f.id}:${f.versao}:${f.usarNoAnuncio ? 1 : 0}:${f.ia?.estado || ""}:${f.reg?.nuvem?.original ? 1 : 0}:${f.reg?.nuvem?.tratada ? 1 : 0}`).join(",");
   const r0 = estadoRapido(ficha);
+  // (05/11) Ao chegar na Finalizar, grava na conta na hora (a conferência usa os dados mais novos).
+  useEffect(() => {
+    if (etapa === "finalizar" && usuario?.id) sincronizar();
+  }, [etapa, usuario?.id, sincronizar]);
   const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}|${ficha?.campos?.marca?.valor ?? ""}|${ficha?.campos?.quantidade?.valor ?? ""}|${marcaCompletos(ficha)}|${codigosParaDescricao(ficha).join(",")}`; // (02/11) marca/estoque também salvam na conta; (04/11) custo, peso, medidas e aplicações também
   useEffect(() => {
     if (!usuario?.id) return undefined;
@@ -351,6 +360,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const inicial = e === "descricao" && !estadoRapido(fichaRef.current).titulo.valor ? "titulo" : "";
     campoVozRef.current = inicial;
     setCampoVozEstado(inicial);
+    setEditandoAp("");
     setConfirmandoEnvio(false);
     setAviso("");
     mudarFicha(irParaEtapa(fichaRef.current, e));
@@ -395,6 +405,18 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const res = aplicarInterpretacao(fichaRef.current, { itens: [{ campo: "codigoAdicional", valor: codigo, soletrado }], naoEntendido: [], avisos: [] }, { origem: soletrado ? "voz" : "digitado", textoOriginal: `código adicional: ${codigo}` });
     mudarFicha(res.ficha);
     setAviso(`Código adicional ${codigo} anotado${ouvido && ouvido.trim() !== codigo ? ` (ouvi “${ouvido.trim()}”)` : ""}.${soletrado ? " Foi ditado: marque “conferido” para ele entrar na descrição." : ""}`);
+  }, [mudarFicha]);
+
+  // (05/11) Aplicação corrigida: mesmo registro, volta a pendente (nova confirmação + nova validação no catálogo).
+  const salvarAplicacaoEditada = useCallback((id, texto) => {
+    const atual = fichaRef.current.aplicacoes.find((x) => x.id === id);
+    if (!atual || String(texto || "").trim() === textoAplicacao(atual)) return;
+    const r = editarAplicacao(fichaRef.current, id, texto);
+    if (!r.ok) { setAviso(`⚠️ ${r.erro}`); return; }
+    mudarFicha(r.ficha);
+    setEditandoAp("");
+    if (campoVozRef.current === `ap:${id}`) { campoVozRef.current = ""; setCampoVozEstado(""); }
+    setAviso(`✏️ Aplicação corrigida: ${textoAplicacao(r.aplicacao)}. Confira e marque de novo — o catálogo do Mercado Livre valida de novo na Finalizar.`);
   }, [mudarFicha]);
 
   function aproveitarBase() {
@@ -597,6 +619,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         setAviso(`✅ Tipo de veículo: ${tipo}`);
         return;
       }
+      if (rr.etapa === "compat" && String(campoVozRef.current || "").startsWith("ap:")) { salvarAplicacaoEditada(campoVozRef.current.slice(3), t); return; }
       const id = rr.etapa === "compat" ? "aplicacoes" : (campoVozRef.current && CAMPOS_DIRETOS.find((c) => c.id === campoVozRef.current)?.etapa === rr.etapa ? campoVozRef.current : proximoCampoDireto(f, "", { etapa: rr.etapa }) || camposDaEtapa(rr.etapa)[0]?.id);
       const rotulo = CAMPOS_DIRETOS.find((c) => c.id === id)?.rotulo || id;
       const res = definirCampoDireto(f, id, t, { origem });
@@ -642,7 +665,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       if (conversaAbertaRef.current && (proximaPerguntaCompletar(f, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }) || /^conferir/i.test(t))) { responderNaConversa(t, origem); return; }
       setAviso("Na finalização, confira as pendências e use “Executar operações autorizadas”.");
     }
-  }, [definirCodigo, acrescentarCodigo, irPara, mudarFicha, responderNaConversa, setCampoVoz]);
+  }, [definirCodigo, acrescentarCodigo, salvarAplicacaoEditada, irPara, mudarFicha, responderNaConversa, setCampoVoz]);
 
   // Microfone
   useEffect(() => {
@@ -787,6 +810,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     mudarFicha(f);
     campoVozRef.current = "";
     setCampoVozEstado("");
+    setEditandoAp("");
     setParcial("");
     setOuvidoCodigo(null);
     setConfirmandoNova(false);
@@ -855,7 +879,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   );
 
   return (
-    <div className="pr" data-paiia-voz data-pr-etapa={etapa}>
+    <div className="pr" lang="pt-BR" data-paiia-voz data-pr-etapa={etapa}>
       <style>{CSS_RAPIDO}</style>
       <div className="pr-topo">
         <button type="button" className="pr-voltar" onClick={() => setScreen?.("home")}>← Início</button>
@@ -1138,7 +1162,20 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
                   <span>{[a.tipoVeiculo, a.montadora].filter(Boolean).join(" ")}{a.tipoVeiculo || a.montadora ? " · " : ""}{resumoAplicacao(a)}</span>
                 </label>
                 <span className={`pr-fonte pr-ap-${situacaoAplicacao(a).estado}`}>{situacaoAplicacao(a).estado === "confirmada" ? "✅" : situacaoAplicacao(a).estado === "ambigua" ? "⚠️" : "⏳"} {situacaoAplicacao(a).texto}</span>
-                <span className="pr-fonte">{a.origem === "usuario" ? "informada por você" : (a.fontes || []).join(" · ")}</span>
+                <span className="pr-fonte">{a.origem === "usuario" ? "informada por você" : (a.fontes || []).join(" · ")}{a.editadaEm ? " · corrigida" : ""}</span>
+                {/* (05/11) Corrigir a MESMA aplicação (teclado ou microfone), sem criar outra. */}
+                {campoVoz === `ap:${a.id}` || editandoAp === a.id ? (
+                  <div className={`pr-campo-direto ${campoVoz === `ap:${a.id}` ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={`ap:${a.id}`} data-pv-editando-aplicacao={a.id}>
+                    <label htmlFor={`pr-ap-${a.id}`}>Corrigir (fale ou digite; Enter salva){campoVoz === `ap:${a.id}` && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
+                    <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <CampoTexto id={`pr-ap-${a.id}`} valor={textoAplicacao(a)} ditando={campoVoz === `ap:${a.id}` && ouvindo ? parcial || " " : ""} onSalvar={(v) => salvarAplicacaoEditada(a.id, v)} data="aplicacao-editar" />
+                      {micCampo(`ap:${a.id}`, "Aplicação")}
+                    </div>
+                    <button type="button" className="pr-link" onClick={() => { setEditandoAp(""); if (campoVozRef.current === `ap:${a.id}`) setCampoVoz(""); }} data-pv-editar-fechar>Fechar</button>
+                  </div>
+                ) : (
+                  <button type="button" className="pr-link" onClick={() => setEditandoAp(a.id)} data-pv-editar-aplicacao>Editar</button>
+                )}
                 <button type="button" className="pr-link pr-perigo" onClick={() => mudarFicha(removerAplicacao(fichaRef.current, a.id))}>remover</button>
               </li>
             ))}
@@ -1209,7 +1246,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </>
             );
             return usuario
-              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} />
+              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} />
               : blocoFicha;
           })()}
           {usuario && (
@@ -1438,6 +1475,14 @@ const CSS_RAPIDO = `
 .pr-mic-campo.pr-mic-ouvindo { background: #0ea5e9; }
 .pr-folha { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 20; max-width: 744px; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
 .pr-ap-confirmada { color: #86efac; } .pr-ap-ambigua { color: #fde68a; } .pr-ap-pendente { color: #94a3b8; }
+/* (05/11) Celular: nada passa da largura da tela (botões quebram linha em vez de sair da tela). */
+.pr { width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.pr-bloco, .pr-cartao, .pr-assistente, .pr-campo-direto, .pr-linha > * { min-width: 0; max-width: 100%; }
+.pr-botao, .pr-link, .pr-conta, .pr-chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.pr-nav { flex-wrap: wrap; gap: 8px; }
+.pr-nav .pr-botao { margin-left: auto; }
+.pr-etapa { overflow: hidden; overflow-wrap: normal; word-break: normal; hyphens: auto; line-height: 1.15; text-align: center; }
+.pr img { max-width: 100%; }
 .pr-rodape { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-bottom: 32px; color: #94a3b8; font-size: 13px; }
 @media (max-width: 480px) { .pr-topo h1 { font-size: 19px !important; } .pr-sub { display: none; } }
 `;

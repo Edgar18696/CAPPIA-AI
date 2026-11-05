@@ -132,6 +132,12 @@ export function interpretarAplicacao(texto) {
   }
   if (anoInicio && anoFim && anoFim < anoInicio) [anoInicio, anoFim] = [anoFim, anoInicio];
 
+  // (05/11/2026) Válvulas: “16 válvulas”, “16 v”, “16V” e o “16” colado na cilindrada (“1.6 16”, “16 1.6”)
+  // são do MOTOR, nunca do nome do modelo. Número solto longe da cilindrada continua como foi dito.
+  resto = resto
+    .replace(/\b(8|12|16|20|24)\s*(?:valvulas?|v)\b/g, "$1v")
+    .replace(/\b(\d[.,]\d)\s+(8|12|16|20|24)\b(?![.,]\d)/g, "$1 $2v")
+    .replace(/(^|\s)(8|12|16|20|24)\s+(\d[.,]\d)\b/g, "$1$3 $2v");
   const motores = [];
   resto = resto.replace(/\b(\d[.,]\d)(?:\s*(8v|16v|12v|20v|24v|v6|v8|turbo|tsi|tfsi|flex|diesel|mpi|gdi))?\b/g, (m, cil, extra) => {
     const mot = `${cil.replace(",", ".")}${extra ? ` ${extra.toUpperCase()}` : ""}`;

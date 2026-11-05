@@ -63,6 +63,12 @@ export function compatSemCatalogo(row) {
   return Boolean(v && v.estado === "pergunta" && /nenhum veículo do catálogo confirmou/i.test(txt(v.texto)));
 }
 
+/** (05/11) Veículos validados pelo catálogo do ML na última conferência (ids). */
+export function compatValidadas(row) {
+  const v = row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.compatibilidade;
+  return v?.estado === "ok" && Array.isArray(v.veiculos) ? v.veiculos.filter(Boolean) : [];
+}
+
 export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilidade = false, liberado = false, marcar = {} } = {}) {
   const rev = montarRevisao(row);
   const prep = preparoAtual(row);
@@ -78,7 +84,9 @@ export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilid
   if (ausente) ops.push({ id: "bling_criar", marcada: Boolean(autorizarBling), exigeAutorizacao: true, detalhe: `SKU ${e.codigo} não existe no Bling. Só com a sua autorização específica; estoque inicial 0 (o estoque oficial continua lançado por você no Bling).` });
   // (04/11) Nenhuma operação vem marcada: você marca cada uma.
   ops.push({ id: "ml_publicar", marcada: Boolean(marcar.ml_publicar), detalhe: `${e.tipoAnuncio === "premium" ? "Premium" : "Clássico"} · ${rev.dados.preco} · ${e.quantidade || "?"} un. · conta ${prep.preparo?.conta || "?"}` });
-  if (nCompat && !semCompat) ops.push({ id: "ml_compat", marcada: Boolean(marcar.ml_compat), detalhe: `${nCompat} compatibilidade(s) confirmada(s)` });
+  // (05/11) Só aparece quando o CATÁLOGO do ML validou veículos (as informadas por você não bastam).
+  const validadas = compatValidadas(row);
+  if (validadas.length && !semCompat) ops.push({ id: "ml_compat", marcada: Boolean(marcar.ml_compat), detalhe: `${validadas.length} veículo(s) validado(s) pelo catálogo do Mercado Livre (de ${nCompat} aplicação(ões) informada(s) por você)` });
   ops.push({ id: "bling_vinculo", marcada: Boolean(marcar.ml_publicar), automatica: true, detalhe: "Acompanha a publicação, só leitura: o PAIIA não vincula nem altera estoque ou cadastro no Bling." });
   for (const o of ops) o.estado = est.ops[o.id]?.estado || "nao_iniciado";
   const motivo = !prep.valido ? "Conferência ainda não feita ou desatualizada."
@@ -86,7 +94,7 @@ export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilid
       : !ops.some((o) => o.marcada && !o.automatica) ? "Marque a(s) operação(ões) que você autoriza."
         : !liberado ? "Execução real ainda não liberada nesta versão (proteção do servidor contra duplicidade não comprovada)."
         : "";
-  return { revisao: rev, pendencias, ops, podeExecutar: !motivo, motivo, liberado, skuAusente: ausente, compatSemCatalogo: semCat, semCompatibilidade: semCompat, registro: est };
+  return { revisao: rev, pendencias, ops, podeExecutar: !motivo, motivo, liberado, skuAusente: ausente, compatSemCatalogo: semCat, semCompatibilidade: semCompat, registro: est, compat: { informadas: nCompat, validadas: validadas.length } };
 }
 
 /** Assinatura do que foi autorizado: se a ficha mudar, a autorização deixa de valer. */

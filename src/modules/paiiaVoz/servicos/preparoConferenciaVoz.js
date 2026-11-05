@@ -99,6 +99,40 @@ function resumoAvaliacao(a) {
   };
 }
 
+/**
+ * (05/11/2026) “Não é esta — procurar outra”: a MESMA busca da Conferência do
+ * computador (preditor do ML com o termo digitado + termos da peça, caminho,
+ * domínio e atributos, regras de compatibilidade e rejeições do SKU). Só lê.
+ * Devolve { ok, avaliacao } — nada é confirmado aqui.
+ */
+export async function buscarCategoriasVoz(row, termo, { conta = "", deps } = {}) {
+  const e = entradaDaFicha(row);
+  const contaId = txt(conta || e.conta).replace(/\D/g, "");
+  const termos = [...new Set([txt(termo), ...termosCategoria(e)].filter(Boolean))];
+  if (!termos.length) return { ok: false, erro: "Digite o nome técnico da peça para buscar." };
+  const lerItem = (mlb, c) => deps.chamarPublicacao({ acao: "ml_consulta", conta_ml: txt(c || contaId), metodo: "GET", caminho: `/items/${mlb}` });
+  const [consultas, rej] = await Promise.all([
+    consultarPreditor(termos, deps.lerJson),
+    lerRejeicoesDoSKU({ codigo: e.codigo, listarFichas: deps.listarFichas, lerItem }),
+  ]);
+  const rejeicoes = mesclarRejeicoes(e.categoriaDecisao?.rejeitadas || [], rej.lista).lista;
+  const ids = new Set([...consultas.flatMap((q) => q.sugestoes.map((s) => s.category_id)), ...rejeicoes.map((r) => r.categoria_id)].filter(Boolean));
+  const detalhes = {};
+  const cache = {};
+  for (const id of [...ids].slice(0, 16)) detalhes[id] = await lerDetalheCategoria(id, deps.lerJson, cache);
+  const avaliacao = avaliarCategorias({ tipoVeiculo: e.tipoVeiculo || "Carro/Caminhonete", textoPeca: txt(termo) || e.titulo, consultas, detalhes, evidencia: null, rejeicoes });
+  avaliacao.restricoes = rej.restricoes || [];
+  return { ok: true, avaliacao: resumoAvaliacao(avaliacao) };
+}
+
+/** (05/11) Categoria ESCOLHIDA por você (sugerida ou de outra busca): mesmo registro da Conferência. */
+export function confirmarCategoriaEscolhida(preparo, { candidata, avaliacao, revisao = null, agora = new Date().toISOString() } = {}) {
+  if (!candidata?.id) return { ok: false, erro: "Escolha uma categoria." };
+  if (candidata.rejeitada && !revisao) return { ok: false, erro: "Categoria rejeitada para este SKU: só com revisão registrada." };
+  if (!candidata.compativel && !revisao) return { ok: false, erro: "Categoria não passou na conferência: só com revisão registrada." };
+  return { ok: true, decisao: registrarConfirmacao(preparo?.categoria?.decisao || null, { candidata, avaliacao, revisao, agora }) };
+}
+
 /** Confirma (pelo Voz) a categoria sugerida, com o MESMO registro da Conferência. */
 export function confirmarCategoriaSugerida(preparo, { agora = new Date().toISOString() } = {}) {
   const cat = preparo?.verificacoes?.categoria;

@@ -16,7 +16,7 @@
 
 import { normalizarCodigo } from "../../../services/paizinhoPesquisa/codigoPaizinho.js";
 import { semAcento } from "./numerosFalados.js";
-import { MONTADORAS } from "./interpretarFala.js";
+import { MONTADORAS, interpretarAplicacao } from "./interpretarFala.js";
 // (23/10 - E6) Inicial maiúscula em cada palavra (preserva códigos, siglas, acentos e aplicações).
 import { padronizarTitulo, padronizarDescricao } from "../../../services/padronizarTextoAnuncio.js";
 
@@ -237,6 +237,43 @@ export function confirmarAplicacao(ficha, id, confirmada = true, { agora = Date.
   if (!a) return f;
   a.confirmada = Boolean(confirmada);
   return tocar(f, agora);
+}
+
+/** Texto editável de uma aplicação (montadora, modelo, motor e anos). */
+export function textoAplicacao(ap) {
+  if (!ap) return "";
+  return [ap.montadora, resumoAplicacao(ap).replace(/ à /g, " a ")].filter(Boolean).join(" ").trim();
+}
+
+/**
+ * (05/11/2026) Corrige uma aplicação JÁ cadastrada (teclado ou microfone) no
+ * MESMO registro — nunca cria outra. Modelo, motor e válvulas são separados
+ * de novo (ex.: Clio · 1.6 16V). Montadora e anos que você não disser de novo
+ * continuam como estavam. Depois de corrigida ela volta a ser PENDENTE:
+ * precisa da sua confirmação e de nova validação no catálogo.
+ * Devolve { ficha, ok, erro?, aplicacao? }.
+ */
+export function editarAplicacao(ficha, id, texto, { agora = Date.now() } = {}) {
+  const f = copia(ficha);
+  const a = f.aplicacoes.find((x) => x.id === id);
+  if (!a) return { ficha, ok: false, erro: "Aplicação não encontrada." };
+  const t = txt(texto);
+  if (!t) return { ficha, ok: false, erro: "Diga ou digite a aplicação corrigida." };
+  const nova = /^(?:n[aã]o\s+sei|sei\s+l[aá]|sem\s+aplica|nenhum|pular|deixa)/i.test(t) ? null : interpretarAplicacao(t);
+  if (!nova || !(nova.modelos || []).length) return { ficha, ok: false, erro: `Não entendi o veículo em “${t}” (ex.: Renault Clio 1.6 16V 2008 a 2016). Nada foi alterado.` };
+  const corrigida = {
+    texto: t,
+    montadora: txt(nova.montadora) || a.montadora,
+    modelos: [...nova.modelos],
+    motores: [...(nova.motores || [])],
+    anoInicio: nova.anoInicio || (nova.anoFim ? null : a.anoInicio),
+    anoFim: nova.anoFim || (nova.anoInicio ? null : a.anoFim),
+  };
+  const chave = chaveAplicacao(corrigida);
+  if (f.aplicacoes.some((x) => x.id !== id && x.chave === chave)) return { ficha, ok: false, erro: "Essa aplicação já está na lista: nada foi duplicado." };
+  const anterior = textoAplicacao(a);
+  Object.assign(a, corrigida, { chave, confirmada: false, editadaEm: agora, anteriores: [...(a.anteriores || []), anterior].slice(-5) });
+  return { ficha: tocar(f, agora), ok: true, aplicacao: a };
 }
 
 export function removerAplicacao(ficha, id, { agora = Date.now() } = {}) {

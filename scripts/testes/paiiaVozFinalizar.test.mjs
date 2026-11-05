@@ -136,7 +136,9 @@ async function pronta(opts = {}) {
 test("situação: tudo conferido → operações planejadas; execução real NÃO liberada nesta versão", async () => {
   const row = await pronta();
   const s = Fz.situacaoFinalizar(row);
-  assert.deepEqual(s.ops.map((o) => o.id), ["ml_publicar", "ml_compat", "bling_vinculo"]);
+  // (05/11) catálogo não validou veículos (Linha Pesada sem catálogo): “Gravar compatibilidades” não aparece
+  assert.deepEqual(s.ops.map((o) => o.id), ["ml_publicar", "bling_vinculo"]);
+  assert.deepEqual(s.compat, { informadas: 1, validadas: 0 });
   assert.ok(s.ops.every((o) => !o.marcada), "nenhuma operação vem marcada (Publicar no ML desmarcado)");
   assert.equal(s.pendencias.filter((p) => p.tipo !== "aviso").length, 0);
   assert.equal(s.podeExecutar, false);
@@ -441,4 +443,93 @@ test("Finalizar abre no topo com a escolha da conta primeiro (LOJA ONLINE, REVEL
   assert.ok(f.indexOf("data-pv-finalizar-contas") < f.indexOf("data-pv-finalizar-dados") && f.indexOf("{depoisDaConta}") < f.indexOf("data-pv-finalizar-dados"), "conta primeiro");
   assert.ok(f.includes('const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];') && f.includes("data-pv-conta-opcao") && f.includes("pr-conta-on"));
   assert.ok(f.includes("if (c.id === conta) return; setConta(c.id); setConfirmo(false);"), "mesma conta não mexe; outra conta pede nova autorização");
+});
+
+// ---------------- (05/11) Terceiro pacote ----------------
+test("compatibilidade: informadas por você ≠ validadas pelo catálogo; “Gravar compatibilidades” só com veículos validados", async () => {
+  const row = await pronta();
+  row.dados_conferencia.paiia_voz.preparo.verificacoes.compatibilidade = { estado: "ok", texto: "Compatibilidade: 3 veículo(s) do catálogo…", veiculos: ["V1", "V2", "V3"] };
+  const s = Fz.situacaoFinalizar(row);
+  assert.deepEqual(s.compat, { informadas: 1, validadas: 3 });
+  const op = s.ops.find((o) => o.id === "ml_compat");
+  assert.ok(op && /3 veículo\(s\) validado\(s\) pelo catálogo/.test(op.detalhe));
+  row.dados_conferencia.paiia_voz.preparo.verificacoes.compatibilidade = { estado: "pergunta", texto: "Compatibilidade: nenhum veículo do catálogo confirmou as aplicações (x).", veiculos: [] };
+  assert.ok(!Fz.situacaoFinalizar(row).ops.some((o) => o.id === "ml_compat"), "nada validado → operação não aparece");
+  const tela = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
+  assert.ok(tela.includes("data-pv-compat-informadas") && tela.includes("data-pv-compat-validadas"));
+});
+
+test("aplicações: “16 válvulas”, “16”, “16V” vão para o motor, nunca para o nome do modelo; nomes não são trocados", async () => {
+  const { interpretarAplicacao } = await import("../../src/modules/paiiaVoz/servicos/interpretarFala.js");
+  const casos = {
+    "Renault Symbol 1.6 16V 2008 a 2012": [["Symbol"], ["1.6 16V"]],
+    "Renault Symbol 1.6 16 2008 a 2012": [["Symbol"], ["1.6 16V"]],
+    "Renault Symbol 16 1.6 2008 a 2012": [["Symbol"], ["1.6 16V"]],
+    "Renault Clio 1.6 16 válvulas 2008 a 2016": [["Clio"], ["1.6 16V"]],
+    "Renault Clio 1.6 16 v 2008 a 2016": [["Clio"], ["1.6 16V"]],
+    "Clio 2 1.6 16V 2008 a 2016": [["Clio 2"], ["1.6 16V"]],
+    "Peugeot 206 1.6 16v 2005": [["206"], ["1.6 16V"]],
+    "Gol 1.0 8 válvulas 2010": [["Gol"], ["1.0 8V"]],
+    "Fiat Uno 1.0 2010": [["Uno"], ["1.0"]],
+  };
+  for (const [t, [modelos, motores]] of Object.entries(casos)) {
+    const r = interpretarAplicacao(t);
+    assert.deepEqual([r.modelos, r.motores], [modelos, motores], t);
+  }
+});
+
+test("Finalizar: versão antiga da página não autoriza; autorização vale só para o que estava na tela; categoria: rejeitar e procurar outra", async () => {
+  const V = await import("../../src/modules/paiiaVoz/servicos/versaoSite.js");
+  assert.equal(V.compararVersoes("index-AAA.js", '<script src="/assets/index-AAA.js">').estado, "ok");
+  assert.equal(V.compararVersoes("index-AAA.js", '<script src="/assets/index-BBB.js">').estado, "desatualizada");
+  assert.equal(V.compararVersoes("index-AAA.js", "").estado, "indisponivel");
+  const r = await V.conferirVersaoSite({ doc: { scripts: [{ src: "https://x/assets/index-AAA.js" }] }, buscar: async () => ({ ok: true, text: async () => '<script src="/assets/index-NOVO.js">' }) });
+  assert.deepEqual([r.estado, r.atual, r.noAr], ["desatualizada", "index-AAA.js", "index-NOVO.js"]);
+  const tela = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
+  assert.ok(tela.includes("const podeAutorizar = sit.podeExecutar && versaoOk;") && tela.includes("data-pv-finalizar-atualizar"));
+  assert.ok(tela.includes("const confirmo = Boolean(confirmoAss) && confirmoAss === assinaturaAgora && versaoOk;"), "mudou conta/dados/operações → autorização some");
+  assert.ok(tela.includes("const v = await conferirVersao(); // de novo, na hora de executar"));
+  assert.ok(tela.includes("data-pv-categoria-procurar") && tela.includes("<PainelCategoriaML") && tela.includes("data-pv-categoria-trocar"));
+  // escolha só com confirmação; incompatível/rejeitada só com revisão registrada
+  const P = await import("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js");
+  assert.equal(P.confirmarCategoriaEscolhida({}, { candidata: null }).ok, false);
+  assert.equal(P.confirmarCategoriaEscolhida({}, { candidata: { id: "MLB1", compativel: false } }).ok, false);
+  const ok = P.confirmarCategoriaEscolhida({}, { candidata: { id: "MLB2", compativel: true, caminho: "A > B" }, avaliacao: { sugerida: "MLB1", candidatas: [{ id: "MLB1", compativel: true }, { id: "MLB2", compativel: true }] } });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.decisao.confirmada.id, "MLB2");
+  assert.equal(ok.decisao.confirmada.sugerida, false, "registrado que não era a sugerida");
+});
+
+test("editar aplicação: corrige o MESMO registro (sem duplicar), separa modelo/motor/válvulas, volta a pendente e é validada de novo", async () => {
+  const Fv = await import("../../src/modules/paiiaVoz/servicos/fichaVoz.js");
+  const P = await import("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js");
+  const FC = await import("../../src/modules/paiiaVoz/servicos/fichaCompletaVoz.js");
+  let f = criarFichaVoz({ agora: 1, id: "ed" });
+  f = C.definirCampoDireto(f, "aplicacoes", "Renault Clio 2 16 2008 a 2016").ficha; // ditado com erro
+  f = C.definirCampoDireto(f, "aplicacoes", "Renault Symbol 1.6 16V 2008 a 2012").ficha;
+  const [clio, symbol] = f.aplicacoes;
+  f = Fv.confirmarAplicacao(f, clio.id, true);
+  f = Fv.confirmarAplicacao(f, symbol.id, true);
+  const antes = P.assinaturaEntrada({ ...P.entradaDaFicha({ dados_conferencia: { novo_anuncio: {}, paiia_voz: { aplicacoes: FC.aplicacoesEstruturadasVoz(f) } } }) });
+  const r = Fv.editarAplicacao(f, clio.id, "Renault Clio 1.6 16V 2008 a 2016");
+  assert.equal(r.ok, true, r.erro);
+  assert.equal(r.ficha.aplicacoes.length, 2, "não criou outra");
+  const ed = r.ficha.aplicacoes.find((a) => a.id === clio.id);
+  assert.deepEqual([ed.modelos, ed.motores, ed.anoInicio, ed.anoFim, ed.montadora], [["Clio"], ["1.6 16V"], 2008, 2016, "Renault"]);
+  assert.equal(ed.confirmada, false, "corrigida = precisa confirmar de novo");
+  assert.equal(r.ficha.aplicacoes.find((a) => a.id === symbol.id).confirmada, true, "a outra continua igual");
+  // não dito de novo: montadora e anos continuam
+  const r2 = Fv.editarAplicacao(r.ficha, clio.id, "Clio 1.6 16 válvulas");
+  assert.equal(Fv.textoAplicacao(r2.aplicacao), "Renault Clio 1.6 16V 2008 a 2016");
+  // virar igual à outra: recusado, sem duplicar
+  const r3 = Fv.editarAplicacao(r2.ficha, clio.id, "Renault Symbol 1.6 16V 2008 a 2012");
+  assert.equal(r3.ok, false);
+  assert.equal(Fv.editarAplicacao(r2.ficha, clio.id, "não sei").ok, false, "nada inventado");
+  // a conferência anterior deixa de valer (assinatura muda) → nova validação no catálogo
+  let g = Fv.confirmarAplicacao(r2.ficha, clio.id, true);
+  const depois = P.assinaturaEntrada({ ...P.entradaDaFicha({ dados_conferencia: { novo_anuncio: {}, paiia_voz: { aplicacoes: FC.aplicacoesEstruturadasVoz(g) } } }) });
+  assert.notEqual(antes, depois);
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(tela.includes("data-pv-editar-aplicacao") && tela.includes("micCampo(`ap:${a.id}`, \"Aplicação\")") && tela.includes('startsWith("ap:")) { salvarAplicacaoEditada('), "Editar por teclado e microfone");
+  assert.ok(tela.includes("c.aplicacoes || [], c.tipoVeiculo"), "correção salva na conta");
 });

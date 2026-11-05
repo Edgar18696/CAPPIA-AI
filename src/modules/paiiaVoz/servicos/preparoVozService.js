@@ -10,7 +10,7 @@ import { fichaFechada, fichaSoNoNovoAnuncio } from "../../../services/fichaNovoA
 import { lerJsonPublico } from "../../../services/categoriaMLBusca";
 import { listarAnunciosDoCodigo, conferirDuplicidadeBase } from "../../../services/anuncioPublicacaoService";
 import { modalidadesDaConta } from "../../../services/consultaMLLeitura";
-import { prepararConferenciaVoz, confirmarCategoriaSugerida } from "./preparoConferenciaVoz";
+import { prepararConferenciaVoz, confirmarCategoriaSugerida, buscarCategoriasVoz, confirmarCategoriaEscolhida } from "./preparoConferenciaVoz";
 import { mesclarPreparo } from "./preparoFicha";
 import { aprovarRevisao, comModalidade, comRevisao } from "./revisaoCelularVoz";
 
@@ -54,6 +54,20 @@ export async function prepararEGravar(fichaId, { conta = "" } = {}) {
 /** Confirma (pelo Voz) a categoria sugerida, guardando o mesmo registro da Conferência. */
 export async function confirmarCategoriaEGravar(fichaId, preparo) {
   const c = confirmarCategoriaSugerida(preparo);
+  if (!c.ok) return c;
+  return gravar(fichaId, () => ({ ...preparo, categoria: { decisao: c.decisao } }));
+}
+
+/** (05/11) Procurar outra categoria (só leitura). */
+export async function buscarCategoriasEmOutra(fichaId, termo, { conta = "" } = {}) {
+  const r = await lerFichaNovoAnuncio(fichaId);
+  if (!r.ok) return { ok: false, erro: r.erro || "Ficha não encontrada." };
+  return buscarCategoriasVoz(r.ficha, termo, { conta, deps: depsReais });
+}
+
+/** (05/11) Confirma a categoria escolhida por você e grava na ficha (nada no ML). */
+export async function confirmarCategoriaEscolhidaEGravar(fichaId, preparo, { candidata, avaliacao, revisao = null } = {}) {
+  const c = confirmarCategoriaEscolhida(preparo, { candidata, avaliacao, revisao });
   if (!c.ok) return c;
   return gravar(fichaId, () => ({ ...preparo, categoria: { decisao: c.decisao } }));
 }

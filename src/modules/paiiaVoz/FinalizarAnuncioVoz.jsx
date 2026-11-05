@@ -9,8 +9,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useContasML, contasMLConectadas } from "../../services/contaMLAtiva";
 import { nomeDaLoja } from "../../services/duplicidadeML";
 import { lerFichaNovoAnuncio } from "../../services/fichaNovoAnuncioService";
-import { prepararEGravar, confirmarCategoriaEGravar, definirModalidadeEGravar } from "./servicos/preparoVozService";
-import { preparoAtual } from "./servicos/preparoConferenciaVoz";
+import { prepararEGravar, confirmarCategoriaEGravar, definirModalidadeEGravar, buscarCategoriasEmOutra, confirmarCategoriaEscolhidaEGravar } from "./servicos/preparoVozService";
+import { conferirVersaoSite } from "./servicos/versaoSite";
+import PainelCategoriaML from "../../components/PainelCategoriaML";
+import { preparoAtual, assinaturaEntrada, entradaDaFicha } from "./servicos/preparoConferenciaVoz";
 import { situacaoFinalizar, executarFinalizacao, assinaturaFinalizar, publicacaoRealLiberada, ROTULOS_OPERACOES, rotuloEstado } from "./servicos/finalizarAnuncioVoz";
 import { depsFinalizarReais } from "./servicos/finalizarDepsReais";
 import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
@@ -21,7 +23,7 @@ const depsTeste = () => (globalThis.__paiiaModoTeste && globalThis.__paiiaFinali
 
 const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];
 
-export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null }) {
+export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null, versaoNuvem = 0 }) {
   const estadoContas = useContasML();
   const contas = contasMLConectadas(estadoContas).filter((c) => String(c.ml_user_id || "").trim());
   const [contaEscolhida, setConta] = useState("");
@@ -31,7 +33,11 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const [autorizarBling, setAutorizarBling] = useState(false);
   const [semCompatibilidade, setSemCompatibilidade] = useState(false);
   const [marcar, setMarcar] = useState({}); // (04/11) nenhuma operação vem marcada
-  const [confirmo, setConfirmo] = useState(false);
+  // (05/11) A autorização vale só para o que estava na tela quando você marcou (assinatura).
+  const [confirmoAss, setConfirmoAss] = useState("");
+  const setConfirmo = (v) => { if (!v) setConfirmoAss(""); };
+  const [versao, setVersao] = useState({ estado: "conferindo" });
+  const [cat, setCat] = useState({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" });
   const [resultado, setResultado] = useState(null);
   const [sessao] = useState(() => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
   const autoConferida = useRef("");
@@ -50,6 +56,20 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     if (r?.ok) setRow(r.ficha);
     return r;
   }, [fichaId]);
+  // (05/11) Página desatualizada (aberta antes de uma publicação) não autoriza nada.
+  const conferirVersao = useCallback(async () => {
+    const t = depsTeste();
+    const v = await conferirVersaoSite(t?.buscarSite ? { buscar: t.buscarSite } : {});
+    setVersao(v);
+    return v;
+  }, []);
+  useEffect(() => {
+    let ativo = true;
+    const t = depsTeste();
+    conferirVersaoSite(t?.buscarSite ? { buscar: t.buscarSite } : {}).then((v) => { if (ativo) setVersao(v); });
+    return () => { ativo = false; };
+  }, []);
+  // Relê a ficha ao abrir e a cada gravação do celular na conta (versaoNuvem): nada de dados velhos na tela.
   useEffect(() => {
     let ativo = true;
     (async () => {
@@ -58,7 +78,7 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
       if (ativo && r?.ok) setRow(r.ficha);
     })();
     return () => { ativo = false; };
-  }, [fichaId]);
+  }, [fichaId, versaoNuvem]);
 
   async function acao(nome, fn) {
     if (rodando) return;
@@ -71,12 +91,14 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     setConfirmo(false); // qualquer mudança pede nova confirmação
     await recarregar();
   }
-  const conferir = useCallback(() => acao("conferir", () => preparar(fichaId, { conta })), [fichaId, conta]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Se a ficha mudou durante a conferência (celular gravando), tenta de novo na próxima leitura.
+  const conferir = useCallback(() => acao("conferir", async () => { const r = await preparar(fichaId, { conta }); if (r && !r.ok && r.conflito) autoConferida.current = ""; return r; }), [fichaId, conta]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Conferência AUTOMÁTICA ao abrir (e ao trocar a conta), se estiver desatualizada.
   useEffect(() => {
     if (!row || !conta || rodando) return;
-    const chave = `${row.id}|${conta}`;
+    // (05/11) Uma conferência por versão dos dados (estoque, conta, aplicações… mudaram → confere de novo).
+    const chave = `${row.id}|${conta}|${assinaturaEntrada(entradaDaFicha(row), conta)}`;
     const p = preparoAtual(row);
     if (p.valido && p.preparo?.conta === conta) return;
     if (autoConferida.current === chave) return;
@@ -91,9 +113,29 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const marcadas = sit.ops.filter((o) => o.marcada).map((o) => o.id);
   const temFalha = sit.ops.some((o) => ["erro", "incerto", "bloqueado", "executando"].includes(o.estado));
   const tudoFeito = marcadas.length > 0 && sit.ops.filter((o) => o.marcada).every((o) => o.estado === "ok");
+  const versaoOk = versao.estado === "ok" || versao.estado === "sem-versao";
+  const assinaturaAgora = `${conta}|${versao.atual || ""}|${assinaturaFinalizar(row, marcadas)}|${autorizarBling}|${semCompatibilidade}`;
+  const confirmo = Boolean(confirmoAss) && confirmoAss === assinaturaAgora && versaoOk;
+  const podeAutorizar = sit.podeExecutar && versaoOk;
+  const preparoRow = row?.dados_conferencia?.paiia_voz?.preparo || null;
+  async function buscarCategoria() {
+    setCat((c) => ({ ...c, carregando: true, erro: "" }));
+    const f = depsTeste()?.buscarCategorias || buscarCategoriasEmOutra;
+    let r;
+    try { r = await f(fichaId, cat.termo || d.titulo, { conta }); } catch (e) { r = { ok: false, erro: e?.message || String(e) }; }
+    setCat((c) => ({ ...c, carregando: false, avaliacao: r.ok ? r.avaliacao : c.avaliacao, erro: r.ok ? "" : r.erro || "Não consegui buscar." }));
+  }
+  const escolherCategoria = (candidata, revisao) => acao("categoria", async () => {
+    const av = cat.avaliacao || preparoRow?.verificacoes?.categoria?.avaliacao || null;
+    const r = await confirmarCategoriaEscolhidaEGravar(fichaId, preparoRow, { candidata, avaliacao: av, revisao });
+    if (r.ok) setCat({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" });
+    return r.ok ? preparar(fichaId, { conta }) : r;
+  });
 
   async function executar() {
-    if (rodando || !confirmo || !sit.podeExecutar) return;
+    if (rodando || !confirmo || !podeAutorizar) return;
+    const v = await conferirVersao(); // de novo, na hora de executar
+    if (!(v.estado === "ok" || v.estado === "sem-versao")) { setConfirmoAss(""); return; }
     const autorizacao = { semCompatibilidade: sit.semCompatibilidade, confirmada: true, em: new Date().toISOString(), por: usuarioId, sessao, assinatura: assinaturaFinalizar(row, marcadas) };
     await acao("executar", async () => {
       const r = await executarFinalizacao(fichaId, { marcadas, autorizacao, deps });
@@ -105,6 +147,18 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   return (
     <div className="pr-cartao" data-pv-finalizar-topo data-pv-finalizar={tudoFeito ? "concluido" : sit.podeExecutar ? "pronto" : "pendente"}>
       <p><b>✅ Finalizar anúncio</b> — confere sozinho no Bling e no Mercado Livre (só leitura). Só executa o que você autorizar.</p>
+      {!versaoOk && versao.estado !== "conferindo" && (
+        <div className="pr-cartao" data-pv-finalizar-versao={versao.estado} style={{ borderColor: "#b45309", background: "#422006" }}>
+          {versao.estado === "desatualizada"
+            ? <p>⚠️ <b>Esta página está numa versão antiga do PAIIA.</b> Atualize antes de autorizar (a ficha e as fotos continuam guardadas).</p>
+            : <p>⚠️ Não consegui conferir se esta página é a versão atual do site. A autorização fica bloqueada até conferir.</p>}
+          <div className="pr-linha">
+            {versao.estado === "desatualizada"
+              ? <button type="button" className="pr-botao" onClick={() => window.location.reload()} data-pv-finalizar-atualizar>Atualizar agora</button>
+              : <button type="button" className="pr-link" onClick={conferirVersao} data-pv-finalizar-versao-de-novo>Conferir de novo</button>}
+          </div>
+        </div>
+      )}
       {/* (04/11) 1º: a conta de destino (trocar a conta refaz as conferências dela e pede nova autorização). */}
       <div data-pv-finalizar-contas>
         <span className="pr-rotulo">1. Conta de destino no Mercado Livre</span>
@@ -134,8 +188,12 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
         <dt>Custo</dt><dd>{String(row?.dados_conferencia?.paiia_voz?.complemento?.custo || "").trim() || "— (opcional)"}</dd>
         <dt>Peso/medidas</dt><dd>{d.medida || "—"}</dd>
         <dt>Frete ML</dt><dd>{d.frete || "—"}</dd>
-        <dt>Categoria</dt><dd>{d.categoria || "—"}</dd>
-        <dt>Compatibilidades</dt><dd>{d.aplicacoes.length ? d.aplicacoes.join(" · ") : "—"}</dd>
+        <dt>Categoria</dt><dd>{d.categoria || "—"}{d.categoria && !cat.aberta && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => setCat((c) => ({ ...c, aberta: true, termo: c.termo || d.titulo }))} data-pv-categoria-trocar>Trocar</button></>}</dd>
+        <dt>Compatibilidades</dt>
+        <dd data-pv-finalizar-compat>
+          <span data-pv-compat-informadas>Informadas e confirmadas por você: {d.aplicacoes.length}{d.aplicacoes.length ? ` (${d.aplicacoes.join(" · ")})` : ""}</span><br />
+          <span data-pv-compat-validadas>Validadas pelo catálogo do Mercado Livre: {sit.compat.validadas}</span>
+        </dd>
       </dl>
       <details className="pr-fonte" data-pv-finalizar-descricao><summary>Descrição ({d.descricao.trim() ? "ver" : "vazia"})</summary><pre className="pr-previa">{d.descricao || "—"}</pre></details>
       {Object.entries(row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes || {}).length > 0 && (
@@ -152,11 +210,31 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
               <li key={x.id} data-pv-pendencia={x.id} data-tipo={x.tipo}>
                 {ICONE[x.tipo] || "•"} {x.texto}
                 {x.id === "categoria" && x.sugerida && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("categoria", async () => { const r = await confirmarCategoriaEGravar(fichaId, row?.dados_conferencia?.paiia_voz?.preparo); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-finalizar-categoria>Confirmar {x.sugerida}</button></>}
+                {x.id === "categoria" && !cat.aberta && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => setCat((c) => ({ ...c, aberta: true, termo: c.termo || d.titulo }))} data-pv-categoria-procurar>{x.sugerida ? "Não é esta — procurar outra" : "Procurar categoria"}</button></>}
                 {x.id === "modalidade" && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-finalizar-premium>Usar Premium</button></>}
                 {aoIrEtapa && x.ir && <> <button type="button" className="pr-link" onClick={() => aoIrEtapa(x.ir)}>→ ir</button></>}
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {cat.aberta && (
+        <div className="pr-cartao pr-cinza" data-pv-categoria-busca>
+          <div className="pr-linha pr-entre"><strong>Escolher a categoria</strong><button type="button" className="pr-link" onClick={() => setCat({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" })} data-pv-categoria-fechar>Fechar</button></div>
+          <p className="pr-fonte" style={{ margin: 0 }}>A categoria só vale depois que você confirmar. Mesma busca e mesmas regras da Conferência do computador.</p>
+          {cat.erro && <p className="pr-aviso">⚠️ {cat.erro}</p>}
+          <PainelCategoriaML
+            carregando={cat.carregando}
+            avaliacao={cat.avaliacao || preparoRow?.verificacoes?.categoria?.avaliacao || null}
+            decisao={preparoRow?.categoria?.decisao || null}
+            categoriaId={preparoRow?.categoria?.decisao?.confirmada?.id || ""}
+            onConfirmar={escolherCategoria}
+            onTrocar={() => setCat((c) => ({ ...c, aberta: true }))}
+            termo={cat.termo}
+            onTermo={(t) => setCat((c) => ({ ...c, termo: t }))}
+            onBuscar={buscarCategoria}
+          />
         </div>
       )}
 
@@ -192,13 +270,13 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
       {!tudoFeito && (
         <>
           <label className="pr-check" data-pv-finalizar-confirmo>
-            <input type="checkbox" checked={confirmo} disabled={!sit.podeExecutar || Boolean(rodando)} onChange={(e) => setConfirmo(e.target.checked)} />
+            <input type="checkbox" checked={confirmo} disabled={!podeAutorizar || Boolean(rodando)} onChange={(e) => setConfirmoAss(e.target.checked ? assinaturaAgora : "")} />
             Conferi tudo e autorizo executar as operações marcadas
           </label>
-          <button type="button" className="pr-botao pr-grande" disabled={!sit.podeExecutar || !confirmo || Boolean(rodando)} onClick={executar} data-pv-finalizar-executar>
+          <button type="button" className="pr-botao pr-grande" disabled={!podeAutorizar || !confirmo || Boolean(rodando)} onClick={executar} data-pv-finalizar-executar>
             {rodando === "executar" ? "⏳ Executando…" : temFalha ? "🔁 Retomar operações autorizadas" : "Executar operações autorizadas"}
           </button>
-          {!sit.podeExecutar && <p className="pr-fonte" data-pv-finalizar-motivo>{sit.motivo}</p>}
+          {!podeAutorizar && <p className="pr-fonte" data-pv-finalizar-motivo>{!sit.podeExecutar ? sit.motivo : "Atualize a página (versão nova do PAIIA) para autorizar."}</p>}
         </>
       )}
       {tudoFeito && <p className="pr-ok" data-pv-finalizar-concluido>✅ Todas as operações autorizadas foram concluídas{sit.registro.mlb ? ` · ${sit.registro.mlb}` : ""}.</p>}
