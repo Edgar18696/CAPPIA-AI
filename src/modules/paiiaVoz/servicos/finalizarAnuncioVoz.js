@@ -27,7 +27,7 @@ const txt = (v) => String(v ?? "").trim();
 const copia = (o) => JSON.parse(JSON.stringify(o ?? null));
 
 export const ROTULOS_OPERACOES = {
-  bling_criar: "Criar o produto no Bling (estoque inicial 0)",
+  bling_criar: "Criar o produto no Bling (com o estoque da ficha)",
   ml_publicar: "Publicar no Mercado Livre",
   ml_compat: "Gravar as compatibilidades no anúncio",
   bling_vinculo: "Acompanhar o vínculo do anúncio no Bling (só leitura)",

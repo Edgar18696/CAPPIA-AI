@@ -809,6 +809,41 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setScreen?.("novoAnuncio");
   }
 
+  // (Etapa 1 simplificação) Compatibilidade rápida: só Montadora, Modelo e Ano.
+  // O motor fica interno: vem do título/descrição quando há UM só (ex.: "1.6");
+  // se faltar, a Finalizar pergunta com as opções do catálogo do Mercado Livre.
+  const [veic, setVeic] = useState({ montadora: "", modelo: "", ano: "" });
+  function motorDaFicha(f) {
+    const t = `${f?.rapido?.titulo?.valor || ""} ${f?.rapido?.descricao?.texto || ""} ${f?.rapido?.descricao?.final || ""}`;
+    const achados = [...new Set((t.match(/\b\d\.\d\b/g) || []))];
+    return achados.length === 1 ? achados[0] : "";
+  }
+  function adicionarVeiculoRapido() {
+    const montadora = veic.montadora.trim(); const modelo = veic.modelo.trim(); const ano = veic.ano.trim();
+    const m = ano.match(/^(\d{4})(?:\s*(?:a|à|ate|até|-|–)\s*(\d{4}))?$/i);
+    if (!montadora || !modelo || !m) { setAviso("Preencha Montadora, Modelo e Ano (ex.: 2012 ou 2010 a 2014)."); return; }
+    const anoInicio = Number(m[1]); const anoFim = Number(m[2] || m[1]);
+    if (anoFim < anoInicio) { setAviso("O ano final é menor que o inicial."); return; }
+    const f = JSON.parse(JSON.stringify(fichaRef.current));
+    const motor = motorDaFicha(f);
+    const cap = (t) => t.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+    const r = incluirAplicacao(f, { texto: `${montadora} ${modelo} ${anoInicio}${anoFim !== anoInicio ? ` a ${anoFim}` : ""}`, montadora: cap(montadora), modelos: [cap(modelo)], motores: motor ? [motor] : [], anoInicio, anoFim }, { origem: "usuario", agora: Date.now(), confirmada: true });
+    if (r?.aviso) { setAviso(r.aviso); return; }
+    mudarFicha(f);
+    setVeic({ montadora: "", modelo: "", ano: "" });
+    setAviso(`✅ ${cap(montadora)} ${cap(modelo)} ${anoInicio}${anoFim !== anoInicio ? `–${anoFim}` : ""} incluído${motor ? ` (motor ${motor}, da descrição)` : " (o motor será conferido no catálogo do Mercado Livre)"}.`);
+  }
+  // Resposta à pergunta do motor (Finalizar): grava SÓ na aplicação perguntada e reconfere.
+  function definirMotorDaAplicacao(pm, motor) {
+    const s = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+    const f = JSON.parse(JSON.stringify(fichaRef.current));
+    const a = f.aplicacoes.find((x) => s(x.montadora) === s(pm.montadora) && (x.modelos || []).some((mo) => s(mo) === s(pm.modelo)) && Number(x.anoInicio || 0) === Number(pm.anoInicio || 0) && Number(x.anoFim || 0) === Number(pm.anoFim || 0) && !(x.motores || []).length);
+    if (!a) { setAviso("Não encontrei essa aplicação na ficha; confira a etapa Compat."); return; }
+    a.motores = [motor];
+    mudarFicha(f);
+    setAviso(`✅ Motor ${motor} registrado para ${pm.aplicacao}. A conferência é refeita sozinha.`);
+  }
+
   // (Passo 7) Ficha do rascunho não encontrada na conta: liga o rascunho a uma ficha DESTA conta
   // com o mesmo código (id) ou, com id vazio, deixa a próxima gravação criar a ficha nesta conta.
   // O rascunho e as fotos do aparelho ficam como estão (nada é apagado).
@@ -1228,7 +1263,19 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* ---------------- 6 Compatibilidade ---------------- */}
       {etapa === "compat" && (
         <section className="pr-bloco" data-pr-bloco="compat">
-          {camposDaEtapa("compat").map(renderCampo)}
+          {/* (Etapa 1) Só Montadora, Modelo e Ano. O motor é interno (descrição ou catálogo do ML). */}
+          <div className="pr-cartao" data-pv-veiculo-rapido style={{ display: "grid", gap: 8 }}>
+            <span className="pr-rotulo">Veículo compatível</span>
+            <input className="pr-entrada" placeholder="Montadora (ex.: Fiat)" value={veic.montadora} onChange={(e) => setVeic((v) => ({ ...v, montadora: e.target.value }))} data-pv-veic="montadora" />
+            <input className="pr-entrada" placeholder="Modelo (ex.: Uno)" value={veic.modelo} onChange={(e) => setVeic((v) => ({ ...v, modelo: e.target.value }))} data-pv-veic="modelo" />
+            <input className="pr-entrada" placeholder="Ano (ex.: 2012 ou 2010 a 2014)" inputMode="numeric" value={veic.ano} onChange={(e) => setVeic((v) => ({ ...v, ano: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") adicionarVeiculoRapido(); }} data-pv-veic="ano" />
+            <button type="button" className="pr-botao pr-grande" onClick={adicionarVeiculoRapido} data-pv-veic-adicionar>➕ Adicionar veículo</button>
+          </div>
+          <details open={campoVoz === "aplicacoes" || undefined} data-pv-aplicacao-completa>
+            <summary className="pr-fonte">Falar ou digitar a aplicação completa (opcional)</summary>
+            {camposDaEtapa("compat").filter((c) => c.id === "aplicacoes").map(renderCampo)}
+          </details>
+          {camposDaEtapa("compat").filter((c) => c.id !== "aplicacoes").map(renderCampo)}
           <span className="pr-rotulo">Aplicações (marque só as certas)</span>
           {ficha.aplicacoes.length > 0 && (
             <p className="pr-fonte" data-pv-aplicacoes-contagem>{["confirmada", "ambigua", "pendente"].map((e) => `${ficha.aplicacoes.filter((a) => situacaoAplicacao(a).estado === e).length} ${e === "confirmada" ? "confirmada(s)" : e === "ambigua" ? "ambígua(s)" : "pendente(s)"}`).join(" · ")}. A validação no catálogo do Mercado Livre é feita na Finalizar, com a conta escolhida.</p>
@@ -1344,7 +1391,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </>
             );
             return usuario
-              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} aoIrEtapa={irPara} aoAbrirPublicacao={abrirPublicacaoDaFicha} codigoRascunho={cp?.codigo || ""} aoTrocarFicha={trocarFichaDaConta} />
+              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} aoIrEtapa={irPara} aoAbrirPublicacao={abrirPublicacaoDaFicha} codigoRascunho={cp?.codigo || ""} aoTrocarFicha={trocarFichaDaConta} aoDefinirMotor={definirMotorDaAplicacao} />
               : blocoFicha;
           })()}
           {usuario && (

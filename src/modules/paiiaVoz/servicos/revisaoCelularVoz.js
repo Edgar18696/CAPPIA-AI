@@ -63,10 +63,10 @@ export function montarRevisao(row) {
   if (!p) pendencias.push({ id: "conferir", tipo: "conferir", texto: "Toque em “Conferir agora” para rodar as conferências." });
   else if (!prep.valido) pendencias.push({ id: "conferir", tipo: "conferir", texto: `Conferência desatualizada (${prep.motivo}): confira de novo.` });
   for (const [k, x] of Object.entries(v)) {
-    if (x?.estado && x.estado !== "ok") pendencias.push({ id: k, tipo: x.estado, texto: x.texto, ...(k === "categoria" && x.sugerida ? { sugerida: x.sugerida } : {}) });
+    if (x?.estado && x.estado !== "ok") pendencias.push({ id: k, tipo: x.estado, texto: x.texto, ...(k === "categoria" && x.sugerida ? { sugerida: x.sugerida } : {}), ...(k === "compatibilidade" && x.perguntaMotor ? { perguntaMotor: x.perguntaMotor } : {}) });
   }
-  // Modalidade: Premium é o padrão da loja; Clássico só vale se escolhido de propósito (edicoes.tipoAnuncio).
-  if (e.tipoAnuncio !== "premium" && !d.edicoes?.tipoAnuncio) pendencias.push({ id: "modalidade", tipo: "pergunta", texto: "Modalidade: está Clássico (padrão). Publicar como Premium?" });
+  // (Etapa 2, decisão de 07/11) Clássico é o padrão e NÃO gera pergunta; trocar para Premium
+  // continua disponível na tela, sem ser obrigatório.
   if (!dados.descricao.trim()) pendencias.push({ id: "descricao", tipo: "pergunta", texto: "Descrição vazia: fale ou digite a descrição." });
   if (!e.fotos.length) pendencias.push({ id: "fotos", tipo: "pergunta", texto: "Sem fotos na ficha." });
   const naoTratadas = Array.isArray(voz.fotos) ? voz.fotos.filter((f) => f.usar !== false && f.versao !== "tratada").length : 0;

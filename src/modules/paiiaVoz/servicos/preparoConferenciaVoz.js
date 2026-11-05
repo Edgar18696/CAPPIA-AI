@@ -13,6 +13,7 @@
 import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU } from "../../../services/categoriaMLBusca.js";
 import { avaliarCategorias, conferirCategoriaParaPublicar, registrarConfirmacao, mesclarRejeicoes } from "../../../services/categoriaML.js";
 import { resolverCompatibilidades, compatibilidadeNaoExigivel } from "../../../services/compatibilidadeML.js";
+import { montarAtributosCategoria } from "../../../services/atributosCategoriaML.js";
 import { verificarDuplicidadeML, avaliarRegistrosBase, situacaoMLBRegistrado, nomeDaLoja } from "../../../services/duplicidadeML.js";
 import { conferirEstoque } from "../../../services/estoqueBlingPAIIA.js";
 import { parametrosCotacao, prontoParaCotar, cotarNoPreco, reais } from "../../../services/fretePrecificacao.js";
@@ -87,6 +88,17 @@ async function conferirCategoria(e, deps, conta) {
   }
   if (avaliacao.sugerida) {
     const c = avaliacao.candidatas.find((x) => x.id === avaliacao.sugerida);
+    // (Etapa 2) Seleção AUTOMÁTICA só sem nenhuma dúvida: UMA única categoria válida (compatível e
+    // não rejeitada), sem conflitos, aprovada pela mesma regra de publicação (ramo/tipo/rejeições)
+    // e com TODOS os atributos obrigatórios já preenchidos pela ficha. Senão: pergunta (nada presumido).
+    const validas = (avaliacao.candidatas || []).filter((x) => x.compativel && !x.rejeitada);
+    const det = detalhes[c?.id] || null;
+    if (c && validas.length === 1 && validas[0].id === c.id && !(avaliacao.conflitos || []).length && det?.lido && det.listingAllowed !== false) {
+      const atr = montarAtributosCategoria({ categoriaId: c.id, atributosBrutos: det.atributosBrutos, ficha: { marca: e.marca, numeroPeca: e.codigo, tipoVeiculo: e.tipoVeiculo, textos: [e.titulo] } });
+      const dec = { ...registrarConfirmacao(e.categoriaDecisao || null, { candidata: c, avaliacao, agora: new Date().toISOString() }), automatica: true };
+      const ok = conferirCategoriaParaPublicar({ categoriaId: c.id, decisao: dec, rejeicoes, detalhe: det, tipoVeiculo: e.tipoVeiculo, textoPeca: e.titulo });
+      if (atr.lido && atr.completo && ok.ok) return item("ok", `Categoria ${c.id} — ${c.caminho} (selecionada automaticamente: única categoria válida, atributos obrigatórios conferidos).`, { id: c.id, caminho: c.caminho, automatica: true, avaliacao: resumoAvaliacao(avaliacao), decisao: dec });
+    }
     return item("pergunta", `Categoria sugerida pelo Mercado Livre: ${c.id} — ${c.caminho}. Confirma?`, { sugerida: c.id, caminho: c.caminho, avaliacao: resumoAvaliacao(avaliacao) });
   }
   return item("pergunta", `Categoria: o PAIIA não conseguiu uma sugestão segura (${[...avaliacao.conflitos, ...avaliacao.alertas].slice(0, 2).join(" ") || "sem sugestão"}). Escolha no computador.`, { avaliacao: resumoAvaliacao(avaliacao) });
@@ -151,7 +163,16 @@ async function conferirCompatibilidade(e, deps, conta) {
   try { r = await resolverCompatibilidades(e.aplicacoes, consultar); } catch (x) { r = { erro: x?.message || String(x) }; }
   if (r?.erro) return item("erro", `Compatibilidade: catálogo de veículos não consultado (${r.erro}).`);
   const n = r.veiculos.length;
-  if (n) return item("ok", `Compatibilidade: ${n} veículo(s) do catálogo confirmam as aplicações aprovadas.`, { veiculos: r.veiculos.map((v) => v.id), semCatalogo: r.semCatalogo.length });
+  if (n) {
+    // (Etapa 2) Só os anos/versões que o catálogo CONFIRMOU — um intervalo nunca vale inteiro por conta de parte dele.
+    const porAplicacao = {};
+    for (const v of r.veiculos) (porAplicacao[v.aplicacao] = porAplicacao[v.aplicacao] || []).push(v.nome);
+    const resumo = Object.entries(porAplicacao).map(([ap, nomes]) => `${ap}: ${nomes.join("; ")}`).join(" · ");
+    return item("ok", `Compatibilidade: ${n} veículo(s) confirmados pelo catálogo do Mercado Livre — ${resumo}.`, { veiculos: r.veiculos.map((v) => v.id), validados: r.veiculos.map((v) => ({ id: v.id, nome: v.nome, aplicacao: v.aplicacao })), semCatalogo: r.semCatalogo.length });
+  }
+  // Falta o motor de uma aplicação: UMA pergunta com as opções do próprio catálogo (nada presumido).
+  const pm = (r.perguntasMotor || [])[0];
+  if (pm && !compatibilidadeNaoExigivel(e.tipoVeiculo)) return item("pergunta", `Compatibilidade: qual é o motor do ${pm.aplicacao}? (opções do catálogo do Mercado Livre)`, { veiculos: [], perguntaMotor: pm });
   if (compatibilidadeNaoExigivel(e.tipoVeiculo)) return item("ok", "Compatibilidade: Linha Pesada — o catálogo do Mercado Livre não tem estas aplicações; ficam na ficha e na descrição, sem pendência.", { veiculos: [] });
   return item("pergunta", `Compatibilidade: nenhum veículo do catálogo confirmou as aplicações (${r.semCatalogo.map((s) => s.motivo).slice(0, 2).join("; ")}). Publicar sem compatibilidade?`, { veiculos: [] });
 }
@@ -260,7 +281,7 @@ export async function prepararConferenciaVoz(row, { conta = "", deps } = {}) {
     perguntas,
     bloqueios,
     pronto: perguntas.length === 0 && bloqueios.length === 0 && Object.values(v).every((x) => x.estado === "ok"),
-    categoria: { decisao: e.categoriaDecisao },
+    categoria: { decisao: v.categoria?.automatica && v.categoria?.estado === "ok" ? v.categoria.decisao : e.categoriaDecisao },
   };
 }
 

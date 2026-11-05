@@ -13,7 +13,7 @@ import { prepararEGravar, confirmarCategoriaEGravar, definirModalidadeEGravar, b
 import { conferirVersaoSite } from "./servicos/versaoSite";
 import PainelCategoriaML from "../../components/PainelCategoriaML";
 import { preparoAtual, assinaturaEntrada, entradaDaFicha } from "./servicos/preparoConferenciaVoz";
-import { situacaoFinalizar, executarFinalizacao, assinaturaFinalizar, publicacaoRealLiberada, ROTULOS_OPERACOES, rotuloEstado } from "./servicos/finalizarAnuncioVoz";
+import { situacaoFinalizar, executarFinalizacao, assinaturaFinalizar, publicacaoRealLiberada, ROTULOS_OPERACOES, rotuloEstado, skuAusenteNoBling, estadoFinalizacao } from "./servicos/finalizarAnuncioVoz";
 import { depsFinalizarReais } from "./servicos/finalizarDepsReais";
 import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
@@ -32,7 +32,7 @@ const depsTeste = () => (globalThis.__paiiaModoTeste && globalThis.__paiiaFinali
 
 const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];
 
-export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null, versaoNuvem = 0, aoAbrirPublicacao = null, codigoRascunho = "", aoTrocarFicha = null }) {
+export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null, versaoNuvem = 0, aoAbrirPublicacao = null, codigoRascunho = "", aoTrocarFicha = null, aoDefinirMotor = null }) {
   const estadoContas = useContasML();
   const contas = contasMLConectadas(estadoContas).filter((c) => String(c.ml_user_id || "").trim());
   const [contaEscolhida, setConta] = useState("");
@@ -56,6 +56,7 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   }
   const [erro, setErro] = useState("");
   const [autorizarBling, setAutorizarBling] = useState(false);
+  const [autorizoCadastro, setAutorizoCadastro] = useState(false); // (Etapa 3) autorização do cadastro no Bling no "Finalizar e Enviar"
   const [semCompatibilidade, setSemCompatibilidade] = useState(false);
   const [marcar, setMarcar] = useState({}); // (04/11) nenhuma operação vem marcada
   // (05/11) A autorização vale só para o que estava na tela quando você marcou (assinatura).
@@ -195,12 +196,30 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   // frete oficial, conta), grava a aprovação desta tela e entrega à Publicação existente.
   // Não publica: a publicação real continua exigindo a autorização final na Publicação.
   const rev = montarRevisao(row);
-  const faltaRev = rev.pendencias.filter((p) => p.tipo !== "aviso");
+  // (Etapa 3) SKU ausente no Bling não é "decisão": vira a autorização dentro do "Finalizar e Enviar".
+  const blingAusente = skuAusenteNoBling(row) && estadoFinalizacao(row).ops?.bling_criar?.estado !== "ok";
+  const faltaRev = rev.pendencias.filter((p) => p.tipo !== "aviso" && !(p.id === "bling" && blingAusente));
   const jaNaPublicacao = row?.dados_conferencia?.ficha?.etapa === "publicacao" && !row?.dados_conferencia?.etapa_fluxo;
   const abrirPublicacao = (id) => (aoAbrirPublicacao ? aoAbrirPublicacao(id) : window.location.assign(`/?tela=mercadoLivreTeste&ficha=${encodeURIComponent(id)}`));
+  const lerAgora = async () => (await (depsTeste()?.lerFicha || lerFichaNovoAnuncio)(fichaId))?.ficha || null;
   const seguirParaPublicacao = () => acao("publicacao", async () => {
     if (jaNaPublicacao) { abrirPublicacao(fichaId); return { ok: true }; }
-    if (!rev.aprovada) {
+    // (Etapa 3) 1) Bling: SÓ com a sua autorização. O executor confere antes (já existe → não cria)
+    // e registra na ficha; um segundo toque não repete o que já foi feito.
+    if (blingAusente) {
+      if (!autorizoCadastro) return { ok: false, erro: "Marque a autorização para cadastrar o produto no Bling." };
+      const r = await executarFinalizacao(fichaId, { marcadas: ["bling_criar"], autorizacao: { confirmada: true, em: new Date().toISOString(), por: usuarioId, sessao, assinatura: assinaturaFinalizar(row, ["bling_criar"]) }, deps });
+      setResultado(r);
+      if (!r?.ok) return { ok: false, erro: `Bling: ${r?.erro || "não concluído"} O que já foi feito ficou salvo; corrija e toque de novo.` };
+      const c = await preparar(fichaId, { conta }); // reconfere: o Bling agora tem o SKU
+      if (c && c.ok === false) return c;
+      const nova = await lerAgora();
+      const r2 = montarRevisao(nova);
+      const falta2 = r2.pendencias.filter((x) => x.tipo !== "aviso");
+      if (!r2.podeAprovar) return { ok: false, erro: `Falta resolver: ${falta2[0]?.texto || "conferência"}. O cadastro no Bling ficou salvo.` };
+      const a = await (depsTeste()?.aprovarRevisao || aprovarRevisaoEGravar)(fichaId, { usuario: usuarioId });
+      if (!a?.ok) return a || { ok: false, erro: "Não consegui gravar a aprovação." };
+    } else if (!rev.aprovada) {
       const a = await (depsTeste()?.aprovarRevisao || aprovarRevisaoEGravar)(fichaId, { usuario: usuarioId });
       if (!a?.ok) return a || { ok: false, erro: "Não consegui gravar a aprovação." };
     }
@@ -214,6 +233,15 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const botaoDecisao = (x) => {
     if (x.id === "categoria" && x.sugerida) return <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="categoria" onClick={() => acao("categoria", async () => { const r = await confirmarCategoriaEGravar(fichaId, row?.dados_conferencia?.paiia_voz?.preparo); return r.ok ? preparar(fichaId, { conta }) : r; })}>✅ Confirmar categoria: {x.sugerida}</button>;
     if (x.id === "categoria") return <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="categoria-buscar" onClick={() => setCat((c) => ({ ...c, aberta: true }))}>🔎 Escolher a categoria</button>;
+    // Falta o motor: as opções do catálogo do ML para o modelo/período (uma pergunta, nada presumido).
+    if (x.id === "compatibilidade" && x.perguntaMotor?.opcoes?.length && aoDefinirMotor) return (
+      <div style={{ display: "grid", gap: 8 }} data-pv-pergunta-motor>
+        {x.perguntaMotor.opcoes.map((m) => (
+          <button key={m} type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-motor={m} onClick={() => aoDefinirMotor(x.perguntaMotor, m)}>Motor {m}</button>
+        ))}
+        {aoIrEtapa && <button type="button" className="pr-link" onClick={() => aoIrEtapa("compat")} data-pv-motor-nenhum>Nenhuma destas (ajustar a compatibilidade)</button>}
+      </div>
+    );
     if (x.id === "modalidade") return <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="modalidade" onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })}>Usar Premium (padrão da loja)</button>;
     const etapa = ETAPA_DA_PENDENCIA(x);
     if (etapa && aoIrEtapa) return <button type="button" className="pr-botao pr-grande" data-pv-resolver={`etapa:${etapa}`} onClick={() => aoIrEtapa(etapa)}>✏️ {etapa === "compat" ? "Ajustar a compatibilidade (ex.: motor e anos)" : "Resolver"}</button>;
@@ -235,17 +263,35 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   return (
     <div className="pr-cartao" data-pv-finalizar-topo data-pv-finalizar={tudoFeito ? "concluido" : sit.podeExecutar ? "pronto" : "pendente"}>
       {/* (Passo 7) O próximo passo, sozinho no topo: ou UMA decisão pendente, ou seguir para a Publicação. */}
-      <div className="pr-cartao" data-pv-seguir={!conta ? "conta" : rodando === "conferir" ? "conferindo" : jaNaPublicacao || (rev.podeAprovar && !decisao) ? "publicacao" : "decisao"}>
+      <div className="pr-cartao" data-pv-seguir={!conta ? "conta" : rodando === "conferir" ? "conferindo" : jaNaPublicacao || (!decisao && (rev.podeAprovar || blingAusente)) ? "publicacao" : "decisao"}>
         {!conta ? (
           <p data-pv-seguir-texto>1️⃣ Escolha abaixo a conta do Mercado Livre. A categoria e o frete oficial são conferidos sozinhos.</p>
         ) : rodando === "conferir" ? (
           <p data-pv-seguir-texto>⏳ Conferindo categoria, frete oficial, duplicidade e Bling no Mercado Livre (só leitura)…</p>
-        ) : jaNaPublicacao || (rev.podeAprovar && !decisao) ? (
+        ) : jaNaPublicacao || (!decisao && (rev.podeAprovar || blingAusente)) ? (
           <>
-            <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} onClick={seguirParaPublicacao} data-pv-continuar-publicacao>
-              {rodando === "publicacao" ? "⏳ Abrindo a Publicação…" : "➡️ Continuar para Publicação"}
+            {blingAusente && (
+              <label className="pr-check" data-pv-autorizo-bling-cadastro>
+                <input type="checkbox" checked={autorizoCadastro} disabled={Boolean(rodando)} onChange={(e) => setAutorizoCadastro(e.target.checked)} />
+                <span>Autorizo cadastrar no Bling o produto <b>{entradaDaFicha(row).codigo}</b> com o estoque da ficha (<b>{entradaDaFicha(row).quantidade || "?"}</b> un.). O PAIIA confere antes e não duplica.</span>
+              </label>
+            )}
+            <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || (blingAusente && !autorizoCadastro)} onClick={seguirParaPublicacao} data-pv-continuar-publicacao>
+              {rodando === "publicacao" ? "⏳ Finalizando…" : "✅ Finalizar e Enviar"}
             </button>
-            <p className="pr-fonte">Abre a Publicação desta mesma ficha, com fotos e dados conferidos. Nada é publicado sem a sua autorização final.</p>
+            <p className="pr-fonte">{blingAusente ? "Cadastra no Bling (com a sua autorização) e abre" : "Abre"} a Publicação desta mesma ficha, com fotos e dados conferidos. A publicação no Mercado Livre só acontece depois da sua confirmação final.</p>
+            {/* (Etapa 2) Categoria selecionada + só "Alterar categoria"; modalidade Clássico com troca opcional. */}
+            {row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.categoria?.estado === "ok" && (
+              <p className="pr-fonte" data-pv-categoria-selecionada>
+                Categoria: <b>{(() => { const c = row.dados_conferencia.paiia_voz.preparo.verificacoes.categoria; return c.caminho || (String(c.texto || "").match(/— (.+?) \(/) || [])[1] || c.id; })()}</b>{" "}
+                <button type="button" className="pr-link" onClick={() => setCat((c) => ({ ...c, aberta: true }))} data-pv-alterar-categoria>Alterar categoria</button>
+              </p>
+            )}
+            <p className="pr-fonte" data-pv-modalidade>
+              Modalidade: <b>{rev.dados?.modalidade || "Clássico"}</b>{rev.dados?.modalidade !== "Premium" && (
+                <> · <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-trocar-premium>trocar para Premium</button></>
+              )}
+            </p>
           </>
         ) : decisao ? (
           <>

@@ -28,11 +28,12 @@ function ficha(extra = {}) {
 }
 
 /** Mercado Livre / Bling / base simulados; registra cada chamada (prova de que só há leitura). */
-function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada" } = {}) {
+function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada", atributoSemValor = false } = {}) {
   const chamadas = [];
   const categorias = {
     MLB456155: { name: "Lanternas de Pisca", path: ["Acessórios para Veículos", "Peças de Linha Pesada", "Iluminação", "Lanternas de Pisca"], tipo: tipoCategoria },
     MLB22735: { name: "Pisca Pisca", path: ["Acessórios para Veículos", "Peças de Carros e Caminhonetes", "Iluminação", "Faróis", "Pisca Pisca"], tipo: "Carro/Caminhonete" },
+    MLB456156: { name: "Lanternas Laterais", path: ["Acessórios para Veículos", "Peças de Linha Pesada", "Iluminação", "Lanternas Laterais"], tipo: tipoCategoria },
   };
   const lerJson = async (url) => {
     chamadas.push(["GET", url]);
@@ -44,6 +45,8 @@ function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lantern
         { id: "BRAND", name: "Marca", tags: { required: true } },
         { id: "PART_NUMBER", name: "Número de peça", tags: { required: true } },
         { id: "VEHICLE_TYPE", name: "Tipo de veículo", tags: { required: true }, values: [{ id: "1", name: c.tipo }] },
+        // (Etapa 2) obrigatório que a ficha não preenche → a categoria NÃO é aceita sozinha
+        ...(atributoSemValor ? [{ id: "POSITION", name: "Posição", tags: { required: true }, values: [{ id: "1", name: "Dianteira" }, { id: "2", name: "Traseira" }] }] : []),
       ];
       return { id: m[1], name: c.name, path_from_root: c.path.map((name) => ({ name })), settings: { catalog_domain: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS", listing_allowed: true } };
     }
@@ -77,12 +80,14 @@ function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lantern
   return { deps, chamadas };
 }
 
-test("lanterna (Linha Pesada, LOJA ONLINE): tudo conferido; categoria vira PERGUNTA (nunca confirmada sozinha)", async () => {
+test("lanterna (Linha Pesada, LOJA ONLINE): tudo conferido; categoria ÚNICA válida com atributos conferidos é SELECIONADA sozinha (Etapa 2)", async () => {
   const w = mundo({ registrosBase: [{ mlb_id: "MLB7920523934", status_publicacao: "publicado_com_pendencia", anuncio_id: "antiga" }] });
   const p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: w.deps });
   const v = p.verificacoes;
-  assert.equal(v.categoria.estado, "pergunta", v.categoria.texto);
-  assert.equal(v.categoria.sugerida, "MLB456155");
+  assert.equal(v.categoria.estado, "ok", v.categoria.texto);
+  assert.equal(v.categoria.automatica, true);
+  assert.equal(v.categoria.id, "MLB456155");
+  assert.equal(p.categoria.decisao.confirmada.id, "MLB456155", "a decisão automática é gravada no preparo (mesmo registro)");
   assert.equal(v.compatibilidade.estado, "ok", v.compatibilidade.texto);
   assert.match(v.compatibilidade.texto, /Linha Pesada/);
   assert.equal(v.duplicidade.estado, "ok", v.duplicidade.texto);
@@ -91,14 +96,29 @@ test("lanterna (Linha Pesada, LOJA ONLINE): tudo conferido; categoria vira PERGU
   assert.match(v.bling.texto, /disponível 10/);
   assert.equal(v.frete.estado, "ok", v.frete.texto);
   assert.match(v.frete.texto, /R\$ 13,85/);
-  assert.deepEqual(p.perguntas.map((q) => q.id), ["categoria"]);
-  assert.equal(p.pronto, false);
+  assert.deepEqual(p.perguntas.map((q) => q.id), []);
+  assert.equal(p.pronto, true);
   // Só leitura: nenhuma ação além de consultas
   assert.ok(w.chamadas.every((c) => c[0] === "GET" || c[0] === "BLING" || c[1] === "evidencia_codigo" || (c[0] === "POST" && /^\/catalog_domains\//.test(c[2]))), JSON.stringify(w.chamadas));
 });
 
+test("categoria com atributo obrigatório SEM valor na ficha: vira PERGUNTA (nada presumido)", async () => {
+  const p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: mundo({ atributoSemValor: true }).deps });
+  assert.equal(p.verificacoes.categoria.estado, "pergunta", p.verificacoes.categoria.texto);
+  assert.equal(p.verificacoes.categoria.sugerida, "MLB456155");
+});
+
+test("duas categorias válidas: vira PERGUNTA (nunca escolhe sozinho)", async () => {
+  const w = mundo({ preditor: [{ category_id: "MLB456155", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }, { category_id: "MLB456156", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }] });
+  const p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: w.deps });
+  const validas = (p.verificacoes.categoria.avaliacao?.candidatas || []).filter((c) => c.compativel && !c.rejeitada).length;
+  assert.ok(validas >= 2, `cenário precisa de 2 válidas (tem ${validas})`);
+  assert.notEqual(p.verificacoes.categoria.estado, "ok", p.verificacoes.categoria.texto);
+  assert.notEqual(p.verificacoes.categoria.automatica, true);
+});
+
 test("confirmar a categoria no Voz usa o MESMO registro da Conferência e, reconferindo, fica tudo ✅", async () => {
-  const w = mundo();
+  const w = mundo({ atributoSemValor: true });
   const row = ficha();
   const p1 = await prepararConferenciaVoz(row, { conta: LOJA, deps: w.deps });
   const c = confirmarCategoriaSugerida(p1, { agora: "2026-11-02T12:01:00.000Z" });

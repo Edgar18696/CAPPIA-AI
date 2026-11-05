@@ -301,6 +301,9 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
   const correspondencias = [];
   const descartados = [];
   const semCatalogo = [];
+  // (Etapa 1 simplificação) Aplicação SEM motor: nada é presumido — os motores que o
+  // próprio catálogo lista para o modelo/período viram UMA pergunta simples.
+  const perguntasMotor = [];
   const rotulo = rotuloAplicacaoML;
   const cacheMarca = new Map();
   for (const a of aplicacoes) {
@@ -386,6 +389,10 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
     if (automatica && !correspondencias.some((c) => c.chave === chaveModeloML(a.montadora, a.modelo))) {
       correspondencias.push({ chave: chaveModeloML(a.montadora, a.modelo), montadora: a.montadora, modeloDigitado: a.modelo, modeloCatalogo: limpar(modelo.name), tipo: "automatica", texto: automatica, veiculos: algum });
     }
+    if (!algum && !limpar(a.motor)) {
+      const opcoes = [...new Set(produtos.filter((p) => { if (!/^MLB\d+$/.test(String(p?.id || ""))) return false; const y = ano(atributo(p, "VEHICLE_YEAR")); return y != null && (!a.anoInicio || y >= a.anoInicio) && (!a.anoFim || y <= a.anoFim); }).map((p) => limpar(atributo(p, "ENGINE")) || (semAcento(`${atributo(p, "TRIM")} ${atributo(p, "SHORT_VERSION")}`).match(/\b\d\.\d\b/) || [""])[0]).filter(Boolean))].sort();
+      if (opcoes.length) perguntasMotor.push({ aplicacao: rotulo(a), montadora: a.montadora, modelo: a.modelo, anoInicio: a.anoInicio || null, anoFim: a.anoFim || null, opcoes });
+    }
     if (!algum) semCatalogo.push({ aplicacao: rotulo(a), motivo: `nenhum veículo do catálogo${viaCorrespondencia ? ` (modelo ${limpar(modelo.name)})` : ""} confirma todos os dados aprovados (período, motor${a.versao ? ", versão" : ""})` });
   }
   // Um veículo aceito por uma aplicação não aparece como descartado por outra.
@@ -395,6 +402,7 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
     descartados: descartados.filter((d) => !veiculos.has(d.id)),
     semCatalogo,
     correspondencias,
+    perguntasMotor,
     dominio: DOMINIO_CARROS,
   };
 }

@@ -64,7 +64,9 @@ test("4) tela: 'Completar ficha' grande; Finalizar mostra UMA decisão ou 'Conti
   const seg = f.slice(f.indexOf("const seguirParaPublicacao"), f.indexOf("const decisao = faltaRev[0]"));
   assert.ok(seg.indexOf("aprovarRevisaoEGravar") < seg.indexOf("prepararPublicacaoVoz") && seg.indexOf("prepararPublicacaoVoz") < seg.lastIndexOf("abrirPublicacao(fichaId)"), "aprova → entrega à Publicação existente → abre");
   assert.ok(seg.includes("p.fichaId !== fichaId"), "nunca abre outra ficha");
-  assert.ok(!/executarFinalizacao|publicar_item|criar_produto/.test(seg), "não publica e não cria nada no Bling");
+  assert.ok(!/publicar_item|ml_publicar|criar_produto/.test(seg), "não publica");
+  // (Etapa 3, decisão D1/D4) o Bling só é cadastrado pelo executor existente E com a autorização marcada
+  assert.ok(!seg.includes("executarFinalizacao") || (seg.includes("if (!autorizoCadastro) return") && seg.includes('marcadas: ["bling_criar"]')), "Bling só com autorização");
   assert.ok(f.includes("const decisao = faltaRev[0] || null;") && f.includes("data-pv-seguir="), "uma decisão por vez");
   assert.ok(f.includes('data-pv-resolver="categoria"') && f.includes('data-pv-resolver="modalidade"') && f.includes('p.id === "compatibilidade" ? "compat"'));
 });

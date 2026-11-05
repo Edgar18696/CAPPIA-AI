@@ -28,7 +28,7 @@ function ficha(extra = {}) {
 }
 
 /** Mercado Livre / Bling / base simulados; registra cada chamada (prova de que só há leitura). */
-function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada" } = {}) {
+function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada", atributoSemValor = false } = {}) {
   const chamadas = [];
   const categorias = {
     MLB456155: { name: "Lanternas de Pisca", path: ["Acessórios para Veículos", "Peças de Linha Pesada", "Iluminação", "Lanternas de Pisca"], tipo: tipoCategoria },
@@ -44,6 +44,8 @@ function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lantern
         { id: "BRAND", name: "Marca", tags: { required: true } },
         { id: "PART_NUMBER", name: "Número de peça", tags: { required: true } },
         { id: "VEHICLE_TYPE", name: "Tipo de veículo", tags: { required: true }, values: [{ id: "1", name: c.tipo }] },
+        // (Etapa 2) obrigatório que a ficha não preenche → a categoria NÃO é aceita sozinha
+        ...(atributoSemValor ? [{ id: "POSITION", name: "Posição", tags: { required: true }, values: [{ id: "1", name: "Dianteira" }, { id: "2", name: "Traseira" }] }] : []),
       ];
       return { id: m[1], name: c.name, path_from_root: c.path.map((name) => ({ name })), settings: { catalog_domain: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS", listing_allowed: true } };
     }
@@ -84,7 +86,7 @@ async function conferido(row, w = mundo()) {
   return row;
 }
 async function prontaParaAprovar() {
-  const w = mundo();
+  const w = mundo({ atributoSemValor: true }); // categoria com dúvida → confirmada por você (caminho manual)
   const row = await conferido(ficha(), w);
   const c = confirmarCategoriaSugerida(row.dados_conferencia.paiia_voz.preparo);
   row.dados_conferencia = mesclarPreparo(row.dados_conferencia, { ...row.dados_conferencia.paiia_voz.preparo, categoria: { decisao: c.decisao } });
@@ -107,8 +109,14 @@ test("sem conferência: revisão mostra os dados e pede 'Conferir'; não aprova"
   assert.equal(aprovarRevisao(ficha()).ok, false);
 });
 
-test("só o que precisa de correção aparece: categoria sugerida vira a ÚNICA pendência, com o botão de confirmar", async () => {
-  const r = montarRevisao(await conferido(ficha()));
+test("categoria única válida com atributos conferidos: selecionada sozinha, sem pendência (Etapa 2)", async () => {
+  const r0 = montarRevisao(await conferido(ficha()));
+  assert.deepEqual(r0.pendencias.map((p) => p.id), []);
+  assert.equal(r0.podeAprovar, true);
+});
+
+test("só o que precisa de correção aparece: categoria com dúvida vira a ÚNICA pendência, com o botão de confirmar", async () => {
+  const r = montarRevisao(await conferido(ficha(), mundo({ atributoSemValor: true })));
   assert.deepEqual(r.pendencias.map((p) => p.id), ["categoria"]);
   assert.equal(r.pendencias[0].sugerida, "MLB456155");
   assert.equal(r.podeAprovar, false);
@@ -146,11 +154,11 @@ test("dado mudou depois da aprovação → aprovação deixa de valer sozinha e 
   assert.equal(montarRevisao(row2).aprovada, false);
 });
 
-test("Clássico por padrão → pergunta 'Usar Premium'; trocar exige nova conferência (frete muda); Clássico escolhido de propósito não é pendência", async () => {
+test("Clássico é o padrão SEM pergunta (decisão 07/11); trocar para Premium exige nova conferência (frete muda)", async () => {
   const row = ficha();
   row.dados_conferencia.novo_anuncio.tipoAnuncio = "classico";
   await conferido(row);
-  assert.ok(montarRevisao(row).pendencias.some((p) => p.id === "modalidade"));
+  assert.equal(montarRevisao(row).pendencias.some((p) => p.id === "modalidade"), false, "Clássico não vira pergunta obrigatória");
   row.dados_conferencia = comModalidade(row.dados_conferencia, "premium", "2026-11-02T13:00:00.000Z");
   assert.equal(row.dados_conferencia.novo_anuncio.tipoAnuncio, "premium");
   assert.ok(montarRevisao(row).pendencias.some((p) => p.id === "conferir"), "frete foi cotado como Clássico: reconferir");
