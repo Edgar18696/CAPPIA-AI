@@ -63,7 +63,7 @@ export function compatSemCatalogo(row) {
   return Boolean(v && v.estado === "pergunta" && /nenhum veículo do catálogo confirmou/i.test(txt(v.texto)));
 }
 
-export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilidade = false, liberado = false } = {}) {
+export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilidade = false, liberado = false, marcar = {} } = {}) {
   const rev = montarRevisao(row);
   const prep = preparoAtual(row);
   const e = entradaDaFicha(row);
@@ -76,13 +76,15 @@ export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilid
   const nCompat = e.aplicacoes.length;
   const ops = [];
   if (ausente) ops.push({ id: "bling_criar", marcada: Boolean(autorizarBling), exigeAutorizacao: true, detalhe: `SKU ${e.codigo} não existe no Bling. Só com a sua autorização específica; estoque inicial 0 (o estoque oficial continua lançado por você no Bling).` });
-  ops.push({ id: "ml_publicar", marcada: true, detalhe: `${e.tipoAnuncio === "premium" ? "Premium" : "Clássico"} · ${rev.dados.preco} · ${e.quantidade || "?"} un. · conta ${prep.preparo?.conta || "?"}` });
-  if (nCompat && !semCompat) ops.push({ id: "ml_compat", marcada: true, detalhe: `${nCompat} compatibilidade(s) confirmada(s)` });
-  ops.push({ id: "bling_vinculo", marcada: true, detalhe: "Só leitura: o PAIIA não vincula nem altera estoque ou cadastro no Bling." });
+  // (04/11) Nenhuma operação vem marcada: você marca cada uma.
+  ops.push({ id: "ml_publicar", marcada: Boolean(marcar.ml_publicar), detalhe: `${e.tipoAnuncio === "premium" ? "Premium" : "Clássico"} · ${rev.dados.preco} · ${e.quantidade || "?"} un. · conta ${prep.preparo?.conta || "?"}` });
+  if (nCompat && !semCompat) ops.push({ id: "ml_compat", marcada: Boolean(marcar.ml_compat), detalhe: `${nCompat} compatibilidade(s) confirmada(s)` });
+  ops.push({ id: "bling_vinculo", marcada: Boolean(marcar.ml_publicar), automatica: true, detalhe: "Acompanha a publicação, só leitura: o PAIIA não vincula nem altera estoque ou cadastro no Bling." });
   for (const o of ops) o.estado = est.ops[o.id]?.estado || "nao_iniciado";
   const motivo = !prep.valido ? "Conferência ainda não feita ou desatualizada."
     : bloqueia.length ? `${bloqueia.length} pendência(s) para resolver.`
-      : !liberado ? "Execução real ainda não liberada nesta versão (proteção do servidor contra duplicidade não comprovada)."
+      : !ops.some((o) => o.marcada && !o.automatica) ? "Marque a(s) operação(ões) que você autoriza."
+        : !liberado ? "Execução real ainda não liberada nesta versão (proteção do servidor contra duplicidade não comprovada)."
         : "";
   return { revisao: rev, pendencias, ops, podeExecutar: !motivo, motivo, liberado, skuAusente: ausente, compatSemCatalogo: semCat, semCompatibilidade: semCompat, registro: est };
 }

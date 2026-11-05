@@ -137,10 +137,15 @@ test("situação: tudo conferido → operações planejadas; execução real NÃ
   const row = await pronta();
   const s = Fz.situacaoFinalizar(row);
   assert.deepEqual(s.ops.map((o) => o.id), ["ml_publicar", "ml_compat", "bling_vinculo"]);
+  assert.ok(s.ops.every((o) => !o.marcada), "nenhuma operação vem marcada (Publicar no ML desmarcado)");
   assert.equal(s.pendencias.filter((p) => p.tipo !== "aviso").length, 0);
   assert.equal(s.podeExecutar, false);
-  assert.match(s.motivo, /não liberada/);
-  assert.equal(Fz.situacaoFinalizar(row, { liberado: true }).podeExecutar, true);
+  assert.match(s.motivo, /Marque/);
+  const m = Fz.situacaoFinalizar(row, { marcar: { ml_publicar: true } });
+  assert.match(m.motivo, /não liberada/);
+  assert.equal(m.ops.find((o) => o.id === "bling_vinculo").marcada, true, "vínculo (leitura) acompanha a publicação");
+  assert.equal(Fz.situacaoFinalizar(row, { liberado: true }).podeExecutar, false, "liberado mas nada marcado");
+  assert.equal(Fz.situacaoFinalizar(row, { liberado: true, marcar: { ml_publicar: true } }).podeExecutar, true);
   assert.equal(Fz.publicacaoRealLiberada({}), false, "padrão: desligado");
 });
 
@@ -156,6 +161,7 @@ test("SKU ausente no Bling: informa e só segue com autorização ESPECÍFICA (e
   s = Fz.situacaoFinalizar(row, { liberado: true, autorizarBling: true });
   assert.equal(s.ops[0].marcada, true);
   assert.equal(s.podeExecutar, true);
+  assert.equal(s.ops.find((o) => o.id === "ml_publicar").marcada, false, "autorizar o Bling não marca a publicação");
 });
 
 test("executar: só com confirmação explícita e com a ficha igual à confirmada", async () => {
@@ -293,7 +299,7 @@ test("catálogo do ML não confirma os veículos: só segue com a decisão expl�
   let s = Fz.situacaoFinalizar(row, { liberado: true });
   assert.equal(s.compatSemCatalogo, true);
   assert.equal(s.podeExecutar, false);
-  s = Fz.situacaoFinalizar(row, { liberado: true, semCompatibilidade: true });
+  s = Fz.situacaoFinalizar(row, { liberado: true, semCompatibilidade: true, marcar: { ml_publicar: true } });
   assert.equal(s.podeExecutar, true);
   assert.ok(!s.ops.some((o) => o.id === "ml_compat"));
 });
@@ -302,4 +308,78 @@ test("nada do que existia some: fotos do anúncio (original/fundo branco), aviso
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   for (const t of ["data-pr-envio-fotos", "data-pr-envio-foto", "data-pr-usar-tratada", "data-pr-aviso-interrompidas", "data-pr-aviso-tratando", "data-pr-faltando", "data-pr-peso-medidas-envio", "data-pr-modo-conversa", "data-pv-dados-bling", "data-pr-aproveitar", "data-pr-sugestao", "data-pr-editar-final", "data-pv-confirmar-envio", "data-pv-conversa-opcional", "data-pv-manter-mic"]) assert.ok(tela.includes(t), t);
   assert.ok(ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx").includes("<PreparoPublicacaoVoz"), "rotina atual de publicação continua disponível");
+});
+
+test("entrada (04/11): PAIIA Voz abre SEMPRE nas 7 etapas; modo conversa guardado no aparelho não volta a ser a entrada; nada é apagado", async () => {
+  const mem = new Map([["paiiaVozModo", "conversa"], ["paiiaVozFicha", "{\"id\":\"antiga\"}"]]);
+  globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  const f = ler("src/modules/paiiaVoz/PaiiaVoz.jsx");
+  assert.ok(f.includes('return "rapido";\n}'), "entrada fixa nas 7 etapas");
+  assert.ok(!/localStorage\.setItem\(CHAVE_MODO, m\)/.test(f), "escolher a conversa não fica guardado");
+  assert.ok(f.includes("data-pr-modo-conversa") === false && ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx").includes("data-pr-modo-conversa"), "modo conversa continua disponível pelo link");
+  assert.ok(f.includes("data-pv-versao-nova") && f.includes("window.location.reload()"), "aviso de versão nova com Atualizar");
+  assert.ok(!/removeItem|limparFicha|descartarFichaVoz\(\)/.test(f.slice(f.indexOf("function modoInicial"), f.indexOf("function PaiiaVozConversa("))), "entrada não apaga ficha nem fotos");
+  assert.ok(ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx").includes("data-pr-enviada"), "ficha já enviada: aviso nas 7 etapas");
+  delete globalThis.localStorage;
+});
+
+test("etapas sem a caixa extra “Digite uma informação da peça”/OK: cada campo com o seu microfone (inclusive o Código) e digitação direta", () => {
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(!tela.includes("data-pr-entrada") && !tela.includes("Digite uma informação da peça") && !tela.includes("enviarDigitado"), "caixa extra removida");
+  assert.ok(tela.includes('{micCampo("codigo", "Código")}') && tela.includes('{micCampo("titulo", "Título")}') && tela.includes('{micCampo("", "Descrição")}') && tela.includes("{micCampo(c.id, c.rotulo)}"), "microfone ao lado de cada campo");
+  assert.ok(tela.includes('ditando={ouvindo ? parcial || " " : ""} onSalvar'), "código mostra a fala no próprio campo");
+  assert.ok(tela.includes("onBlur={() => { setFocado(false); if (texto !== valor) onSalvar(texto); }}"), "digitação direta no campo é salva");
+  assert.ok(tela.includes("data-pv-microfone"), "microfone principal continua");
+  assert.ok(ler("src/modules/paiiaVoz/CompletarVoz.jsx").includes("data-pv-completar-entrada"), "conversa opcional mantém a sua resposta digitada");
+});
+
+test("compatibilidade: confirmada / ambígua / pendente; ditada NÃO conta como confirmada", () => {
+  assert.equal(C.situacaoAplicacao({ montadora: "Renault", modelos: ["Master"], anoInicio: 2013, confirmada: false }).estado, "pendente");
+  assert.equal(C.situacaoAplicacao({ montadora: "", modelos: ["Master"], anoInicio: null, confirmada: false }).estado, "ambigua");
+  assert.deepEqual(C.situacaoAplicacao({ montadora: "", modelos: ["Master"], anoInicio: null }).faltas, ["montadora", "anos"]);
+  assert.equal(C.situacaoAplicacao({ montadora: "Renault", modelos: ["Master"], anoInicio: 2013, confirmada: true }).estado, "confirmada");
+  let f = criarFichaVoz({ agora: 1, id: "cp" });
+  f = C.definirCampoDireto(f, "aplicacoes", "Renault Master 2013 a 2022").ficha;
+  assert.equal(f.aplicacoes.length, 1);
+  assert.equal(f.aplicacoes[0].confirmada, false, "dita = pendente até você marcar");
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(tela.includes("data-pv-aplicacao-estado") && tela.includes("data-pv-aplicacoes-contagem"));
+});
+
+test("etapa 3: Título primeiro, depois Descrição; o Título já vem ativo", () => {
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(tela.indexOf('data-pv-campo-direto="titulo"') < tela.indexOf('data-pv-campo-direto="descricao"'), "Título antes da Descrição");
+  assert.ok(tela.includes('const inicial = e === "descricao" && !estadoRapido(fichaRef.current).titulo.valor ? "titulo" : "";'));
+  assert.match(ler("src/modules/paiiaVoz/servicos/rascunhoRapido.js"), /descricao: "Título e Descrição"/);
+});
+
+test("nova ficha: abre vazia; a anterior nunca é apagada sozinha (guardar ou descartar com confirmação); guardadas reabrem", async () => {
+  const mem = new Map();
+  const arm = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  const Fv = await import("../../src/modules/paiiaVoz/servicos/fichaVoz.js");
+  const a = { ...criarFichaVoz({ agora: 1, id: "f1" }) };
+  assert.equal(Fv.guardarNaListaVoz(a, arm).ok, true);
+  assert.equal(Fv.guardarNaListaVoz({ ...a }, arm).ok, true, "guardar de novo atualiza, não duplica");
+  assert.deepEqual(Fv.listarFichasGuardadas(arm).map((x) => x.id), ["f1"]);
+  assert.equal(Fv.retirarDaListaVoz("f1", arm).id, "f1");
+  assert.equal(Fv.listarFichasGuardadas(arm).length, 0);
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  const inicio = tela.slice(tela.indexOf("function iniciarFichaNova("), tela.indexOf("async function novaFicha("));
+  assert.ok(!/limparFicha|descartarFichaVoz|removeItem/.test(inicio), "iniciar nova ficha não apaga nada");
+  for (const t of ["setParcial(\"\")", "setOuvidoCodigo(null)", "setNuvem({ estado: \"\", texto: \"\" })", "setRecenteCompletar(\"\")", "setVersaoRevisao((v) => v + 1)", "criarFichaVoz()"]) assert.ok(inicio.includes(t), t);
+  assert.ok(tela.includes("data-pv-nova-guardar") && tela.includes("data-pv-nova-descartar") && tela.includes("data-pv-nova-cancelar"));
+  assert.ok(tela.includes("faxina(fichaId, { manter: listarFichasGuardadas().map((x) => x.id) })"), "fotos das fichas guardadas protegidas");
+  assert.ok(tela.includes("key={`${ficha.id}-${versaoRevisao}`}"), "Finalizar não herda seleções da ficha anterior");
+});
+
+test("peso/medidas não aparecem no campo Descrição nem na descrição comercial; continuam nos dados técnicos", async () => {
+  const R = await import("../../src/modules/paiiaVoz/servicos/rascunhoRapido.js");
+  let f = criarFichaVoz({ agora: 1, id: "pm" });
+  f = R.definirTextoDescricao(f, "presilha do acabamento");
+  f = C.definirCampoDireto(f, "peso", "200").ficha;
+  f = C.definirCampoDireto(f, "comprimento", "20 por 10 por 5").ficha;
+  assert.ok(!/200 g|20 X 10/i.test(R.descricaoParaEnvio(f)), "descrição comercial sem medidas");
+  assert.deepEqual(R.pesoMedidasParaEnvio(f).campos, { pesoFreteML: "0,2", comprimentoFreteML: "20", larguraFreteML: "10", alturaFreteML: "5" });
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(tela.includes("valor={semLinhaMedidas(r.descricao.texto)}") && tela.includes("comLinhaMedidas(v, estadoRapido(fichaRef.current).descricao.texto)"), "campo Descrição não mostra a linha de medidas e não a perde ao editar");
 });

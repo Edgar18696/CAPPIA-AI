@@ -61,20 +61,20 @@ test("fotos: marcar uso, remover, nova ficha e limite por ficha", async () => {
   await assert.rejects(() => g.adicionar("", [imagem()]), /ficha sem id/);
 });
 
-test("fotos: faxina apaga vencidas (48 h) e de outras fichas, nunca as da ficha atual", async () => {
+test("fotos (04/11): faxina apaga SÓ fotos sem ficha e vencidas; nunca as da ficha atual nem das guardadas", async () => {
   let t = 0;
   const arm = G.armazenamentoMemoria();
   const g = G.criarGuardaFotos({ armazenamento: arm, agora: () => t });
-  await g.adicionar("velha", [comNome(imagem(), "v.jpg")]);
+  await g.adicionar("solta", [comNome(imagem(), "s.jpg")]);
+  await g.adicionar("guardada", [comNome(imagem(), "g.jpg")]);
   t = 10;
   await g.adicionar("atual", [comNome(imagem(), "a.jpg")]);
   t = 20;
-  assert.equal(await g.faxina("atual"), 1);
-  assert.equal((await arm.getAll()).length, 1);
+  assert.equal(await g.faxina("atual", { manter: ["guardada"] }), 0, "nada vencido: nada apagado");
   t = 10 + G.VALIDADE_FOTOS_MS + 1;
-  assert.equal((await g.listar("atual")).length, 0, "vencida não aparece");
-  assert.equal(await g.faxina("atual"), 1);
-  assert.equal((await arm.getAll()).length, 0);
+  assert.equal((await g.listar("atual")).length, 1, "foto da ficha atual não some com o tempo");
+  assert.equal(await g.faxina("atual", { manter: ["guardada"] }), 1, "só a solta vencida");
+  assert.deepEqual((await arm.getAll()).map((r) => r.fichaId).sort(), ["atual", "guardada"]);
 });
 
 test("fotos: sem IndexedDB o navegador usa memória (aviso na tela)", () => {

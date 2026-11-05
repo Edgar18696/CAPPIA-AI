@@ -28,6 +28,7 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const [erro, setErro] = useState("");
   const [autorizarBling, setAutorizarBling] = useState(false);
   const [semCompatibilidade, setSemCompatibilidade] = useState(false);
+  const [marcar, setMarcar] = useState({}); // (04/11) nenhuma operação vem marcada
   const [confirmo, setConfirmo] = useState(false);
   const [resultado, setResultado] = useState(null);
   const [sessao] = useState(() => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
@@ -83,11 +84,11 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
 
   if (!fichaId) return <p className="pr-aviso" data-pv-finalizar-sem-ficha>☁️ Salve a ficha na conta (informe o código) para finalizar.</p>;
   if (!row) return <p className="pr-fonte" data-pv-finalizar="carregando">⏳ Lendo a ficha…</p>;
-  const sit = situacaoFinalizar(row, { autorizarBling, semCompatibilidade, liberado });
+  const sit = situacaoFinalizar(row, { autorizarBling, semCompatibilidade, liberado, marcar });
   const d = sit.revisao.dados;
   const marcadas = sit.ops.filter((o) => o.marcada).map((o) => o.id);
   const temFalha = sit.ops.some((o) => ["erro", "incerto", "bloqueado", "executando"].includes(o.estado));
-  const tudoFeito = sit.ops.filter((o) => o.marcada).every((o) => o.estado === "ok");
+  const tudoFeito = marcadas.length > 0 && sit.ops.filter((o) => o.marcada).every((o) => o.estado === "ok");
 
   async function executar() {
     if (rodando || !confirmo || !sit.podeExecutar) return;
@@ -120,11 +121,13 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
         <dt>Marca</dt><dd>{d.marca || "—"}</dd>
         <dt>Fotos</dt><dd>{d.fotos.length}</dd>
         <dt>Preço · estoque</dt><dd>{d.preco} · {d.estoque || "—"} un.</dd>
+        <dt>Custo</dt><dd>{String(row?.dados_conferencia?.paiia_voz?.complemento?.custo || "").trim() || "— (opcional)"}</dd>
         <dt>Peso/medidas</dt><dd>{d.medida || "—"}</dd>
         <dt>Frete ML</dt><dd>{d.frete || "—"}</dd>
         <dt>Categoria</dt><dd>{d.categoria || "—"}</dd>
         <dt>Compatibilidades</dt><dd>{d.aplicacoes.length ? d.aplicacoes.join(" · ") : "—"}</dd>
       </dl>
+      <details className="pr-fonte" data-pv-finalizar-descricao><summary>Descrição ({d.descricao.trim() ? "ver" : "vazia"})</summary><pre className="pr-previa">{d.descricao || "—"}</pre></details>
       {Object.entries(row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes || {}).length > 0 && (
         <ul className="pr-fonte" data-pv-finalizar-conferencias style={{ margin: 0, paddingLeft: 18 }}>
           {Object.entries(row.dados_conferencia.paiia_voz.preparo.verificacoes).map(([k, v]) => <li key={k} data-pv-conferencia={k} data-estado={v?.estado}>{v?.estado === "ok" ? "✅" : ICONE[v?.estado] || "•"} {v?.texto}</li>)}
@@ -148,7 +151,7 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
       )}
 
       <div className="pr-cartao pr-cinza" data-pv-finalizar-operacoes>
-        <strong>Operações (só as marcadas serão executadas)</strong>
+        <strong>Operações — marque só o que você autoriza</strong>
         {sit.ops.map((o) => (
           <div key={o.id} data-pv-operacao={o.id} data-estado={o.estado}>
             {o.exigeAutorizacao ? (
@@ -156,8 +159,13 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
                 <input type="checkbox" checked={autorizarBling} disabled={Boolean(rodando) || o.estado === "ok"} onChange={(e) => { setAutorizarBling(e.target.checked); setConfirmo(false); }} data-pv-autorizar-bling />
                 <span><b>Autorizo criar o produto {d.sku} no Bling</b> com estoque inicial 0. <span className="pr-fonte">{o.detalhe}</span></span>
               </label>
+            ) : o.automatica ? (
+              <p style={{ margin: 0 }}>{o.marcada ? "☑" : "☐"} {ROTULOS_OPERACOES[o.id]} <span className="pr-fonte">— {o.detalhe}</span></p>
             ) : (
-              <p style={{ margin: 0 }}>☑ {ROTULOS_OPERACOES[o.id]} <span className="pr-fonte">— {o.detalhe}</span></p>
+              <label className="pr-check" style={{ alignItems: "flex-start" }}>
+                <input type="checkbox" checked={o.marcada} disabled={Boolean(rodando) || o.estado === "ok"} onChange={(e) => { const v = e.target.checked; setMarcar((m) => ({ ...m, [o.id]: v })); setConfirmo(false); }} data-pv-marcar-operacao={o.id} />
+                <span><b>{ROTULOS_OPERACOES[o.id]}</b> <span className="pr-fonte">— {o.detalhe}</span></span>
+              </label>
             )}
             <span className="pr-fonte" data-pv-operacao-estado>{rotuloEstado(o.estado)}{sit.registro.ops[o.id]?.erro ? ` · ${sit.registro.ops[o.id].erro}` : sit.registro.ops[o.id]?.resultado ? ` · ${sit.registro.ops[o.id].resultado}` : ""}</span>
           </div>

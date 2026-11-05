@@ -28,7 +28,7 @@ import { padronizarTitulo, padronizarDescricao } from "../../../services/padroni
 // (04/11/2026) 7 etapas aprovadas: Fotos, Código, Descrição/Título, Preço/Custo/Estoque,
 // Peso/Medidas/Frete, Compatibilidade e Finalizar (as antigas “titulo”/“enviar” viram “descricao”/“finalizar”).
 export const ETAPAS = ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"];
-export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", descricao: "Descrição", preco: "Preço", envio: "Envio", compat: "Compat.", finalizar: "Finalizar" };
+export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", descricao: "Título e Descrição", preco: "Preço", envio: "Envio", compat: "Compat.", finalizar: "Finalizar" };
 const ETAPAS_ANTIGAS = { titulo: "descricao", enviar: "finalizar" };
 export const LIMITE_TITULO = 60;
 export const MARCA_PADRAO = "Torken";
@@ -36,7 +36,7 @@ export const MARCA_PADRAO = "Torken";
 export const PERGUNTAS = {
   fotos: "Tire ou escolha até 5 fotos da peça. Pode continuar com menos. Quando terminar, toque em Continuar ou diga “próximo”.",
   codigo: "Qual é o código da peça? Fale ou digite. Se não tiver, diga “sem código”.",
-  descricao: "Descreva a peça (cada fala é acrescentada). Para o título, toque no 🎤 do Título e fale.",
+  descricao: "Primeiro o Título: toque no 🎤 do Título e fale. Depois a Descrição (cada fala é acrescentada).",
   preco: "Toque no 🎤 e fale: marca, preço de venda, custo (opcional) e estoque. Ele passa sozinho para o próximo campo.",
   envio: "Toque no 🎤 e fale o peso embalado (gramas) e as medidas — “20 por 10 por 5” preenche as três.",
   compat: "Diga o veículo e os anos (ex.: Renault Master 2013 a 2022) e marque só as aplicações certas.",

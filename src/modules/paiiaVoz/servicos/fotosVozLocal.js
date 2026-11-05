@@ -99,7 +99,8 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
   async function listar(fichaId) {
     const todos = await arm.getAll();
     return todos
-      .filter((r) => r.fichaId === fichaId && agora() - (Number(r.criadaEm) || 0) <= VALIDADE_FOTOS_MS)
+      // (04/11/2026) As fotos da ficha não “vencem” enquanto a ficha existir (atual ou guardada).
+      .filter((r) => r.fichaId === fichaId)
       .sort((a, b) => (a.ordem ?? a.criadaEm) - (b.ordem ?? b.criadaEm));
   }
 
@@ -187,12 +188,16 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
     for (const r of await arm.getAll()) if (r.fichaId === fichaId) await arm.delete(r.id);
   }
 
-  /** Apaga fotos vencidas ou de fichas que não são a atual. Devolve quantas apagou. */
-  async function faxina(fichaAtualId) {
+  /**
+   * (04/11/2026) Apaga SÓ fotos sem ficha (nem a atual nem uma guardada) e vencidas (48 h).
+   * Fotos da ficha atual e das fichas guardadas nunca são apagadas aqui. Devolve quantas apagou.
+   */
+  async function faxina(fichaAtualId, { manter = [] } = {}) {
     let n = 0;
+    const protegidas = new Set([fichaAtualId, ...manter].filter(Boolean));
     for (const r of await arm.getAll()) {
       const vencida = agora() - (Number(r.criadaEm) || 0) > VALIDADE_FOTOS_MS;
-      if (vencida || (fichaAtualId && r.fichaId !== fichaAtualId)) { await arm.delete(r.id); n++; }
+      if (vencida && !protegidas.has(r.fichaId)) { await arm.delete(r.id); n++; }
     }
     return n;
   }

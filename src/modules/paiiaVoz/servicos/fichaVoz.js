@@ -537,6 +537,37 @@ export function lerFichaVoz(storage) {
   }
 }
 
+// (04/11/2026) Fichas guardadas neste aparelho (“Salvar e começar nova”): nada é apagado sozinho.
+export const CHAVE_FICHAS_GUARDADAS = "paiiaVozFichasGuardadas";
+export const MAX_FICHAS_GUARDADAS = 50;
+export function listarFichasGuardadas(storage) {
+  try {
+    const l = JSON.parse((storage || globalThis.localStorage).getItem(CHAVE_FICHAS_GUARDADAS) || "[]");
+    return Array.isArray(l) ? l.filter((f) => f && typeof f === "object" && f.id && Array.isArray(f.codigos) && Array.isArray(f.aplicacoes)) : [];
+  } catch {
+    return [];
+  }
+}
+/** Guarda (ou atualiza) a ficha na lista. Devolve { ok, erro? }. */
+export function guardarNaListaVoz(ficha, storage) {
+  if (!ficha?.id) return { ok: false, erro: "ficha sem id" };
+  const l = listarFichasGuardadas(storage).filter((f) => f.id !== ficha.id);
+  if (l.length >= MAX_FICHAS_GUARDADAS) return { ok: false, erro: `já há ${MAX_FICHAS_GUARDADAS} fichas guardadas neste aparelho` };
+  try {
+    (storage || globalThis.localStorage).setItem(CHAVE_FICHAS_GUARDADAS, JSON.stringify([{ ...ficha, guardadaEm: Date.now() }, ...l]));
+    return { ok: true };
+  } catch {
+    return { ok: false, erro: "sem espaço no aparelho" };
+  }
+}
+/** Tira da lista (quando ela volta a ser a ficha atual). */
+export function retirarDaListaVoz(id, storage) {
+  const l = listarFichasGuardadas(storage);
+  const f = l.find((x) => x.id === id) || null;
+  try { (storage || globalThis.localStorage).setItem(CHAVE_FICHAS_GUARDADAS, JSON.stringify(l.filter((x) => x.id !== id))); } catch { /* sem acesso */ }
+  return f;
+}
+
 export function descartarFichaVoz(storage) {
   try {
     (storage || globalThis.localStorage).removeItem(CHAVE_FICHA_VOZ);

@@ -14,7 +14,10 @@ import {
   criarFichaVoz,
   lerFichaVoz,
   guardarFichaVoz,
-  descartarFichaVoz,
+  listarFichasGuardadas,
+  guardarNaListaVoz,
+  retirarDaListaVoz,
+  fichaVazia,
   aplicarInterpretacao,
   incorporarResultadoBase,
   conferirCodigo,
@@ -65,7 +68,7 @@ import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVo
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
 // (03/11/2026) Pacote C: conversa “Completar a ficha” (só o que falta) na etapa final.
 import CompletarVoz from "./CompletarVoz";
-import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling, camposDaEtapa, definirTipoVeiculoVoz, estadoEtapasVoz } from "./servicos/completarVoz";
+import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling, camposDaEtapa, definirTipoVeiculoVoz, estadoEtapasVoz, situacaoAplicacao } from "./servicos/completarVoz";
 import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
 import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
@@ -109,7 +112,6 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [parcial, setParcial] = useState("");
   const [ouvindo, setOuvindo] = useState(false);
   const [erroVoz, setErroVoz] = useState("");
-  const [entrada, setEntrada] = useState("");
   const [fotos, setFotos] = useState([]);
   const [consultando, setConsultando] = useState(false);
   const [lendoFoto, setLendoFoto] = useState({ estado: "", candidatos: [] });
@@ -233,7 +235,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     return res;
   }, [usuario?.id, guarda, recarregarFotos]);
   useEffect(() => {
-    guarda.faxina(fichaId).catch(() => {}).finally(() => recarregarFotos());
+    guarda.faxina(fichaId, { manter: listarFichasGuardadas().map((x) => x.id) }).catch(() => {}).finally(() => recarregarFotos());
   }, [fichaId, guarda, recarregarFotos]);
 
   // ---------------- Fundo branco com o Foto IA (fila em paralelo) ----------------
@@ -343,8 +345,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
 
   // ---------------- Navegação ----------------
   const irPara = useCallback((e) => {
-    campoVozRef.current = ""; // saiu do passo: nenhum campo continua “ouvindo”
-    setCampoVozEstado("");
+    // saiu do passo: nenhum campo continua “ouvindo”; (04/11) na etapa 3 o Título vem primeiro
+    const inicial = e === "descricao" && !estadoRapido(fichaRef.current).titulo.valor ? "titulo" : "";
+    campoVozRef.current = inicial;
+    setCampoVozEstado(inicial);
     setConfirmandoEnvio(false);
     setAviso("");
     mudarFicha(irParaEtapa(fichaRef.current, e));
@@ -436,6 +440,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [completarOcupado, setCompletarOcupado] = useState("");
   const [versaoRevisao, setVersaoRevisao] = useState(0);
   const [removendo, setRemovendo] = useState(null); // (04/11) confirmação de “Remover ficha de teste”
+  const [guardadas, setGuardadas] = useState(() => listarFichasGuardadas());
   const [conversaAberta, setConversaAberta] = useState(false);
   const conversaAbertaRef = useRef(false);
   const [recenteCompletar, setRecenteCompletar] = useState("");
@@ -564,7 +569,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         mudarFicha(definirTitulo(f, e.texto, { origem }));
         const av = avaliarTitulo(e.texto, f);
         const voltar = (e.acao === "substituir" || e.acao === "limpar") && rr.titulo.valor && rr.titulo.valor !== e.texto ? " Se não era isso, diga “desfaz”." : "";
-        if (!e.aviso) setAviso((av.avisos.length ? av.avisos.join(" ") : `Título anotado (${e.texto.length}/${LIMITE_TITULO}). Diga “próximo” para o preço.`) + voltar);
+        if (!e.aviso) setAviso((av.avisos.length ? av.avisos.join(" ") : `Título anotado (${e.texto.length}/${LIMITE_TITULO}). Agora toque no 🎤 da Descrição.`) + voltar);
       }
       return;
     }
@@ -670,14 +675,6 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     return () => clearTimeout(t);
   }, [ligarMicrofone, irPara]);
 
-  function enviarDigitado(e) {
-    e?.preventDefault?.();
-    const t = entrada.trim();
-    if (!t) return;
-    setEntrada("");
-    tratarFala(t, "digitado");
-  }
-
   // ---------------- Enviar ----------------
   const fotosUsadas = fotos.filter((f) => f.usarNoAnuncio);
   const resumoFotosTela = resumoFotos(fotos.map((f) => f.reg));
@@ -754,21 +751,60 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       try { descartarRascunhoLocalDaFicha(globalThis.localStorage, f.fichaIdPAIIA, { chaveGuardada: CHAVE_ANUNCIO_EM_ANDAMENTO, chavesLocais: CHAVES_ANUNCIO_LOCAL }); } catch { /* sem localStorage */ }
     }
     try { localStorage.removeItem(CHAVE_COMPLEMENTO_VOZ); } catch { /* sem localStorage */ }
-    await novaFicha();
+    await guarda.limparFicha(f.id).catch(() => {}); // só as fotos DESTA ficha (a Galeria do celular não é tocada)
+    retirarDaListaVoz(f.id);
+    iniciarFichaNova();
     setRemovendo(null);
     setAviso("🗑️ Ficha de teste removida. Começamos uma ficha nova, limpa.");
   }
 
-  async function novaFicha() {
-    await guarda.limparFicha(fichaRef.current.id).catch(() => {});
-    descartarFichaVoz();
-    const f = criarFichaVoz();
+  // (04/11) Nova ficha: abre TOTALMENTE vazia. A anterior nunca é apagada sozinha:
+  // com trabalho em andamento, você escolhe guardar (fica na lista “Fichas guardadas”) ou descartar (com confirmação).
+  const fichaEmAndamento = (f, nFotos) => nFotos > 0 || !fichaVazia(f) || Boolean(estadoRapido(f).titulo.valor || estadoRapido(f).descricao.texto);
+  function pedirNovaFicha() {
+    if (fichaEmAndamento(fichaRef.current, fotosRef.current.length)) { setConfirmandoNova(true); return; }
+    iniciarFichaNova();
+  }
+  function iniciarFichaNova(fichaAbrir = null) {
+    try { reconhecedorRef.current?.parar(); } catch { /* sem microfone */ }
+    const f = fichaAbrir || criarFichaVoz();
     mudarFicha(f);
+    campoVozRef.current = "";
+    setCampoVozEstado("");
+    setParcial("");
+    setOuvidoCodigo(null);
     setConfirmandoNova(false);
     setConfirmandoEnvio(false);
     setEditandoFinal(false);
+    setRemovendo(null);
     setLendoFoto({ estado: "", candidatos: [] });
-    setAviso("Ficha nova.");
+    conversaAbertaRef.current = false;
+    setConversaAberta(false);
+    setRecenteCompletar("");
+    setNuvem({ estado: "", texto: "" });
+    setVersaoRevisao((v) => v + 1);
+    setGuardadas(listarFichasGuardadas());
+    setAviso(fichaAbrir ? `Ficha ${codigoPrincipal(f)?.codigo || ""} reaberta.` : "Ficha nova, vazia.");
+  }
+  async function novaFicha({ guardar }) {
+    const atual = fichaRef.current;
+    if (guardar) {
+      const g = guardarNaListaVoz(atual);
+      if (!g.ok) { setAviso(`⚠️ Não consegui guardar a ficha (${g.erro}). Nada foi apagado.`); setConfirmandoNova(false); return; }
+    } else {
+      await guarda.limparFicha(atual.id).catch(() => {}); // descartar: você confirmou (a ficha da conta e a Galeria não são tocadas)
+    }
+    iniciarFichaNova();
+    setAviso(guardar ? "Ficha anterior guardada neste aparelho. Ficha nova, vazia." : "Ficha anterior descartada deste aparelho. Ficha nova, vazia.");
+  }
+  function abrirGuardada(id) {
+    const atual = fichaRef.current;
+    if (fichaEmAndamento(atual, fotosRef.current.length)) {
+      const g = guardarNaListaVoz(atual);
+      if (!g.ok) { setAviso(`⚠️ Não consegui guardar a ficha atual (${g.erro}). Nada foi trocado.`); return; }
+    }
+    const f = retirarDaListaVoz(id);
+    if (f) iniciarFichaNova(f);
   }
 
   const cp = codigoPrincipal(ficha);
@@ -819,6 +855,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         ))}
       </nav>
 
+      {/* (04/11) Ficha antiga já enviada: avisa (nada é apagado sozinho). */}
+      {ficha.enviadaEm && (
+        <div className="pr-cartao pr-cinza" data-pr-enviada>
+          <p>Esta ficha ({cp?.codigo || "sem código"}) já foi enviada ao Novo Anúncio em {new Date(ficha.enviadaEm).toLocaleString("pt-BR")}. Os dados e as fotos continuam guardados aqui; mudanças feitas aqui não vão para aquela ficha.</p>
+          <p className="pr-fonte">Para continuar aquela ficha, use a etapa 7 (Finalizar) ou a Central no computador. Para outra peça, toque em “Nova ficha limpa” (na etapa Fotos).</p>
+        </div>
+      )}
       {envioFotos.texto && <p className="pr-fonte pr-envio-fundo" role="status" data-pr-envio-fundo={envioFotos.estado}>{envioFotos.texto}</p>}
       <section className="pr-assistente" aria-live="polite">
         <div className="pr-mic-linha">
@@ -841,12 +884,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         )}
         {aviso && <p className="pr-aviso-geral" data-pr-aviso>{aviso}</p>}
         {erroVoz && <p className="pr-erro" role="alert">{erroVoz}</p>}
-        {etapa !== "fotos" && etapa !== "finalizar" && (
-          <form className="pr-entrada" onSubmit={enviarDigitado}>
-            <input value={entrada} onChange={(e) => setEntrada(e.target.value)} placeholder={etapa === "codigo" ? "Digite o código" : etapa === "descricao" && campoVoz === "titulo" ? "Digite o título ou um comando (troca … por …)" : "Digite uma informação da peça"} aria-label="Falar por texto" data-pr-entrada />
-            <button type="submit" className="pr-botao">OK</button>
-          </form>
-        )}
+        {/* (04/11) Sem caixa extra de digitação: cada campo tem o seu microfone e aceita digitação direta. */}
       </section>
 
       {/* ---------------- 1 Fotos ---------------- */}
@@ -911,7 +949,18 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             ) : (
               <div className="pr-linha">
                 <button type="button" className="pr-link pr-perigo" onClick={pedirRemoverFicha} data-pv-remover-ficha>🗑️ Remover ficha de teste</button>
-                <button type="button" className="pr-link" onClick={() => setConfirmandoNova(true)} data-pv-nova-limpa>＋ Nova ficha limpa</button>
+                <button type="button" className="pr-link" onClick={pedirNovaFicha} data-pv-nova-limpa>＋ Nova ficha limpa</button>
+              </div>
+            )}
+            {guardadas.length > 0 && (
+              <div data-pv-fichas-guardadas>
+                <span className="pr-rotulo">Fichas guardadas neste aparelho ({guardadas.length})</span>
+                {guardadas.map((g) => (
+                  <div key={g.id} className="pr-linha pr-entre" data-pv-ficha-guardada={g.id}>
+                    <span className="pr-fonte">{codigoPrincipal(g)?.codigo || "sem código"} · {estadoRapido(g).titulo.valor || "sem título"} · {g.guardadaEm || g.atualizadaEm ? new Date(g.guardadaEm || g.atualizadaEm).toLocaleString("pt-BR") : ""}</span>
+                    <button type="button" className="pr-link" onClick={() => abrirGuardada(g.id)} data-pv-abrir-guardada>Abrir</button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -923,7 +972,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {etapa === "codigo" && (
         <section className="pr-bloco" data-pr-bloco="codigo">
           <label className="pr-rotulo" htmlFor="pr-codigo">Código da peça (SKU)</label>
-          <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo ? parcial : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo" />
+          <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }} data-pv-campo-direto="codigo">
+            <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo ? parcial || " " : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.pular) tratarFala(v, "digitado"); else if (c.erro) setAviso(c.erro); }} data="codigo" />
+            {micCampo("codigo", "Código")}
+          </div>
           {ouvidoCodigo && ouvidoCodigo.codigo === (cp?.codigo || "") && <p className="pr-fonte" data-pr-ouvido>🎤 O celular ouviu: “{ouvidoCodigo.ouvido}” → anotei <b>{ouvidoCodigo.codigo}</b>. Traço só entra se você disser “traço”; para corrigir, digite acima.</p>}
           {cp && cp.conferido === false && (
             <label className="pr-check"><input type="checkbox" onChange={(e) => mudarFicha(conferirCodigo(fichaRef.current, cp.normalizado, e.target.checked))} /> Conferi o código letra por letra</label>
@@ -960,13 +1012,6 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* ---------------- 3 Descrição e título ---------------- */}
       {etapa === "descricao" && (
         <section className="pr-bloco" data-pr-bloco="descricao">
-          <div className={`pr-campo-direto ${!campoVoz ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="descricao">
-            <label htmlFor="pr-desc">Descrição (cada fala é acrescentada; uma informação por linha){!campoVoz && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
-            <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
-              <AreaTexto id="pr-desc" valor={r.descricao.texto} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, v))} data="descricao-texto" ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar />
-              {micCampo("", "Descrição")}
-            </div>
-          </div>
           <div className={`pr-campo-direto ${campoVoz === "titulo" ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="titulo">
             <label htmlFor="pr-titulo">Título ({r.titulo.valor.length}/{LIMITE_TITULO}){campoVoz === "titulo" && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
             <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
@@ -985,6 +1030,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               {sugestoes.map((s) => <button key={s} type="button" className="pr-chip" onClick={() => mudarFicha(definirTitulo(fichaRef.current, s, { origem: "sugestao" }))} data-pr-sugestao>{s}</button>)}
             </div>
           )}
+          <div className={`pr-campo-direto ${!campoVoz ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="descricao">
+            <label htmlFor="pr-desc">Descrição (cada fala é acrescentada; uma informação por linha){!campoVoz && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
+            <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
+              <AreaTexto id="pr-desc" valor={semLinhaMedidas(r.descricao.texto)} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, comLinhaMedidas(v, estadoRapido(fichaRef.current).descricao.texto)))} data="descricao-texto" ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar />
+              {micCampo("", "Descrição")}
+            </div>
+          </div>
           {organizada.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           <div className="pr-linha pr-entre">
             <span className="pr-rotulo">Descrição organizada {r.descricao.final !== null ? "(editada à mão)" : "(automática)"}</span>
@@ -1039,14 +1091,18 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         <section className="pr-bloco" data-pr-bloco="compat">
           {camposDaEtapa("compat").map(renderCampo)}
           <span className="pr-rotulo">Aplicações (marque só as certas)</span>
+          {ficha.aplicacoes.length > 0 && (
+            <p className="pr-fonte" data-pv-aplicacoes-contagem>{["confirmada", "ambigua", "pendente"].map((e) => `${ficha.aplicacoes.filter((a) => situacaoAplicacao(a).estado === e).length} ${e === "confirmada" ? "confirmada(s)" : e === "ambigua" ? "ambígua(s)" : "pendente(s)"}`).join(" · ")}. A validação no catálogo do Mercado Livre é feita na Finalizar, com a conta escolhida.</p>
+          )}
           {!ficha.aplicacoes.length && <p className="pr-vazio">Nenhuma aplicação. Fale o veículo e os anos (ex.: “Renault Master 2013 a 2022”).</p>}
           <ul className="pr-lista">
             {ficha.aplicacoes.map((a) => (
-              <li key={a.id} data-pv-aplicacao={a.chave}>
+              <li key={a.id} data-pv-aplicacao={a.chave} data-pv-aplicacao-estado={situacaoAplicacao(a).estado}>
                 <label className="pr-check">
                   <input type="checkbox" checked={a.confirmada} onChange={(e) => mudarFicha(confirmarAplicacao(fichaRef.current, a.id, e.target.checked))} data-pv-confirmar-aplicacao />
                   <span>{[a.tipoVeiculo, a.montadora].filter(Boolean).join(" ")}{a.tipoVeiculo || a.montadora ? " · " : ""}{resumoAplicacao(a)}</span>
                 </label>
+                <span className={`pr-fonte pr-ap-${situacaoAplicacao(a).estado}`}>{situacaoAplicacao(a).estado === "confirmada" ? "✅" : situacaoAplicacao(a).estado === "ambigua" ? "⚠️" : "⏳"} {situacaoAplicacao(a).texto}</span>
                 <span className="pr-fonte">{a.origem === "usuario" ? "informada por você" : (a.fontes || []).join(" · ")}</span>
                 <button type="button" className="pr-link pr-perigo" onClick={() => mudarFicha(removerAplicacao(fichaRef.current, a.id))}>remover</button>
               </li>
@@ -1111,7 +1167,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
           {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para finalizar.</p>}
-          {usuario && <FinalizarAnuncioVoz key={versaoRevisao} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
+          {usuario && <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
           {usuario && (
             <details className="pr-fonte" open={conversaAberta} onToggle={(e) => { conversaAbertaRef.current = e.currentTarget.open; setConversaAberta(e.currentTarget.open); }} data-pv-conversa-opcional>
               <summary>Completar conversando com o PAIIA (opcional)</summary>
@@ -1147,12 +1203,17 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         </section>
       )}
 
+      {confirmandoNova && (
+        <div className="pr-cartao pr-folha" role="dialog" aria-label="Nova ficha" data-pv-nova-confirmacao>
+          <p><b>Há uma ficha em andamento</b> ({codigoPrincipal(ficha)?.codigo || "sem código"} · {fotos.length} foto(s)). A nova ficha abre vazia. O que fazer com esta?</p>
+          <button type="button" className="pr-botao" onClick={() => novaFicha({ guardar: true })} data-pv-nova-guardar>💾 Guardar esta e começar nova</button>
+          <button type="button" className="pr-botao pr-claro pr-perigo" onClick={() => novaFicha({ guardar: false })} data-pv-nova-descartar>🗑️ Descartar esta (apaga do aparelho) e começar nova</button>
+          <p className="pr-fonte">Descartar apaga só os dados e as fotos desta ficha neste aparelho; a ficha na conta, os anúncios e a Galeria do celular não são tocados.</p>
+          <button type="button" className="pr-link" onClick={() => setConfirmandoNova(false)} data-pv-nova-cancelar>Cancelar</button>
+        </div>
+      )}
       <div className="pr-rodape">
-        {confirmandoNova ? (
-          <span>Apagar esta ficha e as fotos deste aparelho? <button type="button" className="pr-link pr-perigo" onClick={novaFicha} data-pv-nova-sim>Sim, começar outra</button> <button type="button" className="pr-link" onClick={() => setConfirmandoNova(false)}>Não</button></span>
-        ) : (
-          <button type="button" className="pr-link" onClick={() => setConfirmandoNova(true)} data-pv-nova>Nova ficha</button>
-        )}
+        <button type="button" className="pr-link" onClick={pedirNovaFicha} data-pv-nova>Nova ficha</button>
         {onModoConversa && <button type="button" className="pr-link" onClick={onModoConversa} data-pr-modo-conversa>Modo conversa (anterior)</button>}
       </div>
     </div>
@@ -1234,6 +1295,12 @@ function AreaTexto({ id, valor, onSalvar, data, linhas = 5, umaLinha = false, er
     />
   );
 }
+
+// (04/11) Peso/medidas ficam guardados numa linha interna (só para os campos técnicos e o frete):
+// o campo Descrição não mostra essa linha e a descrição comercial não a usa.
+const ehLinhaMedidas = (l) => String(l || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().startsWith("medidas da embalagem:");
+const semLinhaMedidas = (t) => String(t || "").split("\n").filter((l) => !ehLinhaMedidas(l)).join("\n").replace(/\n+$/, "");
+const comLinhaMedidas = (visivel, original) => [String(visivel || "").replace(/\n+$/, ""), ...String(original || "").split("\n").filter(ehLinhaMedidas)].filter((l, i) => i > 0 || l.trim()).join("\n");
 
 // (04/11) Fichas que você mandou preservar: nunca removidas por aqui.
 const FICHAS_PRESERVADAS = ["05b4911c"];
@@ -1323,6 +1390,8 @@ const CSS_RAPIDO = `
 .pr-campo-ditando { border-color: #38bdf8 !important; box-shadow: 0 0 0 2px rgba(56,189,248,.35); }
 .pr-mic-campo { flex: 0 0 auto; width: 46px; min-height: 42px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; font-size: 20px; }
 .pr-mic-campo.pr-mic-ouvindo { background: #0ea5e9; }
+.pr-folha { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 20; max-width: 744px; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+.pr-ap-confirmada { color: #86efac; } .pr-ap-ambigua { color: #fde68a; } .pr-ap-pendente { color: #94a3b8; }
 .pr-rodape { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-bottom: 32px; color: #94a3b8; font-size: 13px; }
 @media (max-width: 480px) { .pr-topo h1 { font-size: 19px !important; } .pr-sub { display: none; } }
 `;

@@ -73,29 +73,51 @@ function manterMicPadrao() {
 
 const BOAS_VINDAS = "Olá! Me conte sobre a peça do jeito que você falaria no balcão — por exemplo: “tenho uma lanterna dianteira de ônibus Neobus Mega Plus”. Eu vou perguntando o que faltar. Se preferir, também entendo “código …”, “preço …” e “aplicação …”.";
 
-// Modo padrão: anúncio rápido (fotos → código → título → descrição → enviar).
-// O modo conversa (anterior) continua disponível e funcionando.
+// (04/11/2026) A ENTRADA é sempre o anúncio em 7 etapas. O modo conversa (anterior)
+// continua disponível pelo link “Modo conversa (anterior)”, mas só nesta visita:
+// antes, a escolha ficava guardada no aparelho e o PAIIA Voz passava a abrir
+// sempre na “Ficha da peça” antiga, sem a barra de etapas.
 const CHAVE_MODO = "paiiaVozModo";
 function modoInicial() {
   try {
-    return localStorage.getItem(CHAVE_MODO) === "conversa" ? "conversa" : "rapido";
+    // Aparelho que guardou "conversa": volta a abrir nas 7 etapas (só a preferência muda; ficha e fotos ficam).
+    if (localStorage.getItem(CHAVE_MODO) === "conversa") localStorage.setItem(CHAVE_MODO, "rapido");
   } catch {
-    return "rapido";
+    // sem localStorage
   }
+  return "rapido";
 }
 export default function PaiiaVoz(props) {
   const [modo, setModo] = useState(modoInicial);
-  const trocar = (m) => {
-    try {
-      localStorage.setItem(CHAVE_MODO, m);
-    } catch {
-      // sem localStorage
-    }
-    setModo(m);
-  };
-  return modo === "conversa"
-    ? <PaiiaVozConversa {...props} onModoRapido={() => trocar("rapido")} />
-    : <PaiiaVozRapido {...props} onModoConversa={() => trocar("conversa")} />;
+  return (
+    <>
+      <AvisoVersaoNova />
+      {modo === "conversa"
+        ? <PaiiaVozConversa {...props} onModoRapido={() => setModo("rapido")} />
+        : <PaiiaVozRapido {...props} onModoConversa={() => setModo("conversa")} />}
+    </>
+  );
+}
+
+/** (04/11) Página aberta antes de uma publicação: avisa e oferece atualizar (nada é apagado). */
+function AvisoVersaoNova() {
+  const [nova, setNova] = useState("");
+  useEffect(() => {
+    let ativo = true;
+    const atual = [...(document?.scripts || [])].map((s) => (s.src || "").match(/assets\/(index-[A-Za-z0-9_-]+\.js)/)?.[1]).find(Boolean);
+    if (!atual || typeof fetch !== "function") return undefined;
+    fetch(`/?versao=${Date.now()}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : ""))
+      .then((html) => { const noAr = html.match(/assets\/(index-[A-Za-z0-9_-]+\.js)/)?.[1]; if (ativo && noAr && noAr !== atual) setNova(noAr); })
+      .catch(() => {});
+    return () => { ativo = false; };
+  }, []);
+  if (!nova) return null;
+  return (
+    <p role="status" data-pv-versao-nova style={{ margin: "0 auto 10px", maxWidth: 760, padding: "10px 12px", borderRadius: 10, background: "#422006", border: "1px solid #b45309", color: "#fde68a", fontSize: 14 }}>
+      Há uma versão nova do PAIIA. <button type="button" onClick={() => window.location.reload()} style={{ background: "none", border: 0, color: "#67e8f9", fontWeight: 700, cursor: "pointer", fontSize: 14 }} data-pv-atualizar>Atualizar agora</button> (a ficha e as fotos deste aparelho continuam guardadas).
+    </p>
+  );
 }
 
 function PaiiaVozConversa({ setScreen, usuario, onModoRapido }) {

@@ -604,3 +604,18 @@ export function estadoEtapasVoz(ficha, { fotos = 0, etapaAtual = "", ordem = [] 
   const iAtual = ordem.indexOf(etapaAtual);
   return Object.fromEntries(ordem.map((e, i) => [e, feito[e] ? "ok" : i < iAtual ? "pe" : ""]));
 }
+
+/**
+ * (04/11) Situação de uma aplicação na etapa Compatibilidade:
+ *  "confirmada" — você marcou; "ambigua" — falta montadora/anos ou há mais de um modelo;
+ *  "pendente" — ainda não marcada. Ditada NÃO é confirmada.
+ */
+export function situacaoAplicacao(a) {
+  const faltas = [];
+  if (!txt(a?.montadora)) faltas.push("montadora");
+  if (!a?.anoInicio) faltas.push("anos");
+  if ((a?.modelos || []).length > 1) faltas.push("mais de um modelo");
+  if (a?.confirmada) return { estado: "confirmada", texto: faltas.length ? `confirmada por você (atenção: ${faltas.join(", ")})` : "confirmada por você", faltas };
+  if (faltas.length) return { estado: "ambigua", texto: `ambígua — falta ${faltas.join(", ")}: fale de novo com montadora, modelo e anos`, faltas };
+  return { estado: "pendente", texto: "pendente — marque se estiver certa", faltas };
+}
