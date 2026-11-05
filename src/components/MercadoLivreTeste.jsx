@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
+import AutorizacaoUnicaPublicacao from "./AutorizacaoUnicaPublicacao";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
 import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
@@ -1581,6 +1582,8 @@ function moverFoto(
   // Contas Mercado Livre (somente leitura) para o passo seguinte à conferência.
   const estadoContasML = useContasML();
   const contasMLDisponiveis = contasMLConectadas(estadoContasML);
+  // (Autorização única) nº da autorização da publicação automática: do Voz (URL) ou do Novo Anúncio.
+  const [autoPiloto, setAutoPiloto] = useState(() => { try { const id = new URL(window.location.href).searchParams.get("auto") || ""; return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : ""; } catch { return ""; } });
   const contaMLAtivaConferencia =
     contasMLDisponiveis.find((c) => c.ativa) || null;
 
@@ -5014,7 +5017,16 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               onLiberarML={setMercadoLivreLiberado}
               onIrCentral={() => sairPara("centralPublicacao")}
             />
-            <PilotoAutomaticoPublicacao conta={contaDestinoML || ""} sku={anuncioConferido?.codigo || ""} />
+            <AutorizacaoUnicaPublicacao
+              anuncioId={anuncioIdPAIIA}
+              sku={anuncioConferido?.codigo || ""}
+              preco={anuncioConferido?.preco || ""}
+              quantidade={quantidadeEstoque}
+              contas={contasMLDisponiveis}
+              onAutorizar={(contaId, id) => { setContaDestinoML(contaId); setAutoPiloto(id); }}
+              ativo={Boolean(autoPiloto)}
+            />
+            <PilotoAutomaticoPublicacao conta={contaDestinoML || ""} sku={anuncioConferido?.codigo || ""} autoId={autoPiloto} />
             {mercadoLivreLiberado && (
             <RevisaoPublicacaoML
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
@@ -7315,7 +7327,11 @@ export default function MercadoLivreTeste(props) {
   const [fichaDoAnuncio] = useState(() => {
     if (fichaUrl) return "";
     try {
+      const mem = window.__paiiaAnuncioSimulador && typeof window.__paiiaAnuncioSimulador === "object" ? window.__paiiaAnuncioSimulador : null;
       const a = JSON.parse(localStorage.getItem("mlAnuncioTeste") || "null");
+      // (Correção 11/11) O anúncio em memória é o que está sendo trabalhado: se a cópia guardada é de
+      // OUTRO código (gravação maior que o espaço do navegador), ela não decide qual ficha abrir.
+      if (mem) return idFichaValido(mem.fichaIdPAIIA) ? String(mem.fichaIdPAIIA) : "";
       return idFichaValido(a?.fichaIdPAIIA) ? String(a.fichaIdPAIIA) : "";
     } catch {
       return "";

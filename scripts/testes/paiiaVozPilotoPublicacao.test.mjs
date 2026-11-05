@@ -27,3 +27,19 @@ test("3) a autorização vai ao servidor; outros anúncios do SKU não bloqueiam
   assert.ok(v.includes('const contaAutomatica = nomeDaLoja(conta) === "LOJA ONLINE";') && v.includes("id = atual?.id && !atual.concluida ? atual.id : novaAutorizacaoId();"), "mesmo número em toque repetido");
   assert.equal((v.match(/data-pv-autorizo-bling-cadastro/g) || []).length, 1, "UMA autorização");
 });
+
+test("4) Novo Anúncio: a MESMA autorização única abre o MESMO piloto (só LOJA ONLINE), com nº reaproveitado", () => {
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes('nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE"') && a.includes("sessionStorage.getItem(CHAVE(anuncioId))") && a.includes("disabled={!marcado}"));
+  const m = ler("src/components/MercadoLivreTeste.jsx");
+  assert.ok(m.includes("<AutorizacaoUnicaPublicacao") && m.includes("autoId={autoPiloto}"));
+  const p = ler("src/services/pilotoPublicacao.js");
+  assert.ok(p.includes('visivel("[data-paiia-confirmar-criar-bling]")'), "cadastro no Bling pelo mesmo botão protegido da Publicação");
+});
+
+test("5) ficha certa: a cópia do anúncio ANTERIOR é apagada antes de gravar a nova; a memória decide a ficha", () => {
+  const c = ler("src/components/CentralPublicacao.jsx");
+  assert.ok(c.indexOf('localStorage.removeItem("mlAnuncioTeste")') > 0 && c.indexOf('localStorage.removeItem("mlAnuncioTeste")') < c.indexOf('"mlAnuncioTeste",\n        JSON.stringify(\n          anuncioLeve'));
+  const m = ler("src/components/MercadoLivreTeste.jsx");
+  assert.ok(m.includes("if (mem) return idFichaValido(mem.fichaIdPAIIA) ? String(mem.fichaIdPAIIA) : \"\";"));
+});

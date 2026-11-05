@@ -661,6 +661,9 @@ export default function CentralPublicacao({
         anuncio?.fichaIdPAIIA || "",
     };
 
+    // (Correção 11/11) Apaga a cópia do anúncio ANTERIOR antes de gravar a deste: se o navegador não tiver
+    // espaço, fica sem cópia (a Publicação usa a da memória), nunca com a de outro produto.
+    try { localStorage.removeItem("mlAnuncioTeste"); } catch { /* segue */ }
     try {
       localStorage.setItem(
         "mlAnuncioTeste",

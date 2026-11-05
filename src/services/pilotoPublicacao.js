@@ -66,6 +66,21 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   const usar = await esperarAte(() => p.achar("[data-paiia-usar-bling]") || p.achar("[data-paiia-bling-estoque]") || p.achar("[data-paiia-bling-estado]"), L.passo);
   if (!usar) return pausa("bling", "O bloco do Bling não apareceu.");
   if (usar.hasAttribute?.("data-paiia-usar-bling")) p.clicar(usar);
+  // (Novo Anúncio) SKU ausente no Bling: o MESMO cadastro protegido da Publicação (criar_produto: confere
+  // as escritas do SKU, trava, envia UMA vez, estoque por balanço). A autorização única cobre este passo.
+  const abrirCriar = await esperarAte(() => visivel("[data-paiia-abrir-criar-bling]") || p.achar("[data-paiia-bling-estoque]") || (p.achar("[data-paiia-confirmar-quantidade]") ? { ja: true } : null), L.passo);
+  if (abrirCriar && abrirCriar.hasAttribute?.("data-paiia-abrir-criar-bling")) {
+    p.progresso("bling", "Cadastrando o produto no Bling com o estoque da ficha…");
+    p.clicar(abrirCriar);
+    const conferi = await esperarAte(() => p.achar("[data-paiia-conferi-sku-bling] input"), L.passo);
+    if (!conferi) return pausa("bling", "O cadastro no Bling não abriu.");
+    if (!conferi.checked) p.clicar(conferi);
+    const criar = await esperarAte(() => visivel("[data-paiia-confirmar-criar-bling]"), L.passo);
+    if (!criar) { const f = p.achar("[data-paiia-bling-faltando]"); return pausa("bling", f ? p.texto(f) : "Faltam dados para cadastrar no Bling."); }
+    p.clicar(criar);
+    const feito = await esperarAte(() => (p.achar("[data-paiia-abrir-criar-bling]") || p.achar("[data-paiia-conferir-criar-bling]") ? (p.achar("[data-paiia-bling-criacao]") && /n[ãa]o foi|incerto|bloquead|falt|erro|n[ãa]o confirm/i.test(p.texto(p.achar("[data-paiia-bling-criacao]"))) ? { erro: p.texto(p.achar("[data-paiia-bling-criacao]")) } : null) : { ok: true }), 3 * L.passo);
+    if (!feito || feito.erro) return pausa("bling", feito?.erro?.slice(0, 300) || "O cadastro no Bling não foi confirmado. Nada foi repetido.");
+  }
   // 3) Quantidade da ficha.
   p.progresso("quantidade");
   const q = await esperarAte(() => visivel("[data-paiia-confirmar-quantidade]") || (p.achar('[data-paiia-quantidade-estado="confirmada"]') ? { ja: true } : null), L.passo);

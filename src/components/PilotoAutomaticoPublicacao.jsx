@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl } from "../services/pilotoPublicacao";
 
-export default function PilotoAutomaticoPublicacao({ conta = "", sku = "" }) {
-  const [auto] = useState(() => autorizacaoDaUrl(window.location.href));
+export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoId = "" }) {
+  // Nº da autorização: do PAIIA Voz (?auto= na URL) ou da autorização única do Novo Anúncio (autoId).
+  const auto = autoId || autorizacaoDaUrl(window.location.href);
   const [st, setSt] = useState({ etapa: "canais", texto: "", fim: null });
   const rodou = useRef(false);
   useEffect(() => {
