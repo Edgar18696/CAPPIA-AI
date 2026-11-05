@@ -55,7 +55,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   }
   const [erro, setErro] = useState("");
   const autorizarBling = false; // (Rodada 2) seção antiga de operações retirada da tela
-  const [autorizoCadastro, setAutorizoCadastro] = useState(false); // (Etapa 3) autorização do cadastro no Bling no "Finalizar e Enviar"
+  const [autorizoCadastro, setAutorizoCadastro] = useState(false);
+  const [incerta, setIncerta] = useState(""); // (Etapa 3) autorização do cadastro no Bling no "Finalizar e Enviar"
   const semCompatibilidade = false;
   const marcar = {}; // (04/11) nenhuma operação vem marcada
   // (05/11) A autorização vale só para o que estava na tela quando você marcou (assinatura).
@@ -191,7 +192,11 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   // Não publica: a publicação real continua exigindo a autorização final na Publicação.
   const rev = montarRevisao(row);
   // (Etapa 3) SKU ausente no Bling não é "decisão": vira a autorização dentro do "Finalizar e Enviar".
-  const blingAusente = skuAusenteNoBling(row) && estadoFinalizacao(row).ops?.bling_criar?.estado !== "ok";
+  // (Bling real) também conta como "em curso" um cadastro que o PAIIA já tentou e não confirmou
+  // (incerto ou estoque não confirmado): o próximo toque CONFERE antes e nunca cadastra de novo.
+  const opBling = estadoFinalizacao(row).ops?.bling_criar || null;
+  const blingEmCurso = Boolean(opBling) && ["erro", "incerto", "executando"].includes(opBling.estado) && (opBling.estado === "incerto" || /estoque inicial não foi confirmado|lance o estoque inicial no Bling|incerto/i.test(String(opBling.erro || "")));
+  const blingAusente = (skuAusenteNoBling(row) || blingEmCurso) && opBling?.estado !== "ok";
   const faltaRev = rev.pendencias.filter((p) => p.tipo !== "aviso" && !(p.id === "bling" && blingAusente));
   const jaNaPublicacao = row?.dados_conferencia?.ficha?.etapa === "publicacao" && !row?.dados_conferencia?.etapa_fluxo;
   const abrirPublicacao = (id) => (aoAbrirPublicacao ? aoAbrirPublicacao(id) : window.location.assign(`/?tela=mercadoLivreTeste&ficha=${encodeURIComponent(id)}`));
@@ -253,7 +258,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const vCat = row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.categoria || null;
   const caminhoCat = vCat?.estado === "ok" ? vCat.caminho || (String(vCat.texto || "").match(/— (.+?) \(/) || [])[1] || vCat.id : "";
   const fotosOriginais = rev.pendencias.find((p) => p.id === "fotos_tratadas");
-  const criarBlingDisponivel = publicacaoRealLiberada() || Boolean(depsTeste()?.blingCriarDisponivel);
+  // (Bling real) a ação criar_produto do servidor existe e é protegida: o cadastro fica disponível com autorização.
+  const criarBlingDisponivel = true;
   const blingBloqueado = blingAusente && !criarBlingDisponivel;
   const qtdFicha = entradaDaFicha(row).quantidade || d.estoque || "";
   const pronto = Boolean(conta) && versaoOk && rodando !== "conferir" && (jaNaPublicacao || (!decisao && !blingBloqueado && (rev.podeAprovar || blingAusente)));
@@ -351,8 +357,16 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
             <span className="pr-rotulo">4. Bling</span>
             {blingBloqueado ? (
               <p className="pr-aviso" data-pv-bling-pendencia>⚠️ O SKU <b>{d.sku}</b> não existe no Bling e o <b>cadastro automático ainda não está disponível</b>. Cadastre-o no Bling (estoque da ficha: {qtdFicha || "?"} un.) e toque em “Conferir de novo”. Nada foi enviado.</p>
+            ) : blingEmCurso ? (
+              <>
+                <p className="pr-aviso" data-pv-bling-pendencia={opBling.estado}>⚠️ {opBling.erro}</p>
+                {opBling.estado === "incerto" && (
+                  <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("conferir-bling", async () => { const r = await (depsTeste()?.conferirIncerta || depsFinalizarReais.conferirIncerta)(d.sku); setIncerta(r.texto); return { ok: true }; })} data-pv-bling-conferir-incerta>🔎 Conferir no Bling</button>
+                )}
+                {incerta && <p className="pr-fonte" data-pv-bling-incerta-resultado>{incerta}</p>}
+              </>
             ) : blingAusente ? (
-              <p className="pr-fonte">O SKU <b>{d.sku}</b> não existe no Bling: pode ser cadastrado com o estoque da ficha ({qtdFicha || "?"} un.), só com a sua autorização abaixo.</p>
+              <p className="pr-fonte" data-pv-bling-ausente>Produto não encontrado no Bling. Ele pode ser cadastrado com os dados da ficha e estoque inicial de {qtdFicha || "?"} un., só com a sua autorização abaixo.</p>
             ) : vBling ? (
               <p className="pr-fonte" data-pv-bling-texto>{vBling.estado === "ok" ? "✅" : ICONE[vBling.estado] || "•"} {String(vBling.texto || "").replace(/^Bling \(SKU/, "Saldo oficial no Bling (SKU").replace(/Anúncio: (\d+)\./, "Estoque da ficha (vai ao anúncio): $1.")} <span>Saldo oficial do Bling: só consultado, nunca alterado.</span></p>
             ) : <p className="pr-fonte">Conferindo o Bling…</p>}
@@ -374,7 +388,7 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
           {pronto && blingAusente && criarBlingDisponivel && (
             <label className="pr-check" data-pv-autorizo-bling-cadastro>
               <input type="checkbox" checked={autorizoCadastro} disabled={Boolean(rodando)} onChange={(e) => setAutorizoCadastro(e.target.checked)} />
-              <span>Autorizo cadastrar no Bling o produto <b>{d.sku}</b> com o estoque da ficha (<b>{qtdFicha || "?"}</b> un.). O PAIIA confere antes e não duplica.</span>
+              <span>{blingEmCurso ? <>Autorizo o PAIIA a <b>conferir</b> o cadastro do SKU <b>{d.sku}</b> no Bling e seguir (nada é cadastrado de novo).</> : <>Produto não encontrado no Bling. <b>Autorizo cadastrar o SKU {d.sku}</b> com os dados da ficha e <b>estoque inicial de {qtdFicha || "?"} un.</b>, e confirmo que conferi que este SKU não existe no Bling escrito com hífen, espaço ou ponto.</>}</span>
             </label>
           )}
           {/* 6. UM botão, no final, só depois da conta */}

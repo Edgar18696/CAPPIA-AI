@@ -246,10 +246,11 @@ test("outro aparelho executando agora: não mexe", async () => {
   assert.deepEqual(sv.escritas, []);
 });
 
-test("ligações reais: escritas (Bling criar, ML publicar, compatibilidades) BLOQUEADAS nesta versão; vínculo só lê", () => {
+test("ligações reais: Bling criar pela ação EXISTENTE criar_produto (com autorização); ML publicar e compatibilidades continuam BLOQUEADAS; vínculo só lê", () => {
   const f = ler("src/modules/paiiaVoz/servicos/finalizarDepsReais.js");
-  for (const op of ["bling_criar", "ml_publicar", "ml_compat"]) assert.ok(f.includes(`async ${op}() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; }`), op);
-  assert.ok(!/criar_produto|acao: "publicar"|gravar_compatibilidades|estoque_atualizar|update_stock/.test(f), "nenhuma escrita real no código");
+  for (const op of ["ml_publicar", "ml_compat"]) assert.ok(f.includes(`async ${op}() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; }`), op);
+  assert.ok(f.includes("async bling_criar(ctx) { return cadastrarNoBlingVoz(ctx.row, { chamarBling }); }"), "cadastro pelo serviço que relê e confere");
+  assert.ok(!/acao: "publicar"|gravar_compatibilidades|estoque_atualizar|update_stock|alterar_estoque/.test(f), "nenhuma outra escrita real");
   assert.ok(/\.eq\("updated_at", r\.ficha\.updated_at\)/.test(f), "registro gravado com trava de versão");
 });
 

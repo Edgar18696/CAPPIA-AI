@@ -1,7 +1,7 @@
 // =============================================================
 // PAIIA Voz — (04/11/2026) Ligações reais da “Finalizar anúncio”.
 // Leituras: Bling (saldo_por_sku), base PAIIA e Mercado Livre (ml_consulta).
-// ESCRITAS (criar no Bling, publicar no ML, gravar compatibilidades):
+// ESCRITAS: criar no Bling LIBERADO (ação existente do servidor, protegida); publicar no ML e gravar compatibilidades:
 // NÃO LIBERADAS nesta versão — devolvem “bloqueado”. Motivo: o código das
 // funções do servidor não está no repositório e a proteção contra duplicar
 // não foi comprovada. Até lá, a publicação real continua pela rotina atual.
@@ -12,6 +12,7 @@ import { fichaFechada } from "../../../services/fichaNovoAnuncio";
 import { conferirDuplicidadeBase } from "../../../services/anuncioPublicacaoService";
 import { verificarDuplicidadeML, nomeDaLoja } from "../../../services/duplicidadeML";
 import { lojaBlingDaConta } from "../../../services/vinculoBlingPublicacao";
+import { cadastrarNoBlingVoz, conferirAntesVoz, conferirIncertaVoz } from "./blingCadastroVoz";
 
 const txt = (v) => String(v ?? "").trim();
 const NAO_LIBERADO = "Execução real ainda não liberada nesta versão: a proteção do servidor contra duplicidade não foi comprovada. Nada foi enviado.";
@@ -22,10 +23,11 @@ async function chamarPublicacao(corpo) {
   if (error) return { ok: false, erro: error.message || "Falha ao falar com o servidor." };
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
-async function lerSaldoBling(sku) {
-  const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } });
-  if (error) return { ok: false, erro: error.message || "Falha ao falar com o Bling." };
-  return data || { ok: false };
+// Mesma função do servidor usada pela Publicação do computador (tokens só no servidor).
+async function chamarBling(corpo) {
+  const { data, error } = await supabase.functions.invoke("bling-integracao", { body: corpo });
+  if (error) throw new Error(error.message || "Falha ao falar com o Bling.");
+  return data || { ok: false, erro: "Resposta vazia do Bling." };
 }
 
 /** Grava SÓ paiia_voz.finalizacao, com trava de versão (updated_at). */
@@ -44,16 +46,12 @@ async function gravarFinalizacao(fichaId, mudar) {
 }
 
 export const depsFinalizarReais = {
+  conferirIncerta: (sku) => conferirIncertaVoz(sku, { chamarBling }),
   lerFicha: lerFichaNovoAnuncio,
   gravarFinalizacao,
   conferir: {
-    async bling_criar(ctx) {
-      const b = await lerSaldoBling(ctx.entrada.codigo);
-      if (b?.encontrado && !b.ambiguo) return { ok: true, feito: true, blingProdutoId: txt(b.produto?.id), texto: `SKU já existe no Bling (produto ${b.produto?.id || "?"}): nada criado.` };
-      if (b?.ambiguo) return { ok: true, bloqueia: true, texto: "Mais de um produto no Bling com este SKU: resolva no Bling. Nada criado." };
-      if (b?.encontrado === false && b.ok !== false) return { ok: true };
-      return { ok: false, erro: b?.erro || "Bling não respondeu" };
-    },
+    // (Bling real) confere antes; SKU criado pelo PAIIA só vale com o saldo oficial = estoque da ficha.
+    async bling_criar(ctx) { return conferirAntesVoz(ctx, { chamarBling }); },
     async ml_publicar(ctx) {
       const conta = ctx.conta;
       if (ctx.registro.mlb) return { ok: true, feito: true, mlb: ctx.registro.mlb, texto: `Já publicado (${ctx.registro.mlb}).` };
@@ -73,7 +71,8 @@ export const depsFinalizarReais = {
     async bling_vinculo() { return { ok: true }; },
   },
   executar: {
-    async bling_criar() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; },
+    // (Bling real) ação EXISTENTE criar_produto, com a sua autorização única; sucesso só com releitura.
+    async bling_criar(ctx) { return cadastrarNoBlingVoz(ctx.row, { chamarBling }); },
     async ml_publicar() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; },
     async ml_compat() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; },
     async bling_vinculo(ctx) {

@@ -15,7 +15,7 @@ test("1) um botão principal 'Finalizar e Enviar'; com SKU ausente no Bling ele 
 test("2) Bling: pelo executor existente (confere antes, registra na ficha, não repete o que já foi feito)", () => {
   assert.ok(seg.includes('executarFinalizacao(fichaId, { marcadas: ["bling_criar"]') && seg.includes("if (!autorizoCadastro) return"));
   assert.ok(seg.indexOf("executarFinalizacao") < seg.indexOf("preparar(fichaId, { conta })") && seg.indexOf("preparar(fichaId, { conta })") < seg.indexOf("aprovarRevisaoEGravar"), "Bling → reconfere → aprova");
-  assert.ok(f.includes('estadoFinalizacao(row).ops?.bling_criar?.estado !== "ok"'), "cadastro já feito não aparece de novo");
+  assert.ok(f.includes('const blingAusente = (skuAusenteNoBling(row) || blingEmCurso) && opBling?.estado !== "ok";'), "cadastro já feito não aparece de novo; tentativa não confirmada continua pendente");
   assert.ok(seg.includes("O que já foi feito ficou salvo"), "erro mostra só a pendência e permite continuar");
 });
 
@@ -25,7 +25,8 @@ test("3) não publica: termina abrindo a Publicação da MESMA ficha (confirmaç
   assert.ok(f.includes("A publicação no Mercado Livre só acontece depois da sua confirmação final."));
 });
 
-test("4) execução real do cadastro no Bling continua bloqueada até o servidor ter a proteção (laboratório simula)", () => {
+test("4) (08/11) cadastro real no Bling pela ação existente, protegida no servidor; publicação no ML continua bloqueada nesta tela", () => {
   const reais = ler("src/modules/paiiaVoz/servicos/finalizarDepsReais.js");
-  assert.ok(/async bling_criar\(\) \{ return \{ ok: false, bloqueado: true/.test(reais));
+  assert.ok(reais.includes("cadastrarNoBlingVoz(ctx.row, { chamarBling })") && reais.includes("conferirAntesVoz(ctx, { chamarBling })"));
+  assert.ok(/async ml_publicar\(\) \{ return \{ ok: false, bloqueado: true/.test(reais));
 });

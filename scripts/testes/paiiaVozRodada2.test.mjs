@@ -12,12 +12,12 @@ test("1) ordem: resumo → conta → modalidade → Bling → decisão → UM bo
   assert.equal((f.match(/data-pv-continuar-publicacao/g) || []).length, 1);
 });
 
-test("2) Bling ausente com cadastro real indisponível: pendência clara, SEM caixa de autorização e sem botão", () => {
+test("2) Bling ausente: a autorização só aparece porque o cadastro real existe (ação protegida do servidor); a trava continua no código", () => {
   assert.ok(f.includes("const blingBloqueado = blingAusente && !criarBlingDisponivel;"));
-  assert.ok(f.includes("const criarBlingDisponivel = publicacaoRealLiberada() || Boolean(depsTeste()?.blingCriarDisponivel);"), "laboratório só libera se pedir explicitamente");
-  assert.ok(f.includes("data-pv-bling-pendencia") && f.includes("cadastro automático ainda não está disponível"));
-  assert.ok(f.includes("{pronto && blingAusente && criarBlingDisponivel && ("), "a autorização só aparece se o cadastro existir de fato");
-  assert.ok(f.includes("!decisao && !blingBloqueado"), "o botão não aparece com o Bling bloqueado");
+  assert.ok(f.includes("const criarBlingDisponivel = true;"), "(08/11) cadastro real pela ação existente criar_produto");
+  assert.ok(f.includes("data-pv-bling-pendencia") && f.includes("cadastro automático ainda não está disponível"), "a pendência clara continua para quando não houver cadastro");
+  assert.ok(f.includes("{pronto && blingAusente && criarBlingDisponivel && ("));
+  assert.ok(f.includes("!decisao && !blingBloqueado"));
 });
 
 test("3) estoque: 'Estoque da ficha' separado do 'Saldo oficial do Bling' (nunca alterado); fotos originais avisadas", () => {
