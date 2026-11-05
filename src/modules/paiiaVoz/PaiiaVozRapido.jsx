@@ -77,6 +77,7 @@ import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto
 import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
 import CategoriaVoz from "./CategoriaVoz";
+import { lerAplicacaoFalada, valorDoCampoFalado, proximoCampoVeiculo } from "./servicos/aplicacaoFalada";
 import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
 import { descartarRascunhoLocalDaFicha } from "../../services/exclusaoFicha";
 import { CHAVE_ANUNCIO_EM_ANDAMENTO, CHAVES_ANUNCIO_LOCAL } from "../../services/fichasCentral";
@@ -114,6 +115,8 @@ function marcaCompletos(ficha) {
   try { const c = dadosCompletosVoz(ficha, { fotos: 1 }); return JSON.stringify([c.custo || "", c.medida || null, c.aplicacoes || [], c.tipoVeiculo || ""]); } catch { return ""; } // (05/11) conteúdo das aplicações, não só a quantidade (corrigida também salva)
 }
 
+const VEIC_VAZIO = Object.freeze({ montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "" });
+
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
   const [aviso, setAviso] = useState("");
@@ -136,6 +139,17 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const setCampoVoz = useCallback((id) => { campoVozRef.current = id; setCampoVozEstado(id); }, []); // (03/11) o que o celular ouviu no código (diagnóstico)
   const fichaRef = useRef(ficha);
   const reconhecedorRef = useRef(null);
+  // Toque no 🎤 de um campo: liga (ou desliga) o microfone só para aquele campo.
+  const tocarMicCampo = useCallback((id) => {
+    const rec = reconhecedorRef.current;
+    if (campoVozRef.current === id && rec?.ouvindo) { rec.parar(); return; }
+    setCampoVoz(id); setErroVoz("");
+    try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* sem microfone */ }
+  }, []);
+  // (12/11) Campos da aplicação na etapa Compat.: Montadora, Modelo, Motor (opcional), Ano inicial e final.
+  const [veic, setVeicEstado] = useState(VEIC_VAZIO);
+  const veicRef = useRef(VEIC_VAZIO);
+  const setVeic = useCallback((v) => { const novo = typeof v === "function" ? v(veicRef.current) : v; veicRef.current = novo; setVeicEstado(novo); }, []);
   const fotoRef = useRef(null);
   const [galeriaAberta, setGaleriaAberta] = useState(false); // (06/11) Galeria interna do PAIIA (fotos da conta)
   const galeriaRef = useRef(null);
@@ -658,6 +672,29 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         return;
       }
       if (rr.etapa === "compat" && String(campoVozRef.current || "").startsWith("ap:")) { salvarAplicacaoEditada(campoVozRef.current.slice(3), t); return; }
+      // (12/11) Compatibilidades por voz: a fala entra nos CAMPOS (Montadora, Modelo, Motor, Anos) e avança
+      // sozinha para o próximo campo. Só preenche: a aplicação entra quando você toca em Adicionar veículo.
+      if (rr.etapa === "compat" && campoVozRef.current !== "aplicacoes") {
+        const ROT = { montadora: "Montadora", modelo: "Modelo", motor: "Motor", anoInicio: "Ano inicial", anoFim: "Ano final" };
+        const alvo = String(campoVozRef.current || "");
+        const campo = alvo.startsWith("veic:") && alvo !== "veic:tudo" ? alvo.slice(5) : "";
+        const tudo = lerAplicacaoFalada(t);
+        let novo = null;
+        if (campo && Object.keys(tudo).length <= 1) { const val = valorDoCampoFalado(campo, t); if (val) novo = { ...veicRef.current, [campo]: val }; }
+        else if (Object.keys(tudo).length) novo = { ...veicRef.current, ...tudo };
+        if (novo) {
+          setVeic(novo);
+          const ultimo = campo || [...Object.keys(tudo)].sort((a, b) => ["montadora", "modelo", "motor", "anoInicio", "anoFim"].indexOf(b) - ["montadora", "modelo", "motor", "anoInicio", "anoFim"].indexOf(a))[0];
+          const prox = proximoCampoVeiculo(novo, ultimo);
+          const anotado = ["montadora", "modelo", "motor", "anoInicio", "anoFim"].filter((k) => novo[k]).map((k) => `${ROT[k]}: ${novo[k]}`).join(" · ");
+          setAviso(`✅ ${anotado}${prox ? ` → agora ${ROT[prox]}` : " · confira e toque em “Adicionar veículo”"}`);
+          setCampoVoz(prox ? `veic:${prox}` : "");
+          const rec = reconhecedorRef.current;
+          if (prox && origem === "voz") setTimeout(() => { try { if (rec && !rec.ouvindo && campoVozRef.current) rec.iniciar(); } catch { /* precisa de toque */ } }, 400);
+          return;
+        }
+        if (campo) { setAviso(`⚠️ Não entendi ${ROT[campo]}. Fale de novo ou digite.`); return; }
+      }
       const id = rr.etapa === "compat" ? "aplicacoes" : (campoVozRef.current && CAMPOS_DIRETOS.find((c) => c.id === campoVozRef.current)?.etapa === rr.etapa ? campoVozRef.current : proximoCampoDireto(f, "", { etapa: rr.etapa }) || camposDaEtapa(rr.etapa)[0]?.id);
       const rotulo = CAMPOS_DIRETOS.find((c) => c.id === id)?.rotulo || id;
       const res = definirCampoDireto(f, id, t, { origem });
@@ -813,26 +850,30 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (Etapa 1 simplificação) Compatibilidade rápida: só Montadora, Modelo e Ano.
   // O motor fica interno: vem do título/descrição quando há UM só (ex.: "1.6");
   // se faltar, a Finalizar pergunta com as opções do catálogo do Mercado Livre.
-  const [veic, setVeic] = useState({ montadora: "", modelo: "", ano: "" });
+  // (12/11) Montadora, Modelo, Motor (opcional), Ano inicial e Ano final (opcional = ano único).
+
   function motorDaFicha(f) {
     const t = `${f?.rapido?.titulo?.valor || ""} ${f?.rapido?.descricao?.texto || ""} ${f?.rapido?.descricao?.final || ""}`;
     const achados = [...new Set((t.match(/\b\d\.\d\b/g) || []))];
     return achados.length === 1 ? achados[0] : "";
   }
   function adicionarVeiculoRapido() {
-    const montadora = veic.montadora.trim(); const modelo = veic.modelo.trim(); const ano = veic.ano.trim();
-    const m = ano.match(/^(\d{4})(?:\s*(?:a|à|ate|até|-|–)\s*(\d{4}))?$/i);
-    if (!montadora || !modelo || !m) { setAviso("Preencha Montadora, Modelo e Ano (ex.: 2012 ou 2010 a 2014)."); return; }
-    const anoInicio = Number(m[1]); const anoFim = Number(m[2] || m[1]);
+    const v = veicRef.current;
+    const montadora = v.montadora.trim(); const modelo = v.modelo.trim();
+    // Ano: campos próprios; aceita também "2010 a 2014" digitado no Ano inicial. Nunca amplia a faixa.
+    const mm = String(v.anoInicio || "").trim().match(/^(\d{4})(?:\s*(?:a|à|ate|até|-|–)\s*(\d{4}))?$/i);
+    const fimTxt = String(v.anoFim || "").trim();
+    if (!montadora || !modelo || !mm || (fimTxt && !/^\d{4}$/.test(fimTxt))) { setAviso("Preencha Montadora, Modelo e Ano (ex.: 2012, ou 2010 e 2014)."); return; }
+    const anoInicio = Number(mm[1]); const anoFim = Number(mm[2] || fimTxt || mm[1]);
     if (anoFim < anoInicio) { setAviso("O ano final é menor que o inicial."); return; }
     const f = JSON.parse(JSON.stringify(fichaRef.current));
-    const motor = motorDaFicha(f);
+    const motor = v.motor.trim() || motorDaFicha(f);
     const cap = (t) => t.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
-    const r = incluirAplicacao(f, { texto: `${montadora} ${modelo} ${anoInicio}${anoFim !== anoInicio ? ` a ${anoFim}` : ""}`, montadora: cap(montadora), modelos: [cap(modelo)], motores: motor ? [motor] : [], anoInicio, anoFim }, { origem: "usuario", agora: Date.now(), confirmada: true });
+    const r = incluirAplicacao(f, { texto: `${montadora} ${modelo}${motor ? ` ${motor}` : ""} ${anoInicio}${anoFim !== anoInicio ? ` a ${anoFim}` : ""}`, montadora: cap(montadora), modelos: [cap(modelo)], motores: motor ? [motor] : [], anoInicio, anoFim }, { origem: "usuario", agora: Date.now(), confirmada: true });
     if (r?.aviso) { setAviso(r.aviso); return; }
     mudarFicha(f);
-    setVeic({ montadora: "", modelo: "", ano: "" });
-    setAviso(`✅ ${cap(montadora)} ${cap(modelo)} ${anoInicio}${anoFim !== anoInicio ? `–${anoFim}` : ""} incluído${motor ? ` (motor ${motor}, da descrição)` : " (o motor será conferido no catálogo do Mercado Livre)"}.`);
+    setVeic(VEIC_VAZIO);
+    setAviso(`✅ ${cap(montadora)} ${cap(modelo)}${motor ? ` ${motor}` : ""} ${anoInicio}${anoFim !== anoInicio ? `–${anoFim}` : ""} incluído${v.motor.trim() ? "" : motor ? " (motor da descrição)" : " (o motor será conferido no catálogo do Mercado Livre)"}.`);
   }
   // Resposta à pergunta do motor (Finalizar): grava SÓ na aplicação perguntada e reconfere.
   function definirMotorDaAplicacao(pm, motor) {
@@ -968,7 +1009,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (04/11) Microfone de um campo: toque e fale (o texto aparece no próprio campo).
   const micCampo = (id, rotulo) => (suporta && !avisoVoz ? (
     <button type="button" className={`pr-mic-campo ${campoVoz === id && ouvindo ? "pr-mic-ouvindo" : ""}`} aria-label={`Falar ${rotulo}`} aria-pressed={campoVoz === id && ouvindo} data-pv-campo-mic={id || "descricao"}
-      onClick={() => { const rec = reconhecedorRef.current; if (campoVoz === id && ouvindo) { rec?.parar(); return; } setCampoVoz(id); setErroVoz(""); try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* sem microfone */ } }}>🎤</button>
+      onClick={() => tocarMicCampo(id)}>🎤</button>
   ) : null);
   const renderCampo = (c) => {
     const valores = valoresCamposDiretos(ficha);
@@ -1009,6 +1050,12 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </button>
         ))}
       </nav>
+      {/* (12/11) SKU principal fixo e visível em todas as etapas depois do Código. */}
+      {cp?.codigo && etapa !== "fotos" && etapa !== "codigo" && (
+        <div className="pr-sku-fixo" data-pv-sku-fixo style={{ position: "sticky", top: 0, zIndex: 5, background: "#0b1220", border: "1px solid #1e3a5f", borderRadius: 10, padding: "6px 10px", margin: "0 0 8px", fontSize: 14 }}>
+          SKU principal: <b>{cp.codigo}</b>{codigosAdicionais(ficha).length ? <span className="pr-fonte"> · +{codigosAdicionais(ficha).length} código(s) adicional(is): {codigosAdicionais(ficha).map((c) => c.codigo || c).join(", ")}</span> : null}
+        </div>
+      )}
 
       {/* (04/11) Ficha antiga já enviada: avisa (nada é apagado sozinho). */}
       {ficha.enviadaEm && (
@@ -1280,9 +1327,18 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {/* (Etapa 1) Só Montadora, Modelo e Ano. O motor é interno (descrição ou catálogo do ML). */}
           <div className="pr-cartao" data-pv-veiculo-rapido style={{ display: "grid", gap: 8 }}>
             <span className="pr-rotulo">Veículo compatível</span>
-            <input className="pr-entrada" placeholder="Montadora (ex.: Fiat)" value={veic.montadora} onChange={(e) => setVeic((v) => ({ ...v, montadora: e.target.value }))} data-pv-veic="montadora" />
-            <input className="pr-entrada" placeholder="Modelo (ex.: Uno)" value={veic.modelo} onChange={(e) => setVeic((v) => ({ ...v, modelo: e.target.value }))} data-pv-veic="modelo" />
-            <input className="pr-entrada" placeholder="Ano (ex.: 2012 ou 2010 a 2014)" inputMode="numeric" value={veic.ano} onChange={(e) => setVeic((v) => ({ ...v, ano: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter") adicionarVeiculoRapido(); }} data-pv-veic="ano" />
+            {micCampo("veic:tudo", "a aplicação inteira") && (
+              <button type="button" className={`pr-botao ${campoVoz === "veic:tudo" && ouvindo ? "pr-mic-ouvindo" : ""}`} data-pv-veic-falar-tudo
+                onClick={() => tocarMicCampo("veic:tudo")}>
+                🎤 Falar a aplicação (ex.: “Fiat Uno motor 1.0 de 2010 a 2014”)
+              </button>
+            )}
+            {[["montadora", "Montadora (ex.: Fiat)", "text"], ["modelo", "Modelo (ex.: Uno)", "text"], ["motor", "Motor (opcional, ex.: 1.0, 1.6 16V, Diesel)", "text"], ["anoInicio", "Ano inicial (ou único)", "numeric"], ["anoFim", "Ano final (opcional)", "numeric"]].map(([k, ph, modo]) => (
+              <div key={k} className={`pr-linha ${campoVoz === `veic:${k}` ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={`veic:${k}`} style={{ gap: 6, alignItems: "center" }}>
+                <input className="pr-entrada" style={{ flex: 1 }} placeholder={ph} inputMode={modo} value={veic[k]} onChange={(e) => { const val = e.target.value; setVeic((v) => ({ ...v, [k]: val })); }} onKeyDown={(e) => { if (e.key === "Enter") adicionarVeiculoRapido(); }} data-pv-veic={k} />
+                {micCampo(`veic:${k}`, ph.split(" (")[0])}
+              </div>
+            ))}
             <button type="button" className="pr-botao pr-grande" onClick={adicionarVeiculoRapido} data-pv-veic-adicionar>➕ Adicionar veículo</button>
           </div>
           <details open={campoVoz === "aplicacoes" || undefined} data-pv-aplicacao-completa>
@@ -1343,7 +1399,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {etapa === "categoria" && (
         <section className="pr-bloco" data-pr-bloco="categoria">
           {usuario
-            ? <CategoriaVoz key={ficha.fichaIdPAIIA || ficha.id} fichaId={ficha.fichaIdPAIIA || ""} versaoNuvem={versaoNuvem} aoMudar={marcarCategoria} />
+            ? <CategoriaVoz key={ficha.fichaIdPAIIA || ficha.id} fichaId={ficha.fichaIdPAIIA || ""} versaoNuvem={versaoNuvem} aoMudar={marcarCategoria} aplicacoes={(ficha.aplicacoes || []).filter((a) => a.confirmada)} />
             : <p className="pr-aviso">Entre na sua conta para conferir a categoria.</p>}
           {navEtapa("compat", "finalizar")}
         </section>

@@ -14,7 +14,7 @@ import { categoriaEGravar, confirmarCategoriaEGravar, buscarCategoriasEmOutra, c
 const depsTeste = () => (globalThis.__paiiaModoTeste && globalThis.__paiiaCategoriaDeps) || null;
 const caminhoDo = (item) => item?.caminho || (String(item?.texto || "").match(/— (.+?) \(/) || [])[1] || item?.id || "";
 
-export default function CategoriaVoz({ fichaId, aoMudar = null, versaoNuvem = 0 }) {
+export default function CategoriaVoz({ fichaId, aoMudar = null, versaoNuvem = 0, aplicacoes = [] }) {
   const [estado, setEstado] = useState({ lendo: true, item: null, erro: "" });
   const [busca, setBusca] = useState({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" });
   const [preparo, setPreparo] = useState(null);
@@ -82,6 +82,19 @@ export default function CategoriaVoz({ fichaId, aoMudar = null, versaoNuvem = 0 
         <p data-pv-categoria-texto>{estado.erro ? `⚠️ ${estado.erro}` : "⚠️ Não há uma categoria segura: escolha abaixo antes de finalizar."}</p>
       )}
       {!estado.lendo && estado.erro && (ok || item?.sugerida) && <p className="pr-aviso">⚠️ {estado.erro}</p>}
+      {/* (12/11) Aplicações já cadastradas, organizadas. O ano é da APLICAÇÃO do veículo, não da categoria. */}
+      {aplicacoes.length > 0 && (
+        <div className="pr-cartao pr-cinza" data-pv-categoria-aplicacoes style={{ marginTop: 8 }}>
+          <span className="pr-rotulo">Aplicações cadastradas (o ano é da aplicação, não da categoria)</span>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {aplicacoes.map((a) => (
+              <li key={a.id} data-pv-categoria-aplicacao>
+                {[a.montadora, (a.modelos || []).join("/"), (a.motores || []).join("/") || "motor a conferir", a.anoInicio ? (a.anoFim && a.anoFim !== a.anoInicio ? `${a.anoInicio}–${a.anoFim}` : String(a.anoInicio)) : ""].filter(Boolean).join(" · ")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {!estado.lendo && (
         <div className="pr-linha" style={{ gap: 8 }}>
           {!busca.aberta && <button type="button" className="pr-link" onClick={() => setBusca((b) => ({ ...b, aberta: true }))} data-pv-alterar-categoria>Alterar categoria</button>}

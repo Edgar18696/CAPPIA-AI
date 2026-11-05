@@ -33,12 +33,12 @@ test("3) conferência: falta de motor vira pergunta (não 'catálogo errado') e 
   assert.ok(ler("src/modules/paiiaVoz/servicos/revisaoCelularVoz.js").includes('k === "compatibilidade" && x.perguntaMotor'));
 });
 
-test("4) tela: só Montadora, Modelo e Ano; aplicação completa recolhida; motor perguntado com botões do catálogo", () => {
+test("4) tela: Montadora, Modelo, Motor (opcional) e Anos (12/11); aplicação completa recolhida; motor perguntado com botões do catálogo", () => {
   const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  for (const c of ['data-pv-veic="montadora"', 'data-pv-veic="modelo"', 'data-pv-veic="ano"', "data-pv-veic-adicionar"]) assert.ok(t.includes(c), c);
+  for (const c of ["data-pv-veic={k}", '["anoInicio", "Ano inicial (ou único)"', '["motor", "Motor (opcional', "data-pv-veic-adicionar"]) assert.ok(t.includes(c), c);
   assert.ok(t.includes("<details open={campoVoz === \"aplicacoes\" || undefined} data-pv-aplicacao-completa>"), "fala/texto completo continua disponível");
   const add = t.slice(t.indexOf("function adicionarVeiculoRapido()"), t.indexOf("// Resposta à pergunta do motor"));
-  assert.ok(add.includes("achados.length === 1") || t.includes("achados.length === 1 ? achados[0]"), "motor só quando há UM na descrição");
+  assert.ok(t.includes("achados.length === 1 ? achados[0]") && add.includes("v.motor.trim() || motorDaFicha(f)"), "motor informado; senão só quando há UM na descrição");
   assert.ok(add.includes("confirmada: true") && add.includes('origem: "usuario"'));
   const f = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
   assert.ok(f.includes("x.perguntaMotor.opcoes.map") && f.includes("data-pv-motor-nenhum"), "opções do catálogo + 'nenhuma destas' (nunca 'todas')");
