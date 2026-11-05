@@ -5040,6 +5040,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             />
             {mercadoLivreLiberado && (
             <RevisaoPublicacaoML
+              autoPublicacao={autoPiloto}
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
               titulo={anuncioConferido.titulo}
               contaDestino={contaDestinoML}

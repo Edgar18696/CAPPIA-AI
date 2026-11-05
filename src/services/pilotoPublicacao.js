@@ -95,8 +95,18 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   // 5) Publicar UMA vez (o nº da autorização vai junto; o servidor recusa repetição).
   p.progresso("publicar");
   if (!aut.checked) p.clicar(aut);
-  const pub = await esperarAte(() => visivel("[data-paiia-publicar-ml]"), L.passo);
-  if (!pub) { const t = p.achar("[data-paiia-publicar-ml]"); return pausa("publicar", (t && p.texto(t.parentElement || t).match(/Corrija antes de publicar:[^\n]*/)?.[0]) || "A publicação não foi liberada pela conferência."); }
+  // Bloqueio da conferência (ex.: Frete/precificação): espera só enquanto algo ainda está sendo conferido
+  // ("Conferindo…"); bloqueio estável por alguns segundos = pausa JÁ, com o motivo específico.
+  let estavel = 0;
+  const pub = await esperarAte(() => {
+    const b = visivel("[data-paiia-publicar-ml]");
+    if (b) return b;
+    const bloq = p.achar("[data-paiia-bloqueios-detalhe]");
+    const conferindo = bloq && /Conferindo|Procurando|Consultando/i.test(p.texto(bloq));
+    estavel = bloq && !conferindo ? estavel + 1 : 0;
+    return estavel >= (L.estavel || 4) ? { bloqueio: p.texto(bloq) } : null;
+  }, L.passo);
+  if (!pub || pub.bloqueio) return pausa("publicar", pub?.bloqueio ? `Corrija antes de publicar — ${pub.bloqueio.slice(0, 400)}` : "A publicação não foi liberada pela conferência.");
   p.clicar(pub);
   // A tela pede 2 toques (autorizar + confirmar): a ÚNICA autorização do Voz cobre os dois.
   // O 2º toque só acontece UMA vez e só se nada começou; a trava do servidor impede repetição.

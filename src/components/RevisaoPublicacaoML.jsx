@@ -32,7 +32,7 @@ import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categ
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services/registroMLBService";
-import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, calcularFreteEPrecos, reais as reaisFrete } from "../services/fretePrecificacao";
+import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, ORIGEM_FRETE, reais as reaisFrete } from "../services/fretePrecificacao";
 import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
   resolverCompatibilidades,
@@ -313,7 +313,7 @@ async function chamar(acao, extra = {}, contaML = "") {
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
 
-export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades, modoSimples = false }) {
+export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp = "", anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades, modoSimples = false }) {
   const [conexao, setConexao] = useState(null);
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
@@ -1044,7 +1044,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [integracao?.anuncioId, integracao?.registro?.estado]);
 
-  const autoPublicacao = autoPublicacaoDaUrl();
+  const autoPublicacao = autoPublicacaoProp || autoPublicacaoDaUrl();
   async function publicar() {
     if (!autorizado || !validacao?.valido || bloqueios.length > 0) return;
     if (!armado) {
@@ -1279,17 +1279,25 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   async function conferirFretePublicacao() {
     let registro = anuncio?.freteML || null;
     let recalculado = false;
-    // (Publicação automática) Medidas/peso confirmados mudaram depois da cotação: RECALCULA no ML com as
-    // medidas atuais, no preço da ficha (cotação oficial, nunca estimativa), sem pedir o procedimento antigo.
-    if (autoPublicacaoDaUrl() && contaEscolhida) {
-      const s0 = situacaoFrete({ registro, atual: { conta: contaEscolhida, medida: logistica?.medida, modalidade: logistica?.modalidade || registro?.modalidade, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio, preco: campos.preco } });
-      if (s0.estado === "desatualizado" || s0.estado === "sem_cotacao") {
-        const params = parametrosCotacao({ conta: contaEscolhida, medida: logistica?.medida, modalidade: logistica?.modalidade || registro?.modalidade, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio });
-        const base = registro?.base || (anuncio?.custo ? { custo: Number(String(anuncio.custo).replace(",", ".")) || 0 } : null);
-        if (base?.custo > 0) {
-          const r = await calcularFreteEPrecos({ params, base, precoFinal: campos.preco, consultar: (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, contaEscolhida), estimar: false });
-          if (r?.ok && r.registro) { registro = r.registro; recalculado = true; setFreteRecalculado(r.registro); }
-        }
+    // (Publicação automática, correção 12/11) Medidas/peso confirmados mudaram depois da cotação: COTA de novo
+    // no ML com as medidas ATUAIS no preço da ficha (cotação oficial; nunca estimativa) e segue. Não depende do
+    // custo nem da tabela de margens (que exigia o procedimento antigo). Cotação recusada = motivo específico.
+    const auto = Boolean(autoPublicacao || autoPublicacaoDaUrl());
+    if (auto && contaEscolhida) {
+      const atualAuto = { conta: contaEscolhida, medida: logistica?.medida, modalidade: logistica?.modalidade || registro?.modalidade, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio, preco: campos.preco };
+      const s0 = situacaoFrete({ registro, atual: atualAuto });
+      if (s0.estado !== "ok") {
+        const m = logistica?.medida || {};
+        const medidaTxt = `${m.comprimento_cm || "?"} × ${m.largura_cm || "?"} × ${m.altura_cm || "?"} cm, ${m.peso_g || "?"} g`;
+        const params = parametrosCotacao(atualAuto);
+        const nova = await cotarNoPreco({ params, preco: campos.preco, consultar: (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, contaEscolhida) });
+        if (!nova?.ok) return { ok: false, motivo: `o Mercado Livre não cotou o frete com as medidas confirmadas (${medidaTxt}) no preço ${reaisFrete(campos.preco)}: ${nova?.erro || "sem resposta"}.` };
+        if (nova.origem === ORIGEM_FRETE.SIMULACAO) return { ok: false, motivo: "a cotação veio SIMULADA; só vale a cotação real do Mercado Livre." };
+        registro = { ...(registro || {}), ...params, origem: ORIGEM_FRETE.ML, calculado_em: new Date().toISOString(), final: { ...(registro?.final || {}), ...nova, origem: ORIGEM_FRETE.ML } };
+        setFreteRecalculado(registro);
+        const s1 = situacaoFrete({ registro, atual: atualAuto });
+        if (s1.estado !== "ok") return { ok: false, motivo: s1.motivos.join("; ").replace(/\.*$/, ".") };
+        return { ok: true, recalculado: true, texto: `Frete RECALCULADO automaticamente com as medidas confirmadas (${medidaTxt}): ${reaisFrete(nova.custo_vendedor)} no preço ${reaisFrete(campos.preco)} (peso cobrado ${nova.peso_cobrado_g} g, cotação oficial do Mercado Livre).` };
       }
     }
     const s = situacaoFrete({
@@ -1307,7 +1315,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     const params = parametrosCotacao({ ...registro, conta: contaEscolhida, categoria: campos.categoria_id || registro.categoria });
     const nova = await cotarNoPreco({ params, preco: campos.preco, consultar: (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, contaEscolhida) });
     const c = conferirCotacao({ registro, nova });
-    if (!c.ok) return { ok: false, motivo: c.motivo };
+    if (!c.ok && !(auto && c.diferenca)) return { ok: false, motivo: c.motivo };
+    if (!c.ok && auto && c.diferenca) return { ok: true, recalculado: true, texto: `Frete conferido agora no Mercado Livre: ${reaisFrete(nova.custo_vendedor)} no preço ${reaisFrete(campos.preco)} (peso cobrado ${nova.peso_cobrado_g} g). O valor mudou desde a cotação da ficha (${c.motivo.replace(/ Volte ao Novo Anúncio e recalcule a precificação\./, "")}).` };
     return { ok: true, recalculado, texto: `${recalculado ? "Frete RECALCULADO automaticamente com as medidas confirmadas. " : ""}Frete conferido agora no Mercado Livre: ${reaisFrete(nova.custo_vendedor)} (peso considerado ${nova.peso_cobrado_g} g, ${registro.final.faixa_rotulo}) — igual ao usado na precificação.` };
   }
   useEffect(() => {
@@ -1320,7 +1329,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     })();
     return () => { ativo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contaOk, contaEscolhida, campos.preco, campos.tipoAnuncio, campos.categoria_id]);
+  }, [contaOk, contaEscolhida, campos.preco, campos.tipoAnuncio, campos.categoria_id, autoPublicacao, JSON.stringify(logistica?.medida || null)]);
   useEffect(() => {
     setDuplicidadeML(null);
     setDuplicidadeBase(null);
@@ -2040,7 +2049,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 )}
               </div>
             )}
-            {bloqueios.length > 0 && <p style={erro}>Corrija antes de publicar: {bloqueios.map((b) => b.item).join(", ")}.</p>}
+            {bloqueios.length > 0 && <p style={erro} data-paiia-bloqueios-publicar={bloqueios.map((b) => b.item).join("|")}>Corrija antes de publicar: {bloqueios.map((b) => b.item).join(", ")}.</p>}
+            {bloqueios.length > 0 && <div style={{ display: "none" }} data-paiia-bloqueios-detalhe>{bloqueios.map((b) => `${b.item}: ${b.texto}`).join(" · ")}</div>}
             {!mostrarOpcaoSemCompat && bloqueios.some((b) => b.item === "Compatibilidades") && onVoltarCompatibilidades && (
               <button type="button" data-paiia-navegacao data-paiia-voltar-compat onClick={() => onVoltarCompatibilidades()} style={botaoVoltarEtapa}>
                 ← Voltar às Compatibilidades (⑨ da Conferência)
