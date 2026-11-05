@@ -19,6 +19,9 @@ import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
 import { aprovarRevisaoEGravar } from "./servicos/preparoVozService";
 import { prepararPublicacaoVoz } from "./servicos/publicarVozService";
+import { diagnosticarFichaVoz, textoDiagnostico } from "./servicos/localizarFichaVoz";
+import { listarAnunciosDoCodigo } from "../../services/anuncioPublicacaoService";
+import { supabase } from "../../supabase";
 
 // (Passo 7) Pendência da revisão → etapa do celular que a resolve.
 const ETAPA_DA_PENDENCIA = (p) => (p.id === "compatibilidade" ? "compat" : p.id === "descricao" ? "descricao" : p.id === "fotos" ? "fotos" : /^ficha:Peso/.test(p.id) ? "envio" : /^ficha:Tipo/.test(p.id) ? "compat" : /^ficha:T[ií]tulo/.test(p.id) ? "descricao" : "");
@@ -29,7 +32,7 @@ const depsTeste = () => (globalThis.__paiiaModoTeste && globalThis.__paiiaFinali
 
 const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];
 
-export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null, versaoNuvem = 0, aoAbrirPublicacao = null }) {
+export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null, versaoNuvem = 0, aoAbrirPublicacao = null, codigoRascunho = "", aoTrocarFicha = null }) {
   const estadoContas = useContasML();
   const contas = contasMLConectadas(estadoContas).filter((c) => String(c.ml_user_id || "").trim());
   const [contaEscolhida, setConta] = useState("");
@@ -37,6 +40,20 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   // (06/11) Resultado da última leitura da ficha: “não encontrada” ou erro não ficam presos em “Lendo a ficha…”.
   const [leitura, setLeitura] = useState({ estado: "lendo", erro: "" });
   const [rodando, setRodando] = useState("");
+  // (Passo 7) Resultado visível do "Ler de novo" (ficha não encontrada).
+  const [diag, setDiag] = useState({ lendo: false, d: null });
+  async function lerDeNovo() {
+    if (diag.lendo) return;
+    setDiag({ lendo: true, d: null });
+    const t = depsTeste();
+    const d = await diagnosticarFichaVoz({ fichaId, codigo: codigoRascunho }, {
+      usuarioAtual: t?.usuarioAtual || (async () => (await supabase.auth.getUser())?.data?.user || null),
+      lerFicha: t?.lerFicha || lerFichaNovoAnuncio,
+      listarPorCodigo: t?.listarPorCodigo || listarAnunciosDoCodigo,
+    });
+    setDiag({ lendo: false, d });
+    if (d.estado === "encontrada") await recarregar();
+  }
   const [erro, setErro] = useState("");
   const [autorizarBling, setAutorizarBling] = useState(false);
   const [semCompatibilidade, setSemCompatibilidade] = useState(false);
@@ -118,7 +135,36 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   }, [row, conta, rodando, conferir]);
 
   if (!fichaId) return <>{depoisDaConta}<p className="pr-aviso" data-pv-finalizar-sem-ficha>☁️ Salve a ficha na conta (informe o código) para finalizar.</p></>;
-  if (!row && leitura.estado === "nao-encontrada") return <><div className="pr-aviso" data-pv-finalizar-nao-encontrada><strong>⚠️ A ficha deste rascunho não foi encontrada na conta em que você está.</strong><br />Ela pode ter sido removida ou criada com outro login. Nada foi enviado ao Bling nem ao Mercado Livre. <small>(ficha {String(fichaId).slice(0, 8)})</small><br /><button type="button" className="pr-link" onClick={recarregar} data-pv-finalizar-ler-de-novo>Ler de novo</button></div>{depoisDaConta}</>;
+  if (!row && leitura.estado === "nao-encontrada") return (
+    <>
+      <div className="pr-aviso" data-pv-finalizar-nao-encontrada>
+        <strong>⚠️ A ficha deste rascunho não foi encontrada na conta em que você está.</strong><br />
+        Ela pode ter sido excluída ou criada com outro login. O rascunho e as fotos continuam guardados neste aparelho. Nada foi enviado ao Bling nem ao Mercado Livre. <small>(ficha {String(fichaId).slice(0, 8)})</small>
+        <div className="pr-linha" style={{ marginTop: 8 }}>
+          <button type="button" className="pr-botao pr-grande" onClick={lerDeNovo} disabled={diag.lendo} data-pv-finalizar-ler-de-novo>{diag.lendo ? "⏳ Lendo a conta…" : "🔄 Ler de novo"}</button>
+        </div>
+        {diag.d && <p role="status" data-pv-diagnostico={diag.d.estado} style={{ marginTop: 8 }}>{textoDiagnostico(diag.d)}</p>}
+        {diag.d?.estado === "nao-encontrada" && aoTrocarFicha && (
+          <div data-pv-diagnostico-opcoes style={{ display: "grid", gap: 8 }}>
+            {diag.d.candidatas.map((c) => (
+              <button key={c.id} type="button" className="pr-botao pr-grande" onClick={() => aoTrocarFicha(c.id)} data-pv-usar-ficha={c.id}>
+                ↪ Usar a ficha {c.id.slice(0, 8)} desta conta{c.titulo ? ` (${c.titulo.slice(0, 40)})` : ""}
+              </button>
+            ))}
+            {!diag.d.candidatas.length && (
+              <>
+                <button type="button" className="pr-botao pr-grande" onClick={() => { if (window.confirm(`Criar a ficha nesta conta (${diag.d.usuario?.email || ""}) a partir deste rascunho?\n\nO rascunho e as fotos deste aparelho são usados; nada é publicado. Se você excluiu essa ficha de propósito, toque em Cancelar.`)) aoTrocarFicha(""); }} data-pv-criar-ficha-conta>
+                  ➕ Criar a ficha nesta conta com este rascunho
+                </button>
+                <p className="pr-fonte" style={{ margin: 0 }}>Use só se a ficha antiga não deveria ter sumido (ex.: outro login). Ficha excluída de propósito não é recriada sozinha.</p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      {depoisDaConta}
+    </>
+  );
   if (!row && leitura.estado === "erro") return <><p className="pr-aviso" data-pv-finalizar-erro-leitura>⚠️ Não consegui ler a ficha agora{leitura.erro ? ` (${leitura.erro})` : ""}. Nada foi enviado. <button type="button" className="pr-link" onClick={recarregar} data-pv-finalizar-ler-de-novo>Tentar de novo</button></p>{depoisDaConta}</>;
   if (!row) return <><p className="pr-fonte" data-pv-finalizar="carregando">⏳ Lendo a ficha…</p>{depoisDaConta}</>;
   const sit = situacaoFinalizar(row, { autorizarBling, semCompatibilidade, liberado, marcar });

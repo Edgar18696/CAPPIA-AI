@@ -809,6 +809,21 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setScreen?.("novoAnuncio");
   }
 
+  // (Passo 7) Ficha do rascunho não encontrada na conta: liga o rascunho a uma ficha DESTA conta
+  // com o mesmo código (id) ou, com id vazio, deixa a próxima gravação criar a ficha nesta conta.
+  // O rascunho e as fotos do aparelho ficam como estão (nada é apagado).
+  function trocarFichaDaConta(id) {
+    const atual = fichaRef.current;
+    const nova = { ...atual, versao: (Number(atual.versao) || 0) + 1 };
+    if (id) nova.fichaIdPAIIA = id; else delete nova.fichaIdPAIIA;
+    delete nova.enviadaEm; delete nova.enviadaPara;
+    fichaRef.current = nova;
+    setFicha(nova);
+    guardarFichaVoz(nova);
+    setAviso(id ? `↪ Rascunho ligado à ficha ${id.slice(0, 8)} desta conta. Gravando…` : "➕ Criando a ficha nesta conta com o rascunho e as fotos deste aparelho…");
+    setTimeout(() => { sincronizar(); }, 50);
+  }
+
   // (Passo 7) Abre a Publicação da MESMA ficha (chamado pela Finalizar depois da aprovação):
   // endereço ?ficha=<ID> e, a partir daqui, o celular não regrava mais a ficha.
   function abrirPublicacaoDaFicha(id) {
@@ -1329,7 +1344,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </>
             );
             return usuario
-              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} aoIrEtapa={irPara} aoAbrirPublicacao={abrirPublicacaoDaFicha} />
+              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} versaoNuvem={versaoNuvem} aoIrEtapa={irPara} aoAbrirPublicacao={abrirPublicacaoDaFicha} codigoRascunho={cp?.codigo || ""} aoTrocarFicha={trocarFichaDaConta} />
               : blocoFicha;
           })()}
           {usuario && (
