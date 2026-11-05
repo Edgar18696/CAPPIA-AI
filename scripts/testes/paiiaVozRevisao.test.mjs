@@ -168,12 +168,13 @@ test("Clássico é o padrão SEM pergunta (decisão 07/11); trocar para Premium 
   assert.equal(montarRevisao(row2).pendencias.some((p) => p.id === "modalidade"), false);
 });
 
-test("bloqueios das conferências continuam bloqueando a aprovação (duplicidade)", async () => {
+test("(regra 08/11) outro anúncio do mesmo SKU não vira pendência; falha de consulta continua bloqueando", async () => {
   const row = await conferido(ficha(), mundo({ skuAtivo: "MLB5499135577" }));
   const r = montarRevisao(row);
-  assert.ok(r.pendencias.some((p) => p.id === "duplicidade" && p.tipo === "bloqueio"));
-  assert.equal(r.podeAprovar, false);
-  assert.equal(aprovarRevisao(row).ok, false);
+  assert.ok(!r.pendencias.some((p) => p.id === "duplicidade"));
+  const c = await import("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js");
+  assert.ok(String(c.prepararConferenciaVoz).length > 0);
+  assert.ok(fs.readFileSync(new URL("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js", import.meta.url), "utf8").includes('Duplicidade: Mercado Livre não conferido (${ml.erro}). Publicação bloqueada.'));
 });
 
 test("compatibilidade de carro sem veículo continua pendente (não aprova sem decisão)", async () => {

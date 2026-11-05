@@ -161,9 +161,9 @@ function conferir({ usoBling = null, freteConf = null, campos, quantidadeConfirm
   // (O mesmo SKU em OUTRA conta é permitido: cada conta tem o seu MLB.)
   if (duplicidadeML?.carregando) itens.push({ item: "Duplicidade na conta", nivel: "aviso", texto: "Conferindo no Mercado Livre se este SKU/código já está anunciado nesta conta (maiúsculas, minúsculas, espaços e anúncios antigos)..." });
   else if (duplicidadeML?.erro) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Não foi possível conferir anúncios deste SKU/código nesta conta (${duplicidadeML.erro}). Sem essa conferência a publicação fica bloqueada.` });
-  else if (duplicidadeML?.duplicados?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `Este SKU/código já tem anúncio nesta conta: ${duplicidadeML.duplicados.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Publicar de novo criaria duplicidade (em outra conta é permitido).` });
-  else if (duplicidadeML?.ativosBase?.length) itens.push({ item: "Duplicidade na conta", nivel: "erro", texto: `MLB registrado na base sem confirmação de exclusão/encerramento no Mercado Livre nesta conta: ${duplicidadeML.ativosBase.join(", ")}. Publicação bloqueada.` });
-  else if (duplicidadeML?.possiveis?.length && !possivelConfirmado) itens.push({ item: "Possível duplicidade na conta", nivel: "erro", texto: `Anúncio desta conta com o mesmo código, mas SKU diferente/vazio: ${duplicidadeML.possiveis.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Confira no Mercado Livre; só publique se NÃO for o mesmo produto (marque a confirmação abaixo).` });
+  else if (duplicidadeML?.duplicados?.length) itens.push({ item: "Duplicidade na conta", nivel: autoPublicacaoDaUrl() ? "aviso" : "erro", texto: `Este SKU/código já tem anúncio nesta conta: ${duplicidadeML.duplicados.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Publicar de novo criaria duplicidade (em outra conta é permitido).` });
+  else if (duplicidadeML?.ativosBase?.length) itens.push({ item: "Duplicidade na conta", nivel: autoPublicacaoDaUrl() ? "aviso" : "erro", texto: `MLB registrado na base sem confirmação de exclusão/encerramento no Mercado Livre nesta conta: ${duplicidadeML.ativosBase.join(", ")}. Publicação bloqueada.` });
+  else if (duplicidadeML?.possiveis?.length && !possivelConfirmado) itens.push({ item: "Possível duplicidade na conta", nivel: autoPublicacaoDaUrl() ? "aviso" : "erro", texto: `Anúncio desta conta com o mesmo código, mas SKU diferente/vazio: ${duplicidadeML.possiveis.map((d) => `${d.id} (${d.status}; ${d.motivo})`).join(", ")}. Confira no Mercado Livre; só publique se NÃO for o mesmo produto (marque a confirmação abaixo).` });
   else if (duplicidadeML?.possiveis?.length) itens.push({ item: "Possível duplicidade na conta", nivel: "aviso", texto: `Você confirmou que ${duplicidadeML.possiveis.map((d) => d.id).join(", ")} NÃO é o mesmo produto.` });
   else if (duplicidadeML?.verificado) itens.push({ item: "Duplicidade na conta", nivel: "ok", texto: `Nenhum anúncio deste SKU/código nesta conta (${duplicidadeML.buscas} buscas, ${duplicidadeML.candidatos} anúncios conferidos). O mesmo SKU em outras contas não bloqueia.` });
   if (!duplicidadeML && !duplicidadeBase && skuEnvio) itens.push({ item: "Duplicidade na conta", nivel: "aviso", texto: "Proteção final: ao validar e de novo ao publicar, o PAIIA confere se este SKU já tem anúncio NESTA conta do Mercado Livre (e o registro interno). Duplicado bloqueia." });
@@ -301,6 +301,9 @@ const TEXTO_MEDIDAS_OBRIGATORIAS = "Peso e medidas da embalagem são obrigatóri
 const ehFaltaMedidasML = (c) => /seller[._]package|package[._]dimensions/i.test(`${c?.codigo || ""} ${c?.mensagem || ""}`);
 
 // Toda chamada leva a conta ML escolhida (conta_ml). Sem conta: não chama.
+// (PAIIA Voz) nº da autorização da publicação automática (?auto=<uuid> na Publicação); vazio na tela normal.
+const autoPublicacaoDaUrl = () => { try { const id = new URL(window.location.href).searchParams.get("auto") || ""; return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : ""; } catch { return ""; } };
+
 async function chamar(acao, extra = {}, contaML = "") {
   if (!contaML) return { ok: false, codigo: "conta_nao_selecionada", erro: "Selecione a conta Mercado Livre desta publicação." };
   const { data, error } = await supabase.functions.invoke("mercadolivre-publicacao", {
@@ -1041,6 +1044,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [integracao?.anuncioId, integracao?.registro?.estado]);
 
+  const autoPublicacao = autoPublicacaoDaUrl();
   async function publicar() {
     if (!autorizado || !validacao?.valido || bloqueios.length > 0) return;
     if (!armado) {
@@ -1107,7 +1111,11 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     const noML = base.erro ? null : await consultarDuplicidadeML(contaEscolhida, base.registros || []);
     if (noML) setDuplicidadeML(noML);
     const avBase = base.erro ? null : avaliarRegistrosBase({ registros: base.registros || [], ml: noML });
-    const motivo = base.erro
+    // (Regra 08/11 — publicação automática do PAIIA Voz) outros anúncios do mesmo SKU NÃO bloqueiam:
+    // só falhas de consulta param; a repetição da MESMA autorização é barrada no servidor.
+    const motivo = autoPublicacao
+      ? (base.erro ? `Base PAIIA não conferida (${base.erro}).` : noML?.erro ? `Mercado Livre não conferido (${noML.erro}).` : "")
+      : base.erro
       ? `Base PAIIA não conferida (${base.erro}).`
       : avBase && avBase.estado !== "ok"
         ? `A base PAIIA registra este código publicado nesta conta e o Mercado Livre não confirmou exclusão/encerramento (${(avBase.pendentes.length ? avBase.pendentes.map((p) => `${p.mlb}: ${p.motivo}`) : avBase.mlbs).join("; ")}).`
@@ -1128,6 +1136,8 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
       anuncio: dadosAnuncio,
       confirmado: true,
       confirmacao: "PUBLICAR",
+      // (PAIIA Voz, publicação automática) nº ÚNICO da autorização: o servidor recusa repetição.
+      ...(autoPublicacao ? { autorizacao_id: autoPublicacao } : {}),
     }, contaEscolhida);
     let verificacao = null;
     let registroBling = null;
@@ -2065,7 +2075,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 </div>
               );
             })()}
-            {resultado && !resultado.ok && <p style={erro}>❌ {resultado.erro}</p>}
+            {resultado && !resultado.ok && <p style={erro} data-paiia-resultado-publicacao="erro">❌ {resultado.erro}</p>}
             {resultado && ficha.resultadoGravado && <p style={{ ...info, color: "#86efac" }}>💾 Resultado salvo na ficha do anúncio (MLB, data/hora, Bling e estoque).</p>}
             {resultado?.ok && resultado.publicado && ficha.anuncioId && (
               <button type="button" data-paiia-navegacao data-paiia-abrir-tela-final onClick={() => onAbrirTelaFinal?.(ficha.anuncioId)} style={{ ...botaoVerde, marginTop: 8 }}>

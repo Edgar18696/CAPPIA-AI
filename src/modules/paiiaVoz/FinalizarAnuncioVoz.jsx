@@ -15,6 +15,7 @@ import PainelCategoriaML from "../../components/PainelCategoriaML";
 import { preparoAtual, assinaturaEntrada, entradaDaFicha } from "./servicos/preparoConferenciaVoz";
 import { situacaoFinalizar, executarFinalizacao, assinaturaFinalizar, publicacaoRealLiberada, ROTULOS_OPERACOES, skuAusenteNoBling, estadoFinalizacao } from "./servicos/finalizarAnuncioVoz";
 import { depsFinalizarReais } from "./servicos/finalizarDepsReais";
+import { novaAutorizacaoId } from "../../services/pilotoPublicacao";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
 import { aprovarRevisaoEGravar } from "./servicos/preparoVozService";
 import { prepararPublicacaoVoz } from "./servicos/publicarVozService";
@@ -199,13 +200,33 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const blingAusente = (skuAusenteNoBling(row) || blingEmCurso) && opBling?.estado !== "ok";
   const faltaRev = rev.pendencias.filter((p) => p.tipo !== "aviso" && !(p.id === "bling" && blingAusente));
   const jaNaPublicacao = row?.dados_conferencia?.ficha?.etapa === "publicacao" && !row?.dados_conferencia?.etapa_fluxo;
-  const abrirPublicacao = (id) => (aoAbrirPublicacao ? aoAbrirPublicacao(id) : window.location.assign(`/?tela=mercadoLivreTeste&ficha=${encodeURIComponent(id)}`));
+  const abrirPublicacao = (id, auto = "") => (aoAbrirPublicacao ? aoAbrirPublicacao(id, auto) : window.location.assign(`/?tela=mercadoLivreTeste&ficha=${encodeURIComponent(id)}${auto ? `&auto=${auto}` : ""}`));
+  // (Publicação automática) só na LOJA ONLINE por enquanto; nas outras contas segue a Publicação de sempre.
+  const contaAutomatica = nomeDaLoja(conta) === "LOJA ONLINE";
+  // Nº ÚNICO desta autorização, gravado na ficha com trava de versão: um segundo toque/aba reaproveita o
+  // MESMO número (o servidor nunca publica duas vezes com ele). Nova autorização só depois de concluída.
+  async function reservarAutorizacao() {
+    let id = "";
+    const g = await deps.gravarFinalizacao(fichaId, (fin) => {
+      const atual = fin?.autorizacaoPublicacao;
+      id = atual?.id && !atual.concluida ? atual.id : novaAutorizacaoId();
+      return { ...(fin || {}), autorizacaoPublicacao: atual?.id === id ? atual : { id, em: new Date().toISOString(), por: usuarioId, conta } };
+    });
+    return g?.ok ? { ok: true, id } : { ok: false, erro: g?.erro || "Não consegui registrar a autorização na ficha. Nada foi enviado." };
+  }
   const lerAgora = async () => (await (depsTeste()?.lerFicha || lerFichaNovoAnuncio)(fichaId))?.ficha || null;
   const seguirParaPublicacao = () => acao("publicacao", async () => {
     // A versão da página é conferida de novo na hora (página antiga nunca finaliza).
     const v = await conferirVersao();
     if (!(v.estado === "ok" || v.estado === "sem-versao")) return { ok: false, erro: "Atualize a página (versão nova do PAIIA) antes de finalizar. Nada foi feito." };
-    if (jaNaPublicacao) { abrirPublicacao(fichaId); return { ok: true }; }
+    if (contaAutomatica && !autorizoCadastro) return { ok: false, erro: "Marque a autorização para o PAIIA concluir a publicação." };
+    if (jaNaPublicacao) {
+      if (!contaAutomatica) { abrirPublicacao(fichaId); return { ok: true }; }
+      const au = await reservarAutorizacao();
+      if (!au.ok) return au;
+      abrirPublicacao(fichaId, au.id);
+      return { ok: true };
+    }
     // (Etapa 3) 1) Bling: SÓ com a sua autorização. O executor confere antes (já existe → não cria)
     // e registra na ficha; um segundo toque não repete o que já foi feito.
     if (blingAusente) {
@@ -228,6 +249,12 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     const p = await (depsTeste()?.prepararPublicacao || prepararPublicacaoVoz)(fichaId);
     if (!p?.ok) return p || { ok: false, erro: "Não consegui preparar a Publicação." };
     if (p.fichaId && p.fichaId !== fichaId) return { ok: false, erro: "A Publicação não é desta ficha: nada foi aberto." };
+    if (contaAutomatica) {
+      const au = await reservarAutorizacao();
+      if (!au.ok) return au;
+      abrirPublicacao(fichaId, au.id);
+      return p;
+    }
     abrirPublicacao(fichaId);
     return p;
   });
@@ -385,16 +412,16 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
               <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="conferir" onClick={conferir}>🔄 Conferir agora</button>
             </div>
           ) : null}
-          {pronto && blingAusente && criarBlingDisponivel && (
+          {pronto && (contaAutomatica || (blingAusente && criarBlingDisponivel)) && (
             <label className="pr-check" data-pv-autorizo-bling-cadastro>
               <input type="checkbox" checked={autorizoCadastro} disabled={Boolean(rodando)} onChange={(e) => setAutorizoCadastro(e.target.checked)} />
-              <span>{blingEmCurso ? <>Autorizo o PAIIA a <b>conferir</b> o cadastro do SKU <b>{d.sku}</b> no Bling e seguir (nada é cadastrado de novo).</> : <>Produto não encontrado no Bling. <b>Autorizo cadastrar o SKU {d.sku}</b> com os dados da ficha e <b>estoque inicial de {qtdFicha || "?"} un.</b>, e confirmo que conferi que este SKU não existe no Bling escrito com hífen, espaço ou ponto.</>}</span>
+              <span>{contaAutomatica ? <><b>Autorizo o PAIIA a publicar no Mercado Livre (LOJA ONLINE)</b> o SKU <b>{d.sku}</b> por <b>{d.preco}</b>, quantidade <b>{qtdFicha || "?"}</b>, e concluir sozinho o vínculo no Bling e a Central{blingAusente && !blingEmCurso ? <>; <b>cadastrar no Bling</b> com estoque inicial de {qtdFicha || "?"} un., e confirmo que conferi que este SKU não existe no Bling escrito com hífen, espaço ou ponto</> : ""}. É uma única autorização: nada é publicado duas vezes.</> : blingEmCurso ? <>Autorizo o PAIIA a <b>conferir</b> o cadastro do SKU <b>{d.sku}</b> no Bling e seguir (nada é cadastrado de novo).</> : <>Produto não encontrado no Bling. <b>Autorizo cadastrar o SKU {d.sku}</b> com os dados da ficha e <b>estoque inicial de {qtdFicha || "?"} un.</b>, e confirmo que conferi que este SKU não existe no Bling escrito com hífen, espaço ou ponto.</>}</span>
             </label>
           )}
           {/* 6. UM botão, no final, só depois da conta */}
           {pronto && (
             <div className="pr-cartao" data-pv-seguir="publicacao">
-              <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || (blingAusente && !autorizoCadastro)} onClick={seguirParaPublicacao} data-pv-continuar-publicacao>
+              <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || ((blingAusente || contaAutomatica) && !autorizoCadastro)} onClick={seguirParaPublicacao} data-pv-continuar-publicacao>
                 {rodando === "publicacao" ? "⏳ Finalizando…" : "✅ Finalizar e Enviar"}
               </button>
               <p className="pr-fonte">Abre a Publicação desta mesma ficha, com fotos e dados conferidos. A publicação no Mercado Livre só acontece depois da sua confirmação final.</p>

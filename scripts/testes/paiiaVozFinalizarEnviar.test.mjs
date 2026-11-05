@@ -8,7 +8,7 @@ const seg = f.slice(f.indexOf("const seguirParaPublicacao"), f.indexOf("const de
 
 test("1) um botão principal 'Finalizar e Enviar'; com SKU ausente no Bling ele só habilita com a autorização marcada", () => {
   assert.ok(f.includes('"✅ Finalizar e Enviar"') && f.includes("data-pv-autorizo-bling-cadastro"));
-  assert.ok(f.includes("disabled={Boolean(rodando) || (blingAusente && !autorizoCadastro)}"));
+  assert.ok(f.includes("disabled={Boolean(rodando) || ((blingAusente || contaAutomatica) && !autorizoCadastro)}"));
   assert.ok(f.includes("!(p.id === \"bling\" && blingAusente)"), "SKU ausente não vira 'decisão' separada");
 });
 

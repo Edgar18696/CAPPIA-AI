@@ -16,7 +16,7 @@ test("2) Bling ausente: a autorização só aparece porque o cadastro real exist
   assert.ok(f.includes("const blingBloqueado = blingAusente && !criarBlingDisponivel;"));
   assert.ok(f.includes("const criarBlingDisponivel = true;"), "(08/11) cadastro real pela ação existente criar_produto");
   assert.ok(f.includes("data-pv-bling-pendencia") && f.includes("cadastro automático ainda não está disponível"), "a pendência clara continua para quando não houver cadastro");
-  assert.ok(f.includes("{pronto && blingAusente && criarBlingDisponivel && ("));
+  assert.ok(f.includes("{pronto && (contaAutomatica || (blingAusente && criarBlingDisponivel)) && ("));
   assert.ok(f.includes("!decisao && !blingBloqueado"));
 });
 

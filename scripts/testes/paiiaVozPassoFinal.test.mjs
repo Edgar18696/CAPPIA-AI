@@ -59,8 +59,8 @@ test("4) tela: 'Completar ficha' grande; Finalizar mostra UMA decisão ou 'Conti
   const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(t.includes("data-pv-completar-ficha={pf.etapa}") && t.includes("onClick={() => irPara(pf.etapa)}") && t.includes('className="pr-botao pr-grande"'));
   assert.ok(t.includes("aoIrEtapa={irPara} aoAbrirPublicacao={abrirPublicacaoDaFicha}"));
-  const ab = t.slice(t.indexOf("function abrirPublicacaoDaFicha(id)"), t.indexOf("// (04/11) Remover ficha de teste"));
-  assert.ok(ab.includes("id !== fichaRef.current.fichaIdPAIIA") && ab.includes("enderecoPublicacaoDaFicha(window.location.href, id)") && ab.includes('setScreen?.("mercadoLivreTeste")'), "só abre a MESMA ficha");
+  const ab = t.slice(t.indexOf("function abrirPublicacaoDaFicha(id"), t.indexOf("// (04/11) Remover ficha de teste"));
+  assert.ok(ab.includes("id !== fichaRef.current.fichaIdPAIIA") && ab.includes("let destino = enderecoPublicacaoDaFicha(window.location.href, id);") && ab.includes('setScreen?.("mercadoLivreTeste")'), "só abre a MESMA ficha");
   const f = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
   const seg = f.slice(f.indexOf("const seguirParaPublicacao"), f.indexOf("const decisao = faltaRev[0]"));
   assert.ok(seg.indexOf("aprovarRevisaoEGravar") < seg.indexOf("prepararPublicacaoVoz") && seg.indexOf("prepararPublicacaoVoz") < seg.lastIndexOf("abrirPublicacao(fichaId)"), "aprova → entrega à Publicação existente → abre");

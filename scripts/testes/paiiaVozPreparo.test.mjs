@@ -148,12 +148,11 @@ test("sem conta: pergunta a conta e não consulta nada no Mercado Livre", async 
   assert.ok(!w.chamadas.some((c) => c[1] === "ml_consulta"));
 });
 
-test("anúncio ATIVO do mesmo SKU na conta → BLOQUEIO de duplicidade", async () => {
+test("(regra 08/11) anúncio ATIVO do mesmo SKU na conta NÃO bloqueia: vira anúncio ADICIONAL, informado", async () => {
   const w = mundo({ skuAtivo: "MLB5499135577" });
   const p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: w.deps });
-  assert.equal(p.verificacoes.duplicidade.estado, "bloqueio", p.verificacoes.duplicidade.texto);
-  assert.match(p.verificacoes.duplicidade.texto, /MLB5499135577/);
-  assert.equal(p.pronto, false);
+  assert.equal(p.verificacoes.duplicidade.estado, "ok", p.verificacoes.duplicidade.texto);
+  assert.match(p.verificacoes.duplicidade.texto, /MLB5499135577.*anúncio ADICIONAL/);
 });
 
 test("SKU fora do Bling: pergunta (o PAIIA não cria produto); estoque acima do Bling bloqueia", async () => {

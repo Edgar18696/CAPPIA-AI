@@ -203,9 +203,10 @@ async function conferirDuplicidade(e, deps, conta) {
     conferidosBase.push({ ...situacaoMLBRegistrado({ mlb, conta, resp }), mlb: mlb || "sem MLB", ficha_origem: p?.anuncio_id || "" });
   }
   const av = avaliarRegistrosBase({ registros: outros, ml: { ...ml, conferidosBase } });
-  if (ml.duplicados.length) return item("bloqueio", `Duplicidade: já existe anúncio deste SKU nesta conta (${ml.duplicados.map((d) => `${d.id} ${d.status}`).join(", ")}).`, { duplicados: ml.duplicados.map((d) => d.id) });
-  if (av.estado !== "ok") return item("bloqueio", `Duplicidade: ${av.pendentes.map((p) => `${p.mlb}: ${p.motivo}`).join("; ")}.`);
-  if (ml.possiveis.length) return item("pergunta", `Duplicidade: possível anúncio parecido nesta conta (${ml.possiveis.map((d) => d.id).join(", ")}). Confira antes de publicar.`, { possiveis: ml.possiveis.map((d) => d.id) });
+  // (Regra definitiva 08/11) Outros anúncios do mesmo SKU NÃO bloqueiam: o usuário pode anunciar a mesma
+  // peça mais de uma vez. Só falha de consulta para; a repetição da MESMA autorização é barrada no servidor.
+  const existentes = [...new Set([...ml.duplicados.map((d) => `${d.id} ${d.status}`), ...av.pendentes.map((p) => p.mlb), ...ml.possiveis.map((d) => d.id)])];
+  if (existentes.length) return item("ok", `Duplicidade: já existem anúncios deste SKU nesta conta (${existentes.join(", ")}). Será criado um anúncio ADICIONAL, como você pediu.`, { existentes, duplicados: ml.duplicados.map((d) => d.id) });;
   return item("ok", `Duplicidade: nenhum anúncio deste SKU na ${nomeDaLoja(conta)} (${ml.buscas} buscas).${av.anteriores.length ? ` ${av.anteriores.map((a) => a.texto).join(" ")}` : ""}`);
 }
 

@@ -873,8 +873,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
 
   // (Passo 7) Abre a Publicação da MESMA ficha (chamado pela Finalizar depois da aprovação):
   // endereço ?ficha=<ID> e, a partir daqui, o celular não regrava mais a ficha.
-  function abrirPublicacaoDaFicha(id) {
-    const destino = enderecoPublicacaoDaFicha(window.location.href, id);
+  function abrirPublicacaoDaFicha(id, auto = "") {
+    let destino = enderecoPublicacaoDaFicha(window.location.href, id);
+    // (Publicação automática) nº da autorização única vai junto; a Publicação executa sozinha.
+    if (destino && auto) { try { const u = new URL(destino, window.location.href); u.searchParams.set("auto", auto); destino = u.pathname + u.search + u.hash; } catch { /* sem auto */ } }
     if (!destino || id !== fichaRef.current.fichaIdPAIIA) { setAviso("⚠️ A Publicação não é desta ficha: nada foi aberto."); return; }
     window.history.replaceState(window.history.state, "", destino);
     if (!fichaRef.current.enviadaEm) {

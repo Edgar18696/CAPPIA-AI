@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
+import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
 import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
@@ -5013,6 +5014,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               onLiberarML={setMercadoLivreLiberado}
               onIrCentral={() => sairPara("centralPublicacao")}
             />
+            <PilotoAutomaticoPublicacao conta={contaDestinoML || ""} sku={anuncioConferido?.codigo || ""} />
             {mercadoLivreLiberado && (
             <RevisaoPublicacaoML
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
