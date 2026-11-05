@@ -69,7 +69,8 @@ export function montarAprovacaoDoVoz(row, { agora = new Date().toISOString() } =
     .map((a) => ({ montadora: txt(a.montadora), modelo: txt(a.modelo), motor: txt(a.motor), versao: txt(a.versao), anoInicio: txt(a.anoInicio), anoFim: txt(a.anoFim), origem: a.origem === "base" ? "base" : "manual", fonte: txt(a.fonte) || "PAIIA Voz" }));
   const anuncioConferido = {
     codigo: e.codigo,
-    oem: "",
+    // (04/11) códigos adicionais conferidos da ficha (antes iam vazios para a publicação)
+    oem: String(d.novo_anuncio?.oem ?? "").trim(),
     titulo: e.titulo.slice(0, 60),
     preco: e.preco.toFixed(2),
     descricao: String(d.novo_anuncio?.descricao ?? ""),

@@ -19,7 +19,9 @@ const ICONE = { pergunta: "❓", bloqueio: "⛔", erro: "⚠️", aguardando: "�
 // Laboratório: ligações simuladas (só com o modo de teste do PAIIA ligado).
 const depsTeste = () => (globalThis.__paiiaModoTeste && globalThis.__paiiaFinalizarDeps) || null;
 
-export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null }) {
+const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];
+
+export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa = null, depoisDaConta = null }) {
   const estadoContas = useContasML();
   const contas = contasMLConectadas(estadoContas).filter((c) => String(c.ml_user_id || "").trim());
   const [contaEscolhida, setConta] = useState("");
@@ -82,8 +84,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     conferir();
   }, [row, conta, rodando, conferir]);
 
-  if (!fichaId) return <p className="pr-aviso" data-pv-finalizar-sem-ficha>☁️ Salve a ficha na conta (informe o código) para finalizar.</p>;
-  if (!row) return <p className="pr-fonte" data-pv-finalizar="carregando">⏳ Lendo a ficha…</p>;
+  if (!fichaId) return <>{depoisDaConta}<p className="pr-aviso" data-pv-finalizar-sem-ficha>☁️ Salve a ficha na conta (informe o código) para finalizar.</p></>;
+  if (!row) return <><p className="pr-fonte" data-pv-finalizar="carregando">⏳ Lendo a ficha…</p>{depoisDaConta}</>;
   const sit = situacaoFinalizar(row, { autorizarBling, semCompatibilidade, liberado, marcar });
   const d = sit.revisao.dados;
   const marcadas = sit.ops.filter((o) => o.marcada).map((o) => o.id);
@@ -101,18 +103,26 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   }
 
   return (
-    <div className="pr-cartao" data-pv-finalizar={tudoFeito ? "concluido" : sit.podeExecutar ? "pronto" : "pendente"}>
+    <div className="pr-cartao" data-pv-finalizar-topo data-pv-finalizar={tudoFeito ? "concluido" : sit.podeExecutar ? "pronto" : "pendente"}>
       <p><b>✅ Finalizar anúncio</b> — confere sozinho no Bling e no Mercado Livre (só leitura). Só executa o que você autorizar.</p>
-      <div className="pr-linha">
-        <label className="pr-fonte">Conta Mercado Livre:{" "}
-          <select value={conta} onChange={(e) => setConta(e.target.value)} data-pv-finalizar-conta>
-            <option value="">— escolha —</option>
-            {conta && !contas.some((c) => String(c.ml_user_id) === conta) && <option value={conta}>{nomeDaLoja(conta)}</option>}
-            {contas.map((c) => <option key={c.ml_user_id} value={String(c.ml_user_id)}>{nomeDaLoja(c.ml_user_id, c.nickname)}</option>)}
-          </select>
-        </label>
+      {/* (04/11) 1º: a conta de destino (trocar a conta refaz as conferências dela e pede nova autorização). */}
+      <div data-pv-finalizar-contas>
+        <span className="pr-rotulo">1. Conta de destino no Mercado Livre</span>
+        <div className="pr-linha" role="radiogroup" aria-label="Conta de destino" style={{ gap: 6 }}>
+          {[...(conta && !contas.some((c) => String(c.ml_user_id) === conta) ? [{ ml_user_id: conta }] : []), ...contas]
+            .map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) }))
+            .sort((a, b) => (ORDEM_CONTAS.indexOf(a.nome) + 99) % 99 - (ORDEM_CONTAS.indexOf(b.nome) + 99) % 99)
+            .map((c) => (
+              <button key={c.id} type="button" role="radio" aria-checked={c.id === conta} className={`pr-conta ${c.id === conta ? "pr-conta-on" : ""}`} disabled={Boolean(rodando)}
+                onClick={() => { if (c.id === conta) return; setConta(c.id); setConfirmo(false); }} data-pv-conta-opcao={c.nome} data-escolhida={c.id === conta ? "sim" : "nao"}>
+                {c.id === conta ? "✔ " : ""}{c.nome}
+              </button>
+            ))}
+        </div>
+        {!conta && <p className="pr-aviso" data-pv-finalizar-sem-conta>Escolha a conta para conferir frete, categoria, duplicidade e compatibilidades.</p>}
         <button type="button" className="pr-link" disabled={Boolean(rodando) || !conta} onClick={conferir} data-pv-finalizar-reconferir>{rodando === "conferir" ? "⏳ Conferindo…" : "🔄 Conferir de novo"}</button>
       </div>
+      {depoisDaConta}
       {erro && <p className="pr-aviso" data-pv-finalizar-erro>⚠️ {erro}</p>}
 
       <dl className="pr-resumo" data-pv-finalizar-dados>

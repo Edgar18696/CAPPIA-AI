@@ -74,14 +74,14 @@ function tocar(f, agora) {
 // ---------------------------------------------------------------
 // Códigos
 // ---------------------------------------------------------------
-function adicionarCodigo(f, codigo, { origem, principal = false, soletrado = false, agora, fonte = "" }) {
+function adicionarCodigo(f, codigo, { origem, principal = false, soletrado = false, agora, fonte = "", conferido = null }) {
   const original = txt(codigo).toUpperCase();
   const normalizado = normalizarCodigo(original);
   if (!normalizado) return { mudou: false, aviso: "Código vazio." };
   let existente = f.codigos.find((c) => c.normalizado === normalizado);
   let mudou = false;
   if (!existente) {
-    existente = { codigo: original, normalizado, origem, fonte, em: agora, principal: false, soletrado, conferido: !soletrado };
+    existente = { codigo: original, normalizado, origem, fonte, em: agora, principal: false, soletrado, conferido: conferido === null ? !soletrado : Boolean(conferido) };
     f.codigos.push(existente);
     mudou = true;
   }
@@ -127,6 +127,47 @@ export function removerCodigo(ficha, normalizado, { agora = Date.now() } = {}) {
 
 export const codigoPrincipal = (f) => (f?.codigos || []).find((c) => c.principal) || null;
 export const codigosAdicionais = (f) => (f?.codigos || []).filter((c) => !c.principal);
+
+/**
+ * (04/11/2026) Códigos que vão para a descrição: o principal (SKU) e TODOS os
+ * adicionais conferidos, sem repetir. Adicional ditado ou vindo da base só
+ * entra depois de conferido.
+ */
+export function codigosParaDescricao(f) {
+  const vistos = new Set();
+  const lista = [];
+  const p = codigoPrincipal(f);
+  for (const c of [p, ...codigosAdicionais(f).filter((x) => x.conferido !== false)]) {
+    if (!c?.codigo || vistos.has(c.normalizado)) continue;
+    vistos.add(c.normalizado);
+    lista.push(c.codigo);
+  }
+  return lista;
+}
+const RE_CAB_CODIGOS = /^\s*c[oó]digos?\s+de\s+refer[eê]ncia\s*:?\s*$/i;
+/** Linhas da seção de códigos (cabeçalho + códigos). */
+export function linhasCodigosReferencia(codigos) {
+  return codigos.length ? [codigos.length > 1 ? "Códigos de Referência:" : "Código de Referência:", codigos.join(" / ")] : [];
+}
+/**
+ * (04/11/2026) Descrição editada à mão: a seção de códigos acompanha a ficha
+ * (código acrescentado, corrigido ou removido) sem mexer no resto do texto.
+ */
+export function aplicarCodigosNoTexto(texto, codigos) {
+  const linhas = String(texto ?? "").split("\n");
+  const novas = linhasCodigosReferencia(codigos);
+  const i = linhas.findIndex((l) => RE_CAB_CODIGOS.test(l));
+  if (i >= 0) {
+    const fim = i + 1 < linhas.length && linhas[i + 1].trim() && !/:\s*$/.test(linhas[i + 1]) ? i + 2 : i + 1;
+    linhas.splice(i, fim - i, ...novas);
+    if (!novas.length && linhas[i] !== undefined && !linhas[i].trim() && i > 0 && !linhas[i - 1].trim()) linhas.splice(i, 1);
+    return linhas.join("\n");
+  }
+  if (!novas.length) return linhas.join("\n");
+  const g = linhas.findIndex((l) => /^\s*garantia\b/i.test(l));
+  if (g >= 0) { linhas.splice(g, 0, ...novas, ""); return linhas.join("\n"); }
+  return [...linhas, "", ...novas].join("\n").replace(/^\n+/, "");
+}
 
 // ---------------------------------------------------------------
 // Aplicações
@@ -307,7 +348,8 @@ export function incorporarResultadoBase(ficha, resultado, { agora = Date.now() }
     if (r.mudou) mudancas.push(`Aplicação da ${resultado.rotulo}: ${resumoAplicacao(ap)}`);
   }
   for (const c of resultado.codigos || []) {
-    const r = adicionarCodigo(f, c, { origem: resultado.origem, agora, fonte: resultado.rotulo });
+    // (04/11) Código vindo da base/catálogo é equivalência SUGERIDA: só entra na descrição depois de você conferir.
+    const r = adicionarCodigo(f, c, { origem: resultado.origem, agora, fonte: resultado.rotulo, conferido: false });
     if (r.mudou) mudancas.push(`Código de referência da ${resultado.rotulo}: ${c}`);
   }
   if (resultado.descricao && !f.campos.descricao) {
@@ -436,8 +478,8 @@ export function montarDescricao(ficha) {
     linhas.push("");
   }
   linhas.push("Especificações Técnicas:", "Condição do item: Produto novo", "");
-  const codigos = (ficha?.codigos || []).filter((c) => c.conferido !== false).map((c) => c.codigo);
-  if (codigos.length) linhas.push("Código de Referência:", codigos.join(" / "), "");
+  const codigos = codigosParaDescricao(ficha);
+  if (codigos.length) linhas.push(...linhasCodigosReferencia(codigos), "");
   linhas.push("Garantia: 3 Meses", "", TEXTO_ATENCAO, "", TEXTO_IMPORTANTE);
   return padronizarDescricao(linhas.join("\n"));
 }

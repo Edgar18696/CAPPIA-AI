@@ -16,7 +16,9 @@ import { pareceCodigo, pareceAno } from "./interpretarFala.js";
 import {
   aplicacoesConfirmadas,
   codigoPrincipal,
-  codigosAdicionais,
+  codigosParaDescricao,
+  linhasCodigosReferencia,
+  aplicarCodigosNoTexto,
   limparTextoAnuncio,
   TEXTO_ATENCAO,
   TEXTO_IMPORTANTE,
@@ -242,8 +244,9 @@ export function organizarDescricao(ficha) {
     linhas.push("");
   }
   linhas.push("Especificações Técnicas:", "Condição do item: Produto novo", "");
-  const codigos = (ficha?.codigos || []).filter((c) => c.conferido !== false).map((c) => c.codigo);
-  if (codigos.length) linhas.push("Código de Referência:", codigos.join(" / "), "");
+  // (04/11) principal + TODOS os adicionais conferidos (sem repetir)
+  const codigos = codigosParaDescricao(ficha);
+  if (codigos.length) linhas.push(...linhasCodigosReferencia(codigos), "");
   linhas.push("Garantia: 3 Meses", "", TEXTO_ATENCAO, "", TEXTO_IMPORTANTE);
   return { texto: padronizarDescricao(linhas.join("\n")), informacoes, medidas, avisos: [...new Set(avisos)] };
 }
@@ -261,7 +264,8 @@ export function definirDescricaoFinal(ficha, texto, { agora = Date.now() } = {})
 
 export function descricaoParaEnvio(ficha) {
   const r = estadoRapido(ficha);
-  return r.descricao.final !== null && r.descricao.final !== undefined ? padronizarDescricao(r.descricao.final) : organizarDescricao(ficha).texto;
+  // (04/11) Texto editado à mão: a seção de códigos acompanha os códigos da ficha.
+  return r.descricao.final !== null && r.descricao.final !== undefined ? padronizarDescricao(aplicarCodigosNoTexto(r.descricao.final, codigosParaDescricao(ficha))) : organizarDescricao(ficha).texto;
 }
 
 // ---------------------------------------------------------------
@@ -313,7 +317,7 @@ export function mapearRapidoParaNovoAnuncio(ficha, { agora = Date.now() } = {}) 
   const preco = Number(ficha?.campos?.preco?.valor);
   const dados = {
     codigo: cp?.codigo || "",
-    oem: codigosAdicionais(ficha).filter((c) => c.conferido !== false).map((c) => c.codigo).join(", "),
+    oem: codigosParaDescricao(ficha).slice(cp ? 1 : 0).join(", "),
     titulo: r.titulo.valor,
     descricao: descricaoParaEnvio(ficha),
     preco: Number.isFinite(preco) && preco > 0 ? preco.toFixed(2).replace(".", ",") : "",

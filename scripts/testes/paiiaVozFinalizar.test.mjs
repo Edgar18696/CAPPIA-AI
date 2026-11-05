@@ -327,7 +327,7 @@ test("etapas sem a caixa extra “Digite uma informação da peça”/OK: cada c
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(!tela.includes("data-pr-entrada") && !tela.includes("Digite uma informação da peça") && !tela.includes("enviarDigitado"), "caixa extra removida");
   assert.ok(tela.includes('{micCampo("codigo", "Código")}') && tela.includes('{micCampo("titulo", "Título")}') && tela.includes('{micCampo("", "Descrição")}') && tela.includes("{micCampo(c.id, c.rotulo)}"), "microfone ao lado de cada campo");
-  assert.ok(tela.includes('ditando={ouvindo ? parcial || " " : ""} onSalvar'), "código mostra a fala no próprio campo");
+  assert.ok(tela.includes('ditando={ouvindo && campoVoz !== "codigoAdicional" ? parcial || " " : ""} onSalvar'), "código mostra a fala no próprio campo");
   assert.ok(tela.includes("onBlur={() => { setFocado(false); if (texto !== valor) onSalvar(texto); }}"), "digitação direta no campo é salva");
   assert.ok(tela.includes("data-pv-microfone"), "microfone principal continua");
   assert.ok(ler("src/modules/paiiaVoz/CompletarVoz.jsx").includes("data-pv-completar-entrada"), "conversa opcional mantém a sua resposta digitada");
@@ -382,4 +382,63 @@ test("peso/medidas não aparecem no campo Descrição nem na descrição comerci
   assert.deepEqual(R.pesoMedidasParaEnvio(f).campos, { pesoFreteML: "0,2", comprimentoFreteML: "20", larguraFreteML: "10", alturaFreteML: "5" });
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(tela.includes("valor={semLinhaMedidas(r.descricao.texto)}") && tela.includes("comLinhaMedidas(v, estadoRapido(fichaRef.current).descricao.texto)"), "campo Descrição não mostra a linha de medidas e não a perde ao editar");
+});
+
+// ---------------- (04/11) Segundo pacote ----------------
+test("códigos: SKU principal + 4 adicionais → os 5 na ficha, na descrição e nos dados de exportação (Bling/ML)", async () => {
+  const Fv = await import("../../src/modules/paiiaVoz/servicos/fichaVoz.js");
+  const R = await import("../../src/modules/paiiaVoz/servicos/rascunhoRapido.js");
+  const P = await import("../../src/modules/paiiaVoz/servicos/publicacaoVoz.js");
+  let f = criarFichaVoz({ agora: 1, id: "c5" });
+  const ad = (v, soletrado = false) => { f = Fv.aplicarInterpretacao(f, { itens: [{ campo: "codigoAdicional", valor: v, soletrado }] }).ficha; };
+  f = Fv.aplicarInterpretacao(f, { itens: [{ campo: "codigoPrincipal", valor: "242101345R" }] }).ficha;
+  ad("7703072360"); ad("8200459187"); ad("A-1234"); ad("XYZ 99");
+  ad("7703072360"); // repetido: não duplica
+  f = R.definirTitulo(f, "Presilha Plástica Master 3");
+  assert.equal(f.codigos.length, 5);
+  assert.equal(Fv.codigoPrincipal(f).codigo, "242101345R", "um único principal");
+  const esperado = "242101345R / 7703072360 / 8200459187 / A-1234 / XYZ 99";
+  const desc = R.descricaoParaEnvio(f);
+  assert.ok(desc.includes("Códigos de Referência:") && desc.includes(esperado), desc);
+  const { dados } = R.mapearRapidoParaNovoAnuncio(f);
+  assert.equal(dados.codigo, "242101345R");
+  assert.equal(dados.oem, "7703072360, 8200459187, A-1234, XYZ 99");
+  assert.ok(dados.descricao.includes(esperado));
+  // dados preparados para a publicação (ML; o Bling recebe pelo vínculo do anúncio)
+  assert.ok(ler("src/modules/paiiaVoz/servicos/publicacaoVoz.js").includes('oem: String(d.novo_anuncio?.oem ?? "").trim(),'), "oem não vai mais vazio");
+  assert.equal(typeof P.montarAprovacaoDoVoz, "function");
+});
+
+test("códigos: ditado/da base só entra depois de conferido; remover/corrigir atualiza a descrição (também a editada à mão)", async () => {
+  const Fv = await import("../../src/modules/paiiaVoz/servicos/fichaVoz.js");
+  const R = await import("../../src/modules/paiiaVoz/servicos/rascunhoRapido.js");
+  let f = criarFichaVoz({ agora: 1, id: "c6" });
+  f = Fv.aplicarInterpretacao(f, { itens: [{ campo: "codigoPrincipal", valor: "242101345R" }, { campo: "codigoAdicional", valor: "7703072360", soletrado: true }] }).ficha;
+  f = Fv.incorporarResultadoBase(f, { encontrado: true, origem: "base", rotulo: "Base PAIIA", codigos: ["8200459187"], aplicacoes: [] }).ficha;
+  assert.ok(!R.descricaoParaEnvio(f).includes("7703072360"), "ditado sem conferir não entra");
+  assert.ok(!R.descricaoParaEnvio(f).includes("8200459187"), "equivalência da base sem conferir não entra");
+  assert.ok(R.descricaoParaEnvio(f).includes("Código de Referência:\n242101345R"));
+  f = Fv.conferirCodigo(f, "7703072360", true);
+  f = Fv.conferirCodigo(f, "8200459187", true);
+  assert.ok(R.descricaoParaEnvio(f).includes("242101345R / 7703072360 / 8200459187"));
+  // texto final editado à mão acompanha a ficha
+  f = R.definirDescricaoFinal(f, R.descricaoParaEnvio(f).replace("Presilha", "Presilha editada"));
+  f = Fv.removerCodigo(f, "7703072360");
+  const d = R.descricaoParaEnvio(f);
+  assert.ok(d.includes("242101345R / 8200459187") && !d.includes("7703072360"), d);
+  f = Fv.removerCodigo(f, "8200459187");
+  assert.ok(R.descricaoParaEnvio(f).includes("Código de Referência:\n242101345R"));
+  // ficha antiga com códigos já registrados continua igual
+  const antiga = { ...criarFichaVoz({ agora: 1, id: "old" }), codigos: [{ codigo: "856371-305", normalizado: "856371305", principal: true, conferido: true }, { codigo: "123", normalizado: "123", principal: false, conferido: true }] };
+  assert.ok(R.descricaoParaEnvio(antiga).includes("856371-305 / 123"));
+});
+
+test("Finalizar abre no topo com a escolha da conta primeiro (LOJA ONLINE, REVELAÇÃO, CIEBR); trocar a conta pede nova autorização", () => {
+  const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(tela.includes('if (e === "finalizar") setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); }'), "Continuar e a barra usam irPara → topo");
+  assert.ok(tela.includes("depoisDaConta={blocoFicha}"), "conta antes do resumo da ficha");
+  const f = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
+  assert.ok(f.indexOf("data-pv-finalizar-contas") < f.indexOf("data-pv-finalizar-dados") && f.indexOf("{depoisDaConta}") < f.indexOf("data-pv-finalizar-dados"), "conta primeiro");
+  assert.ok(f.includes('const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];') && f.includes("data-pv-conta-opcao") && f.includes("pr-conta-on"));
+  assert.ok(f.includes("if (c.id === conta) return; setConta(c.id); setConfirmo(false);"), "mesma conta não mexe; outra conta pede nova autorização");
 });

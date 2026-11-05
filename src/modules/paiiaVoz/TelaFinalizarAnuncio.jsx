@@ -31,6 +31,8 @@ const CSS = `
 .pr-cartao { padding: 12px; border-radius: 12px; border: 1px solid #0e7490; background: #082f49; display: flex; flex-direction: column; gap: 8px; }
 .pr-cartao p { margin: 0; font-size: 14px; }
 .pr-cinza { border-color: #334155; background: #0f172a; }
+.pr-conta { padding: 10px 14px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-weight: 800; font-size: 15px; cursor: pointer; }
+.pr-conta-on { border: 2px solid #22d3ee; background: #0e7490; color: #fff; }
 .pr-linha { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .pr-botao { padding: 10px 16px; border-radius: 10px; border: 0; background: linear-gradient(90deg, #2563eb, #0891b2); color: #fff; font-weight: 800; font-size: 15px; cursor: pointer; }
 .pr-botao:disabled { opacity: .45; cursor: not-allowed; }

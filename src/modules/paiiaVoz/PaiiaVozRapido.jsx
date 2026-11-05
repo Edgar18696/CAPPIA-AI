@@ -25,6 +25,8 @@ import {
   confirmarAplicacao,
   removerAplicacao,
   codigoPrincipal,
+  codigosAdicionais,
+  codigosParaDescricao,
   resumoAplicacao,
   incluirAplicacao,
   CHAVE_COMPLEMENTO_VOZ,
@@ -274,7 +276,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   }, [modoIA, usuario?.id, idsFotos, fichaId]);
   const marcaFotos = fotos.map((f) => `${f.id}:${f.versao}:${f.usarNoAnuncio ? 1 : 0}:${f.ia?.estado || ""}:${f.reg?.nuvem?.original ? 1 : 0}:${f.reg?.nuvem?.tratada ? 1 : 0}`).join(",");
   const r0 = estadoRapido(ficha);
-  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}|${ficha?.campos?.marca?.valor ?? ""}|${ficha?.campos?.quantidade?.valor ?? ""}|${marcaCompletos(ficha)}`; // (02/11) marca/estoque também salvam na conta; (04/11) custo, peso, medidas e aplicações também
+  const marcaFicha = `${codigoPrincipal(ficha)?.codigo || ""}|${r0.titulo.valor}|${descricaoParaEnvio(ficha)}|${ficha?.campos?.preco?.valor ?? ""}|${ficha?.campos?.marca?.valor ?? ""}|${ficha?.campos?.quantidade?.valor ?? ""}|${marcaCompletos(ficha)}|${codigosParaDescricao(ficha).join(",")}`; // (02/11) marca/estoque também salvam na conta; (04/11) custo, peso, medidas e aplicações também
   useEffect(() => {
     if (!usuario?.id) return undefined;
     const t = setTimeout(() => { sincronizar(); }, 1200);
@@ -352,6 +354,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setConfirmandoEnvio(false);
     setAviso("");
     mudarFicha(irParaEtapa(fichaRef.current, e));
+    // (04/11) Finalizar abre no topo (a escolha da conta é a primeira coisa da tela)
+    if (e === "finalizar") setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { /* sem rolagem */ } }, 30);
   }, [mudarFicha]);
 
   // ---------------- Código ----------------
@@ -382,6 +386,16 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setAviso(`Código ${codigo} anotado${ouviu}.${soletrado ? " Foi ditado: confira letra por letra. Para traço, diga “traço”." : ""} Consultando a base PAIIA…`);
     consultarBase(codigo);
   }, [consultarBase, mudarFicha]);
+
+  // (04/11) Código ADICIONAL da mesma peça (por voz ou digitação): guardado sem repetir; o SKU principal não muda.
+  const acrescentarCodigo = useCallback((codigo, { soletrado = false, ouvido = "" } = {}) => {
+    const n = String(codigo || "").replace(/[^0-9a-z]/gi, "").toUpperCase();
+    if (!n) return;
+    if ((fichaRef.current.codigos || []).some((x) => x.normalizado === n)) { setAviso(`O código ${codigo} já está na ficha.`); return; }
+    const res = aplicarInterpretacao(fichaRef.current, { itens: [{ campo: "codigoAdicional", valor: codigo, soletrado }], naoEntendido: [], avisos: [] }, { origem: soletrado ? "voz" : "digitado", textoOriginal: `código adicional: ${codigo}` });
+    mudarFicha(res.ficha);
+    setAviso(`Código adicional ${codigo} anotado${ouvido && ouvido.trim() !== codigo ? ` (ouvi “${ouvido.trim()}”)` : ""}.${soletrado ? " Foi ditado: marque “conferido” para ele entrar na descrição." : ""}`);
+  }, [mudarFicha]);
 
   function aproveitarBase() {
     const cp = codigoPrincipal(fichaRef.current);
@@ -558,6 +572,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         return;
       }
       if (c.erro) { setAviso(c.erro); return; }
+      // (04/11) Microfone do campo “Acrescentar código”: entra como código ADICIONAL (o principal não muda).
+      if (campoVozRef.current === "codigoAdicional") { acrescentarCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", ouvido: origem === "voz" ? t : "" }); return; }
       definirCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", duvidas: c.duvidas, ouvido: origem === "voz" ? t : "" });
       return;
     }
@@ -626,7 +642,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       if (conversaAbertaRef.current && (proximaPerguntaCompletar(f, { fotos: fotosRef.current.filter((x) => x.usarNoAnuncio).length }) || /^conferir/i.test(t))) { responderNaConversa(t, origem); return; }
       setAviso("Na finalização, confira as pendências e use “Executar operações autorizadas”.");
     }
-  }, [definirCodigo, irPara, mudarFicha, responderNaConversa, setCampoVoz]);
+  }, [definirCodigo, acrescentarCodigo, irPara, mudarFicha, responderNaConversa, setCampoVoz]);
 
   // Microfone
   useEffect(() => {
@@ -973,10 +989,29 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         <section className="pr-bloco" data-pr-bloco="codigo">
           <label className="pr-rotulo" htmlFor="pr-codigo">Código da peça (SKU)</label>
           <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }} data-pv-campo-direto="codigo">
-            <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo ? parcial || " " : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.pular) tratarFala(v, "digitado"); else if (c.erro) setAviso(c.erro); }} data="codigo" />
+            <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo && campoVoz !== "codigoAdicional" ? parcial || " " : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.pular) tratarFala(v, "digitado"); else if (c.erro) setAviso(c.erro); }} data="codigo" />
             {micCampo("codigo", "Código")}
           </div>
           {ouvidoCodigo && ouvidoCodigo.codigo === (cp?.codigo || "") && <p className="pr-fonte" data-pr-ouvido>🎤 O celular ouviu: “{ouvidoCodigo.ouvido}” → anotei <b>{ouvidoCodigo.codigo}</b>. Traço só entra se você disser “traço”; para corrigir, digite acima.</p>}
+          {/* (04/11) Códigos adicionais da mesma peça: todos os conferidos vão para a descrição (Códigos de Referência). */}
+          <div className="pr-cartao pr-cinza" data-pv-codigos-adicionais>
+            <span className="pr-rotulo">Códigos adicionais da mesma peça ({codigosAdicionais(ficha).length})</span>
+            {codigosAdicionais(ficha).map((c) => (
+              <div key={c.normalizado} className="pr-linha pr-entre" data-pv-codigo-adicional={c.codigo} data-conferido={c.conferido !== false ? "sim" : "nao"}>
+                <span><b>{c.codigo}</b> <span className="pr-fonte">{c.fonte ? `· sugerido: ${c.fonte}` : c.origem === "voz" ? "· ditado" : "· digitado"}</span></span>
+                <span className="pr-linha" style={{ gap: 4 }}>
+                  <label className="pr-check"><input type="checkbox" checked={c.conferido !== false} onChange={(e) => mudarFicha(conferirCodigo(fichaRef.current, c.normalizado, e.target.checked))} data-pv-conferir-codigo /> conferido</label>
+                  <button type="button" className="pr-link pr-perigo" onClick={() => mudarFicha(removerCodigo(fichaRef.current, c.normalizado))} data-pv-remover-codigo>remover</button>
+                </span>
+              </div>
+            ))}
+            <label className="pr-rotulo" htmlFor="pr-codigo-adicional">Acrescentar código (fale ou digite e toque fora / Enter)</label>
+            <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }} data-pv-campo-direto="codigoAdicional">
+              <CampoTexto id="pr-codigo-adicional" valor="" ditando={campoVoz === "codigoAdicional" && ouvindo ? parcial || " " : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) acrescentarCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo-adicional" />
+              {micCampo("codigoAdicional", "Código adicional")}
+            </div>
+            <p className="pr-fonte" style={{ margin: 0 }}>Só os conferidos entram na descrição. Códigos sugeridos pela base não são considerados equivalentes sem a sua conferência.</p>
+          </div>
           {cp && cp.conferido === false && (
             <label className="pr-check"><input type="checkbox" onChange={(e) => mudarFicha(conferirCodigo(fichaRef.current, cp.normalizado, e.target.checked))} /> Conferi o código letra por letra</label>
           )}
@@ -1129,45 +1164,54 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {/* ---------------- 7 Finalizar ---------------- */}
       {etapa === "finalizar" && (
         <section className="pr-bloco" data-pr-bloco="finalizar">
-          {(() => {
-            const pend = dadosCompletosVoz(ficha, { fotos: fotosUsadas.length }).pendencias;
-            const etapaDa = (t) => /^Fotos/i.test(t) ? "fotos" : /^C[oó]digo|SKU/i.test(t) ? "codigo" : /^T[ií]tulo|^Descri/i.test(t) ? "descricao" : /^Marca|^Pre[cç]o|^Estoque|^Quantidade|^Custo/i.test(t) ? "preco" : /^Peso|^Medida|^Comprimento|^Largura|^Altura/i.test(t) ? "envio" : "compat";
-            return pend.length ? (
-              <div className="pr-cartao" data-pv-pendencias-envio>
-                <strong>Falta completar ({pend.length})</strong>
-                <ul className="pr-fonte" style={{ margin: 0, paddingLeft: 18 }}>{pend.map((x) => <li key={x}>{x} <button type="button" className="pr-link" onClick={() => irPara(etapaDa(x))} data-pv-ir-etapa={etapaDa(x)}>→ ir</button></li>)}</ul>
-              </div>
-            ) : <p className="pr-ok" data-pv-ficha-completa>✅ Ficha completa.</p>;
-          })()}
-          <dl className="pr-resumo">
-            <dt>Fotos</dt><dd data-pr-resumo-fotos>{fotosUsadas.length} ({fotosUsadas.filter((f) => f.versao === "tratada").length} com fundo branco)</dd>
-            <dt>Código</dt><dd>{cp?.codigo || "—"}</dd>
-            <dt>Título</dt><dd data-pr-resumo-titulo>{r.titulo.valor || "—"} <small>({r.titulo.valor.length}/{LIMITE_TITULO})</small></dd>
-            <dt>Aplicações conferidas</dt><dd>{ficha.aplicacoes.filter((a) => a.confirmada).length}</dd>
-            <dt>Peso/medidas</dt><dd data-pr-resumo-peso-medidas>{pesoMedidas ? pesoMedidas.texto : "—"}</dd>
-          </dl>
-          <span className="pr-rotulo">Fotos que vão para o anúncio</span>
-          <div className="pr-envio-fotos" data-pr-envio-fotos>
-            {fotos.map((f, i) => (
-              <div key={f.id} className={`pr-envio-foto ${f.usarNoAnuncio ? "" : "pr-fora"}`} data-pr-envio-foto={f.usarNoAnuncio ? (f.versao === "tratada" ? "fundo-branco" : "original") : "fora"}>
-                <img src={f.versao === "tratada" && f.urlTratada ? f.urlTratada : f.url} alt={`Foto ${i + 1}`} />
-                <div>
-                  <strong>{i + 1}. {f.usarNoAnuncio ? (f.versao === "tratada" ? "Fundo branco" : "Original") : "Não vai ao anúncio"}</strong>
-                  <EstadoFotoIA f={f} modoIA={modoIA} onRepetir={() => repetirIA(f.id)} curto />
-                  {f.tratada?.aplicavel && f.usarNoAnuncio && f.versao !== "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "tratada")} data-pr-usar-tratada>Usar fundo branco</button>}
-                  {f.versao === "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "original")}>Usar original</button>}
-                </div>
-              </div>
-            ))}
-            {!fotos.length && <p className="pr-vazio">Nenhuma foto: volte à etapa Fotos.</p>}
-          </div>
-          {resumoFotosTela.interrompidas > 0 && <p className="pr-aviso" data-pr-aviso-interrompidas>⏸ {resumoFotosTela.interrompidas} foto(s) com o fundo branco interrompido. Toque em “Retomar” na foto, ou siga com a original.</p>}
-          {resumoFotosTela.tratando > 0 && <p className="pr-aviso" data-pr-aviso-tratando>⏳ {resumoFotosTela.tratando} foto(s) ainda em tratamento. Se seguir agora, elas vão como original (você pode aguardar).</p>}
-          {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Falta: {validacao.faltando.join(", ")}.</p>}
-          {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
-          {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
+          {/* (04/11) Finalizar abre no topo: primeiro a conta de destino, depois os dados, pendências, operações e autorização. */}
           {!usuario && <p className="pr-aviso">⚠️ Entre na sua conta para finalizar.</p>}
-          {usuario && <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} />}
+          {(() => {
+            const blocoFicha = (
+              <>
+              {(() => {
+                const pend = dadosCompletosVoz(ficha, { fotos: fotosUsadas.length }).pendencias;
+                const etapaDa = (t) => /^Fotos/i.test(t) ? "fotos" : /^C[oó]digo|SKU/i.test(t) ? "codigo" : /^T[ií]tulo|^Descri/i.test(t) ? "descricao" : /^Marca|^Pre[cç]o|^Estoque|^Quantidade|^Custo/i.test(t) ? "preco" : /^Peso|^Medida|^Comprimento|^Largura|^Altura/i.test(t) ? "envio" : "compat";
+                return pend.length ? (
+                  <div className="pr-cartao" data-pv-pendencias-envio>
+                    <strong>Falta completar ({pend.length})</strong>
+                    <ul className="pr-fonte" style={{ margin: 0, paddingLeft: 18 }}>{pend.map((x) => <li key={x}>{x} <button type="button" className="pr-link" onClick={() => irPara(etapaDa(x))} data-pv-ir-etapa={etapaDa(x)}>→ ir</button></li>)}</ul>
+                  </div>
+                ) : <p className="pr-ok" data-pv-ficha-completa>✅ Ficha completa.</p>;
+              })()}
+              <dl className="pr-resumo">
+                <dt>Fotos</dt><dd data-pr-resumo-fotos>{fotosUsadas.length} ({fotosUsadas.filter((f) => f.versao === "tratada").length} com fundo branco)</dd>
+                <dt>Código</dt><dd>{cp?.codigo || "—"}</dd>
+                <dt>Título</dt><dd data-pr-resumo-titulo>{r.titulo.valor || "—"} <small>({r.titulo.valor.length}/{LIMITE_TITULO})</small></dd>
+                <dt>Aplicações conferidas</dt><dd>{ficha.aplicacoes.filter((a) => a.confirmada).length}</dd>
+                <dt>Peso/medidas</dt><dd data-pr-resumo-peso-medidas>{pesoMedidas ? pesoMedidas.texto : "—"}</dd>
+              </dl>
+              <span className="pr-rotulo">Fotos que vão para o anúncio</span>
+              <div className="pr-envio-fotos" data-pr-envio-fotos>
+                {fotos.map((f, i) => (
+                  <div key={f.id} className={`pr-envio-foto ${f.usarNoAnuncio ? "" : "pr-fora"}`} data-pr-envio-foto={f.usarNoAnuncio ? (f.versao === "tratada" ? "fundo-branco" : "original") : "fora"}>
+                    <img src={f.versao === "tratada" && f.urlTratada ? f.urlTratada : f.url} alt={`Foto ${i + 1}`} />
+                    <div>
+                      <strong>{i + 1}. {f.usarNoAnuncio ? (f.versao === "tratada" ? "Fundo branco" : "Original") : "Não vai ao anúncio"}</strong>
+                      <EstadoFotoIA f={f} modoIA={modoIA} onRepetir={() => repetirIA(f.id)} curto />
+                      {f.tratada?.aplicavel && f.usarNoAnuncio && f.versao !== "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "tratada")} data-pr-usar-tratada>Usar fundo branco</button>}
+                      {f.versao === "tratada" && <button type="button" className="pr-link" onClick={() => escolherVersao(f.id, "original")}>Usar original</button>}
+                    </div>
+                  </div>
+                ))}
+                {!fotos.length && <p className="pr-vazio">Nenhuma foto: volte à etapa Fotos.</p>}
+              </div>
+              {resumoFotosTela.interrompidas > 0 && <p className="pr-aviso" data-pr-aviso-interrompidas>⏸ {resumoFotosTela.interrompidas} foto(s) com o fundo branco interrompido. Toque em “Retomar” na foto, ou siga com a original.</p>}
+              {resumoFotosTela.tratando > 0 && <p className="pr-aviso" data-pr-aviso-tratando>⏳ {resumoFotosTela.tratando} foto(s) ainda em tratamento. Se seguir agora, elas vão como original (você pode aguardar).</p>}
+              {validacao.faltando.length > 0 && <p className="pr-falta" data-pr-faltando>Falta: {validacao.faltando.join(", ")}.</p>}
+              {validacao.avisos.map((a) => <p key={a} className="pr-aviso">⚠️ {a}</p>)}
+              {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
+              </>
+            );
+            return usuario
+              ? <FinalizarAnuncioVoz key={`${ficha.id}-${versaoRevisao}`} fichaId={ficha.fichaIdPAIIA || ""} usuarioId={usuario?.id || ""} depoisDaConta={blocoFicha} />
+              : blocoFicha;
+          })()}
           {usuario && (
             <details className="pr-fonte" open={conversaAberta} onToggle={(e) => { conversaAbertaRef.current = e.currentTarget.open; setConversaAberta(e.currentTarget.open); }} data-pv-conversa-opcional>
               <summary>Completar conversando com o PAIIA (opcional)</summary>
@@ -1375,6 +1419,8 @@ const CSS_RAPIDO = `
 .pr-cartao { padding: 10px; border-radius: 12px; border: 1px solid #0e7490; background: #082f49; display: flex; flex-direction: column; gap: 6px; }
 .pr-cartao p { margin: 0; font-size: 14px; }
 .pr-cinza { border-color: #334155; background: #0f172a; }
+.pr-conta { padding: 10px 14px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-weight: 800; font-size: 15px; cursor: pointer; }
+.pr-conta-on { border: 2px solid #22d3ee; background: #0e7490; color: #fff; }
 .pr-sugestoes { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .pr-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .pr-lista li { padding: 8px; border-radius: 10px; border: 1px solid #1e293b; display: flex; flex-direction: column; gap: 2px; }
