@@ -112,6 +112,15 @@ function resumoAvaliacao(a) {
 }
 
 /**
+ * (Rodada 1 — etapa 7 "Categoria") Só a conferência da CATEGORIA, sem conta: catálogo público do
+ * Mercado Livre + histórico do SKU (as rejeições usam a conta de cada ficha antiga). Mesma regra
+ * da etapa 8: automática só sem dúvida; senão pergunta. Só lê.
+ */
+export async function conferirSoCategoriaVoz(row, { deps } = {}) {
+  return conferirCategoria(entradaDaFicha(row), deps, "");
+}
+
+/**
  * (05/11/2026) “Não é esta — procurar outra”: a MESMA busca da Conferência do
  * computador (preditor do ML com o termo digitado + termos da peça, caminho,
  * domínio e atributos, regras de compatibilidade e rejeições do SKU). Só lê.

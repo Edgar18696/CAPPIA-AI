@@ -10,7 +10,7 @@ import { fichaFechada, fichaSoNoNovoAnuncio } from "../../../services/fichaNovoA
 import { lerJsonPublico } from "../../../services/categoriaMLBusca";
 import { listarAnunciosDoCodigo, conferirDuplicidadeBase } from "../../../services/anuncioPublicacaoService";
 import { modalidadesDaConta } from "../../../services/consultaMLLeitura";
-import { prepararConferenciaVoz, confirmarCategoriaSugerida, buscarCategoriasVoz, confirmarCategoriaEscolhida } from "./preparoConferenciaVoz";
+import { prepararConferenciaVoz, confirmarCategoriaSugerida, buscarCategoriasVoz, confirmarCategoriaEscolhida, conferirSoCategoriaVoz } from "./preparoConferenciaVoz";
 import { mesclarPreparo } from "./preparoFicha";
 import { aprovarRevisao, comModalidade, comRevisao } from "./revisaoCelularVoz";
 
@@ -49,6 +49,24 @@ export async function prepararEGravar(fichaId, { conta = "" } = {}) {
   const preparo = await prepararConferenciaVoz(r.ficha, { conta, deps: depsReais });
   const g = await gravar(fichaId, () => preparo);
   return g.ok ? { ok: true, preparo } : { ...g, preparo };
+}
+
+/**
+ * (Rodada 1 — etapa 7) Confere SÓ a categoria e grava na mesma ficha, sem mexer nas outras
+ * conferências: a decisão (automática sem dúvida, ou a sua) vai para preparo.categoria.decisao,
+ * o mesmo registro que a etapa 8 reaproveita.
+ */
+export async function categoriaEGravar(fichaId, { deps = depsReais } = {}) {
+  const r = await lerFichaNovoAnuncio(fichaId);
+  if (!r.ok) return { ok: false, erro: r.erro || "Ficha não encontrada." };
+  let item;
+  try { item = await conferirSoCategoriaVoz(r.ficha, { deps }); } catch (e) { return { ok: false, erro: e?.message || String(e) }; }
+  const g = await gravar(fichaId, (row) => {
+    const ant = row?.dados_conferencia?.paiia_voz?.preparo || {};
+    const decisao = item?.estado === "ok" && item.decisao ? item.decisao : ant?.categoria?.decisao || null;
+    return { ...ant, verificacoes: { ...(ant.verificacoes || {}), categoria: item }, categoria: { decisao } };
+  });
+  return g.ok ? { ok: true, item, ficha: g.ficha } : { ...g, item };
 }
 
 /** Confirma (pelo Voz) a categoria sugerida, guardando o mesmo registro da Conferência. */

@@ -5,7 +5,7 @@
 // Junta o que já existe: o preparo das conferências (preparoConferenciaVoz,
 // só leitura) e a revisão (revisaoCelularVoz). Aqui ficam:
 //   • as OPERAÇÕES que a finalização pode executar, cada uma marcável;
-//   • a autorização ESPECÍFICA para criar o produto no Bling (estoque inicial 0);
+//   • a autorização ESPECÍFICA para criar o produto no Bling (com o estoque da ficha — decisão D1);
 //   • o REGISTRO de cada operação na ficha (paiia_voz.finalizacao) para
 //     retomar sem repetir: antes de cada operação a realidade é conferida
 //     (Bling/ML) — o que já foi feito não é feito de novo.
@@ -81,7 +81,7 @@ export function situacaoFinalizar(row, { autorizarBling = false, semCompatibilid
   const bloqueia = pendencias.filter((p) => p.tipo !== "aviso" && p.id !== "modalidade");
   const nCompat = e.aplicacoes.length;
   const ops = [];
-  if (ausente) ops.push({ id: "bling_criar", marcada: Boolean(autorizarBling), exigeAutorizacao: true, detalhe: `SKU ${e.codigo} não existe no Bling. Só com a sua autorização específica; estoque inicial 0 (o estoque oficial continua lançado por você no Bling).` });
+  if (ausente) ops.push({ id: "bling_criar", marcada: Boolean(autorizarBling), exigeAutorizacao: true, detalhe: `SKU ${e.codigo} não existe no Bling. Só com a sua autorização específica; com o estoque da ficha (${e.quantidade || "?"} un.); o saldo oficial do Bling nunca é sobrescrito.` });
   // (04/11) Nenhuma operação vem marcada: você marca cada uma.
   ops.push({ id: "ml_publicar", marcada: Boolean(marcar.ml_publicar), detalhe: `${e.tipoAnuncio === "premium" ? "Premium" : "Clássico"} · ${rev.dados.preco} · ${e.quantidade || "?"} un. · conta ${prep.preparo?.conta || "?"}` });
   // (05/11) Só aparece quando o CATÁLOGO do ML validou veículos (as informadas por você não bastam).

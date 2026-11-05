@@ -76,6 +76,7 @@ import CompletarVoz from "./CompletarVoz";
 import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling, camposDaEtapa, definirTipoVeiculoVoz, estadoEtapasVoz, situacaoAplicacao } from "./servicos/completarVoz";
 import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
+import CategoriaVoz from "./CategoriaVoz";
 import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
 import { descartarRascunhoLocalDaFicha } from "../../services/exclusaoFicha";
 import { CHAVE_ANUNCIO_EM_ANDAMENTO, CHAVES_ANUNCIO_LOCAL } from "../../services/fichasCentral";
@@ -844,6 +845,17 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setAviso(`✅ Motor ${motor} registrado para ${pm.aplicacao}. A conferência é refeita sozinha.`);
   }
 
+  // (Rodada 1) Etapa 7: guarda no rascunho só o resultado (para a barra de etapas); a decisão fica na conta.
+  const marcarCategoria = useCallback((c) => {
+    const atual = fichaRef.current;
+    const ant = atual.categoriaVoz || {};
+    if (Boolean(ant.ok) === Boolean(c?.ok) && (ant.id || "") === (c?.id || "")) return;
+    const nova = { ...atual, categoriaVoz: c?.ok ? { ok: true, id: c.id, caminho: c.caminho, automatica: Boolean(c.automatica), em: Date.now() } : { ok: false, em: Date.now() } };
+    fichaRef.current = nova;
+    setFicha(nova);
+    guardarFichaVoz(nova);
+  }, []);
+
   // (Passo 7) Ficha do rascunho não encontrada na conta: liga o rascunho a uma ficha DESTA conta
   // com o mesmo código (id) ou, com id vazio, deixa a próxima gravação criar a ficha nesta conta.
   // O rascunho e as fotos do aparelho ficam como estão (nada é apagado).
@@ -1321,11 +1333,21 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </div>
             );
           })()}
-          {navEtapa("envio", "finalizar")}
+          {navEtapa("envio", "categoria")}
         </section>
       )}
 
-      {/* ---------------- 7 Finalizar ---------------- */}
+      {/* ---------------- 7 Categoria (Rodada 1) ---------------- */}
+      {etapa === "categoria" && (
+        <section className="pr-bloco" data-pr-bloco="categoria">
+          {usuario
+            ? <CategoriaVoz key={ficha.fichaIdPAIIA || ficha.id} fichaId={ficha.fichaIdPAIIA || ""} versaoNuvem={versaoNuvem} aoMudar={marcarCategoria} />
+            : <p className="pr-aviso">Entre na sua conta para conferir a categoria.</p>}
+          {navEtapa("compat", "finalizar")}
+        </section>
+      )}
+
+      {/* ---------------- 8 Finalizar ---------------- */}
       {etapa === "finalizar" && (
         <section className="pr-bloco" data-pr-bloco="finalizar">
           {/* Passo 7: UM botão grande — completar a ficha (vai direto à etapa pendente) ou seguir para a Publicação. */}
@@ -1425,7 +1447,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           ) : (
             <button type="button" className="pr-link" disabled={!validacao.pronto} onClick={() => setConfirmandoEnvio(true)} data-pv-enviar-novo>✏️ Editar no Novo Anúncio (computador)</button>
           )}
-          {navEtapa("compat", "")}
+          {navEtapa("categoria", "")}
         </section>
       )}
 
@@ -1542,7 +1564,7 @@ const CSS_RAPIDO = `
 .pr-topo h1 { margin: 0; font-size: 22px !important; color: #fff; }
 .pr-sub { color: #94a3b8; font-size: 13px; }
 .pr-voltar { padding: 8px 12px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #cbd5e1; cursor: pointer; font-weight: 700; }
-.pr-etapas { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.pr-etapas { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; margin-bottom: 10px; }
 .pr-etapa { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 2px; border-radius: 10px; border: 1px solid #1e293b; background: #0b1220; color: #94a3b8; font-size: 11px; font-weight: 700; cursor: pointer; min-width: 0; }
 .pr-etapa span { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #1e293b; color: #e2e8f0; font-size: 12px; }
 .pr-atual { border-color: #22d3ee; color: #fff; background: #082f49; }
@@ -1551,7 +1573,7 @@ const CSS_RAPIDO = `
 .pr-pendente span { background: #b45309; }
 .pr-pendente { color: #fcd34d; }
 .pr-chip-on { background: #0e7490; color: #fff; }
-@media (max-width: 480px) { .pr-etapa { font-size: 9px; padding: 5px 0; } }
+@media (max-width: 480px) { .pr-etapas { gap: 3px; } .pr-etapa { font-size: 8px; padding: 4px 0; letter-spacing: -0.2px; } .pr-etapa span { width: 20px; height: 20px; font-size: 11px; } }
 .pr-assistente { position: sticky; top: 0; z-index: 5; padding: 10px; border-radius: 14px; background: linear-gradient(145deg, #0f172a, #082f49); border: 1px solid rgba(56,189,248,.35); margin-bottom: 10px; }
 .pr-mic-linha { display: flex; gap: 10px; align-items: center; }
 .pr-mic { width: 60px; height: 60px; flex: none; border-radius: 50%; border: 0; cursor: pointer; color: #fff; display: grid; place-items: center; background: radial-gradient(circle at 30% 25%, #22d3ee, #0284c7 55%, #1d4ed8); box-shadow: 0 8px 20px rgba(14,165,233,.4); }

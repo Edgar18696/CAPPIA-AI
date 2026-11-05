@@ -13,9 +13,8 @@ import { prepararEGravar, confirmarCategoriaEGravar, definirModalidadeEGravar, b
 import { conferirVersaoSite } from "./servicos/versaoSite";
 import PainelCategoriaML from "../../components/PainelCategoriaML";
 import { preparoAtual, assinaturaEntrada, entradaDaFicha } from "./servicos/preparoConferenciaVoz";
-import { situacaoFinalizar, executarFinalizacao, assinaturaFinalizar, publicacaoRealLiberada, ROTULOS_OPERACOES, rotuloEstado, skuAusenteNoBling, estadoFinalizacao } from "./servicos/finalizarAnuncioVoz";
+import { situacaoFinalizar, executarFinalizacao, assinaturaFinalizar, publicacaoRealLiberada, ROTULOS_OPERACOES, skuAusenteNoBling, estadoFinalizacao } from "./servicos/finalizarAnuncioVoz";
 import { depsFinalizarReais } from "./servicos/finalizarDepsReais";
-import PreparoPublicacaoVoz from "./PreparoPublicacaoVoz";
 import { montarRevisao } from "./servicos/revisaoCelularVoz";
 import { aprovarRevisaoEGravar } from "./servicos/preparoVozService";
 import { prepararPublicacaoVoz } from "./servicos/publicarVozService";
@@ -55,13 +54,12 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     if (d.estado === "encontrada") await recarregar();
   }
   const [erro, setErro] = useState("");
-  const [autorizarBling, setAutorizarBling] = useState(false);
+  const autorizarBling = false; // (Rodada 2) seção antiga de operações retirada da tela
   const [autorizoCadastro, setAutorizoCadastro] = useState(false); // (Etapa 3) autorização do cadastro no Bling no "Finalizar e Enviar"
-  const [semCompatibilidade, setSemCompatibilidade] = useState(false);
-  const [marcar, setMarcar] = useState({}); // (04/11) nenhuma operação vem marcada
+  const semCompatibilidade = false;
+  const marcar = {}; // (04/11) nenhuma operação vem marcada
   // (05/11) A autorização vale só para o que estava na tela quando você marcou (assinatura).
-  const [confirmoAss, setConfirmoAss] = useState("");
-  const setConfirmo = (v) => { if (!v) setConfirmoAss(""); };
+  const setConfirmo = () => {}; // (Rodada 2) confirmação antiga retirada; a confirmação final fica na Publicação
   const [versao, setVersao] = useState({ estado: "conferindo" });
   const [cat, setCat] = useState({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" });
   const [resultado, setResultado] = useState(null);
@@ -171,12 +169,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const sit = situacaoFinalizar(row, { autorizarBling, semCompatibilidade, liberado, marcar });
   const d = sit.revisao.dados;
   const marcadas = sit.ops.filter((o) => o.marcada).map((o) => o.id);
-  const temFalha = sit.ops.some((o) => ["erro", "incerto", "bloqueado", "executando"].includes(o.estado));
   const tudoFeito = marcadas.length > 0 && sit.ops.filter((o) => o.marcada).every((o) => o.estado === "ok");
   const versaoOk = versao.estado === "ok" || versao.estado === "sem-versao";
-  const assinaturaAgora = `${conta}|${versao.atual || ""}|${assinaturaFinalizar(row, marcadas)}|${autorizarBling}|${semCompatibilidade}`;
-  const confirmo = Boolean(confirmoAss) && confirmoAss === assinaturaAgora && versaoOk;
-  const podeAutorizar = sit.podeExecutar && versaoOk;
   const preparoRow = row?.dados_conferencia?.paiia_voz?.preparo || null;
   async function buscarCategoria() {
     setCat((c) => ({ ...c, carregando: true, erro: "" }));
@@ -203,6 +197,9 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const abrirPublicacao = (id) => (aoAbrirPublicacao ? aoAbrirPublicacao(id) : window.location.assign(`/?tela=mercadoLivreTeste&ficha=${encodeURIComponent(id)}`));
   const lerAgora = async () => (await (depsTeste()?.lerFicha || lerFichaNovoAnuncio)(fichaId))?.ficha || null;
   const seguirParaPublicacao = () => acao("publicacao", async () => {
+    // A versão da página é conferida de novo na hora (página antiga nunca finaliza).
+    const v = await conferirVersao();
+    if (!(v.estado === "ok" || v.estado === "sem-versao")) return { ok: false, erro: "Atualize a página (versão nova do PAIIA) antes de finalizar. Nada foi feito." };
     if (jaNaPublicacao) { abrirPublicacao(fichaId); return { ok: true }; }
     // (Etapa 3) 1) Bling: SÓ com a sua autorização. O executor confere antes (já existe → não cria)
     // e registra na ficha; um segundo toque não repete o que já foi feito.
@@ -248,64 +245,21 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     return <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || !conta} data-pv-resolver="conferir" onClick={conferir}>🔄 {x.id === "conferir" ? "Conferir agora" : "Conferir de novo"}</button>;
   };
 
-  async function executar() {
-    if (rodando || !confirmo || !podeAutorizar) return;
-    const v = await conferirVersao(); // de novo, na hora de executar
-    if (!(v.estado === "ok" || v.estado === "sem-versao")) { setConfirmoAss(""); return; }
-    const autorizacao = { semCompatibilidade: sit.semCompatibilidade, confirmada: true, em: new Date().toISOString(), por: usuarioId, sessao, assinatura: assinaturaFinalizar(row, marcadas) };
-    await acao("executar", async () => {
-      const r = await executarFinalizacao(fichaId, { marcadas, autorizacao, deps });
-      setResultado(r);
-      return r.ok ? r : { ok: false, erro: r.erro };
-    });
-  }
 
+
+  // (Rodada 2) Ordem única da etapa 8: resumo e conferências → conta → modalidade → Bling →
+  // a única decisão/autorização necessária → UM botão "Finalizar e Enviar" no final.
+  const vBling = row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.bling || null;
+  const vCat = row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.categoria || null;
+  const caminhoCat = vCat?.estado === "ok" ? vCat.caminho || (String(vCat.texto || "").match(/— (.+?) \(/) || [])[1] || vCat.id : "";
+  const fotosOriginais = rev.pendencias.find((p) => p.id === "fotos_tratadas");
+  const criarBlingDisponivel = publicacaoRealLiberada() || Boolean(depsTeste()?.blingCriarDisponivel);
+  const blingBloqueado = blingAusente && !criarBlingDisponivel;
+  const qtdFicha = entradaDaFicha(row).quantidade || d.estoque || "";
+  const pronto = Boolean(conta) && versaoOk && rodando !== "conferir" && (jaNaPublicacao || (!decisao && !blingBloqueado && (rev.podeAprovar || blingAusente)));
   return (
-    <div className="pr-cartao" data-pv-finalizar-topo data-pv-finalizar={tudoFeito ? "concluido" : sit.podeExecutar ? "pronto" : "pendente"}>
-      {/* (Passo 7) O próximo passo, sozinho no topo: ou UMA decisão pendente, ou seguir para a Publicação. */}
-      <div className="pr-cartao" data-pv-seguir={!conta ? "conta" : rodando === "conferir" ? "conferindo" : jaNaPublicacao || (!decisao && (rev.podeAprovar || blingAusente)) ? "publicacao" : "decisao"}>
-        {!conta ? (
-          <p data-pv-seguir-texto>1️⃣ Escolha abaixo a conta do Mercado Livre. A categoria e o frete oficial são conferidos sozinhos.</p>
-        ) : rodando === "conferir" ? (
-          <p data-pv-seguir-texto>⏳ Conferindo categoria, frete oficial, duplicidade e Bling no Mercado Livre (só leitura)…</p>
-        ) : jaNaPublicacao || (!decisao && (rev.podeAprovar || blingAusente)) ? (
-          <>
-            {blingAusente && (
-              <label className="pr-check" data-pv-autorizo-bling-cadastro>
-                <input type="checkbox" checked={autorizoCadastro} disabled={Boolean(rodando)} onChange={(e) => setAutorizoCadastro(e.target.checked)} />
-                <span>Autorizo cadastrar no Bling o produto <b>{entradaDaFicha(row).codigo}</b> com o estoque da ficha (<b>{entradaDaFicha(row).quantidade || "?"}</b> un.). O PAIIA confere antes e não duplica.</span>
-              </label>
-            )}
-            <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || (blingAusente && !autorizoCadastro)} onClick={seguirParaPublicacao} data-pv-continuar-publicacao>
-              {rodando === "publicacao" ? "⏳ Finalizando…" : "✅ Finalizar e Enviar"}
-            </button>
-            <p className="pr-fonte">{blingAusente ? "Cadastra no Bling (com a sua autorização) e abre" : "Abre"} a Publicação desta mesma ficha, com fotos e dados conferidos. A publicação no Mercado Livre só acontece depois da sua confirmação final.</p>
-            {/* (Etapa 2) Categoria selecionada + só "Alterar categoria"; modalidade Clássico com troca opcional. */}
-            {row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.categoria?.estado === "ok" && (
-              <p className="pr-fonte" data-pv-categoria-selecionada>
-                Categoria: <b>{(() => { const c = row.dados_conferencia.paiia_voz.preparo.verificacoes.categoria; return c.caminho || (String(c.texto || "").match(/— (.+?) \(/) || [])[1] || c.id; })()}</b>{" "}
-                <button type="button" className="pr-link" onClick={() => setCat((c) => ({ ...c, aberta: true }))} data-pv-alterar-categoria>Alterar categoria</button>
-              </p>
-            )}
-            <p className="pr-fonte" data-pv-modalidade>
-              Modalidade: <b>{rev.dados?.modalidade || "Clássico"}</b>{rev.dados?.modalidade !== "Premium" && (
-                <> · <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-trocar-premium>trocar para Premium</button></>
-              )}
-            </p>
-          </>
-        ) : decisao ? (
-          <>
-            <p data-pv-seguir-texto><b>Falta resolver{faltaRev.length > 1 ? ` (1 de ${faltaRev.length})` : ""}:</b> {decisao.texto}</p>
-            {botaoDecisao(decisao)}
-          </>
-        ) : (
-          <>
-            <p data-pv-seguir-texto>As conferências ainda não estão prontas.</p>
-            <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="conferir" onClick={conferir}>🔄 Conferir agora</button>
-          </>
-        )}
-      </div>
-      <p><b>✅ Finalizar anúncio</b> — confere sozinho no Bling e no Mercado Livre (só leitura). Só executa o que você autorizar.</p>
+    <div className="pr-cartao" data-pv-finalizar-topo data-pv-finalizar={tudoFeito ? "concluido" : pronto ? "pronto" : "pendente"}>
+      <p><b>✅ Finalizar anúncio</b> — confere sozinho no Bling e no Mercado Livre (só leitura) e só faz o que você autorizar.</p>
       {!versaoOk && versao.estado !== "conferindo" && (
         <div className="pr-cartao" data-pv-finalizar-versao={versao.estado} style={{ borderColor: "#b45309", background: "#422006" }}>
           {versao.estado === "desatualizada"
@@ -318,9 +272,57 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
           </div>
         </div>
       )}
-      {/* (04/11) 1º: a conta de destino (trocar a conta refaz as conferências dela e pede nova autorização). */}
+      {erro && <p className="pr-aviso" data-pv-finalizar-erro>⚠️ {erro}</p>}
+
+      {/* 1. Resumo da ficha e conferências automáticas */}
+      <span className="pr-rotulo">1. Resumo e conferências</span>
+      <dl className="pr-resumo" data-pv-finalizar-dados>
+        <dt>SKU</dt><dd>{d.sku || "—"}</dd>
+        <dt>Título</dt><dd>{d.titulo || "—"}</dd>
+        <dt>Marca</dt><dd>{d.marca || "—"}</dd>
+        <dt>Fotos</dt><dd data-pv-fotos-resumo>{d.fotos.length}{fotosOriginais ? " · vai a foto ORIGINAL (fundo branco desligado ou não tratada)" : ""}</dd>
+        <dt>Preço</dt><dd>{d.preco}</dd>
+        <dt>Estoque da ficha</dt><dd data-pv-estoque-ficha>{qtdFicha || "—"} un. (é o que vai ao anúncio)</dd>
+        <dt>Custo</dt><dd>{String(row?.dados_conferencia?.paiia_voz?.complemento?.custo || "").trim() || "— (opcional)"}</dd>
+        <dt>Peso/medidas</dt><dd>{d.medida || "—"}</dd>
+        <dt>Frete ML</dt><dd>{d.frete || "—"}</dd>
+        <dt>Categoria</dt><dd data-pv-categoria-selecionada>{caminhoCat || d.categoria || "—"}{!cat.aberta && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => setCat((c) => ({ ...c, aberta: true, termo: c.termo || d.titulo }))} data-pv-alterar-categoria>Alterar categoria</button></>}</dd>
+        <dt>Compatibilidades</dt>
+        <dd data-pv-finalizar-compat>
+          <span data-pv-compat-informadas>Informadas e confirmadas por você: {d.aplicacoes.length}{d.aplicacoes.length ? ` (${d.aplicacoes.join(" · ")})` : ""}</span><br />
+          <span data-pv-compat-validadas>Validadas pelo catálogo do Mercado Livre: {sit.compat.validadas}</span>
+        </dd>
+      </dl>
+      <details className="pr-fonte" data-pv-finalizar-descricao><summary>Descrição ({d.descricao.trim() ? "ver" : "vazia"})</summary><pre className="pr-previa">{d.descricao || "—"}</pre></details>
+      {Object.entries(row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes || {}).length > 0 && (
+        <ul className="pr-fonte" data-pv-finalizar-conferencias style={{ margin: 0, paddingLeft: 18 }}>
+          {Object.entries(row.dados_conferencia.paiia_voz.preparo.verificacoes).filter(([k]) => k !== "bling").map(([k, v]) => <li key={k} data-pv-conferencia={k} data-estado={v?.estado}>{v?.estado === "ok" ? "✅" : ICONE[v?.estado] || "•"} {v?.texto}</li>)}
+        </ul>
+      )}
+      {depoisDaConta}
+
+      {cat.aberta && (
+        <div className="pr-cartao pr-cinza" data-pv-categoria-busca>
+          <div className="pr-linha pr-entre"><strong>Escolher a categoria</strong><button type="button" className="pr-link" onClick={() => setCat({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" })} data-pv-categoria-fechar>Fechar</button></div>
+          <p className="pr-fonte" style={{ margin: 0 }}>A categoria só vale depois que você confirmar. Mesma busca e mesmas regras da Conferência do computador.</p>
+          {cat.erro && <p className="pr-aviso">⚠️ {cat.erro}</p>}
+          <PainelCategoriaML
+            carregando={cat.carregando}
+            avaliacao={cat.avaliacao || preparoRow?.verificacoes?.categoria?.avaliacao || null}
+            decisao={null}
+            categoriaId=""
+            onConfirmar={escolherCategoria}
+            onTrocar={() => setCat((c) => ({ ...c, aberta: true }))}
+            termo={cat.termo}
+            onTermo={(t) => setCat((c) => ({ ...c, termo: t }))}
+            onBuscar={buscarCategoria}
+          />
+        </div>
+      )}
+
+      {/* 2. Conta Mercado Livre */}
       <div data-pv-finalizar-contas>
-        <span className="pr-rotulo">1. Conta de destino no Mercado Livre</span>
+        <span className="pr-rotulo">2. Conta do Mercado Livre</span>
         <div className="pr-linha" role="radiogroup" aria-label="Conta de destino" style={{ gap: 6 }}>
           {[...(conta && !contas.some((c) => String(c.ml_user_id) === conta) ? [{ ml_user_id: conta }] : []), ...contas]
             .map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) }))
@@ -332,120 +334,60 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
               </button>
             ))}
         </div>
-        {!conta && <p className="pr-aviso" data-pv-finalizar-sem-conta>Escolha a conta para conferir frete, categoria, duplicidade e compatibilidades.</p>}
-        <button type="button" className="pr-link" disabled={Boolean(rodando) || !conta} onClick={conferir} data-pv-finalizar-reconferir>{rodando === "conferir" ? "⏳ Conferindo…" : "🔄 Conferir de novo"}</button>
-      </div>
-      {depoisDaConta}
-      {erro && <p className="pr-aviso" data-pv-finalizar-erro>⚠️ {erro}</p>}
-
-      <dl className="pr-resumo" data-pv-finalizar-dados>
-        <dt>SKU</dt><dd>{d.sku || "—"}</dd>
-        <dt>Título</dt><dd>{d.titulo || "—"}</dd>
-        <dt>Marca</dt><dd>{d.marca || "—"}</dd>
-        <dt>Fotos</dt><dd>{d.fotos.length}</dd>
-        <dt>Preço · estoque</dt><dd>{d.preco} · {d.estoque || "—"} un.</dd>
-        <dt>Custo</dt><dd>{String(row?.dados_conferencia?.paiia_voz?.complemento?.custo || "").trim() || "— (opcional)"}</dd>
-        <dt>Peso/medidas</dt><dd>{d.medida || "—"}</dd>
-        <dt>Frete ML</dt><dd>{d.frete || "—"}</dd>
-        <dt>Categoria</dt><dd>{d.categoria || "—"}{d.categoria && !cat.aberta && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => setCat((c) => ({ ...c, aberta: true, termo: c.termo || d.titulo }))} data-pv-categoria-trocar>Trocar</button></>}</dd>
-        <dt>Compatibilidades</dt>
-        <dd data-pv-finalizar-compat>
-          <span data-pv-compat-informadas>Informadas e confirmadas por você: {d.aplicacoes.length}{d.aplicacoes.length ? ` (${d.aplicacoes.join(" · ")})` : ""}</span><br />
-          <span data-pv-compat-validadas>Validadas pelo catálogo do Mercado Livre: {sit.compat.validadas}</span>
-        </dd>
-      </dl>
-      <details className="pr-fonte" data-pv-finalizar-descricao><summary>Descrição ({d.descricao.trim() ? "ver" : "vazia"})</summary><pre className="pr-previa">{d.descricao || "—"}</pre></details>
-      {Object.entries(row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes || {}).length > 0 && (
-        <ul className="pr-fonte" data-pv-finalizar-conferencias style={{ margin: 0, paddingLeft: 18 }}>
-          {Object.entries(row.dados_conferencia.paiia_voz.preparo.verificacoes).map(([k, v]) => <li key={k} data-pv-conferencia={k} data-estado={v?.estado}>{v?.estado === "ok" ? "✅" : ICONE[v?.estado] || "•"} {v?.texto}</li>)}
-        </ul>
-      )}
-
-      {sit.pendencias.length > 0 && (
-        <div data-pv-finalizar-pendencias>
-          <strong>Pendências ({sit.pendencias.filter((p) => p.tipo !== "aviso").length})</strong>
-          <ul className="pr-fonte" style={{ margin: 0, paddingLeft: 18 }}>
-            {sit.pendencias.map((x) => (
-              <li key={x.id} data-pv-pendencia={x.id} data-tipo={x.tipo}>
-                {ICONE[x.tipo] || "•"} {x.texto}
-                {x.id === "categoria" && x.sugerida && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("categoria", async () => { const r = await confirmarCategoriaEGravar(fichaId, row?.dados_conferencia?.paiia_voz?.preparo); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-finalizar-categoria>Confirmar {x.sugerida}</button></>}
-                {x.id === "categoria" && !cat.aberta && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => setCat((c) => ({ ...c, aberta: true, termo: c.termo || d.titulo }))} data-pv-categoria-procurar>{x.sugerida ? "Não é esta — procurar outra" : "Procurar categoria"}</button></>}
-                {x.id === "modalidade" && <> <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-finalizar-premium>Usar Premium</button></>}
-                {aoIrEtapa && x.ir && <> <button type="button" className="pr-link" onClick={() => aoIrEtapa(x.ir)}>→ ir</button></>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {cat.aberta && (
-        <div className="pr-cartao pr-cinza" data-pv-categoria-busca>
-          <div className="pr-linha pr-entre"><strong>Escolher a categoria</strong><button type="button" className="pr-link" onClick={() => setCat({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" })} data-pv-categoria-fechar>Fechar</button></div>
-          <p className="pr-fonte" style={{ margin: 0 }}>A categoria só vale depois que você confirmar. Mesma busca e mesmas regras da Conferência do computador.</p>
-          {cat.erro && <p className="pr-aviso">⚠️ {cat.erro}</p>}
-          <PainelCategoriaML
-            carregando={cat.carregando}
-            avaliacao={cat.avaliacao || preparoRow?.verificacoes?.categoria?.avaliacao || null}
-            decisao={preparoRow?.categoria?.decisao || null}
-            categoriaId={preparoRow?.categoria?.decisao?.confirmada?.id || ""}
-            onConfirmar={escolherCategoria}
-            onTrocar={() => setCat((c) => ({ ...c, aberta: true }))}
-            termo={cat.termo}
-            onTermo={(t) => setCat((c) => ({ ...c, termo: t }))}
-            onBuscar={buscarCategoria}
-          />
-        </div>
-      )}
-
-      <div className="pr-cartao pr-cinza" data-pv-finalizar-operacoes>
-        <strong>Operações — marque só o que você autoriza</strong>
-        {sit.ops.map((o) => (
-          <div key={o.id} data-pv-operacao={o.id} data-estado={o.estado}>
-            {o.exigeAutorizacao ? (
-              <label className="pr-check" style={{ alignItems: "flex-start" }}>
-                <input type="checkbox" checked={autorizarBling} disabled={Boolean(rodando) || o.estado === "ok"} onChange={(e) => { setAutorizarBling(e.target.checked); setConfirmo(false); }} data-pv-autorizar-bling />
-                <span><b>Autorizo criar o produto {d.sku} no Bling</b> com estoque inicial 0. <span className="pr-fonte">{o.detalhe}</span></span>
-              </label>
-            ) : o.automatica ? (
-              <p style={{ margin: 0 }}>{o.marcada ? "☑" : "☐"} {ROTULOS_OPERACOES[o.id]} <span className="pr-fonte">— {o.detalhe}</span></p>
-            ) : (
-              <label className="pr-check" style={{ alignItems: "flex-start" }}>
-                <input type="checkbox" checked={o.marcada} disabled={Boolean(rodando) || o.estado === "ok"} onChange={(e) => { const v = e.target.checked; setMarcar((m) => ({ ...m, [o.id]: v })); setConfirmo(false); }} data-pv-marcar-operacao={o.id} />
-                <span><b>{ROTULOS_OPERACOES[o.id]}</b> <span className="pr-fonte">— {o.detalhe}</span></span>
-              </label>
-            )}
-            <span className="pr-fonte" data-pv-operacao-estado>{rotuloEstado(o.estado)}{sit.registro.ops[o.id]?.erro ? ` · ${sit.registro.ops[o.id].erro}` : sit.registro.ops[o.id]?.resultado ? ` · ${sit.registro.ops[o.id].resultado}` : ""}</span>
-          </div>
-        ))}
-        {sit.compatSemCatalogo && (
-          <label className="pr-check" style={{ alignItems: "flex-start" }}>
-            <input type="checkbox" checked={semCompatibilidade} disabled={Boolean(rodando)} onChange={(e) => { setSemCompatibilidade(e.target.checked); setConfirmo(false); }} data-pv-sem-compat />
-            <span><b>Publicar sem compatibilidade do catálogo</b> <span className="pr-fonte">— o catálogo do Mercado Livre não confirmou os veículos; as aplicações ficam só na descrição. Nada é marcado na tabela.</span></span>
-          </label>
-        )}
-        <p className="pr-fonte" style={{ margin: 0 }}>Estoque e cadastro oficiais do Bling: <b>não são alterados</b>. Vínculo automático só na LojaOnlineSP; REVELAÇÃO e CIEBR: vínculo manual.</p>
+        {!conta && <p className="pr-aviso" data-pv-finalizar-sem-conta>Escolha a conta: o frete, a duplicidade e as compatibilidades são conferidos nela.</p>}
+        {conta && <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={conferir} data-pv-finalizar-reconferir>{rodando === "conferir" ? "⏳ Conferindo…" : "🔄 Conferir de novo"}</button>}
       </div>
 
-      {!tudoFeito && (
+      {conta && (
         <>
-          <label className="pr-check" data-pv-finalizar-confirmo>
-            <input type="checkbox" checked={confirmo} disabled={!podeAutorizar || Boolean(rodando)} onChange={(e) => setConfirmoAss(e.target.checked ? assinaturaAgora : "")} />
-            Conferi tudo e autorizo executar as operações marcadas
-          </label>
-          <button type="button" className="pr-botao pr-grande" disabled={!podeAutorizar || !confirmo || Boolean(rodando)} onClick={executar} data-pv-finalizar-executar>
-            {rodando === "executar" ? "⏳ Executando…" : temFalha ? "🔁 Retomar operações autorizadas" : "Executar operações autorizadas"}
-          </button>
-          {!podeAutorizar && <p className="pr-fonte" data-pv-finalizar-motivo>{!sit.podeExecutar ? sit.motivo : "Atualize a página (versão nova do PAIIA) para autorizar."}</p>}
+          {/* 3. Modalidade */}
+          <p className="pr-fonte" data-pv-modalidade>
+            <span className="pr-rotulo">3. Modalidade</span>{" "}<b>{rev.dados?.modalidade || "Clássico"}</b>{rev.dados?.modalidade !== "Premium" && (
+              <> · <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })} data-pv-trocar-premium>trocar para Premium</button></>
+            )}
+          </p>
+          {/* 4. Bling: saldo oficial (nunca alterado) ou pendência clara */}
+          <div data-pv-bling={blingBloqueado ? "pendente" : blingAusente ? "criar" : vBling?.estado || "nao-conferido"}>
+            <span className="pr-rotulo">4. Bling</span>
+            {blingBloqueado ? (
+              <p className="pr-aviso" data-pv-bling-pendencia>⚠️ O SKU <b>{d.sku}</b> não existe no Bling e o <b>cadastro automático ainda não está disponível</b>. Cadastre-o no Bling (estoque da ficha: {qtdFicha || "?"} un.) e toque em “Conferir de novo”. Nada foi enviado.</p>
+            ) : blingAusente ? (
+              <p className="pr-fonte">O SKU <b>{d.sku}</b> não existe no Bling: pode ser cadastrado com o estoque da ficha ({qtdFicha || "?"} un.), só com a sua autorização abaixo.</p>
+            ) : vBling ? (
+              <p className="pr-fonte" data-pv-bling-texto>{vBling.estado === "ok" ? "✅" : ICONE[vBling.estado] || "•"} {String(vBling.texto || "").replace(/^Bling \(SKU/, "Saldo oficial no Bling (SKU").replace(/Anúncio: (\d+)\./, "Estoque da ficha (vai ao anúncio): $1.")} <span>Saldo oficial do Bling: só consultado, nunca alterado.</span></p>
+            ) : <p className="pr-fonte">Conferindo o Bling…</p>}
+          </div>
+          {/* 5. Só a decisão/autorização realmente necessária */}
+          {rodando === "conferir" ? (
+            <p data-pv-seguir-texto>⏳ Conferindo categoria, frete oficial, duplicidade e Bling (só leitura)…</p>
+          ) : decisao ? (
+            <div className="pr-cartao" data-pv-seguir="decisao">
+              <p data-pv-seguir-texto><b>Falta resolver{faltaRev.length > 1 ? ` (1 de ${faltaRev.length})` : ""}:</b> {decisao.texto}</p>
+              {botaoDecisao(decisao)}
+            </div>
+          ) : !pronto && !blingBloqueado ? (
+            <div className="pr-cartao" data-pv-seguir="decisao">
+              <p data-pv-seguir-texto>As conferências ainda não estão prontas.</p>
+              <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="conferir" onClick={conferir}>🔄 Conferir agora</button>
+            </div>
+          ) : null}
+          {pronto && blingAusente && criarBlingDisponivel && (
+            <label className="pr-check" data-pv-autorizo-bling-cadastro>
+              <input type="checkbox" checked={autorizoCadastro} disabled={Boolean(rodando)} onChange={(e) => setAutorizoCadastro(e.target.checked)} />
+              <span>Autorizo cadastrar no Bling o produto <b>{d.sku}</b> com o estoque da ficha (<b>{qtdFicha || "?"}</b> un.). O PAIIA confere antes e não duplica.</span>
+            </label>
+          )}
+          {/* 6. UM botão, no final, só depois da conta */}
+          {pronto && (
+            <div className="pr-cartao" data-pv-seguir="publicacao">
+              <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || (blingAusente && !autorizoCadastro)} onClick={seguirParaPublicacao} data-pv-continuar-publicacao>
+                {rodando === "publicacao" ? "⏳ Finalizando…" : "✅ Finalizar e Enviar"}
+              </button>
+              <p className="pr-fonte">Abre a Publicação desta mesma ficha, com fotos e dados conferidos. A publicação no Mercado Livre só acontece depois da sua confirmação final.</p>
+            </div>
+          )}
+          {resultado && !resultado.ok && <p className="pr-aviso" data-pv-finalizar-parou>Parou em “{ROTULOS_OPERACOES[resultado.parou] || "—"}”: {resultado.erro} O que já foi feito ficou salvo; nada foi repetido.</p>}
         </>
-      )}
-      {tudoFeito && <p className="pr-ok" data-pv-finalizar-concluido>✅ Todas as operações autorizadas foram concluídas{sit.registro.mlb ? ` · ${sit.registro.mlb}` : ""}.</p>}
-      {resultado && !resultado.ok && <p className="pr-aviso" data-pv-finalizar-parou>Parou em “{ROTULOS_OPERACOES[resultado.parou] || "—"}”: {resultado.erro} Nada foi repetido.</p>}
-
-      {!liberado && (
-        <details className="pr-fonte" data-pv-rotina-atual>
-          <summary>Publicar pela rotina atual (enquanto a execução desta tela não é liberada)</summary>
-          <PreparoPublicacaoVoz fichaId={fichaId} usuarioId={usuarioId} />
-        </details>
       )}
     </div>
   );

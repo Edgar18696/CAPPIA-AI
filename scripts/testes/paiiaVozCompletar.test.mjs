@@ -45,8 +45,8 @@ function fichaPresilha() {
 }
 const ROTEIRO = { marca: "Torken", preco: "39,90", quantidade: "10", peso: "200 gramas", medidas: "20 por 10 por 5", montadora: "Renault", confirmarAplicacao: "sim", aplicacaoDescricao: "sim", maisAplicacao: "não", tipoVeiculo: "carro", conta: "Loja Online", modalidade: "Premium" };
 
-test("7 etapas aprovadas (04/11): Fotos, Código, Descrição/Título, Preço, Envio, Compat., Finalizar", () => {
-  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"]);
+test("8 etapas (Rodada 1): Fotos, Código, Descrição/Título, Preço, Envio, Compat., Categoria, Finalizar", () => {
+  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"]);
   assert.equal(ROTULOS_ETAPAS.finalizar, "Finalizar");
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes('onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>'), "Continuar das fotos vai para o Código");

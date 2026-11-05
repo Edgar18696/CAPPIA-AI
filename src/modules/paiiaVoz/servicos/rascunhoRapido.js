@@ -29,8 +29,8 @@ import { padronizarTitulo, padronizarDescricao } from "../../../services/padroni
 
 // (04/11/2026) 7 etapas aprovadas: Fotos, Código, Descrição/Título, Preço/Custo/Estoque,
 // Peso/Medidas/Frete, Compatibilidade e Finalizar (as antigas “titulo”/“enviar” viram “descricao”/“finalizar”).
-export const ETAPAS = ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"];
-export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", descricao: "Título e Descrição", preco: "Preço", envio: "Envio", compat: "Compat.", finalizar: "Finalizar" };
+export const ETAPAS = ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"];
+export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", descricao: "Título e Descrição", preco: "Preço", envio: "Envio", compat: "Compat.", categoria: "Categoria", finalizar: "Finalizar" };
 const ETAPAS_ANTIGAS = { titulo: "descricao", enviar: "finalizar" };
 export const LIMITE_TITULO = 60;
 export const MARCA_PADRAO = "Torken";
@@ -42,6 +42,7 @@ export const PERGUNTAS = {
   preco: "Toque no 🎤 e fale: marca, preço de venda, custo (opcional) e estoque. Ele passa sozinho para o próximo campo.",
   envio: "Toque no 🎤 e fale o peso embalado (gramas) e as medidas — “20 por 10 por 5” preenche as três.",
   compat: "Diga o veículo e os anos (ex.: Renault Master 2013 a 2022) e marque só as aplicações certas.",
+  categoria: "Confira a categoria do Mercado Livre. Se estiver certa, é só seguir; se não, toque em Alterar categoria.",
   finalizar: "Confira as pendências. A finalização confere no Bling e no Mercado Livre e só executa o que você autorizar.",
 };
 

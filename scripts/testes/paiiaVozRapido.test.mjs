@@ -244,7 +244,7 @@ test("envio: dados para o Novo Anúncio (título e descrição do rascunho, marc
 });
 
 test("etapas: navegação e estado guardado na ficha (F5)", () => {
-  assert.deepEqual(R.ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"]);
+  assert.deepEqual(R.ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"]);
   assert.equal(R.proximaEtapa("fotos"), "codigo");
   assert.equal(R.proximaEtapa("finalizar"), "finalizar");
   // ficha guardada com as etapas antigas abre na etapa nova equivalente

@@ -599,6 +599,8 @@ export function estadoEtapasVoz(ficha, { fotos = 0, etapaAtual = "", ordem = [] 
     preco: Boolean(txt(v.marca) && txt(v.preco) && txt(v.quantidade)),
     envio: Boolean(txt(v.peso) && txt(v.comprimento) && txt(v.largura) && txt(v.altura)),
     compat: (ficha?.aplicacoes || []).some((a) => a.confirmada) && Boolean(completos.tipoVeiculo),
+    // (Rodada 1) Etapa 7: a categoria só conta como feita quando o servidor a confirmou (automática ou escolhida).
+    categoria: Boolean(ficha?.categoriaVoz?.ok && ficha?.categoriaVoz?.id),
     finalizar: false,
   };
   const iAtual = ordem.indexOf(etapaAtual);

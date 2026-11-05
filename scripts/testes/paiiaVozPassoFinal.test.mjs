@@ -16,33 +16,34 @@ const ID = "73ebf08c-93e0-44d4-84fe-1acd1c5fac5f";
 
 /** Ficha do BCK001 preenchida etapa por etapa; `ate` = última etapa preenchida. */
 function fichaAte(ate) {
-  const ordem = ["codigo", "descricao", "preco", "envio", "compat"];
+  const ordem = ["codigo", "descricao", "preco", "envio", "compat", "categoria"];
   let f = V.criarFichaVoz({ agora: 1, id: "pf" });
   for (const e of ordem.slice(0, ordem.indexOf(ate) + 1)) {
     if (e === "codigo") f = { ...f, codigos: [{ codigo: "BCK001", normalizado: "BCK001", principal: true, conferido: true, origem: "digitado" }] };
     if (e === "descricao") { f = R.definirTitulo(f, "Kit Refil Bomba De Combustivel Sistema Bosch", { origem: "digitado" }); f = R.definirDescricaoFinal(f, "Kit refil da bomba de combustível."); }
     if (e === "preco") for (const [c, v] of [["marca", "Torken"], ["preco", "27,92"], ["quantidade", "2"]]) f = C.definirCampoDireto(f, c, v).ficha;
     if (e === "envio") for (const [c, v] of [["peso", "300"], ["comprimento", "20"], ["largura", "10"], ["altura", "8"]]) f = C.definirCampoDireto(f, c, v).ficha;
+    if (e === "categoria") f = { ...f, categoriaVoz: { ok: true, id: "MLB191833", caminho: "Acessórios > Injeção" } };
     if (e === "compat") { f = { ...f, aplicacoes: [{ id: "ap1", chave: "fiat|uno|2010|2014", montadora: "Fiat", modelos: ["Uno"], motores: [], versoes: [], anoInicio: 2010, anoFim: 2014, confirmada: true, origem: "usuario", fontes: [] }] }; f = C.definirTipoVeiculoVoz(f, "Carro/Caminhonete"); }
   }
   return f;
 }
 
 test("1) ficha incompleta: 'Completar ficha' leva à PRIMEIRA etapa pendente, na ordem das 7 etapas", () => {
-  assert.deepEqual(ETAPAS_OBRIGATORIAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat"]);
-  assert.equal(decidirPassoFinal(fichaAte("compat"), { fotos: 0 }).etapa, "fotos", "sem foto → Fotos");
-  const casos = [["", "codigo"], ["codigo", "descricao"], ["descricao", "preco"], ["preco", "envio"], ["envio", "compat"]];
+  assert.deepEqual(ETAPAS_OBRIGATORIAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria"]);
+  assert.equal(decidirPassoFinal(fichaAte("categoria"), { fotos: 0 }).etapa, "fotos", "sem foto → Fotos");
+  const casos = [["", "codigo"], ["codigo", "descricao"], ["descricao", "preco"], ["preco", "envio"], ["envio", "compat"], ["compat", "categoria"]];
   for (const [ate, espera] of casos) {
     const d = decidirPassoFinal(ate ? fichaAte(ate) : V.criarFichaVoz({ agora: 1, id: "v" }), { fotos: 2 });
     assert.equal(d.acao, "completar", ate);
     assert.equal(d.etapa, espera, `preenchido até ${ate || "nada"} → ${espera}`);
   }
   const d = decidirPassoFinal(fichaAte("descricao"), { fotos: 2 });
-  assert.deepEqual(d.faltam, ["Preço", "Envio", "Compat."]);
+  assert.deepEqual(d.faltam, ["Preço", "Envio", "Compat.", "Categoria"]);
 });
 
 test("2) ficha completa: 'Continuar para Publicação'", () => {
-  assert.deepEqual(decidirPassoFinal(fichaAte("compat"), { fotos: 2 }), { acao: "publicacao", faltam: [] });
+  assert.deepEqual(decidirPassoFinal(fichaAte("categoria"), { fotos: 2 }), { acao: "publicacao", faltam: [] });
 });
 
 test("3) endereço da Publicação: SEMPRE a ficha informada (?ficha=<ID>&tela=mercadoLivreTeste), sem outra", () => {

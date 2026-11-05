@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { prepararConferenciaVoz, confirmarCategoriaSugerida, preparoAtual, entradaDaFicha } from "../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js";
+import { prepararConferenciaVoz, confirmarCategoriaSugerida, preparoAtual, entradaDaFicha, conferirSoCategoriaVoz } from "../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js";
 import { mesclarPreparo } from "../../src/modules/paiiaVoz/servicos/preparoFicha.js";
 import * as N from "../../src/modules/paiiaVoz/servicos/fichaVozNuvem.js";
 import { mesclarNovoAnuncio } from "../../src/services/fichaNovoAnuncio.js";
@@ -216,4 +216,16 @@ test("serviço: só leitura no ML/Bling; grava apenas paiia_voz.preparo e só an
   const m = ler("src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js");
   assert.equal(/acao:\s*"publicar"/.test(m), false);
   assert.ok(m.includes("conferirCategoriaParaPublicar") && m.includes("avaliarCategorias") && m.includes("verificarDuplicidadeML") && m.includes("conferirEstoque") && m.includes("cotarNoPreco") && m.includes("resolverCompatibilidades"), "reaproveita as conferências oficiais");
+});
+
+test("(Rodada 1) etapa 7 sem conta: categoria única válida já vem SELECIONADA; com atributo sem valor vira pergunta", async () => {
+  const w = mundo();
+  const c = await conferirSoCategoriaVoz(ficha(), { deps: w.deps });
+  assert.equal(c.estado, "ok", c.texto);
+  assert.equal(c.automatica, true);
+  assert.match(c.caminho, /Lanternas de Pisca/);
+  assert.ok(!w.chamadas.some((x) => x[0] === "BLING" || /shipping|catalog_compat/.test(String(x[2] || ""))), "só a categoria é conferida");
+  const d = await conferirSoCategoriaVoz(ficha(), { deps: mundo({ atributoSemValor: true }).deps });
+  assert.equal(d.estado, "pergunta");
+  assert.equal(d.sugerida, "MLB456155");
 });

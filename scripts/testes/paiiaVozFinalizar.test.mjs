@@ -157,7 +157,7 @@ test("SKU ausente no Bling: informa e só segue com autorização ESPECÍFICA (e
   let s = Fz.situacaoFinalizar(row, { liberado: true });
   assert.equal(s.ops[0].id, "bling_criar");
   assert.equal(s.ops[0].marcada, false, "nunca marcada sozinha");
-  assert.match(s.ops[0].detalhe, /estoque inicial 0/);
+  assert.match(s.ops[0].detalhe, /estoque da ficha/, "(D1) mesma quantidade da ficha em todo lugar");
   assert.equal(s.podeExecutar, false);
   assert.ok(s.pendencias.some((p) => p.id === "bling"));
   s = Fz.situacaoFinalizar(row, { liberado: true, autorizarBling: true });
@@ -256,16 +256,15 @@ test("ligações reais: escritas (Bling criar, ML publicar, compatibilidades) BL
 test("tela única: confere sozinha, uma confirmação + um botão; Bling com autorização própria; rotina atual mantida enquanto não liberado", () => {
   const f = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
   assert.ok(f.includes("Conferência AUTOMÁTICA ao abrir"));
-  assert.equal((f.match(/data-pv-finalizar-executar/g) || []).length, 1, "um botão de executar");
-  assert.ok(f.includes("data-pv-finalizar-confirmo") && f.includes("data-pv-autorizar-bling"));
-  assert.ok(f.includes("data-pv-rotina-atual") && f.includes("{!liberado && ("));
-  assert.ok(f.includes("setConfirmo(false); // qualquer mudança pede nova confirmação"));
+  // (Rodada 2) UM botão principal; nada da seção antiga de operações na tela
+  assert.equal((f.match(/data-pv-continuar-publicacao/g) || []).length, 1, "um botão Finalizar e Enviar");
+  for (const x of ["data-pv-finalizar-executar", "data-pv-finalizar-confirmo", "data-pv-finalizar-operacoes", "data-pv-rotina-atual"]) assert.ok(!f.includes(x), `sem ${x}`);
   const app = ler("src/App.jsx");
   assert.ok(app.includes('screen === "finalizarAnuncio"'), "a mesma tela no computador");
 });
 
-test("celular: 7 etapas; estado de cada etapa (concluída/pendência); campos seguem só dentro da etapa", () => {
-  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "finalizar"]);
+test("celular: 8 etapas; estado de cada etapa (concluída/pendência); campos seguem só dentro da etapa", () => {
+  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"]);
   let f = criarFichaVoz({ agora: 1, id: "e7" });
   let e = C.estadoEtapasVoz(f, { fotos: 0, etapaAtual: "preco", ordem: ETAPAS });
   assert.equal(e.fotos, "pe"); assert.equal(e.codigo, "pe"); assert.equal(e.envio, "");
@@ -281,7 +280,7 @@ test("celular: 7 etapas; estado de cada etapa (concluída/pendência); campos se
   f = C.definirTipoVeiculoVoz(f, "Carro/Caminhonete");
   assert.equal(f.completar.tipoVeiculo, "Carro/Caminhonete");
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(tela.includes("grid-template-columns: repeat(7,"));
+  assert.ok(tela.includes("grid-template-columns: repeat(8,"), "8 etapas numa linha");
   for (const b of ["descricao", "preco", "envio", "compat", "finalizar"]) assert.ok(tela.includes(`data-pr-bloco="${b}"`), b);
   assert.ok(tela.includes("<FinalizarAnuncioVoz"));
 });
@@ -309,7 +308,8 @@ test("catálogo do ML não confirma os veículos: só segue com a decisão expl�
 test("nada do que existia some: fotos do anúncio (original/fundo branco), avisos de tratamento, faltando e peso/medidas para os Dados técnicos", () => {
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   for (const t of ["data-pr-envio-fotos", "data-pr-envio-foto", "data-pr-usar-tratada", "data-pr-aviso-interrompidas", "data-pr-aviso-tratando", "data-pr-faltando", "data-pr-peso-medidas-envio", "data-pr-modo-conversa", "data-pv-dados-bling", "data-pr-aproveitar", "data-pr-sugestao", "data-pr-editar-final", "data-pv-confirmar-envio", "data-pv-conversa-opcional", "data-pv-manter-mic"]) assert.ok(tela.includes(t), t);
-  assert.ok(ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx").includes("<PreparoPublicacaoVoz"), "rotina atual de publicação continua disponível");
+  // (Rodada 2) a "rotina atual" saiu da tela: o caminho único é Finalizar e Enviar → Publicação (mesmo serviço)
+  assert.ok(ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx").includes("prepararPublicacaoVoz"), "Publicação continua pelo mesmo serviço");
 });
 
 test("entrada (04/11): PAIIA Voz abre SEMPRE nas 7 etapas; modo conversa guardado no aparelho não volta a ser a entrada; nada é apagado", async () => {
@@ -440,7 +440,8 @@ test("Finalizar abre no topo com a escolha da conta primeiro (LOJA ONLINE, REVEL
   assert.ok(tela.includes('if (e === "finalizar") setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); }'), "Continuar e a barra usam irPara → topo");
   assert.ok(tela.includes("depoisDaConta={blocoFicha}"), "conta antes do resumo da ficha");
   const f = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
-  assert.ok(f.indexOf("data-pv-finalizar-contas") < f.indexOf("data-pv-finalizar-dados") && f.indexOf("{depoisDaConta}") < f.indexOf("data-pv-finalizar-dados"), "conta primeiro");
+  // (Rodada 2) ordem aprovada: resumo/conferências → conta → modalidade → Bling → decisão → botão no final
+  assert.ok(f.indexOf("data-pv-finalizar-dados") < f.indexOf("data-pv-finalizar-contas") && f.indexOf("data-pv-finalizar-contas") < f.indexOf("data-pv-modalidade") && f.indexOf("data-pv-modalidade") < f.indexOf("data-pv-bling=") && f.indexOf("data-pv-bling=") < f.lastIndexOf("data-pv-continuar-publicacao"), "resumo, depois conta, depois o botão no final");
   assert.ok(f.includes('const ORDEM_CONTAS = ["LOJA ONLINE", "REVELAÇÃO", "CIEBR"];') && f.includes("data-pv-conta-opcao") && f.includes("pr-conta-on"));
   assert.ok(f.includes("if (c.id === conta) return; setConta(c.id); setConfirmo(false);"), "mesma conta não mexe; outra conta pede nova autorização");
 });
@@ -486,10 +487,9 @@ test("Finalizar: versão antiga da página não autoriza; autorização vale só
   const r = await V.conferirVersaoSite({ doc: { scripts: [{ src: "https://x/assets/index-AAA.js" }] }, buscar: async () => ({ ok: true, text: async () => '<script src="/assets/index-NOVO.js">' }) });
   assert.deepEqual([r.estado, r.atual, r.noAr], ["desatualizada", "index-AAA.js", "index-NOVO.js"]);
   const tela = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
-  assert.ok(tela.includes("const podeAutorizar = sit.podeExecutar && versaoOk;") && tela.includes("data-pv-finalizar-atualizar"));
-  assert.ok(tela.includes("const confirmo = Boolean(confirmoAss) && confirmoAss === assinaturaAgora && versaoOk;"), "mudou conta/dados/operações → autorização some");
-  assert.ok(tela.includes("const v = await conferirVersao(); // de novo, na hora de executar"));
-  assert.ok(tela.includes("data-pv-categoria-procurar") && tela.includes("<PainelCategoriaML") && tela.includes("data-pv-categoria-trocar"));
+  assert.ok(tela.includes("const pronto = Boolean(conta) && versaoOk &&") && tela.includes("data-pv-finalizar-atualizar"), "página antiga não mostra o botão de finalizar");
+  assert.ok(tela.includes("const v = await conferirVersao();") && tela.includes("Atualize a página (versão nova do PAIIA) antes de finalizar"), "versão conferida de novo na hora");
+  assert.ok(tela.includes("data-pv-alterar-categoria") && tela.includes("<PainelCategoriaML"), "Alterar categoria abre a mesma busca");
   // escolha só com confirmação; incompatível/rejeitada só com revisão registrada
   const P = await import("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js");
   assert.equal(P.confirmarCategoriaEscolhida({}, { candidata: null }).ok, false);
