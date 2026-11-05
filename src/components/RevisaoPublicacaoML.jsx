@@ -32,7 +32,7 @@ import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categ
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services/registroMLBService";
-import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, reais as reaisFrete } from "../services/fretePrecificacao";
+import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, calcularFreteEPrecos, reais as reaisFrete } from "../services/fretePrecificacao";
 import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
   resolverCompatibilidades,
@@ -1275,8 +1275,23 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   // para ESTA conta, peso, medidas, modalidade, tipo, categoria e faixa de
   // preço; e o ML, consultado de novo agora, precisa cotar igual.
   const [freteConf, setFreteConf] = useState(null);
+  const [, setFreteRecalculado] = useState(null); // (automático) cotação refeita com as medidas confirmadas
   async function conferirFretePublicacao() {
-    const registro = anuncio?.freteML || null;
+    let registro = anuncio?.freteML || null;
+    let recalculado = false;
+    // (Publicação automática) Medidas/peso confirmados mudaram depois da cotação: RECALCULA no ML com as
+    // medidas atuais, no preço da ficha (cotação oficial, nunca estimativa), sem pedir o procedimento antigo.
+    if (autoPublicacaoDaUrl() && contaEscolhida) {
+      const s0 = situacaoFrete({ registro, atual: { conta: contaEscolhida, medida: logistica?.medida, modalidade: logistica?.modalidade || registro?.modalidade, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio, preco: campos.preco } });
+      if (s0.estado === "desatualizado" || s0.estado === "sem_cotacao") {
+        const params = parametrosCotacao({ conta: contaEscolhida, medida: logistica?.medida, modalidade: logistica?.modalidade || registro?.modalidade, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio });
+        const base = registro?.base || (anuncio?.custo ? { custo: Number(String(anuncio.custo).replace(",", ".")) || 0 } : null);
+        if (base?.custo > 0) {
+          const r = await calcularFreteEPrecos({ params, base, precoFinal: campos.preco, consultar: (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, contaEscolhida), estimar: false });
+          if (r?.ok && r.registro) { registro = r.registro; recalculado = true; setFreteRecalculado(r.registro); }
+        }
+      }
+    }
     const s = situacaoFrete({
       registro,
       atual: {
@@ -1293,7 +1308,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     const nova = await cotarNoPreco({ params, preco: campos.preco, consultar: (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, contaEscolhida) });
     const c = conferirCotacao({ registro, nova });
     if (!c.ok) return { ok: false, motivo: c.motivo };
-    return { ok: true, texto: `Frete conferido agora no Mercado Livre: ${reaisFrete(nova.custo_vendedor)} (peso considerado ${nova.peso_cobrado_g} g, ${registro.final.faixa_rotulo}) — igual ao usado na precificação.` };
+    return { ok: true, recalculado, texto: `${recalculado ? "Frete RECALCULADO automaticamente com as medidas confirmadas. " : ""}Frete conferido agora no Mercado Livre: ${reaisFrete(nova.custo_vendedor)} (peso considerado ${nova.peso_cobrado_g} g, ${registro.final.faixa_rotulo}) — igual ao usado na precificação.` };
   }
   useEffect(() => {
     let ativo = true;

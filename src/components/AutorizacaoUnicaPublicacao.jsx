@@ -6,7 +6,7 @@ import { novaAutorizacaoId } from "../services/pilotoPublicacao";
 
 const CHAVE = (id) => `paiiaAutorizacaoPublicacao:${id}`;
 
-export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", preco = "", quantidade = "", contas = [], onAutorizar, ativo = false }) {
+export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", preco = "", quantidade = "", contas = [], onAutorizar, onManual = null, ativo = false }) {
   const [marcado, setMarcado] = useState(false);
   const loja = (contas || []).find((c) => nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE");
   if (ativo || !anuncioId || !loja) return null;
@@ -28,6 +28,7 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", p
         style={{ marginTop: 10, width: "100%", padding: "14px 16px", fontSize: 17, fontWeight: 800, borderRadius: 10, border: "none", background: marcado ? "#16a34a" : "#334155", color: "#fff", cursor: marcado ? "pointer" : "not-allowed" }}>
         ✅ Finalizar e Enviar
       </button>
+      {onManual && <button type="button" onClick={onManual} data-paiia-publicacao-manual style={{ marginTop: 8, background: "none", border: "none", color: "#94a3b8", textDecoration: "underline", cursor: "pointer", fontSize: 13 }}>Publicar manualmente (outra conta ou correção)</button>}
     </div>
   );
 }

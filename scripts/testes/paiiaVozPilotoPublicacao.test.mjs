@@ -3,7 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { situacaoAnuncioML, autorizacaoDaUrl, novaAutorizacaoId } from "../../src/services/pilotoPublicacao.js";
-const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
+// Quebras de linha do Windows (CRLF) não mudam o conteúdo conferido.
+const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 test("1) nº da autorização: UUID novo, lido só da URL e só se válido", () => {
   const id = novaAutorizacaoId();

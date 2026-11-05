@@ -3,6 +3,7 @@ import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
 import AutorizacaoUnicaPublicacao from "./AutorizacaoUnicaPublicacao";
+import { nomeDaLoja } from "../services/duplicidadeML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
 import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
@@ -1583,7 +1584,11 @@ function moverFoto(
   const estadoContasML = useContasML();
   const contasMLDisponiveis = contasMLConectadas(estadoContasML);
   // (Autorização única) nº da autorização da publicação automática: do Voz (URL) ou do Novo Anúncio.
+  const [publicacaoManual, setPublicacaoManual] = useState(false);
+  const lojaOnlineConectada = contasMLDisponiveis.some((c) => nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE");
   const [autoPiloto, setAutoPiloto] = useState(() => { try { const id = new URL(window.location.href).searchParams.get("auto") || ""; return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : ""; } catch { return ""; } });
+  // Caminho único: LOJA ONLINE conectada (ou piloto rodando) e você não pediu o modo manual.
+  const modoAutorizacaoUnica = (Boolean(autoPiloto) || lojaOnlineConectada) && !publicacaoManual;
   const contaMLAtivaConferencia =
     contasMLDisponiveis.find((c) => c.ativa) || null;
 
@@ -5003,6 +5008,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                 ❌ {fichaBase.erro} Sem a ficha na base, o F5 não consegue recuperar este anúncio e a publicação fica bloqueada.
               </section>
             )}
+            <div data-paiia-fluxo-antigo-base style={modoAutorizacaoUnica ? { display: "none" } : undefined}>
             <DecisaoBasePAIIA
               anuncioId={anuncioIdPAIIA}
               existeNaBase={Boolean(anuncio?.pecaEncontrada)}
@@ -5010,13 +5016,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               aplicacoes={aplicacoesConfirmadas}
               nomePeca={nomePeca}
             />
-            <EscolherCanaisPublicacao
-              key={anuncioIdPAIIA || "sem-ficha"}
-              anuncioId={anuncioIdPAIIA}
-              temContaML={contasMLDisponiveis.length > 0}
-              onLiberarML={setMercadoLivreLiberado}
-              onIrCentral={() => sairPara("centralPublicacao")}
-            />
+            </div>
             <AutorizacaoUnicaPublicacao
               anuncioId={anuncioIdPAIIA}
               sku={anuncioConferido?.codigo || ""}
@@ -5024,9 +5024,20 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               quantidade={quantidadeEstoque}
               contas={contasMLDisponiveis}
               onAutorizar={(contaId, id) => { setContaDestinoML(contaId); setAutoPiloto(id); }}
-              ativo={Boolean(autoPiloto)}
+              ativo={Boolean(autoPiloto) || publicacaoManual}
+              onManual={() => setPublicacaoManual(true)}
             />
             <PilotoAutomaticoPublicacao conta={contaDestinoML || ""} sku={anuncioConferido?.codigo || ""} autoId={autoPiloto} />
+            {/* (Caminho único) Com a autorização única disponível (LOJA ONLINE), o fluxo antigo fica ESCONDIDO:
+                continua montado só para o piloto executar os mesmos passos; aparece para outras contas ou se você pedir. */}
+            <div data-paiia-fluxo-antigo={modoAutorizacaoUnica ? "oculto" : "visivel"} style={modoAutorizacaoUnica ? { display: "none" } : undefined}>
+            <EscolherCanaisPublicacao
+              key={anuncioIdPAIIA || "sem-ficha"}
+              anuncioId={anuncioIdPAIIA}
+              temContaML={contasMLDisponiveis.length > 0}
+              onLiberarML={setMercadoLivreLiberado}
+              onIrCentral={() => sairPara("centralPublicacao")}
+            />
             {mercadoLivreLiberado && (
             <RevisaoPublicacaoML
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
@@ -5048,6 +5059,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               }}
             />
             )}
+            </div>
           </>
         )}
 
