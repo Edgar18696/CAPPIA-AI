@@ -50,7 +50,13 @@ export default function CorrecaoCompatMLB({ ficha, mlb, conta }) {
           <div data-paiia-compat-mlb-correspondidas>• Correspondidas no catálogo do ML: {d.compat.veiculos.length} veículo(s){(d.compat.correspondencias || []).length ? ` (${d.compat.correspondencias.map((c) => `${c.modeloDigitado} → ${c.modeloCatalogo}`).join("; ")})` : ""}</div>
           <div data-paiia-compat-mlb-aceitas>• Já aceitas no anúncio: {d.jaAceitos.length} de {d.compat.veiculos.length} (o anúncio tem {d.noAnuncio} veículo(s) no total)</div>
           {d.compat.semCatalogo.length > 0 && <div data-paiia-compat-mlb-sem-catalogo style={{ color: "#fde68a" }}>• Sem correspondência segura (continuam na ficha, nada foi trocado): {d.compat.semCatalogo.map((x) => `${x.aplicacao} — ${x.motivo}`).join("; ")}</div>}
-          {d.faltam.length > 0 ? (
+          {d.avisoUserProduct && <div data-paiia-compat-mlb-aviso-up style={{ color: "#94a3b8" }}>ⓘ {d.avisoUserProduct}</div>}
+          {d.categoriaBloqueia ? (
+            <div data-paiia-compat-mlb-categoria-bloqueia style={{ color: "#fca5a5", marginTop: 6, fontWeight: "bold" }}>
+              ⛔ {d.categoriaBloqueia}
+              <div style={{ fontWeight: "normal", color: "#fde68a" }}>Nada foi enviado. Troque a categoria do anúncio no Mercado Livre (Meus anúncios → Modificar → Categoria) para uma de peças de carro e depois confira aqui de novo.</div>
+            </div>
+          ) : d.faltam.length > 0 ? (
             <div style={{ marginTop: 6 }}>
               <div data-paiia-compat-mlb-faltam>Faltam no anúncio: {d.faltam.map((v) => v.nome).join("; ")}</div>
               <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>

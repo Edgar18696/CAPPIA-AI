@@ -113,7 +113,7 @@ export function sistemaDaCategoria({ niveis = [], dominio = "" } = {}) {
 
 export const rotuloSistema = (id) => SISTEMAS.find((s) => s.id === id)?.rotulo || id || "não identificado";
 
-function ramoEsperado(tipoVeiculo) {
+export function ramoEsperado(tipoVeiculo) {
   const t = norm(tipoVeiculo);
   return RAMO_POR_TIPO.find((r) => r.tipo.test(t))?.ramo || "";
 }

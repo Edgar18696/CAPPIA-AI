@@ -7,6 +7,7 @@
 // confirmação explícita — os veículos que faltam ao MESMO MLB.
 // Nunca cria anúncio, nunca remove veículo, nunca mexe no Bling.
 // =============================================================
+import { ramoEsperado } from "./categoriaML.js";
 import {
   aplicacoesDaFicha,
   separarAplicacoesParaML,
@@ -35,11 +36,36 @@ export async function lerCompatibilidadesDoMLB(mlb, consultar) {
   if (!c?.ok) return { ok: false, erro: c?.erro || "não foi possível ler as compatibilidades do anúncio" };
   const up = String(it.dados.user_product_id || "");
   let cu = null;
+  let avisoUserProduct = "";
   if (/^MLBU\d+$/.test(up)) {
+    // (06/11/2026) Leitura COMPLEMENTAR: o Mercado Livre responde 400 “Missing request
+    // parameter” em /user-products/{MLBU}/compatibilities. Isso não pode derrubar a
+    // conferência — vale a leitura do próprio anúncio (/items/{MLB}/compatibilities).
     cu = await consultar(`/user-products/${up}/compatibilities`);
-    if (!cu?.ok) return { ok: false, erro: cu?.erro || "não foi possível ler as compatibilidades do produto do vendedor" };
+    if (!cu?.ok) {
+      avisoUserProduct = `O Mercado Livre não permite ler as compatibilidades do produto do vendedor ${up} por esta consulta (${cu?.erro || "sem resposta"}); contadas as do anúncio ${mlb}.`;
+      cu = null;
+    }
   }
-  return { ok: true, item: it.dados, userProduct: up || "", ids: idsCompatibilidadesLidas(c.dados, cu?.dados) };
+  // Categoria do anúncio: só categoria de peças do tipo de veículo recebe veículos.
+  let categoria = null;
+  const catId = String(it.dados.category_id || "");
+  if (/^MLB\d+$/.test(catId)) {
+    const cat = await consultar(`/categories/${catId}`);
+    if (cat?.ok && Array.isArray(cat.dados?.path_from_root)) {
+      const niveis = cat.dados.path_from_root.map((n) => String(n?.name || "")).filter(Boolean);
+      categoria = { id: catId, niveis, caminho: niveis.join(" > ") };
+    }
+  }
+  return { ok: true, item: it.dados, userProduct: up || "", avisoUserProduct, categoria, ids: idsCompatibilidadesLidas(c.dados, cu?.dados) };
+}
+
+/** A categoria do anúncio aceita veículos do tipo da ficha? (só leitura do caminho). */
+export function categoriaRecebeVeiculos(categoria, tipoVeiculo = "Carro/Caminhonete") {
+  if (!categoria?.niveis?.length) return { ok: true, motivo: "" };
+  const ramo = ramoEsperado(tipoVeiculo) || "Peças de Carros e Caminhonetes";
+  if (categoria.niveis[0] === "Acessórios para Veículos" && categoria.niveis[1] === ramo) return { ok: true, motivo: "" };
+  return { ok: false, motivo: `O anúncio está na categoria “${categoria.caminho}” (${categoria.id}), fora de “${ramo}”: o Mercado Livre não vincula veículos de ${tipoVeiculo} a ela. Enviar de novo não resolve — a categoria do anúncio precisa ser trocada.` };
 }
 
 /**
@@ -56,7 +82,10 @@ export async function conferirCompatibilidadesMLB({ ficha, mlb, consultar }) {
   if (compat?.erro) return { ok: false, erro: compat.erro };
   const faltam = compat.veiculos.filter((v) => !lidos.ids.has(String(v.id).toUpperCase()));
   const jaAceitos = compat.veiculos.filter((v) => lidos.ids.has(String(v.id).toUpperCase()));
-  return { ok: true, mlb, informadas: detalhadas.length + modelos.length, aplicacoes: detalhadas, modelos, compat, noAnuncio: lidos.ids.size, jaAceitos, faltam, userProduct: lidos.userProduct };
+  const dc = ficha?.dados_conferencia || {};
+  const tipoVeiculo = dc?.ficha?.anuncioConferido?.tipoVeiculo || dc?.ficha?.campos?.tipoVeiculo || "Carro/Caminhonete";
+  const categoriaAnuncio = categoriaRecebeVeiculos(lidos.categoria, tipoVeiculo);
+  return { ok: true, mlb, informadas: detalhadas.length + modelos.length, aplicacoes: detalhadas, modelos, compat, noAnuncio: lidos.ids.size, jaAceitos, faltam, userProduct: lidos.userProduct, avisoUserProduct: lidos.avisoUserProduct, categoria: lidos.categoria, categoriaBloqueia: categoriaAnuncio.ok ? "" : categoriaAnuncio.motivo };
 }
 
 /**
