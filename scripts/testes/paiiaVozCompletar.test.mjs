@@ -249,7 +249,7 @@ test("campos diretos: marca, preço, estoque, peso (g) e medidas (cm) — e avan
 test("tela: texto ditado aparece no próprio campo; campo ativo à vista; voz das perguntas opcional (desligada)", () => {
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes("const mostrado = ditando ? ditando : focado ? texto : valor;"), "campo mostra o que está sendo ditado");
-  assert.ok(f.includes('ditando={ouvindo && campoVoz !== "codigoAdicional" ? parcial || " " : ""} onSalvar'), "código");
+  assert.ok(f.includes('ditando={ouvindo && campoVoz !== "codigoAdicional" && parcial ? parcial : ""} onSalvar'), "código");
   assert.ok(f.includes('ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar'), "descrição");
   assert.ok(f.includes('ditando={campoVoz === "titulo" && ouvindo ? parcial || " " : ""}'), "título");
   assert.ok(f.includes("data-pv-campo-mic") && f.includes("data-pv-dados-diretos"));

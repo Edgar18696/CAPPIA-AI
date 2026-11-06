@@ -33,7 +33,7 @@ function aplicacaoDaLinha(l, fonte) {
 /**
  * @returns {Promise<{ encontrado, origem, rotulo, aplicacoes[], codigos[], descricao, erro }>}
  */
-export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalogo } = {}) {
+export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalogo, preencherAutomatico } = {}) {
   const alvo = normalizarCodigo(codigo);
   const vazio = { encontrado: false, origem: "", rotulo: "", aplicacoes: [], codigos: [], descricao: "", erro: "" };
   if (!alvo) return { ...vazio, erro: "Informe o código da peça antes de consultar." };
@@ -76,6 +76,26 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
     }
   }
 
+  // 3) (13/11) A MESMA busca do Criar Anúncio (catálogo mestre, catálogos internos, base de anúncios),
+  // sem internet. Mesma ordem de fontes de aplicações que o Criar Anúncio usa. Nada é inventado.
+  if (typeof preencherAutomatico === "function") {
+    try {
+      const r = await preencherAutomatico({ codigo, oem: "", permitirBuscaInternet: false });
+      const peca = r?.pecaEncontrada || null;
+      const fontes = [r?.baseMestre?.aplicacoes, r?.diagnostico?.baseMestre?.aplicacoes, r?.inteligencia?.registros, peca?.aplicacoes, r?.resultadosCatalogo, r?.aplicacoes].find((a) => Array.isArray(a) && a.length) || [];
+      const rotulo = "Base PAIIA (mesma busca do Criar Anúncio)";
+      const vistos = new Set();
+      const aplicacoes = fontes
+        .filter((l) => String(l?.tipo_referencia || "").toLowerCase() !== "nota_tecnica")
+        .map((l) => aplicacaoDaLinha(l, rotulo))
+        .filter((a) => { if (!a) return false; const k = [a.montadora, a.modelos[0], a.motores[0], a.anoInicio, a.anoFim].join("|").toLowerCase(); if (vistos.has(k)) return false; vistos.add(k); return true; });
+      const codigos = [...new Set([peca?.codigo_oem, ...(peca?.codigos_oem || []), ...(peca?.codigos_equivalentes || []), ...(peca?.codigos_alternativos || []), r?.oem].map(txt).filter(Boolean))].filter((c) => normalizarCodigo(c) !== alvo);
+      const descricao = txt(peca?.descricao || peca?.nome || peca?.peca || r?.descricao || "");
+      if (aplicacoes.length || descricao || codigos.length) return { encontrado: true, origem: "catalogo", rotulo, aplicacoes, codigos, descricao, erro: "" };
+    } catch (e) {
+      vazio.erro = vazio.erro || `Busca da base indisponível: ${e?.message || e}`;
+    }
+  }
   return { ...vazio, erro: vazio.erro || "" };
 }
 

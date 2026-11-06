@@ -330,7 +330,7 @@ test("etapas sem a caixa extra “Digite uma informação da peça”/OK: cada c
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(!tela.includes("data-pr-entrada") && !tela.includes("Digite uma informação da peça") && !tela.includes("enviarDigitado"), "caixa extra removida");
   assert.ok(tela.includes('{micCampo("codigo", "Código")}') && tela.includes('{micCampo("titulo", "Título")}') && tela.includes('{micCampo("", "Descrição")}') && tela.includes("{micCampo(c.id, c.rotulo)}"), "microfone ao lado de cada campo");
-  assert.ok(tela.includes('ditando={ouvindo && campoVoz !== "codigoAdicional" ? parcial || " " : ""} onSalvar'), "código mostra a fala no próprio campo");
+  assert.ok(tela.includes('ditando={ouvindo && campoVoz !== "codigoAdicional" && parcial ? parcial : ""} onSalvar'), "código mostra a fala no próprio campo");
   assert.ok(tela.includes("onBlur={() => { setFocado(false); if (texto !== valor) onSalvar(texto); }}"), "digitação direta no campo é salva");
   assert.ok(tela.includes("data-pv-microfone"), "microfone principal continua");
   assert.ok(ler("src/modules/paiiaVoz/CompletarVoz.jsx").includes("data-pv-completar-entrada"), "conversa opcional mantém a sua resposta digitada");

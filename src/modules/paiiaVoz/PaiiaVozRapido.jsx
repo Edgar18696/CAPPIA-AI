@@ -61,6 +61,9 @@ import { entenderTrecho } from "./servicos/conversaVoz";
 import { criarReconhecedor, suportaReconhecimento, diagnosticoVoz } from "./servicos/reconhecimentoVoz";
 import TesteMicrofone from "./TesteMicrofone";
 import { consultarBaseVoz } from "./servicos/consultaBaseVoz";
+import { preencherAnuncioAutomaticamente } from "../../services/preencherAnuncioService";
+// Laboratório: a busca do Criar Anúncio pode ser simulada SÓ no modo de teste.
+const preencherBase = (...a) => (globalThis.__paiiaModoTeste && globalThis.__paiiaPreencherTeste ? globalThis.__paiiaPreencherTeste(...a) : preencherAnuncioAutomaticamente(...a));
 import { candidatosDeCodigo, lerTextoDaFoto } from "./servicos/codigoNaFoto";
 import { armazenamentoIndexedDB, armazenamentoMemoria, criarGuardaFotos, MAX_FOTOS_POR_FICHA } from "./servicos/fotosVozLocal";
 import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
@@ -424,9 +427,17 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const consultarBase = useCallback(async (codigo) => {
     setConsultando(true);
     try {
-      const res = await consultarBaseVoz(codigo, { buscarValidado: buscarConhecimentoValidado, pesquisarCatalogo });
-      mudarFicha(registrarConsultaBase(fichaRef.current, res));
-      if (res.encontrado) setAviso(`Encontrei o código na ${res.rotulo}. Veja as sugestões abaixo; você decide se aproveita.`);
+      const res = await consultarBaseVoz(codigo, { buscarValidado: buscarConhecimentoValidado, pesquisarCatalogo, preencherAutomatico: preencherBase });
+      let f = registrarConsultaBase(fichaRef.current, res);
+      // (13/11) Encontrado: aproveita SOZINHO o que a base tem. Aplicações entram como "da base, a conferir"
+      // (desmarcadas, sem duplicar); códigos como adicionais não conferidos; nada confirmado é sobrescrito.
+      if (res.encontrado && !estadoRapido(fichaRef.current).base?.aproveitado) {
+        const inc = incorporarResultadoBase(f, res);
+        f = marcarBaseAproveitada(inc.ficha);
+        if (!estadoRapido(f).titulo.valor) { const sug = sugestoesTitulo(f)[0]; if (sug) f = definirTitulo(f, sug, { origem: "base" }); }
+      }
+      mudarFicha(f);
+      if (res.encontrado) setAviso(`Encontrei o código na ${res.rotulo}: ${res.aplicacoes.length} aplicação(ões) e ${res.codigos.length} código(s) trazidos para conferir.`);
       else setAviso("Não encontrei esse código na base PAIIA. Pode seguir normalmente.");
     } catch (e) {
       mudarFicha(registrarConsultaBase(fichaRef.current, { encontrado: false, erro: String(e?.message || e) }));
@@ -474,7 +485,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   function aproveitarBase() {
     const cp = codigoPrincipal(fichaRef.current);
     if (!cp) return;
-    consultarBaseVoz(cp.codigo, { buscarValidado: buscarConhecimentoValidado, pesquisarCatalogo }).then((res) => {
+    consultarBaseVoz(cp.codigo, { buscarValidado: buscarConhecimentoValidado, pesquisarCatalogo, preencherAutomatico: preencherBase }).then((res) => {
       const inc = incorporarResultadoBase(fichaRef.current, res);
       let f = marcarBaseAproveitada(inc.ficha);
       const rr = estadoRapido(f);
@@ -648,6 +659,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       if (c.erro) { setAviso(c.erro); return; }
       // (04/11) Microfone do campo “Acrescentar código”: entra como código ADICIONAL (o principal não muda).
       if (campoVozRef.current === "codigoAdicional") { acrescentarCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", ouvido: origem === "voz" ? t : "" }); return; }
+      // (13/11) SKU principal fixo: já definido, uma fala posterior NÃO o substitui (entra como adicional),
+      // a não ser que você peça ("trocar/corrigir o código principal …"). Digitado no campo: vale o digitado.
+      const principalAtual = codigoPrincipal(f)?.codigo || "";
+      if (origem === "voz" && principalAtual && principalAtual !== c.codigo && !/\b(troc|corrig|mud|substitu)\w*/i.test(t)) { acrescentarCodigo(c.codigo, { soletrado: c.soletrado, ouvido: t }); return; }
       definirCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", duvidas: c.duvidas, ouvido: origem === "voz" ? t : "" });
       return;
     }
@@ -1189,7 +1204,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         <section className="pr-bloco" data-pr-bloco="codigo">
           <label className="pr-rotulo" htmlFor="pr-codigo">Código da peça (SKU)</label>
           <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }} data-pv-campo-direto="codigo">
-            <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo && campoVoz !== "codigoAdicional" ? parcial || " " : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.pular) tratarFala(v, "digitado"); else if (c.erro) setAviso(c.erro); }} data="codigo" />
+            <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo && campoVoz !== "codigoAdicional" && parcial ? parcial : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.pular) tratarFala(v, "digitado"); else if (c.erro) setAviso(c.erro); }} data="codigo" />
             {micCampo("codigo", "Código")}
           </div>
           {ouvidoCodigo && ouvidoCodigo.codigo === (cp?.codigo || "") && <p className="pr-fonte" data-pr-ouvido>🎤 O celular ouviu: “{ouvidoCodigo.ouvido}” → anotei <b>{ouvidoCodigo.codigo}</b>. Traço só entra se você disser “traço”; para corrigir, digite acima.</p>}
@@ -1207,7 +1222,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             ))}
             <label className="pr-rotulo" htmlFor="pr-codigo-adicional">Acrescentar código (fale ou digite e toque fora / Enter)</label>
             <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }} data-pv-campo-direto="codigoAdicional">
-              <CampoTexto id="pr-codigo-adicional" valor="" ditando={campoVoz === "codigoAdicional" && ouvindo ? parcial || " " : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) acrescentarCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo-adicional" />
+              <CampoTexto id="pr-codigo-adicional" valor="" ditando={campoVoz === "codigoAdicional" && ouvindo && parcial ? parcial : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) acrescentarCodigo(c.codigo); else if (c.erro) setAviso(c.erro); }} data="codigo-adicional" />
               {micCampo("codigoAdicional", "Código adicional")}
             </div>
             <p className="pr-fonte" style={{ margin: 0 }}>Só os conferidos entram na descrição. Códigos sugeridos pela base não são considerados equivalentes sem a sua conferência.</p>
