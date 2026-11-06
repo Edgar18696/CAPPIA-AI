@@ -15,7 +15,7 @@ export async function listarFotosGaleria(supabase, userId, { inicio = 0, quantid
   try {
     resposta = await supabase
       .from("processamentos")
-      .select("id, tipo, status, created_at, imagem_processada")
+      .select("id, tipo, status, created_at, imagem_processada, imagem_original")
       .eq("user_id", userId)
       .eq("tipo", "foto")
       .not("imagem_processada", "is", null)
@@ -29,7 +29,12 @@ export async function listarFotosGaleria(supabase, userId, { inicio = 0, quantid
   const linhas = Array.isArray(resposta?.data) ? resposta.data : [];
   const fotos = linhas
     .filter((l) => /^https?:\/\//i.test(String(l.imagem_processada || "")))
-    .map((l) => ({ id: String(l.id), url: String(l.imagem_processada), em: l.created_at || "" }));
+    .map((l) => {
+      const original = /^https?:\/\//i.test(String(l.imagem_original || "")) ? String(l.imagem_original) : "";
+      // (06/11) Já tratada pelo Foto IA (fundo branco): processada e diferente da original.
+      const tratada = /^processad/i.test(String(l.status || "")) && original !== String(l.imagem_processada);
+      return { id: String(l.id), url: String(l.imagem_processada), em: l.created_at || "", original, tratada };
+    });
   return { fotos, temMais: linhas.length === quantidade, erro: "" };
 }
 

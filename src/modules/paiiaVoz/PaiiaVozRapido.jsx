@@ -89,6 +89,8 @@ import { rascunhoDaFicha } from "../../services/fichaNovoAnuncio";
 import { enviarOriginalFotoIA, recortarFotoIA } from "../../services/fotoIA/pipelineFotoIA";
 import { comporFotoFinal } from "../../services/fotoIA/composicaoFotoIA";
 import { supabase } from "../../supabase";
+import GaleriaSeletor from "../../components/fotos/GaleriaSeletor";
+import { baixarFotoGaleria, vagasFotos } from "./servicos/galeriaVoz";
 import { consumirAcaoPaiiaVoz } from "./servicos/acaoInicial";
 import { iniciarAnuncioNovo, abrirFichaNoNovoAnuncio } from "../../services/aberturaNovoAnuncio";
 import { buscarConhecimentoValidado } from "../../services/paizinhoPesquisa/conhecimentoValidado";
@@ -133,6 +135,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const fichaRef = useRef(ficha);
   const reconhecedorRef = useRef(null);
   const fotoRef = useRef(null);
+  const [galeriaAberta, setGaleriaAberta] = useState(false); // (06/11) Galeria interna do PAIIA (fotos da conta)
   const galeriaRef = useRef(null);
   const trocarRef = useRef({ input: null, id: null });
   const fotosRef = useRef([]);
@@ -329,6 +332,39 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     } catch (e) {
       setAviso(`Não consegui guardar as fotos neste aparelho (${e?.message || e}).`);
     }
+  }
+  // (06/11) Galeria interna: baixa as escolhidas e guarda nesta ficha (mesmo caminho das fotos do aparelho).
+  // Foto já tratada (fundo branco): entra pronta, sem passar de novo pelo Foto IA (sem créditos);
+  // a ficha usa os MESMOS arquivos da Galeria (nada é enviado de novo, nada é alterado lá).
+  async function usarFotosDaGaleria(itens) {
+    const arquivos = [];
+    const prontas = [];
+    for (const it of itens) {
+      try {
+        const final = await baixarFotoGaleria(it);
+        if (!it.tratada) { arquivos.push(final); continue; }
+        const original = it.original ? await baixarFotoGaleria({ id: `${it.id}-original`, url: it.original }).catch(() => null) : null;
+        prontas.push({ it, final, original });
+      } catch (e) { return `Não consegui trazer uma foto da Galeria (${e?.message || e}). Nada foi alterado na Galeria.`; }
+    }
+    if (prontas.length) {
+      try {
+        const em = Date.now();
+        // tudo gravado junto com a foto: a fila do Foto IA nunca a vê como “nova”
+        const extras = prontas.map(({ it, final, original }) => ({
+          tratada: { blob: final, origem: "galeria", baixaResolucao: false, em },
+          ia: { estado: "pronta", origem: "galeria", erro: "", em },
+          versao: "tratada",
+          nuvem: { original: { caminho: "", url: original ? it.original : it.url }, tratada: { caminho: "", url: it.url, em } },
+        }));
+        const { guardadas, recusadas } = await guarda.adicionar(fichaRef.current.id, prontas.map((p) => p.original || p.final), extras);
+        await recarregarFotos();
+        if (!arquivos.length) setAviso(`${guardadas.length} foto(s) da Galeria já com fundo branco: entraram prontas, sem novo tratamento.${recusadas.length ? ` ${recusadas.length} não entrou(aram): ${[...new Set(recusadas.map((x) => x.motivo))].join("; ")}.` : ""}`);
+      } catch (e) { return `Não consegui guardar as fotos da Galeria neste aparelho (${e?.message || e}).`; }
+    }
+    if (arquivos.length) await adicionarFotos(arquivos);
+    setGaleriaAberta(false);
+    return "";
   }
   async function trocarFoto(id, arquivo) {
     if (!arquivo) return;
@@ -932,11 +968,25 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         <section className="pr-bloco" data-pr-bloco="fotos">
           <div className="pr-linha">
             <button type="button" className="pr-botao pr-claro" disabled={fotos.length >= MAX_FOTOS_POR_FICHA} onClick={() => fotoRef.current?.click()} data-pv-foto-botao>📷 Tirar foto</button>
-            <button type="button" className="pr-botao pr-claro" disabled={fotos.length >= MAX_FOTOS_POR_FICHA} onClick={() => galeriaRef.current?.click()} data-pv-galeria-botao>🖼️ Galeria</button>
+            <button type="button" className="pr-botao pr-claro" disabled={fotos.length >= MAX_FOTOS_POR_FICHA} onClick={() => setGaleriaAberta(true)} data-pv-galeria-botao>🖼️ Galeria</button>
+            <button type="button" className="pr-botao pr-claro" disabled={fotos.length >= MAX_FOTOS_POR_FICHA} onClick={() => galeriaRef.current?.click()} data-pv-dispositivo-botao>📁 Enviar foto do dispositivo</button>
             <span className="pr-contador" data-pr-contador>{fotos.length} de {MAX_FOTOS_POR_FICHA}</span>
           </div>
           <input ref={fotoRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => { adicionarFotos(e.target.files); e.target.value = ""; }} data-pv-foto-input />
           <input ref={galeriaRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={(e) => { adicionarFotos(e.target.files); e.target.value = ""; }} data-pv-galeria-input />
+          {/* (06/11) Galeria interna: fotos da conta (só leitura); a escolhida é copiada para esta ficha como as outras. */}
+          {galeriaAberta && (
+            <GaleriaSeletor
+              supabase={supabase}
+              userId={usuario?.id}
+              vagas={vagasFotos(fotos.length, MAX_FOTOS_POR_FICHA)}
+              onEscolher={usarFotosDaGaleria}
+              onFechar={() => setGaleriaAberta(false)}
+              onArquivo={() => galeriaRef.current?.click()}
+              classeBotao="pr-botao"
+              classeLink="pr-link"
+            />
+          )}
           <input ref={(el) => { trocarRef.current.input = el; }} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { trocarFoto(trocarRef.current.id, e.target.files?.[0]); e.target.value = ""; }} data-pr-trocar-input />
           <div className="pr-fotos">
             {fotos.map((f, i) => (

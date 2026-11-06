@@ -104,15 +104,16 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
       .sort((a, b) => (a.ordem ?? a.criadaEm) - (b.ordem ?? b.criadaEm));
   }
 
-  /** Guarda as imagens recebidas. Devolve { guardadas[], recusadas[] }. */
-  async function adicionar(fichaId, arquivos) {
+  /** Guarda as imagens recebidas. Devolve { guardadas[], recusadas[] }.
+   *  (06/11) extras[i] (opcional): campos já prontos da foto i (ex.: foto da Galeria já tratada). */
+  async function adicionar(fichaId, arquivos, extras = []) {
     if (!fichaId) throw new Error("ficha sem id");
     const lista = Array.from(arquivos || []);
     const atuais = await listar(fichaId);
     const guardadas = [];
     const recusadas = [];
     let ordem = atuais.length ? Math.max(...atuais.map((r) => Number(r.ordem) || 0)) + 1 : 1;
-    for (const a of lista) {
+    for (const [i, a] of lista.entries()) {
       if (!ehImagem(a)) { recusadas.push({ nome: a?.name || "", motivo: "não é imagem" }); continue; }
       if (atuais.length + guardadas.length >= MAX_FOTOS_POR_FICHA) { recusadas.push({ nome: a?.name || "", motivo: `limite de ${MAX_FOTOS_POR_FICHA} fotos por ficha` }); continue; }
       const reg = {
@@ -128,6 +129,7 @@ export function criarGuardaFotos({ armazenamento, agora = () => Date.now() } = {
         ia: null,
         criadaEm: agora(),
         ordem: ordem++,
+        ...(extras[i] || {}),
       };
       await arm.put(reg);
       guardadas.push(reg);

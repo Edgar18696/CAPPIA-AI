@@ -28,6 +28,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const contas = contasMLConectadas(estadoContas).filter((c) => String(c.ml_user_id || "").trim());
   const [contaEscolhida, setConta] = useState("");
   const [row, setRow] = useState(null);
+  // (06/11) Resultado da última leitura da ficha: “não encontrada” ou erro não ficam presos em “Lendo a ficha…”.
+  const [leitura, setLeitura] = useState({ estado: "lendo", erro: "" });
   const [rodando, setRodando] = useState("");
   const [erro, setErro] = useState("");
   const [autorizarBling, setAutorizarBling] = useState(false);
@@ -54,6 +56,7 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     if (!fichaId) return null;
     const r = await (depsTeste()?.lerFicha || lerFichaNovoAnuncio)(fichaId);
     if (r?.ok) setRow(r.ficha);
+    setLeitura(r?.ok ? { estado: "ok", erro: "" } : { estado: r?.naoEncontrada ? "nao-encontrada" : "erro", erro: r?.erro || "" });
     return r;
   }, [fichaId]);
   // (05/11) Página desatualizada (aberta antes de uma publicação) não autoriza nada.
@@ -75,7 +78,9 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
     (async () => {
       if (!fichaId) return;
       const r = await (depsTeste()?.lerFicha || lerFichaNovoAnuncio)(fichaId);
-      if (ativo && r?.ok) setRow(r.ficha);
+      if (!ativo) return;
+      if (r?.ok) setRow(r.ficha);
+      setLeitura(r?.ok ? { estado: "ok", erro: "" } : { estado: r?.naoEncontrada ? "nao-encontrada" : "erro", erro: r?.erro || "" });
     })();
     return () => { ativo = false; };
   }, [fichaId, versaoNuvem]);
@@ -107,6 +112,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   }, [row, conta, rodando, conferir]);
 
   if (!fichaId) return <>{depoisDaConta}<p className="pr-aviso" data-pv-finalizar-sem-ficha>☁️ Salve a ficha na conta (informe o código) para finalizar.</p></>;
+  if (!row && leitura.estado === "nao-encontrada") return <><div className="pr-aviso" data-pv-finalizar-nao-encontrada><strong>⚠️ A ficha deste rascunho não foi encontrada na conta em que você está.</strong><br />Ela pode ter sido removida ou criada com outro login. Nada foi enviado ao Bling nem ao Mercado Livre. <small>(ficha {String(fichaId).slice(0, 8)})</small><br /><button type="button" className="pr-link" onClick={recarregar} data-pv-finalizar-ler-de-novo>Ler de novo</button></div>{depoisDaConta}</>;
+  if (!row && leitura.estado === "erro") return <><p className="pr-aviso" data-pv-finalizar-erro-leitura>⚠️ Não consegui ler a ficha agora{leitura.erro ? ` (${leitura.erro})` : ""}. Nada foi enviado. <button type="button" className="pr-link" onClick={recarregar} data-pv-finalizar-ler-de-novo>Tentar de novo</button></p>{depoisDaConta}</>;
   if (!row) return <><p className="pr-fonte" data-pv-finalizar="carregando">⏳ Lendo a ficha…</p>{depoisDaConta}</>;
   const sit = situacaoFinalizar(row, { autorizarBling, semCompatibilidade, liberado, marcar });
   const d = sit.revisao.dados;

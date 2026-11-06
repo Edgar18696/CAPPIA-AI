@@ -176,3 +176,39 @@ test("escolhas do usuário não se perdem enquanto o tratamento grava o progress
   const arq = g.arquivoEscolhido((await g.listar("F"))[0]);
   assert.equal(arq.size, 7);
 });
+
+test("(06/11) Galeria: foto já tratada entra pronta (sem Foto IA, sem cobrança); original sem tratamento segue normal; limite de 5", async () => {
+  const GV = await import("../../src/modules/paiiaVoz/servicos/galeriaVoz.js");
+  // listagem: marca “tratada” só o que o Foto IA processou (diferente da original)
+  const linhas = [
+    { id: 1, status: "processado", imagem_processada: "https://g/p1.png", imagem_original: "https://g/o1.jpg" },
+    { id: 2, status: "enviado", imagem_processada: "https://g/o2.jpg", imagem_original: "https://g/o2.jpg" },
+    { id: 3, status: "processado", imagem_processada: "https://g/p3.png", imagem_original: null },
+  ];
+  const sb = { from: () => { const q = { select: () => q, eq: () => q, not: () => q, order: () => q, range: async () => ({ data: linhas, error: null }) }; return q; } };
+  const lista = await GV.listarFotosGaleria(sb, "u1");
+  assert.deepEqual(lista.fotos.map((f) => [f.id, f.tratada, f.original]), [["1", true, "https://g/o1.jpg"], ["2", false, "https://g/o2.jpg"], ["3", true, ""]]);
+  // guarda: a já tratada nasce com fundo branco pronto e endereços da Galeria; a fila não a trata
+  const g = G.criarGuardaFotos({ armazenamento: G.armazenamentoMemoria() });
+  await g.adicionar("F", [img("dispositivo.jpg")]);
+  const final = new Blob([new Uint8Array(1200)], { type: "image/png" });
+  const em = 123;
+  await g.adicionar("F", [img("galeria-1-original.jpg", 900)], [{ tratada: { blob: final, origem: "galeria", baixaResolucao: false, em }, ia: { estado: "pronta", origem: "galeria", erro: "", em }, versao: "tratada", nuvem: { original: { caminho: "", url: "https://g/o1.jpg" }, tratada: { caminho: "", url: "https://g/p1.png", em } } }]);
+  await g.adicionar("F", [img("galeria-2.jpg")]); // sem tratamento: como foto nova
+  const falsa = fotoIAFalsa();
+  const fila = IA.criarFilaFotoIA({ guarda: g, executar: IA.criarExecutorFotoIA(falsa.deps) });
+  await fila.enfileirarNovas("F");
+  assert.ok(await ate(async () => (await g.listar("F")).every((r) => r.ia?.estado === "pronta")));
+  const regs = await g.listar("F");
+  const gal = regs.find((r) => r.nome === "galeria-1-original.jpg");
+  assert.equal(falsa.c.cobradas.size, 2, "só a do dispositivo e a da Galeria sem tratamento foram tratadas");
+  assert.equal(gal.tratada.blob.size, 1200, "fundo branco da Galeria intacto (mesmos bytes)");
+  assert.equal(gal.blob.size, 900, "original da Galeria intacta");
+  assert.equal(gal.versao, "tratada");
+  const N = await import("../../src/modules/paiiaVoz/servicos/fichaVozNuvem.js");
+  assert.equal(N.urlNoAnuncio(gal), "https://g/p1.png", "o anúncio usa o MESMO arquivo da Galeria (nada enviado de novo)");
+  // limite de 5 continua
+  const r = await g.adicionar("F", [img("a.jpg"), img("b.jpg"), img("c.jpg")], [{ versao: "tratada" }]);
+  assert.equal(r.guardadas.length, 2); assert.equal(r.recusadas.length, 1);
+  assert.equal((await g.listar("F")).length, 5);
+});
