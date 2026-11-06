@@ -1965,10 +1965,10 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               </div>
             )}
             {validacao && validacao.ok && validacao.valido && (
-              <p style={{ ...info, color: "#86efac" }}>✅ O Mercado Livre aceitou os dados. Nenhum anúncio foi criado.</p>
+              <p style={{ ...info, color: "#86efac" }} data-paiia-validacao="ok">✅ O Mercado Livre aceitou os dados. Nenhum anúncio foi criado.</p>
             )}
             {validacao && (!validacao.ok || !validacao.valido) && (
-              <div style={erro}>
+              <div style={erro} data-paiia-validacao="erro">
                 ❌ {validacao.erro || validacao.mensagem || "O Mercado Livre apontou problemas:"}
                 <ul style={{ margin: "6px 0 0 18px" }}>
                   {(validacao.causas || []).map((c, i) => (

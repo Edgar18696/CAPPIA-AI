@@ -85,13 +85,48 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   p.progresso("quantidade");
   const q = await esperarAte(() => visivel("[data-paiia-confirmar-quantidade]") || (p.achar('[data-paiia-quantidade-estado="confirmada"]') ? { ja: true } : null), L.passo);
   if (q && !q.ja) p.clicar(q);
-  // 4) Validar no ML (não publica).
+  // 4) Validar no ML (não publica; leitura segura de repetir). (Correção 13/11) A validação pode já estar
+  // RODANDO (validação automática da tela) e demorar mais que um passo comum: espera enquanto ela mostra
+  // "Validando…"; usa o resultado que já existir; erro da validação = mensagem específica (1 nova tentativa,
+  // porque validar não cria nada); botão travado com motivo = esse motivo.
   p.progresso("validar");
-  const val = await esperarAte(() => visivel("[data-paiia-validar-ml]"), L.passo);
-  if (!val) { const m = p.achar("[data-paiia-motivo-sem-validar]"); return pausa("validar", m ? p.texto(m) : "A validação no Mercado Livre não ficou disponível."); }
-  p.clicar(val);
+  const limiteVal = L.validacao || 3 * 60_000;
+  const lerValidacao = () => {
+    if (p.achar('[data-paiia-validacao="ok"]')) return { ok: true };
+    const e = p.achar('[data-paiia-validacao="erro"]');
+    return e ? { erro: p.texto(e).replace(/\s+/g, " ").trim().slice(0, 400) } : null;
+  };
+  let tentativasVal = 0;
+  let resVal;
+  for (;;) {
+    let estavelMotivo = 0;
+    const r1 = await esperarAte(() => {
+      const v = lerValidacao();
+      if (v) return v;
+      const b = visivel("[data-paiia-validar-ml]");
+      if (b) return { botao: b };
+      const m = p.achar("[data-paiia-motivo-sem-validar]");
+      estavelMotivo = m && !p.achar("[data-paiia-validando]") ? estavelMotivo + 1 : 0;
+      return estavelMotivo >= (L.estavel || 4) ? { motivo: p.texto(m).replace(/^⚠\s*/, "") } : null;
+    }, limiteVal);
+    if (!r1) return pausa("validar", p.achar("[data-paiia-validando]") ? "O Mercado Livre não terminou a validação em 3 minutos. Nada foi enviado ao Mercado Livre; tente de novo mais tarde." : "A tela de validação não respondeu. Nada foi enviado ao Mercado Livre.");
+    if (r1.motivo) return pausa("validar", r1.motivo);
+    if (r1.ok) { resVal = r1; break; }
+    if (r1.erro && (tentativasVal >= 2 || !visivel("[data-paiia-validar-ml]"))) return pausa("validar", `${r1.erro} Nada foi enviado ao Mercado Livre.`);
+    // botão livre (nunca validou) ou erro na 1ª tentativa: valida (de novo) — só leitura no ML.
+    const b = visivel("[data-paiia-validar-ml]");
+    if (!b) continue;
+    tentativasVal += 1;
+    p.progresso("validar", tentativasVal > 1 ? "Validando de novo no Mercado Livre…" : "Validando no Mercado Livre…");
+    p.clicar(b);
+    await p.esperar(L.intervalo);
+    const r2 = await esperarAte(() => (p.achar("[data-paiia-validando]") ? null : lerValidacao()), limiteVal);
+    if (!r2) return pausa("validar", "O Mercado Livre não terminou a validação em 3 minutos. Nada foi enviado ao Mercado Livre; tente de novo mais tarde.");
+    if (r2.ok) { resVal = r2; break; }
+    if (tentativasVal >= 2) return pausa("validar", `${r2.erro} Nada foi enviado ao Mercado Livre.`);
+  }
   const aut = await esperarAte(() => visivel("[data-paiia-autorizo-ml]") || (erroNaTela() ? { erro: erroNaTela() } : null), L.passo);
-  if (!aut || aut.erro) return pausa("validar", aut?.erro || "O Mercado Livre não confirmou os dados do anúncio.");
+  if (!resVal || !aut || aut.erro) return pausa("validar", aut?.erro || "O Mercado Livre não confirmou os dados do anúncio.");
   // 5) Publicar UMA vez (o nº da autorização vai junto; o servidor recusa repetição).
   p.progresso("publicar");
   if (!aut.checked) p.clicar(aut);
