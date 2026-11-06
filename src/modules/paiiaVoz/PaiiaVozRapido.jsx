@@ -80,6 +80,7 @@ import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto
 import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
 import CategoriaVoz from "./CategoriaVoz";
+import CalculadoraPrecoVoz from "./CalculadoraPrecoVoz";
 import { lerAplicacaoFalada, valorDoCampoFalado, proximoCampoVeiculo } from "./servicos/aplicacaoFalada";
 import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
 import { descartarRascunhoLocalDaFicha } from "../../services/exclusaoFicha";
@@ -142,6 +143,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const setCampoVoz = useCallback((id) => { campoVozRef.current = id; setCampoVozEstado(id); }, []); // (03/11) o que o celular ouviu no código (diagnóstico)
   const fichaRef = useRef(ficha);
   const reconhecedorRef = useRef(null);
+  // (P-01/P-02) Microfone contínuo: depois de tratar uma fala, volta a ouvir sozinho (sem clique).
+  const seguirOuvindo = useCallback(() => {
+    setTimeout(() => { const rec = reconhecedorRef.current; try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* precisa de toque */ } }, 450);
+  }, []);
   // Toque no 🎤 de um campo: liga (ou desliga) o microfone só para aquele campo.
   const tocarMicCampo = useCallback((id) => {
     const rec = reconhecedorRef.current;
@@ -482,6 +487,20 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setAviso(`✏️ Aplicação corrigida: ${textoAplicacao(r.aplicacao)}. Confira e marque de novo — o catálogo do Mercado Livre valida de novo na Finalizar.`);
   }, [mudarFicha]);
 
+  // (P-04) Etapa Compatibilidade: as aplicações da base aparecem SOZINHAS, sem nova pesquisa pedida por você.
+  // Ficha consultada antes desta versão (não aproveitada ou "não encontrada" com a busca antiga): refaz a
+  // consulta UMA vez, em silêncio, e traz as aplicações como "da base, a conferir".
+  const baseCompatRef = useRef("");
+  useEffect(() => {
+    if (etapa !== "compat") return undefined;
+    const cp0 = codigoPrincipal(fichaRef.current);
+    const b = estadoRapido(fichaRef.current).base;
+    if (!cp0?.codigo || baseCompatRef.current === cp0.codigo || b?.aproveitado) return undefined;
+    baseCompatRef.current = cp0.codigo;
+    const tm = setTimeout(() => { if (b?.estado === "encontrado") aproveitarBase(); else consultarBase(cp0.codigo); }, 0);
+    return () => clearTimeout(tm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [etapa]);
   function aproveitarBase() {
     const cp = codigoPrincipal(fichaRef.current);
     if (!cp) return;
@@ -646,6 +665,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       return;
     }
     if (rr.etapa === "codigo") {
+      // (P-01) "não tenho mais códigos" (ou "pronto", "só isso") → vai para o Título com o microfone ligado.
+      if (codigoPrincipal(f) && /\b(n[aã]o tenho mais|n[aã]o tem mais|s[oó] isso|acabou|pronto|terminei|nenhum outro|sem mais)\b/i.test(t)) {
+        irPara("descricao");
+        setCampoVoz("titulo"); // mesmo com título sugerido pela base: a próxima fala é o TÍTULO
+        setAviso("✅ Códigos salvos. Agora fale o TÍTULO da peça.");
+        seguirOuvindo();
+        return;
+      }
       // (03/11/2026) Código FALADO: sem traço/ponto que não foi pronunciado (o reconhecedor
       // do celular formata números sozinho); hífen só com “traço”. Digitado: como foi digitado.
       const c = lerCodigoDaFala(t, { falado: origem === "voz" });
@@ -658,12 +685,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       }
       if (c.erro) { setAviso(c.erro); return; }
       // (04/11) Microfone do campo “Acrescentar código”: entra como código ADICIONAL (o principal não muda).
-      if (campoVozRef.current === "codigoAdicional") { acrescentarCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", ouvido: origem === "voz" ? t : "" }); return; }
+      if (campoVozRef.current === "codigoAdicional") { acrescentarCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", ouvido: origem === "voz" ? t : "" }); if (origem === "voz") seguirOuvindo(); return; }
       // (13/11) SKU principal fixo: já definido, uma fala posterior NÃO o substitui (entra como adicional),
       // a não ser que você peça ("trocar/corrigir o código principal …"). Digitado no campo: vale o digitado.
       const principalAtual = codigoPrincipal(f)?.codigo || "";
       if (origem === "voz" && principalAtual && principalAtual !== c.codigo && !/\b(troc|corrig|mud|substitu)\w*/i.test(t)) { acrescentarCodigo(c.codigo, { soletrado: c.soletrado, ouvido: t }); return; }
       definirCodigo(c.codigo, { soletrado: c.soletrado && origem === "voz", duvidas: c.duvidas, ouvido: origem === "voz" ? t : "" });
+      // (P-01) SKU salvo → próximo: códigos adicionais, sem clique (o microfone continua).
+      if (origem === "voz") { setCampoVoz("codigoAdicional"); setAviso(`✅ SKU principal ${c.codigo}. Fale os códigos adicionais, um por vez — ou diga “não tenho mais códigos”.`); seguirOuvindo(); }
       return;
     }
     if (rr.etapa === "descricao" && campoVozRef.current === "titulo") {
@@ -671,10 +700,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       if (e.aviso) setAviso(e.aviso);
       // (22/10) Comando não entendido / fala de conversa: nada é alterado.
       if (!["nada", "nao-achou", "nao-entendeu", "nao-parece"].includes(e.acao)) {
+        // (P-02) Códigos e siglas ditos no título ficam em MAIÚSCULAS (ex.: "iwp211" → "IWP211").
+        if (origem === "voz") e.texto = String(e.texto || "").replace(/\b(?=[\p{L}\d-]*\d)(?=[\p{L}\d-]*\p{L})[\p{L}\d-]{3,}\b/gu, (w) => (/^\d+(\.\d+)?$/.test(w) ? w : w.toUpperCase())).replace(/\b(\d\.\d)([A-Z])\b/g, "$1$2");
         mudarFicha(definirTitulo(f, e.texto, { origem }));
         const av = avaliarTitulo(e.texto, f);
         const voltar = (e.acao === "substituir" || e.acao === "limpar") && rr.titulo.valor && rr.titulo.valor !== e.texto ? " Se não era isso, diga “desfaz”." : "";
-        if (!e.aviso) setAviso((av.avisos.length ? av.avisos.join(" ") : `Título anotado (${e.texto.length}/${LIMITE_TITULO}). Agora toque no 🎤 da Descrição.`) + voltar);
+        if (!e.aviso) setAviso((av.avisos.length ? av.avisos.join(" ") + " " : "") + `✅ Título salvo (${e.texto.length}/${LIMITE_TITULO}). Agora fale a DESCRIÇÃO — cada frase é acrescentada.` + voltar);
+        // (P-02) Título pronto → Descrição (campo "" = descrição), sem clique; o microfone continua.
+        if (origem === "voz") { setCampoVoz(""); seguirOuvindo(); }
       }
       return;
     }
@@ -1034,7 +1067,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       <div key={c.id} className={`pr-campo-direto ${ativo ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={c.id} data-estado={ativo ? (ouvindo ? "ouvindo" : "ativo") : valores[c.id] ? "ok" : "vazio"}>
         <label htmlFor={`pr-dd-${c.id}`}>{c.rotulo}{c.opcional ? " — opcional" : ""}{ativo && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
         <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap" }}>
-          <CampoTexto id={`pr-dd-${c.id}`} campoVoz={c.id} valor={ehAplic ? "" : valores[c.id]} ditando={ativo && ouvindo ? (parcial || " ") : ""} inputMode={["marca", "aplicacoes"].includes(c.id) ? "text" : "decimal"}
+          <CampoTexto id={`pr-dd-${c.id}`} campoVoz={c.id} valor={ehAplic ? "" : valores[c.id]} ditando={ativo && ouvindo && parcial ? parcial : ""} inputMode={["marca", "aplicacoes"].includes(c.id) ? "text" : "decimal"}
             onSalvar={(v) => { if (!String(v).trim()) return; const res = definirCampoDireto(fichaRef.current, c.id, v, { origem: "digitado" }); if (res.ok) mudarFicha(res.ficha); else setAviso(`⚠️ ${c.rotulo}: ${res.erro}`); }} data={`dado-${c.id}`} />
           {micCampo(c.id, c.rotulo)}
         </div>
@@ -1265,7 +1298,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           <div className={`pr-campo-direto ${campoVoz === "titulo" ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="titulo">
             <label htmlFor="pr-titulo">Título ({r.titulo.valor.length}/{LIMITE_TITULO}){campoVoz === "titulo" && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
             <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
-              <AreaTexto id="pr-titulo" valor={r.titulo.valor} onSalvar={(v) => mudarFicha(definirTitulo(fichaRef.current, v.replace(/\s*\n+\s*/g, " "), { origem: "digitado" }))} data="titulo" linhas={2} umaLinha erro={r.titulo.valor.length > LIMITE_TITULO} ditando={campoVoz === "titulo" && ouvindo ? parcial || " " : ""} />
+              <AreaTexto id="pr-titulo" valor={r.titulo.valor} onSalvar={(v) => mudarFicha(definirTitulo(fichaRef.current, v.replace(/\s*\n+\s*/g, " "), { origem: "digitado" }))} data="titulo" linhas={2} umaLinha erro={r.titulo.valor.length > LIMITE_TITULO} ditando={campoVoz === "titulo" && ouvindo && parcial ? parcial : ""} />
               {micCampo("titulo", "Título")}
             </div>
           </div>
@@ -1283,7 +1316,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           <div className={`pr-campo-direto ${!campoVoz ? "pr-campo-ativo" : ""}`} data-pv-campo-direto="descricao">
             <label htmlFor="pr-desc">Descrição (cada fala é acrescentada; uma informação por linha){!campoVoz && ouvindo ? " · 🎤 ouvindo…" : ""}</label>
             <div className="pr-linha" style={{ gap: 6, flexWrap: "nowrap", alignItems: "flex-start" }}>
-              <AreaTexto id="pr-desc" valor={semLinhaMedidas(r.descricao.texto)} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, comLinhaMedidas(v, estadoRapido(fichaRef.current).descricao.texto)))} data="descricao-texto" ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar />
+              <AreaTexto id="pr-desc" valor={semLinhaMedidas(r.descricao.texto)} onSalvar={(v) => mudarFicha(definirTextoDescricao(fichaRef.current, comLinhaMedidas(v, estadoRapido(fichaRef.current).descricao.texto)))} data="descricao-texto" ditando={ouvindo && !campoVoz && parcial ? parcial : ""} acrescentar />
               {micCampo("", "Descrição")}
             </div>
           </div>
@@ -1309,6 +1342,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               <button type="button" className="pr-link" disabled={lendoBlingVoz} onClick={trazerDoBling} data-pv-dados-bling>{lendoBlingVoz ? "⏳ Lendo o cadastro Bling…" : "⬇️ Trazer do Bling (só leitura; preenche só o que está vazio)"}</button>
             )}
             {camposDaEtapa("preco").map(renderCampo)}
+            {/* (P-03) Opcional: custo → preço sugerido; só preenche o Preço com o seu toque. */}
+            <CalculadoraPrecoVoz tipoAnuncio={estadoRapido(ficha).tipoAnuncio || "classico"} aoUsarPreco={(v) => { const r2 = definirCampoDireto(fichaRef.current, "preco", v, { origem: "digitado" }); mudarFicha(r2.ficha); setAviso(r2.ok ? `✅ Preço de venda: R$ ${v}. Agora a marca e o estoque.` : r2.erro); }} />
             <p className="pr-fonte" style={{ margin: 0 }}>O estoque aqui é a quantidade a anunciar; o estoque oficial continua o do Bling.</p>
           </div>
           {navEtapa("descricao", "envio")}

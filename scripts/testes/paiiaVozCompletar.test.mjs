@@ -250,8 +250,8 @@ test("tela: texto ditado aparece no próprio campo; campo ativo à vista; voz da
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes("const mostrado = ditando ? ditando : focado ? texto : valor;"), "campo mostra o que está sendo ditado");
   assert.ok(f.includes('ditando={ouvindo && campoVoz !== "codigoAdicional" && parcial ? parcial : ""} onSalvar'), "código");
-  assert.ok(f.includes('ditando={ouvindo && !campoVoz ? parcial || " " : ""} acrescentar'), "descrição");
-  assert.ok(f.includes('ditando={campoVoz === "titulo" && ouvindo ? parcial || " " : ""}'), "título");
+  assert.ok(f.includes('ditando={ouvindo && !campoVoz && parcial ? parcial : ""} acrescentar'), "descrição");
+  assert.ok(f.includes('ditando={campoVoz === "titulo" && ouvindo && parcial ? parcial : ""}'), "título");
   assert.ok(f.includes("data-pv-campo-mic") && f.includes("data-pv-dados-diretos"));
   assert.ok(f.includes('el.scrollIntoView?.({ block: "nearest" })') && f.includes("r.bottom > window.innerHeight"), "só rola se estiver fora da tela");
   assert.ok(f.includes("|${marcaCompletos(ficha)}|"), "custo/peso/medidas/aplicações salvam na conta");

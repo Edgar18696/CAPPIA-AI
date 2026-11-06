@@ -20,7 +20,8 @@ function aplicacaoDaLinha(l, fonte) {
   const modelo = txt(l.modelo);
   if (!modelo) return null;
   return {
-    texto: [l.montadora, l.modelo, l.motor, l.ano_inicio, l.ano_fim].filter(Boolean).join(" "),
+    texto: [l.montadora, l.modelo, l.motor, l.versao, l.ano_inicio, l.ano_fim].filter(Boolean).join(" "),
+    versao: txt(l.versao),
     montadora: txt(l.montadora),
     modelos: [modelo],
     motores: txt(l.motor) ? [txt(l.motor)] : [],
