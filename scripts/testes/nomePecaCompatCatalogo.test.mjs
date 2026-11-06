@@ -211,3 +211,33 @@ test("C8) gravado na ficha: correspondência + versão vão junto das aplicaçõ
   assert.equal((rev.match(/registrarCorrespondenciaModeloML\(/g) || []).length, 2);
   assert.match(rev, /onClick=\{\(\) => confirmarModeloCatalogo\(x, escolhaModelo\[x\.chave\]\)\}/);
 });
+
+test("C9) (06/11) Tela: uma linha por aplicação aprovada; versões do catálogo só no detalhe; envio continua só com os validados", async () => {
+  const CM = await import("../../src/services/compatibilidadeML.js");
+  const aps = [
+    { montadora: "Renault", modelo: "Clio", motor: "1.6 16V", anoInicio: 2009, anoFim: 2016 },
+    { montadora: "Renault", modelo: "Twingo", motor: "1.0", anoInicio: 2000, anoFim: 2002 },
+  ];
+  const r = await CM.resolverCompatibilidades(aps, catalogo().consultar);
+  // o cruzamento (o que vai ao ML) é o mesmo de antes: só os do período/motor/válvulas aprovados
+  assert.deepEqual(r.veiculos.map((v) => v.id).sort(), ["MLB1001", "MLB1002"]);
+  assert.ok(r.descartados.length >= 4, "descartados continuam calculados (validação interna)");
+  const linhas = CM.resumoCompatAprovadas(aps, r);
+  assert.deepEqual(linhas.map((l) => [l.marca, l.modelo, l.motor, l.periodo, l.estado, l.versoes]), [
+    ["Renault", "Clio", "1.6 16V", "2009–2016", "ok", 2],
+    ["Renault", "Twingo", "1.0", "2000–2002", "sem", 0],
+  ]);
+  assert.ok(linhas[1].aviso.length < 70, "aviso curto");
+  // enquanto o catálogo não respondeu: sem aviso, nada inventado
+  assert.ok(CM.resumoCompatAprovadas(aps, { carregando: true }).every((l) => l.estado === "pendente" && !l.aviso));
+  // as aplicações aprovadas não são alteradas
+  assert.deepEqual(aps[0], { montadora: "Renault", modelo: "Clio", motor: "1.6 16V", anoInicio: 2009, anoFim: 2016 });
+  // Publicação: linhas resumidas na tela; listas do catálogo dentro do detalhe recolhido
+  const rev = ler("src/components/RevisaoPublicacaoML.jsx");
+  assert.match(rev, /resumoCompatAprovadas\(aplicacoes, compatML\)/);
+  const det = rev.indexOf("data-paiia-compat-detalhe"), fim = rev.indexOf("</details>", det);
+  assert.ok(det > 0 && rev.indexOf("data-paiia-compat-veiculo=") > det && rev.indexOf("data-paiia-compat-veiculo=") < fim, "veículos só no detalhe");
+  assert.ok(rev.indexOf("data-paiia-compat-descartado=") > det && rev.indexOf("data-paiia-compat-descartado=") < fim, "descartados só no detalhe");
+  // envio ao ML continua usando compatML.veiculos (sem mudança)
+  assert.match(rev, /compatML\.veiculos/);
+});

@@ -48,7 +48,7 @@ import {
   situacaoCompatibilidade,
   textoSoModelosSemDetalhes,
   TEXTO_SEM_APLICACAO,
-  TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados } from "../services/compatibilidadeML";
+  TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados, resumoCompatAprovadas } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
@@ -959,13 +959,23 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
   }
 
   async function validarNoML() {
+    // (06/11) “Validando...” desde o primeiro instante; qualquer falha aparece na tela (nada é publicado).
+    setOcupado("validar");
+    try {
+      await validarNoMLEtapas();
+    } catch (e) {
+      setValidacao({ ok: false, erro: `Validação interrompida: ${e?.message || e}. Nada foi publicado; tente de novo.` });
+      setOcupado("");
+    }
+  }
+  async function validarNoMLEtapas() {
     const cat = await conferirCategoriaAgora();
     setCategoriaConf(cat);
     if (!cat.ok) {
       setValidacao({ ok: false, erro: `Validação NÃO executada — categoria: ${cat.motivos.join(" ")}` });
+      setOcupado("");
       return;
     }
-    setOcupado("validar");
     setValidacao(null);
     setArmado(false);
     setDigitalValidada("");
@@ -1780,8 +1790,17 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
             )}
             {aplicacoes.length > 0 && (
               <div data-paiia-compat-ml style={{ marginTop: 10, color: "#e2e8f0", fontSize: 13 }}>
-                <b>Compatibilidades (só as aplicações aprovadas):</b>{" "}
-                {aplicacoes.map((a) => [a.modeloCatalogo?.nome ? `${a.modelo} (catálogo ML: ${a.modeloCatalogo.nome})` : a.modelo, a.motor, a.anoInicio && a.anoFim ? (a.anoInicio === a.anoFim ? a.anoInicio : `${a.anoInicio}–${a.anoFim}`) : a.anoInicio ? `a partir de ${a.anoInicio}` : a.anoFim ? `até ${a.anoFim}` : ""].filter(Boolean).join(" ")).join(" · ")}
+                <b>Compatibilidades aprovadas por você:</b>
+                {/* (06/11) Uma linha por aplicação aprovada; as versões do catálogo ficam no detalhe técnico (recolhido). */}
+                <div data-paiia-compat-linhas style={{ display: "grid", gap: 2, margin: "4px 0" }}>
+                  {resumoCompatAprovadas(aplicacoes, compatML).map((r) => (
+                    <div key={r.rotulo} data-paiia-compat-linha={r.rotulo} data-paiia-compat-linha-estado={r.estado}>
+                      {[r.marca, r.modelo, r.motor, r.periodo].filter(Boolean).join(" · ")}{r.versao ? ` (${r.versao})` : ""}
+                      {r.estado === "ok" && <span style={{ color: "#86efac" }}> — ✓ validada no catálogo{r.versoes ? ` (${r.versoes} versão(ões))` : ""}</span>}
+                      {r.estado === "sem" && <span style={{ color: "#facc15" }}> — ⚠ {r.aviso}</span>}
+                    </div>
+                  ))}
+                </div>
                 {compatML?.carregando && <p style={info}>⏳ Procurando os veículos no catálogo do Mercado Livre...</p>}
                 {compatML?.erro && (
                   <p style={erro}>
@@ -1791,11 +1810,14 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                 )}
                 {compatML?.veiculos && (
                   <>
-                    <div style={{ marginTop: 4 }}>Serão vinculados {compatML.veiculos.length} veículo(s):</div>
-                    {compatML.veiculos.map((v) => <div key={v.id} data-paiia-compat-veiculo={v.id} style={{ color: "#86efac" }}>✓ {v.nome}</div>)}
-                    {compatML.descartados.length > 0 && <div style={{ marginTop: 4, color: "#94a3b8" }}>Descartados (não confirmam os dados aprovados):</div>}
-                    {compatML.descartados.map((d) => <div key={d.id} data-paiia-compat-descartado={d.id} style={{ color: "#94a3b8" }}>✗ {d.nome} — {d.motivo}</div>)}
-                    {compatML.semCatalogo.map((x) => (
+                    <div style={{ marginTop: 4 }} data-paiia-compat-envio>Vão para o Mercado Livre só os {compatML.veiculos.length} veículo(s) do catálogo que confirmam marca, modelo, motor, versão e período aprovados.</div>
+                    <details data-paiia-compat-detalhe style={{ marginTop: 4, color: "#94a3b8" }}>
+                      <summary style={{ cursor: "pointer" }}>Ver as versões do catálogo (detalhe técnico)</summary>
+                      {compatML.veiculos.map((v) => <div key={v.id} data-paiia-compat-veiculo={v.id} style={{ color: "#86efac" }}>✓ {v.nome}</div>)}
+                      {compatML.descartados.length > 0 && <div style={{ marginTop: 4, color: "#94a3b8" }}>Descartados (não confirmam os dados aprovados):</div>}
+                      {compatML.descartados.map((d) => <div key={d.id} data-paiia-compat-descartado={d.id} style={{ color: "#94a3b8" }}>✗ {d.nome} — {d.motivo}</div>)}
+                    </details>
+                    {compatML.semCatalogo.filter((x) => x.chave).map((x) => (
                       <div key={x.aplicacao} data-paiia-compat-sem-catalogo={x.chave || ""} style={{ color: "#facc15" }}>
                         ⚠ {x.aplicacao}: {x.motivo}
                         {x.chave && Array.isArray(x.modelosMarca) && x.modelosMarca.length > 0 && (
@@ -1867,16 +1889,32 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
           <div style={bloco} id="pub-etapa-validar">
             <button type="button" data-paiia-navegacao data-paiia-voltar-etapa="pub-etapa-dados" onClick={() => rolarPara("pub-etapa-dados")} style={botaoVoltarEtapa}>← Voltar aos dados que serão enviados</button>
             <strong style={subtitulo}>3. Validar no Mercado Livre (não publica)</strong>
-            <button
-              type="button"
-              data-paiia-validar-ml
-              onClick={validarNoML}
-              disabled={!!ocupado || !campos.categoria_id || faltandoSemValor.length > 0 || Boolean(motivoSemValidar)}
-              style={botaoAzul}
-            >
-              {ocupado === "validar" ? "⏳ Validando..." : "🔎 Validar dados no Mercado Livre"}
-            </button>
-            {motivoSemValidar && <p data-paiia-motivo-sem-validar style={{ ...info, color: "#fde68a" }}>⚠ {motivoSemValidar}</p>}
+            {(() => {
+              // (06/11) Botão bloqueado nunca fica “mudo”: cinza e com o motivo logo abaixo.
+              const motivoBotao = ocupado && ocupado !== "validar"
+                ? `Aguarde: ${{ conexao: "conferindo a conta do Mercado Livre", preparar: "preparando os dados do anúncio", publicar: "publicando" }[ocupado] || "outra operação em andamento"}...`
+                : !campos.categoria_id
+                  ? "Falta a categoria do Mercado Livre: confirme a categoria na Conferência."
+                  : faltandoSemValor.length > 0
+                    ? `Preencha os atributos obrigatórios da categoria (acima, em “Atributos obrigatórios”): ${faltandoSemValor.map((a) => a.nome || a.id).join(", ")}.`
+                    : motivoSemValidar;
+              const bloqueado = Boolean(ocupado) || Boolean(motivoBotao);
+              return (
+                <>
+                  <button
+                    type="button"
+                    data-paiia-validar-ml
+                    onClick={validarNoML}
+                    disabled={bloqueado}
+                    style={{ ...botaoAzul, ...(bloqueado && ocupado !== "validar" ? { opacity: 0.5, cursor: "not-allowed" } : {}) }}
+                  >
+                    {ocupado === "validar" ? "⏳ Validando..." : "🔎 Validar dados no Mercado Livre"}
+                  </button>
+                  {ocupado === "validar" && <p data-paiia-validando style={info}>⏳ Conferindo a categoria, a ficha gravada, a duplicidade e os dados no Mercado Livre (não publica)...</p>}
+                  {motivoBotao && <p data-paiia-motivo-sem-validar style={{ ...info, color: "#fde68a" }}>⚠ {motivoBotao}</p>}
+                </>
+              );
+            })()}
             {fichaPersistida && !fichaPersistida.ok && (
               <div data-paiia-ficha-divergente={(fichaPersistida.divergencias || []).join("|")} style={{ ...erro, marginTop: 8 }}>
                 ❌ {fichaPersistida.motivo}
@@ -2018,7 +2056,7 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
                       <div data-paiia-compat-informadas>• Informadas por você (gravadas na ficha): {v.compatibilidades.informadas ?? v.compatibilidades.aplicacoes_aprovadas} aplicação(ões)</div>
                       <div data-paiia-compat-correspondidas>• Correspondidas no catálogo do ML: {v.compatibilidades.enviados} veículo(s){(v.compatibilidades.correspondencias || []).length > 0 && ` (${v.compatibilidades.correspondencias.map((c) => `${c.de} → ${c.para}${c.tipo === "automatica" ? ", automática" : ""}`).join("; ")})`}</div>
                       <div data-paiia-compat-aceitas>• Aceitas pelo Mercado Livre depois do envio: {v.compatibilidades.aceitos}</div>
-                      {v.compatibilidades.rejeitados.length > 0 && <div>• Não aceitas: {v.compatibilidades.rejeitados.map((x) => `${x.nome}: ${x.motivo}`).join("; ")}</div>}
+                      {v.compatibilidades.rejeitados.length > 0 && <details data-paiia-compat-nao-aceitas><summary>• Não aceitas: {v.compatibilidades.rejeitados.length} (ver detalhe)</summary>{v.compatibilidades.rejeitados.map((x) => `${x.nome}: ${x.motivo}`).join("; ")}</details>}
                       {(v.compatibilidades.sem_catalogo || []).length > 0 && <div>• Sem correspondência no catálogo (continuam na ficha): {v.compatibilidades.sem_catalogo.map((x) => `${x.aplicacao} — ${x.motivo}`).join("; ")}</div>}
                     </div>
                   )}

@@ -269,12 +269,39 @@ export function avaliarVeiculo(produto, aplicacao) {
  * Devolve { veiculos:[{id,nome,aplicacao}], descartados:[{id,nome,motivo}],
  *           semCatalogo:[{aplicacao,motivo}], erro }.
  */
+/** Rótulo interno de uma aplicação no cruzamento com o catálogo (mesmo texto em veiculos/semCatalogo). */
+export function rotuloAplicacaoML(a) {
+  return `${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`.replace(/\s+/g, " ");
+}
+
+/**
+ * (06/11/2026) Resumo para a TELA: uma linha por aplicação aprovada (Marca, Modelo,
+ * Motor, Período) com a situação no catálogo. Só leitura: não muda o cruzamento,
+ * nem o que é enviado (continua sendo compat.veiculos).
+ */
+export function resumoCompatAprovadas(aplicacoes, compat) {
+  const lista = Array.isArray(aplicacoes) ? aplicacoes : [];
+  const veiculos = Array.isArray(compat?.veiculos) ? compat.veiculos : [];
+  const sem = Array.isArray(compat?.semCatalogo) ? compat.semCatalogo : [];
+  return lista.map((a) => {
+    const rotulo = rotuloAplicacaoML(a);
+    const periodo = a.anoInicio && a.anoFim ? (String(a.anoInicio) === String(a.anoFim) ? `${a.anoInicio}` : `${a.anoInicio}–${a.anoFim}`) : a.anoInicio ? `a partir de ${a.anoInicio}` : a.anoFim ? `até ${a.anoFim}` : "";
+    const base = { rotulo, marca: limpar(a.montadora), modelo: limpar(a.modelo), motor: limpar(a.motor), periodo, versao: limpar(a.versao) };
+    if (!compat || compat.carregando || compat.erro) return { ...base, estado: "pendente", versoes: 0, aviso: "" };
+    const versoes = veiculos.filter((v) => v.aplicacao === rotulo).length;
+    const s = sem.find((x) => x.aplicacao === rotulo);
+    // (um veículo do catálogo é contado na 1ª aplicação que o aceitou; “sem” só quando o cruzamento não achou nenhum)
+    if (!s) return { ...base, estado: "ok", versoes, aviso: "" };
+    return { ...base, estado: "sem", versoes: 0, aviso: s?.chave ? "modelo não encontrado no catálogo: escolha abaixo" : "sem correspondência no catálogo do ML: não será enviada", chave: s?.chave || "" };
+  });
+}
+
 export async function resolverCompatibilidades(aplicacoes, consultar) {
   const veiculos = new Map();
   const correspondencias = [];
   const descartados = [];
   const semCatalogo = [];
-  const rotulo = (a) => `${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`.replace(/\s+/g, " ");
+  const rotulo = rotuloAplicacaoML;
   const cacheMarca = new Map();
   for (const a of aplicacoes) {
     // Modelo confirmado SEM detalhes (sem motor e sem período): não é

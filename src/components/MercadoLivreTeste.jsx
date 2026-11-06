@@ -7356,7 +7356,8 @@ export default function MercadoLivreTeste(props) {
           } catch {
             atual = null;
           }
-          if (!atual || String(atual.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== chaveLocal) {
+          // (06/11/2026) Cópia de OUTRA ficha do mesmo código também é trocada (nunca abre a outra ficha).
+          if (!atual || String(atual.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, "") !== chaveLocal || String(atual.fichaIdPAIIA || "") !== String(r.anuncio.id)) {
             localStorage.setItem("mlAnuncioTeste", JSON.stringify({ ...(recBase.ok ? recBase.anuncio : {}), fichaIdPAIIA: r.anuncio.id }));
           }
           const fotosLocaisBrutas = (local?.campos?.fotos?.length ? local.campos.fotos : local?.anuncioConferido?.fotos) || [];
@@ -7388,6 +7389,15 @@ export default function MercadoLivreTeste(props) {
         guardarFotosEmMemoria(window, rec.fotos, { fichaIdPAIIA: rec.id, codigo: rec.anuncio?.codigo || r.anuncio.codigo });
         window.__paiiaFichaRecuperada = rec.id;
         localStorage.setItem("mlAnuncioTeste", JSON.stringify(rec.anuncio));
+        // (06/11/2026) A cópia deste navegador era de OUTRA ficha do mesmo código: fica guardada à parte (nada se perde).
+        const idOutra = String(local?.campos?.anuncioIdPAIIA || "");
+        if (idOutra && idOutra !== String(rec.id)) {
+          try {
+            localStorage.setItem(`paiiaVersaoDescartada:${idOutra}`, JSON.stringify({ guardada_em: new Date().toISOString(), motivo: `aberta a ficha ${rec.id}`, copia: local }));
+          } catch {
+            // sem espaço
+          }
+        }
         mapa[rec.chave] = rec.fichaConferencia;
         localStorage.setItem("paiiaConferenciaPorCodigo", JSON.stringify(mapa));
         if (rec.aplicacoesManuais) {

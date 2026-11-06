@@ -67,6 +67,10 @@ export function montarRecuperacaoDaFicha(anuncioBase, fichaLocal = null) {
   const fotosLimpas = fotos.filter(Boolean);
   const anuncio = {
     ...(dados.anuncio || {}),
+    // (06/11/2026) A ficha aberta é a do endereço: um fichaIdPAIIA de OUTRA ficha
+    // gravado no anúncio (cópia feita de outra ficha do mesmo código) nunca
+    // redireciona a Conferência para a outra ficha nem grava nela.
+    fichaIdPAIIA: id,
     codigo: dados.anuncio?.codigo || conferido?.codigo || campos.codigo || anuncioBase.codigo,
     titulo: dados.anuncio?.titulo || conferido?.titulo || campos.titulo || anuncioBase.titulo,
     descricao: dados.anuncio?.descricao ?? conferido?.descricao ?? campos.descricao,

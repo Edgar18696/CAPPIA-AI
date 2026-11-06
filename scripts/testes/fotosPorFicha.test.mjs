@@ -153,3 +153,21 @@ test("9) código: Conferência grava marca/histórico, bloqueia aprovação; nad
   const ps = fs.readFileSync(path.join(RAIZ, "src/services/publicacaoSegura.js"), "utf8");
   assert.match(ps, /origemFotosAprovadas\(base\)/);
 });
+
+test("(06/11/2026) abrir pelo endereço: fichaIdPAIIA de OUTRA ficha gravado no anúncio não redireciona", async () => {
+  const fs = await import("node:fs");
+  const base = { id: "28efa450-917a-44b9-b065-17545e0223f0", codigo: "173373897R", status_fluxo: "conferencia_aprovada", updated_at: "2026-11-04T14:53:42Z",
+    dados_conferencia: { salvo_em: "2026-11-04T14:53:42Z", anuncio: { codigo: "173373897R", fichaIdPAIIA: "e91fdf5b-055c-450b-b1d3-7490f804c72e", preco: 110.27 },
+      ficha: { etapa: "publicacao", assinaturaAprovada: "x", anuncioConferido: { titulo: "T", preco: 110.27, fotos: [] }, campos: { titulo: "T", quantidadeEstoque: "315", marca: "Renault ", compatibilidades: "RENAULT\n\n• Clio II", fotos: [] } } } };
+  // cópia deste navegador é da OUTRA ficha do mesmo código (mais nova): não entra
+  const local = { salvoEm: "2026-11-04T15:00:00Z", campos: { anuncioIdPAIIA: "e91fdf5b-055c-450b-b1d3-7490f804c72e", quantidadeEstoque: "", marca: "", compatibilidades: "" } };
+  const rec = montarRecuperacaoDaFicha(base, local);
+  assert.equal(rec.anuncio.fichaIdPAIIA, base.id, "o anúncio aponta a ficha do endereço");
+  assert.equal(rec.fichaConferencia.campos.anuncioIdPAIIA, base.id);
+  assert.deepEqual([rec.fichaConferencia.campos.quantidadeEstoque, rec.fichaConferencia.campos.marca, rec.fichaConferencia.campos.compatibilidades], ["315", "Renault ", "RENAULT\n\n• Clio II"], "campos da ficha aberta preservados");
+  assert.equal(rec.fichaConferencia.etapa, "publicacao", "aprovação preservada ao abrir");
+  assert.ok(rec.fichaConferencia.assinaturaAprovada);
+  const ml = fs.readFileSync(new URL("../../src/components/MercadoLivreTeste.jsx", import.meta.url), "utf8");
+  assert.match(ml, /String\(atual\.fichaIdPAIIA \|\| ""\) !== String\(r\.anuncio\.id\)/, "conflito: cópia de outra ficha também é trocada");
+  assert.match(ml, /paiiaVersaoDescartada:\$\{idOutra\}/, "cópia da outra ficha guardada à parte");
+});
