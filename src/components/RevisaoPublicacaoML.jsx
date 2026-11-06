@@ -302,6 +302,8 @@ const ehFaltaMedidasML = (c) => /seller[._]package|package[._]dimensions/i.test(
 
 // Toda chamada leva a conta ML escolhida (conta_ml). Sem conta: não chama.
 // (PAIIA Voz) nº da autorização da publicação automática (?auto=<uuid> na Publicação); vazio na tela normal.
+// (Publicação automática) conferências complementares: não impedem o ML de aceitar o anúncio; ficam como pendência.
+const COMPLEMENTARES_AUTO = new Set(["Frete/precificação", "Compatibilidades", "Duplicidade na base PAIIA", "Duplicidade na conta", "Possível duplicidade na conta", "Modelos na descrição", "Padrões ML"]);
 const autoPublicacaoDaUrl = () => { try { const id = new URL(window.location.href).searchParams.get("auto") || ""; return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : ""; } catch { return ""; } };
 
 async function chamar(acao, extra = {}, contaML = "") {
@@ -1046,13 +1048,13 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
 
   const autoPublicacao = autoPublicacaoProp || autoPublicacaoDaUrl();
   async function publicar() {
-    if (!autorizado || !validacao?.valido || bloqueios.length > 0) return;
+    if (!autorizado || (!autoPublicacao && !validacao?.valido) || bloqueios.length > 0) return;
     if (!armado) {
       setArmado(true);
       return;
     }
     // Compatibilidades aprovadas ainda não resolvidas no catálogo: espera.
-    if (aplicacoes.length && (!compatML || compatML.carregando || compatML.erro)) {
+    if (!autoPublicacao && aplicacoes.length && (!compatML || compatML.carregando || compatML.erro)) {
       setResultado({ ok: false, erro: "Publicação BLOQUEADA: as compatibilidades aprovadas ainda não foram conferidas no catálogo do Mercado Livre." });
       setArmado(false);
       return;
@@ -1061,7 +1063,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     // Ficha persistida relida NA HORA: tem de ser a MESMA versão validada.
     const fp = await reconferirFichaPersistida();
     setFichaPersistida(fp);
-    if (!fp.ok || !digitalValidada || fp.digital !== digitalValidada) {
+    if (!fp.ok || (!autoPublicacao && (!digitalValidada || fp.digital !== digitalValidada))) {
       setResultado({
         ok: false,
         erro: `Publicação BLOQUEADA: ${fp.ok ? "a ficha gravada mudou depois da validação. Valide de novo." : fp.motivo}`,
@@ -1075,7 +1077,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     // Compatibilidade estruturada GRAVADA na ficha antes de publicar: as
     // aplicações aprovadas e as versões do catálogo ML que serão enviadas.
     // Relida da base; se não bater com a tela, nada é publicado.
-    if (aplicacoes.length) {
+    // (Automático) compatibilidades são gravadas DEPOIS da publicação (pendência se faltar): não seguram o envio.
+    if (aplicacoes.length && !autoPublicacao) {
       const idsTela = (compatML?.veiculos || []).map((v) => v.id);
       const sv = await salvarCompatibilidadesML({ anuncioId: ficha.anuncioId, aplicacoes, compat: compatML });
       const relida = sv.ok ? await obterAnuncio(ficha.anuncioId) : null;
@@ -1088,8 +1091,10 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
       }
     }
     // Categoria + atributos obrigatórios/condicionais: de novo NA HORA do clique.
-    const catAgora = await conferirCategoriaAgora();
-    setCategoriaConf(catAgora);
+    // (Automático) categoria confirmada e atributos obrigatórios são conferidos pelo PRÓPRIO servidor na
+    // publicação (categoria_confirmada_id + validação do ML); a conferência complementar fica para depois.
+    const catAgora = autoPublicacao ? { ok: true } : await conferirCategoriaAgora();
+    if (!autoPublicacao) setCategoriaConf(catAgora);
     if (!catAgora.ok) {
       setResultado({ ok: false, erro: `Publicação BLOQUEADA: categoria — ${catAgora.motivos.join(" ")}` });
       setArmado(false);
@@ -1097,8 +1102,9 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
       return;
     }
     // Frete × precificação: conferido de novo NA HORA do clique.
-    const freteAgora = await conferirFretePublicacao();
-    setFreteConf(freteAgora);
+    // (Automático) frete/precificação não é exigência do ML para criar o anúncio: vira pendência posterior.
+    const freteAgora = autoPublicacao ? { ok: true } : await conferirFretePublicacao();
+    if (!autoPublicacao) setFreteConf(freteAgora);
     if (!freteAgora.ok) {
       setResultado({ ok: false, erro: `Publicação BLOQUEADA: frete/precificação — ${freteAgora.motivo}` });
       setArmado(false);
@@ -1106,9 +1112,10 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
       return;
     }
     // Proteção dupla, conferida de novo NA HORA do clique (sem cache).
-    const base = await consultarDuplicidadeBase(contaEscolhida);
-    setDuplicidadeBase(base);
-    const noML = base.erro ? null : await consultarDuplicidadeML(contaEscolhida, base.registros || []);
+    // (Automático) outros anúncios do SKU não bloqueiam; repetição da MESMA autorização é barrada no servidor.
+    const base = autoPublicacao ? { registros: [] } : await consultarDuplicidadeBase(contaEscolhida);
+    if (!autoPublicacao) setDuplicidadeBase(base);
+    const noML = autoPublicacao || base.erro ? null : await consultarDuplicidadeML(contaEscolhida, base.registros || []);
     if (noML) setDuplicidadeML(noML);
     const avBase = base.erro ? null : avaliarRegistrosBase({ registros: base.registros || [], ml: noML });
     // (Regra 08/11 — publicação automática do PAIIA Voz) outros anúncios do mesmo SKU NÃO bloqueiam:
@@ -1169,6 +1176,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
         mlb: r.item_id, anuncioId: ficha.anuncioId || null, blingProdutoId: registroBling.bling_produto_id,
       }).catch((e) => ({ ok: false, erro: e?.message || "falha" }));
       setRegistroInterno({ ...rr, mlb: r.item_id });
+      // (Automático) MLB confirmado pelo ML e gravado: "publicado" JÁ (verificações seguem e atualizam depois).
+      if (autoPublicacao) setResultado({ ...r, verificacao: { pendencias: [], em_andamento: true } });
       // Compatibilidades: só os veículos do catálogo que confirmam as
       // aplicações aprovadas (lista mostrada antes da publicação).
       const idsCompat = (compatML?.veiculos || []).map((v) => v.id);
@@ -1377,7 +1386,10 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
         ? { item: "Categoria", nivel: "ok", texto: `${campos.categoria_id} — ${categoriaConf.detalhe?.caminho || ""} (confirmada por você; não rejeitada para este SKU; obrigatórios e condicionais conferidos${motivoSemGtinFicha ? `; motivo sem GTIN: ${motivoSemGtinFicha.nome}` : ""}).${categoriaConf.avisos?.length ? ` ${categoriaConf.avisos.join(" ")}` : ""}` }
         : { item: "Categoria", nivel: "erro", texto: `${categoriaConf.motivos.join(" ")} Volte à Conferência (bloco ⑮) para confirmar/corrigir.` }
   );
-  const bloqueios = conferencia.filter((c) => c.nivel === "erro");
+  // (Publicação automática, 13/11) "Publicar primeiro, conferir depois": só as exigências do Mercado Livre
+  // bloqueiam. Conferências complementares viram pendência para depois (nunca são escondidas).
+  const bloqueios = conferencia.filter((c) => c.nivel === "erro" && !(autoPublicacao && COMPLEMENTARES_AUTO.has(c.item)));
+  const pendenciasPosteriores = autoPublicacao ? conferencia.filter((c) => c.nivel === "erro" && COMPLEMENTARES_AUTO.has(c.item)) : [];
   // A opção só aparece quando Compatibilidades (sem aplicação) é o ÚNICO
   // bloqueio. Ela libera exclusivamente esse item; nada mais é aprovado.
   const soCompatPendente = bloqueios.length > 0 && bloqueios.every((b) => b.semCompatOpcao);
@@ -1724,7 +1736,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
                     <button type="button" data-paiia-confirmar-quantidade onClick={confirmarQuantidade} style={{ ...botaoAzul, padding: "6px 10px", whiteSpace: "nowrap" }}>✔ Confirmar</button>
                   )}
                 </div>
-                <div data-paiia-quantidade-estado style={{ fontSize: 12, marginTop: 4, color: quantidadeConfirmada ? "#86efac" : "#fde68a" }}>
+                <div data-paiia-quantidade-estado={quantidadeConfirmada ? "confirmada" : "pendente"} style={{ fontSize: 12, marginTop: 4, color: quantidadeConfirmada ? "#86efac" : "#fde68a" }}>
                   {quantidadeConfirmada
                     ? `✅ ${campos.quantidade} unidade(s) confirmada(s) — gravada na ficha; é esta que vai ao Mercado Livre${usoBling === "usar" && !estoque?.encontrado ? " e ao Bling" : ""}.`
                     : avisoQuantidade || (qtdInicial.origem === "ficha_campo_estoque" && campos.quantidade === String(qtdInicial.valor)
@@ -2016,7 +2028,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               data-paiia-publicar-ml
               data-paiia-modo-simples={modoSimples ? "1" : undefined}
               onClick={modoSimples ? tocarPublicarSimples : publicar}
-              disabled={(!modoSimples && !autorizado) || !validacao?.valido || !!ocupado || resultado?.publicado || bloqueios.length > 0}
+              disabled={(!modoSimples && !autorizado) || (!autoPublicacao && !validacao?.valido) || !!ocupado || resultado?.publicado || bloqueios.length > 0}
               style={{ ...botaoVerde, opacity: (!modoSimples && !autorizado) || !validacao?.valido ? 0.5 : 1 }}
             >
               {ocupado === "publicar"
@@ -2050,6 +2062,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               </div>
             )}
             {bloqueios.length > 0 && <p style={erro} data-paiia-bloqueios-publicar={bloqueios.map((b) => b.item).join("|")}>Corrija antes de publicar: {bloqueios.map((b) => b.item).join(", ")}.</p>}
+            {pendenciasPosteriores.length > 0 && <div style={{ display: "none" }} data-paiia-pendencias-posteriores>{pendenciasPosteriores.map((b) => `${b.item}: ${b.texto}`).join(" · ")}</div>}
             {bloqueios.length > 0 && <div style={{ display: "none" }} data-paiia-bloqueios-detalhe>{bloqueios.map((b) => `${b.item}: ${b.texto}`).join(" · ")}</div>}
             {!mostrarOpcaoSemCompat && bloqueios.some((b) => b.item === "Compatibilidades") && onVoltarCompatibilidades && (
               <button type="button" data-paiia-navegacao data-paiia-voltar-compat onClick={() => onVoltarCompatibilidades()} style={botaoVoltarEtapa}>
@@ -2100,7 +2113,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
                 </div>
               );
             })()}
-            {resultado && !resultado.ok && <p style={erro} data-paiia-resultado-publicacao="erro">❌ {resultado.erro}</p>}
+            {resultado && !resultado.ok && <p style={erro} data-paiia-resultado-publicacao="erro">❌ {resultado.erro}{autoPublicacao && (resultado.causas || []).length ? ` Motivo do Mercado Livre: ${resultado.causas.map((c) => c.mensagem || c.message || c.codigo || c.code).filter(Boolean).join("; ")}.` : ""}</p>}
             {resultado && ficha.resultadoGravado && <p style={{ ...info, color: "#86efac" }}>💾 Resultado salvo na ficha do anúncio (MLB, data/hora, Bling e estoque).</p>}
             {resultado?.ok && resultado.publicado && ficha.anuncioId && (
               <button type="button" data-paiia-navegacao data-paiia-abrir-tela-final onClick={() => onAbrirTelaFinal?.(ficha.anuncioId)} style={{ ...botaoVerde, marginTop: 8 }}>

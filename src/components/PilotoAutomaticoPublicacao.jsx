@@ -27,6 +27,7 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         return document.querySelector("[data-paiia-integracao-bling]")?.getAttribute("data-paiia-integracao-bling") || "";
       },
       progresso: (etapa, texto = "") => setSt((s) => ({ ...s, etapa, texto })),
+      publicado: (pub) => setSt((s) => ({ ...s, publicado: pub })),
     };
     executarPiloto(p, { limites: globalThis.__paiiaLimitesPiloto || {} }).then((r) => setSt((s) => ({ ...s, fim: r })), (e) => setSt((s) => ({ ...s, fim: { ok: false, etapa: s.etapa, texto: String(e?.message || e) } })));
   }, [auto, conta]);
@@ -35,11 +36,21 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
   return (
     <div data-paiia-piloto={st.fim ? (st.fim.ok ? "concluido" : "pausado") : "executando"} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(2,6,23,0.96)", color: "#e2e8f0", display: "grid", placeItems: "center", padding: 16, overflow: "auto" }}>
       <div style={{ maxWidth: 520, width: "100%", border: "1px solid #334155", borderRadius: 14, padding: 18, background: "#0f172a" }}>
-        {!st.fim && <p style={{ fontSize: 18, fontWeight: 700 }}>⏳ O PAIIA está publicando sozinho. Não é preciso tocar em nada.</p>}
+        {!st.fim && !st.publicado && <p style={{ fontSize: 18, fontWeight: 700 }}>⏳ O PAIIA está publicando sozinho. Não é preciso tocar em nada.</p>}
+        {!st.fim && st.publicado && (
+          <div data-paiia-piloto-publicado style={{ fontSize: 17, fontWeight: 800, lineHeight: 1.5 }}>
+            <div>✅ ANÚNCIO PUBLICADO NO MERCADO LIVRE</div>
+            <p style={{ fontSize: 15, fontWeight: 600 }}>SKU <b>{sku}</b> · <b>{st.publicado.mlb}</b>{st.publicado.link && <> · <a href={st.publicado.link} target="_blank" rel="noreferrer" style={{ color: "#67e8f9" }}>abrir anúncio</a></>}</p>
+            <p style={{ fontSize: 13, color: "#94a3b8", fontWeight: 400 }}>As conferências (anúncio ativo, vínculo no Bling, compatibilidades) seguem sozinhas. Você pode sair desta tela: o anúncio já está criado.</p>
+          </div>
+        )}
         {st.fim?.ok && (
           <div data-paiia-piloto-sucesso={st.fim.pendencia ? "com-pendencia" : "completo"} style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.6 }}>
-            <div>✅ ANÚNCIO PUBLICADO{st.fim.pendencia ? "" : " COM SUCESSO"}</div><div>✅ BLING INTEGRADO</div><div>✅ ESTOQUE CONFERIDO</div><div>✅ MERCADO LIVRE ATIVO</div>
-            {st.fim.pendencia && <p data-paiia-piloto-pendencia style={{ fontSize: 14, fontWeight: 600, color: "#fde68a" }}>⚠ Integração não totalmente concluída: {st.fim.pendencia}</p>}
+            <div>✅ ANÚNCIO PUBLICADO{st.fim.pendencia ? "" : " COM SUCESSO"}</div>
+            <div>{st.fim.vinculo === false ? "⚠ BLING: vínculo a conferir" : "✅ BLING INTEGRADO"}</div>
+            <div>✅ ESTOQUE CONFERIDO</div>
+            <div>{st.fim.ativo === false ? "⚠ MERCADO LIVRE: ativação a conferir" : "✅ MERCADO LIVRE ATIVO"}</div>
+            {st.fim.pendencia && <p data-paiia-piloto-pendencia style={{ fontSize: 14, fontWeight: 600, color: "#fde68a" }}>⚠ Para conferir depois: {st.fim.pendencia}</p>}
             <p style={{ fontSize: 15, fontWeight: 600 }}>SKU <b>{sku}</b> · <b data-paiia-piloto-mlb>{st.fim.mlb}</b>{st.fim.link && <> · <a href={st.fim.link} target="_blank" rel="noreferrer" style={{ color: "#67e8f9" }}>abrir anúncio</a></>}</p>
             <p style={{ fontSize: 13, color: "#94a3b8" }}>Ficha concluída na Central de Publicação.</p>
           </div>

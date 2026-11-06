@@ -7,7 +7,7 @@
 // Qualquer problema: PAUSA com uma única mensagem; nada é repetido.
 // =============================================================
 export const ETAPAS_PILOTO = ["canais", "bling", "quantidade", "validar", "publicar", "ativo", "vinculo", "central"];
-export const ROTULO_ETAPA = { canais: "Canais", bling: "Bling e estoque", quantidade: "Quantidade", validar: "Validação no Mercado Livre", publicar: "Publicação", ativo: "Anúncio ativo", vinculo: "Vínculo no Bling", central: "Central de Publicação" };
+export const ROTULO_ETAPA = { canais: "Canais", bling: "Bling e estoque", quantidade: "Quantidade", validar: "Dados obrigatórios (o ML valida ao publicar)", publicar: "Publicação", ativo: "Anúncio ativo", vinculo: "Vínculo no Bling", central: "Central de Publicação" };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function autorizacaoDaUrl(href) {
@@ -46,7 +46,6 @@ export async function executarPiloto(p, { limites = {} } = {}) {
     for (;;) { const v = await fn(); if (v) return v; if (Date.now() > fim) return null; await p.esperar(intervalo); }
   };
   const visivel = (sel) => { const e = p.achar(sel); return e && !e.disabled ? e : null; };
-  const erroNaTela = () => { const e = p.achar('[data-paiia-resultado-publicacao="erro"], [data-paiia-causa-ml]'); return e ? p.texto(e) : ""; };
 
   // 1) Canais: "somente este anúncio" + Mercado Livre + continuar.
   p.progresso("canais");
@@ -85,51 +84,15 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   p.progresso("quantidade");
   const q = await esperarAte(() => visivel("[data-paiia-confirmar-quantidade]") || (p.achar('[data-paiia-quantidade-estado="confirmada"]') ? { ja: true } : null), L.passo);
   if (q && !q.ja) p.clicar(q);
-  // 4) Validar no ML (não publica; leitura segura de repetir). (Correção 13/11) A validação pode já estar
-  // RODANDO (validação automática da tela) e demorar mais que um passo comum: espera enquanto ela mostra
-  // "Validando…"; usa o resultado que já existir; erro da validação = mensagem específica (1 nova tentativa,
-  // porque validar não cria nada); botão travado com motivo = esse motivo.
-  p.progresso("validar");
-  const limiteVal = L.validacao || 3 * 60_000;
-  const lerValidacao = () => {
-    if (p.achar('[data-paiia-validacao="ok"]')) return { ok: true };
-    const e = p.achar('[data-paiia-validacao="erro"]');
-    return e ? { erro: p.texto(e).replace(/\s+/g, " ").trim().slice(0, 400) } : null;
-  };
-  let tentativasVal = 0;
-  let resVal;
-  for (;;) {
-    let estavelMotivo = 0;
-    const r1 = await esperarAte(() => {
-      const v = lerValidacao();
-      if (v) return v;
-      const b = visivel("[data-paiia-validar-ml]");
-      if (b) return { botao: b };
-      const m = p.achar("[data-paiia-motivo-sem-validar]");
-      estavelMotivo = m && !p.achar("[data-paiia-validando]") ? estavelMotivo + 1 : 0;
-      return estavelMotivo >= (L.estavel || 4) ? { motivo: p.texto(m).replace(/^⚠\s*/, "") } : null;
-    }, limiteVal);
-    if (!r1) return pausa("validar", p.achar("[data-paiia-validando]") ? "O Mercado Livre não terminou a validação em 3 minutos. Nada foi enviado ao Mercado Livre; tente de novo mais tarde." : "A tela de validação não respondeu. Nada foi enviado ao Mercado Livre.");
-    if (r1.motivo) return pausa("validar", r1.motivo);
-    if (r1.ok) { resVal = r1; break; }
-    if (r1.erro && (tentativasVal >= 2 || !visivel("[data-paiia-validar-ml]"))) return pausa("validar", `${r1.erro} Nada foi enviado ao Mercado Livre.`);
-    // botão livre (nunca validou) ou erro na 1ª tentativa: valida (de novo) — só leitura no ML.
-    const b = visivel("[data-paiia-validar-ml]");
-    if (!b) continue;
-    tentativasVal += 1;
-    p.progresso("validar", tentativasVal > 1 ? "Validando de novo no Mercado Livre…" : "Validando no Mercado Livre…");
-    p.clicar(b);
-    await p.esperar(L.intervalo);
-    const r2 = await esperarAte(() => (p.achar("[data-paiia-validando]") ? null : lerValidacao()), limiteVal);
-    if (!r2) return pausa("validar", "O Mercado Livre não terminou a validação em 3 minutos. Nada foi enviado ao Mercado Livre; tente de novo mais tarde.");
-    if (r2.ok) { resVal = r2; break; }
-    if (tentativasVal >= 2) return pausa("validar", `${r2.erro} Nada foi enviado ao Mercado Livre.`);
-  }
-  const aut = await esperarAte(() => visivel("[data-paiia-autorizo-ml]") || (erroNaTela() ? { erro: erroNaTela() } : null), L.passo);
-  if (!resVal || !aut || aut.erro) return pausa("validar", aut?.erro || "O Mercado Livre não confirmou os dados do anúncio.");
+  // 4) (13/11 — "publicar primeiro, conferir depois") Sem pré-validação separada: o SERVIDOR valida no
+  // Mercado Livre dentro da própria publicação (validarComVariacoes) e recusa o que o ML não aceitar.
+  // Assim a mesma checagem não é feita 2–3 vezes e nada fica esperando por ela.
+  p.progresso("validar", "O Mercado Livre valida na própria publicação");
+  await p.esperar(L.intervalo);
+  const aut = visivel("[data-paiia-autorizo-ml]");
   // 5) Publicar UMA vez (o nº da autorização vai junto; o servidor recusa repetição).
   p.progresso("publicar");
-  if (!aut.checked) p.clicar(aut);
+  if (aut && !aut.checked) p.clicar(aut);
   // Bloqueio da conferência (ex.: Frete/precificação): espera só enquanto algo ainda está sendo conferido
   // ("Conferindo…"); bloqueio estável por alguns segundos = pausa JÁ, com o motivo específico.
   let estavel = 0;
@@ -153,19 +116,25 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   const estadoRes = res.getAttribute("data-paiia-resultado-publicacao");
   const mlb = (p.texto(res).match(/MLB\d{6,}/) || [])[0] || "";
   if (!mlb || !/^publicado/.test(estadoRes)) return pausa("publicar", p.texto(res).slice(0, 300) || "O Mercado Livre não publicou. Nada foi reenviado.");
+  // MLB confirmado pelo Mercado Livre e gravado: avisa "publicado" JÁ; o resto segue sem prender ninguém.
+  const link = (res.querySelector?.("a")?.href) || "";
+  p.publicado?.({ mlb, link });
+  const avisos = [];
   // 6) Acompanhar até ATIVO (pausado processando fotos = continua esperando).
   p.progresso("ativo", "Aguardando o Mercado Livre ativar o anúncio…");
   let sit = null;
   const ativo = await esperarAte(async () => { sit = situacaoAnuncioML(await p.consultarItem(mlb).catch(() => null)); if (!sit.fim) p.progresso("ativo", sit.texto); return sit.fim ? sit : null; }, L.ativo, L.intervaloML);
-  if (!ativo) return pausa("ativo", `Anúncio ${mlb} publicado, mas ainda não ficou ativo no Mercado Livre. Nada foi reenviado.`);
-  if (!ativo.ok) return pausa("ativo", `Anúncio ${mlb} publicado, mas ${String(ativo.texto).charAt(0).toLowerCase()}${String(ativo.texto).slice(1)}`);
+  if (!ativo) avisos.push(`o Mercado Livre ainda não ativou o ${mlb} (fotos em processamento?): confira mais tarde`);
+  else if (!ativo.ok) avisos.push(`${String(ativo.texto).replace(/\.$/, "")}: confira no Mercado Livre`);
   // 7) Vínculo no Bling (LOJA ONLINE: o Bling traz o anúncio; o PAIIA só confere).
   p.progresso("vinculo", "Conferindo o vínculo do anúncio no Bling…");
   const vinc = await esperarAte(async () => ((await p.relerIntegracao()) === "integrado" ? true : null), L.vinculo, L.intervaloML);
-  if (!vinc) return pausa("vinculo", `Anúncio ${mlb} ATIVO, mas o vínculo no Bling ainda não foi confirmado. A integração não está totalmente concluída.`);
-  // 8) Central: a ficha já foi marcada publicada pela própria Publicação.
+  if (!vinc) avisos.push("vínculo no Bling ainda não confirmado: confira a Gestão de Anúncios do Bling");
+  // 8) Central (a ficha já foi marcada publicada) + pendências da conferência posterior, sem esconder nada.
   p.progresso("central");
-  // Publicado com pendência (ex.: compatibilidades não gravadas): o anúncio fica, mas a integração NÃO está 100%.
-  const pendencia = estadoRes === "publicado_com_pendencia" ? p.texto(res).replace(/\s+/g, " ").slice(0, 400) : "";
-  return { ok: true, mlb, link: (res.querySelector?.("a")?.href) || "", pendencia };
+  const resFinal = p.achar("[data-paiia-resultado-publicacao]");
+  if (resFinal?.getAttribute?.("data-paiia-resultado-publicacao") === "publicado_com_pendencia") avisos.push(p.texto(resFinal).replace(/\s+/g, " ").slice(0, 300));
+  const posteriores = p.achar("[data-paiia-pendencias-posteriores]");
+  if (posteriores) avisos.push(p.texto(posteriores).replace(/;?\s*a publicação fica bloqueada[^.]*\./gi, ".").replace(/Volte ao Novo Anúncio \([^)]*\) e recalcule/gi, "recalcule no Novo Anúncio").replace(/\s+/g, " ").slice(0, 300));
+  return { ok: true, mlb, link, pendencia: avisos.join(" · "), ativo: Boolean(ativo?.ok), vinculo: Boolean(vinc) };
 }

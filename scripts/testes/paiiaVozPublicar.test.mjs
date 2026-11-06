@@ -189,8 +189,9 @@ test("Publicação existente: modo simples só automatiza LEITURAS; publicar exi
   assert.ok(f.includes("{!modoSimples && (<label"), "caixa 'autorizo' continua no fluxo normal");
   assert.ok(f.includes("onClick={modoSimples ? tocarPublicarSimples : publicar}"));
   assert.match(f, /function tocarPublicarSimples\(\) \{[\s\S]*?if \(!autorizado\) \{\s*setAutorizado\(true\);\s*setArmado\(true\);\s*return;\s*\}\s*publicar\(\);/);
-  // publicar() continua exigindo autorização, validação e zero bloqueios, e a confirmação (armado)
-  assert.match(f, /async function publicar\(\) \{\s*if \(!autorizado \|\| !validacao\?\.valido \|\| bloqueios\.length > 0\) return;\s*if \(!armado\) \{/);
+  // publicar() continua exigindo autorização, zero bloqueios e a confirmação (armado); a validação prévia é
+  // dispensada SÓ na publicação automática (13/11: o servidor valida no ML dentro da publicação).
+  assert.match(f, /async function publicar\(\) \{\s*if \(!autorizado \|\| \(!autoPublicacao && !validacao\?\.valido\) \|\| bloqueios\.length > 0\) return;\s*if \(!armado\) \{/);
   // automações do modo simples: só usarBlingNesteAnuncio (leitura) e validarNoML (não publica)
   const auto = f.slice(f.indexOf("const autoSimplesRef"), f.indexOf("function tocarPublicarSimples"));
   assert.ok(auto.includes("await usarBlingNesteAnuncio()") && auto.includes("await validarNoML()"));
