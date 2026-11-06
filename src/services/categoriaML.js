@@ -389,6 +389,8 @@ export function registrarConfirmacao(decisaoAnterior, { candidata, avaliacao, ag
     alertas: avaliacao?.alertas || [],
     revisao: revisao && revisao.categoria_id === candidata.id ? revisao : null,
     motivoSemGtin: ant.motivoSemGtin || null,
+    // (06/11) Atributos da categoria escolhidos antes (só valem para a mesma categoria).
+    atributos: ant.atributos || null,
     historico,
   };
 }

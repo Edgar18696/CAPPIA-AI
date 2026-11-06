@@ -27,6 +27,7 @@ import {
 } from "../services/anuncioPublicacaoService";
 import { conferirCategoriaParaPublicar } from "../services/categoriaML";
 import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
+import { extrasDaDecisao } from "../services/atributosCategoriaML";
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
@@ -468,8 +469,9 @@ export default function RevisaoPublicacaoML({ anuncio, titulo, onFechar, contaDe
     gtin: String(anuncio?.gtin || ""),
     categoria_id: String(anuncio?.categoriaId || ""),
   }));
-  // Atributos obrigatórios da categoria que o usuário escolhe aqui.
-  const [extras, setExtras] = useState({});
+  // Atributos obrigatórios da categoria: (06/11) já vêm da Conferência (gravados na
+  // decisão da categoria); os que faltarem o usuário escolhe aqui.
+  const [extras, setExtras] = useState(() => extrasDaDecisao(anuncio?.categoriaDecisao));
   // Tipo de veículo: vai EXATAMENTE o confirmado na ficha (⑤ da Conferência),
   // como valor da categoria no ML. Não é escolhido aqui.
   const attrTipoVeiculo = (preparo?.obrigatorios || []).find((a) => a.id === "VEHICLE_TYPE") || null;

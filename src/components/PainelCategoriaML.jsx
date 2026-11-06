@@ -105,6 +105,56 @@ function RejeitarManual({ c, onRejeitar }) {
   );
 }
 
+// (06/11/2026) Atributos obrigatórios da categoria escolhida: só os pendentes em destaque.
+function AtributosCategoria({ atributos, onAtributo, onSeguir }) {
+  const [texto, setTexto] = useState({});
+  if (!atributos?.lido) return null;
+  const pend = atributos.pendentes || [];
+  const ok = (atributos.itens || []).filter((i) => !i.pendente);
+  return (
+    <div data-paiia-atributos-categoria data-paiia-atributos-completos={atributos.completo ? "sim" : "nao"} style={{ ...cartao, border: atributos.completo ? "1px solid #22c55e" : "1px solid #f59e0b", background: "#020617" }}>
+      {atributos.completo ? (
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <div data-paiia-atributos-ok style={{ color: "#86efac", fontWeight: "bold", fontSize: "16px" }}>✅ Atributos completos</div>
+          {onSeguir ? <button type="button" data-paiia-atributos-seguir style={{ ...botao, fontSize: "14px" }} onClick={onSeguir}>Seguir para a Revisão final →</button> : null}
+        </div>
+      ) : (
+        <div style={{ color: "#fbbf24", fontWeight: "bold", fontSize: "16px" }}>Preencha {pend.length === 1 ? "o atributo obrigatório" : `os ${pend.length} atributos obrigatórios`} da categoria:</div>
+      )}
+      {pend.map((a) => (
+        <div key={a.id} data-paiia-atributo-pendente={a.id} style={{ marginTop: "10px" }}>
+          <div style={{ color: "#f8fafc", fontSize: "16px", fontWeight: "bold" }}>{a.nome}</div>
+          {a.duvida ? <div style={{ color: "#fde68a", fontSize: "13px" }}>⚠ {a.duvida}</div> : null}
+          {a.campoProprio ? (
+            <div style={{ color: "#fde68a", fontSize: "14px" }}>Preencha o campo “{a.campoProprio}” desta Conferência.</div>
+          ) : a.tipo === "lista" ? (
+            <select data-paiia-atributo-valor={a.id} value="" onChange={(e) => { const o = a.valores.find((v) => v.id === e.target.value); if (o) onAtributo?.(a, { valueId: o.id, valueName: o.name }); }}
+              style={{ marginTop: "4px", padding: "10px", fontSize: "16px", minWidth: "260px", background: "#0f172a", color: "#f8fafc", border: "1px solid #64748b", borderRadius: "8px" }}>
+              <option value="">— escolha —</option>
+              {a.valores.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          ) : (
+            <div style={{ display: "flex", gap: "8px", marginTop: "4px", flexWrap: "wrap" }}>
+              <input data-paiia-atributo-valor={a.id} value={texto[a.id] || ""} onChange={(e) => setTexto((t) => ({ ...t, [a.id]: e.target.value }))}
+                style={{ padding: "10px", fontSize: "16px", minWidth: "220px", background: "#0f172a", color: "#f8fafc", border: "1px solid #64748b", borderRadius: "8px" }} />
+              <button type="button" data-paiia-atributo-salvar={a.id} disabled={!String(texto[a.id] || "").trim()} style={{ ...botao, fontSize: "14px" }} onClick={() => onAtributo?.(a, { valueName: String(texto[a.id] || "").trim() })}>Salvar</button>
+            </div>
+          )}
+        </div>
+      ))}
+      {ok.length ? (
+        <div data-paiia-atributos-preenchidos style={{ marginTop: "8px", fontSize: "13px", color: "#cbd5e1" }}>
+          {ok.map((a) => (
+            <div key={a.id}>✓ {a.nome}: <strong style={forte}>{a.valor}</strong> <span style={rotulo}>({a.origem})</span>
+              {!a.campoProprio && a.origem === "confirmado por você" ? <button type="button" data-paiia-atributo-alterar={a.id} style={{ ...botaoCinza, padding: "2px 8px", marginLeft: "6px" }} onClick={() => onAtributo?.(a, { valueId: "", valueName: "" })}>alterar</button> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PainelCategoriaML({
   carregando = false,
   erro = "",
@@ -124,23 +174,30 @@ export default function PainelCategoriaML({
   termo = "",
   onTermo,
   onBuscar,
+  preferida = "",
+  atributos = null,
+  onAtributo = null,
+  onSeguir = null,
 }) {
   const confirmada = decisao?.confirmada?.id && decisao.confirmada.id === categoriaId ? decisao.confirmada : null;
   const candidatas = avaliacao?.candidatas || [];
   const sugerida = candidatas.find((c) => c.id === avaliacao?.sugerida) || null;
+  // (06/11) UMA opção na tela: a buscada pelo código MLB (se compatível), a sugerida
+  // pelo PAIIA ou, havendo divergência entre as fontes, a 1ª compatível (com aviso).
+  const pedida = preferida ? candidatas.find((c) => c.id === String(preferida).toUpperCase()) || null : null;
+  const melhor = (pedida?.compativel ? pedida : null) || sugerida || candidatas.find((c) => c.compativel) || null;
+  const divergencia = Boolean(melhor && !sugerida && melhor !== pedida);
   const estado = confirmada ? "confirmada" : carregando ? "carregando" : sugerida ? "sugerida" : avaliacao ? "conflito" : "sem_dados";
   const conflitos = avaliacao?.conflitos || [];
   const alertas = avaliacao?.alertas || [];
+  const outras = candidatas.filter((c) => c.id !== melhor?.id);
+  const caminho = (c) => c.caminho || c.nome || c.id;
 
   return (
     <div data-paiia-categoria-painel data-paiia-categoria-estado={estado}>
       {confirmada ? (
-        <div data-paiia-categoria-confirmada={confirmada.id} style={{ ...cartao, border: "1px solid #22c55e", background: "#020617" }}>
-          <div style={{ color: "#86efac", fontWeight: "bold", fontSize: "13px" }}>✅ Categoria CONFIRMADA por você</div>
-          <div><span style={rotulo}>ID:</span> <strong style={forte}>{confirmada.id}</strong></div>
-          <div><span style={rotulo}>Caminho completo:</span> <strong style={forte}>{confirmada.caminho || categoriaCaminho}</strong></div>
-          <div><span style={rotulo}>Domínio:</span> {confirmada.dominio || "não informado"}</div>
-          <div><span style={rotulo}>Origem:</span> {(confirmada.origem || []).map((o) => ROTULO_ORIGEM_CATEGORIA[o] || o).join(" · ") || "—"} · escolha manual em {new Date(confirmada.data).toLocaleString("pt-BR")}</div>
+        <div data-paiia-categoria-confirmada={confirmada.id} style={{ ...cartao, border: "1px solid #22c55e", background: "#020617", fontSize: "14px" }}>
+          <div style={{ color: "#86efac", fontWeight: "bold", fontSize: "15px" }}>✅ Categoria: {confirmada.caminho || categoriaCaminho} <span style={rotulo}>({confirmada.id})</span></div>
           {decisao?.revisao ? <div style={{ color: "#fde68a" }}>Revisão registrada: {decisao.revisao.justificativa}</div> : null}
           {(problemasSelecionada || []).length ? (
             <div data-paiia-categoria-problemas style={{ color: "#fca5a5", marginTop: "6px" }}>
@@ -148,60 +205,41 @@ export default function PainelCategoriaML({
               <div>Esta categoria NÃO será aprovada nem publicada assim. Troque a categoria (ou o tipo de veículo).</div>
             </div>
           ) : null}
-          <button type="button" data-paiia-categoria-trocar style={{ ...botaoCinza, marginTop: "8px" }} onClick={onTrocar}>Trocar categoria</button>
+          <button type="button" data-paiia-categoria-trocar style={{ ...botaoCinza, marginTop: "8px" }} onClick={onTrocar}>Trocar</button>
+        </div>
+      ) : carregando ? (
+        <div data-paiia-categoria-buscando style={{ ...cartao, border: "1px solid #334155", fontSize: "14px" }}>⏳ Buscando a categoria no Mercado Livre…</div>
+      ) : melhor ? (
+        <div data-paiia-categoria-sugerida={melhor.id} data-paiia-categoria-melhor={melhor.id} style={{ ...cartao, border: "1px solid #22d3ee", fontSize: "14px" }}>
+          <div style={{ color: "#67e8f9", fontWeight: "bold" }}>{melhor === pedida ? "Categoria do código informado" : "Melhor categoria encontrada"}</div>
+          <div style={{ color: "#f8fafc", fontSize: "15px", fontWeight: "bold", marginTop: "2px" }}>{caminho(melhor)} <span style={rotulo}>({melhor.id})</span></div>
+          {divergencia ? <div style={{ color: "#fde68a" }}>As fontes do Mercado Livre indicaram mais de uma opção: confira o caminho antes de usar.</div> : null}
+          <button type="button" data-paiia-categoria-confirmar={melhor.id} style={{ ...botao, marginTop: "8px", fontSize: "14px" }} onClick={() => onConfirmar(melhor, null)}>
+            Usar esta categoria
+          </button>
         </div>
       ) : (
-        <div style={{ ...cartao, border: "1px solid #f59e0b", background: "#020617" }}>
-          <div style={{ color: "#fbbf24", fontWeight: "bold", fontSize: "13px" }}>
-            {carregando ? "⏳ Conferindo categoria no Mercado Livre (preditor, caminho, domínio, anúncios do mesmo código, histórico do SKU)…" : "Categoria Mercado Livre: PENDENTE — confirme abaixo"}
-          </div>
-          {erro ? <div style={{ color: "#fca5a5" }}>⚠ {erro}</div> : null}
+        <div data-paiia-categoria-nenhuma style={{ ...cartao, border: "1px solid #f59e0b", fontSize: "14px", color: "#fde68a" }}>
+          {pedida
+            ? `A categoria ${pedida.id} não serve para esta peça: ${pedida.rejeitada ? "já foi rejeitada pelo Mercado Livre para este SKU" : (pedida.bloqueios || []).join("; ") || "não passou na conferência"}. (Exceção só em “Avançado”.)`
+            : "Nenhuma categoria automotiva compatível encontrada. Busque por outro termo ou informe o código MLB."}
         </div>
       )}
+      {erro ? <div style={{ color: "#fca5a5", fontSize: "13px", marginBottom: "8px" }}>⚠ {erro}</div> : null}
 
-      {!confirmada && conflitos.length ? (
-        <div data-paiia-categoria-conflitos style={{ ...cartao, border: "1px solid #ef4444" }}>
-          <div style={{ color: "#fca5a5", fontWeight: "bold" }}>⚠ Conflito entre as fontes — o PAIIA NÃO escolhe. Decida entre as alternativas:</div>
-          {conflitos.map((c) => <div key={c}>• {c}</div>)}
-        </div>
-      ) : null}
-      {!confirmada && alertas.length ? (
-        <div data-paiia-categoria-alertas style={{ ...cartao, border: "1px solid #f59e0b" }}>
-          {alertas.map((a) => <div key={a} style={{ color: "#fde68a" }}>• {a}</div>)}
-        </div>
-      ) : null}
-
-      {!confirmada && sugerida ? (
-        <div data-paiia-categoria-sugerida={sugerida.id} style={{ ...cartao, border: "1px solid #22d3ee" }}>
-          <div style={{ color: "#67e8f9", fontWeight: "bold", fontSize: "13px" }}>Categoria sugerida (sem conflito entre as fontes)</div>
-          <DadosCategoria c={sugerida} evidencia={evidencia} />
-          <button type="button" data-paiia-categoria-confirmar={sugerida.id} style={{ ...botao, marginTop: "8px" }} onClick={() => onConfirmar(sugerida, null)}>
-            Confirmar esta categoria
+      {!confirmada ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "10px", alignItems: "end", marginBottom: "10px" }}>
+          <label style={{ fontSize: "13px", color: "#94a3b8" }}>
+            Buscar outra: nome técnico da peça ou código da categoria (ex.: MLB458928)
+            <input data-paiia-categoria-termo value={termo} onChange={(e) => onTermo(e.target.value)} style={{ width: "100%", marginTop: "4px", padding: "8px", background: "#020617", color: "#e2e8f0", border: "1px solid #475569", borderRadius: "8px" }} />
+          </label>
+          <button type="button" data-paiia-categoria-buscar disabled={carregando} style={{ ...botao, background: "#2563eb", opacity: carregando ? 0.6 : 1, fontSize: "14px" }} onClick={onBuscar}>
+            {carregando ? "⏳ Buscando…" : "🔎 Buscar Categoria"}
           </button>
         </div>
       ) : null}
 
-      {!confirmada && candidatas.filter((c) => c.id !== sugerida?.id).length ? (
-        <div>
-          <div style={{ color: "#bfdbfe", fontWeight: "bold", margin: "6px 0" }}>{sugerida ? "Outras categorias encontradas" : "Alternativas para sua decisão"}</div>
-          {candidatas.filter((c) => c.id !== sugerida?.id).map((c) => (
-            <div key={c.id} data-paiia-categoria-candidata={c.id} data-paiia-categoria-compativel={c.compativel ? "sim" : "nao"} {...(c.rejeitada ? { "data-paiia-categoria-rejeitada": c.id } : {})}
-              style={{ ...cartao, border: c.rejeitada ? "1px solid #ef4444" : c.compativel ? "1px solid #334155" : "1px solid #f59e0b" }}>
-              {c.rejeitada ? <div style={{ color: "#f87171", fontWeight: "bold" }}>⛔ CATEGORIA REJEITADA — NÃO REUTILIZAR AUTOMATICAMENTE</div> : null}
-              {!c.rejeitada && !c.compativel ? <div style={{ color: "#fbbf24", fontWeight: "bold" }}>⚠ Não passou na conferência do PAIIA</div> : null}
-              <DadosCategoria c={c} evidencia={evidencia} />
-              {c.compativel ? (
-                <button type="button" data-paiia-categoria-confirmar={c.id} style={{ ...botao, marginTop: "6px" }} onClick={() => onConfirmar(c, null)}>
-                  Escolher e confirmar esta categoria
-                </button>
-              ) : (
-                <Revisao c={c} onUsar={onConfirmar} />
-              )}
-              {!c.rejeitada ? <RejeitarManual c={c} onRejeitar={onRejeitarManual} /> : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {confirmada ? <AtributosCategoria atributos={atributos} onAtributo={onAtributo} onSeguir={onSeguir} /> : null}
 
       {exigenciaGtin?.exigido ? (
         <div data-paiia-gtin-motivo-bloco={exigenciaGtin.obrigatorio ? "obrigatorio" : "aviso"} style={{ ...cartao, border: exigenciaGtin.escolhido ? "1px solid #22c55e" : exigenciaGtin.obrigatorio ? "1px solid #ef4444" : "1px solid #f59e0b" }}>
@@ -225,27 +263,57 @@ export default function PainelCategoriaML({
         </div>
       ) : null}
 
-      {rejeicoes.length || restricoes.length ? (
-        <details data-paiia-categoria-historico style={{ marginBottom: "10px" }}>
-          <summary style={{ color: "#fca5a5", fontSize: "12px", cursor: "pointer" }}>Histórico do SKU: {rejeicoes.length} categoria(s) rejeitada(s) · {restricoes.length} restrição(ões) sem motivo confirmado</summary>
-          {rejeicoes.map((r) => <div key={`${r.categoria_id}-${r.mlb}-${r.justificativa || ""}`} style={{ fontSize: "12px", color: "#fca5a5" }}>⛔ {r.categoria_id}{r.mlb ? ` · ${r.mlb}` : ""}: {r.motivo}</div>)}
-          {restricoes.map((r) => (
-            <div key={`r-${r.mlb}`} data-paiia-categoria-restricao={r.mlb} style={{ fontSize: "12px", color: "#fde68a" }}>
-              ⓘ {r.mlb} ({r.status_ml || "?"}{r.sub_status_ml?.length ? ` · ${r.sub_status_ml.join(", ")}` : ""}){r.categoria_id ? ` · categoria ${r.categoria_id}` : ""}: {r.motivo || TEXTO_RESTRICAO_NAO_CONFIRMADA} — não marca a categoria como rejeitada.
+      {/* Exceções e detalhes técnicos: recolhidos (não poluem a tela). */}
+      {(confirmada || outras.length || conflitos.length || alertas.length || rejeicoes.length || restricoes.length) ? (
+        <details data-paiia-categoria-avancado style={{ marginBottom: "10px" }}>
+          <summary style={{ color: "#94a3b8", fontSize: "12px", cursor: "pointer" }}>Avançado (outras categorias, detalhes e exceções)</summary>
+          {confirmada ? (
+            <div style={{ ...cartao, marginTop: "6px" }}>
+              <div><span style={rotulo}>Domínio:</span> {confirmada.dominio || "não informado"}</div>
+              <div><span style={rotulo}>Origem:</span> {(confirmada.origem || []).map((o) => ROTULO_ORIGEM_CATEGORIA[o] || o).join(" · ") || "—"} · escolha manual em {confirmada.data ? new Date(confirmada.data).toLocaleString("pt-BR") : "—"}</div>
+            </div>
+          ) : null}
+          {!confirmada && conflitos.length ? (
+            <div data-paiia-categoria-conflitos style={{ ...cartao, border: "1px solid #ef4444", marginTop: "6px" }}>
+              <div style={{ color: "#fca5a5", fontWeight: "bold" }}>Divergência entre as fontes:</div>
+              {conflitos.map((c) => <div key={c}>• {c}</div>)}
+            </div>
+          ) : null}
+          {!confirmada && alertas.length ? (
+            <div data-paiia-categoria-alertas style={{ ...cartao, border: "1px solid #f59e0b" }}>
+              {alertas.map((a) => <div key={a} style={{ color: "#fde68a" }}>• {a}</div>)}
+            </div>
+          ) : null}
+          {!confirmada && melhor ? <div style={{ ...cartao }}><div style={{ color: "#67e8f9", fontWeight: "bold" }}>Detalhes de {melhor.id}</div><DadosCategoria c={melhor} evidencia={evidencia} /></div> : null}
+          {!confirmada && outras.map((c) => (
+            <div key={c.id} data-paiia-categoria-candidata={c.id} data-paiia-categoria-compativel={c.compativel ? "sim" : "nao"} {...(c.rejeitada ? { "data-paiia-categoria-rejeitada": c.id } : {})}
+              style={{ ...cartao, border: c.rejeitada ? "1px solid #ef4444" : c.compativel ? "1px solid #334155" : "1px solid #f59e0b" }}>
+              {c.rejeitada ? <div style={{ color: "#f87171", fontWeight: "bold" }}>⛔ CATEGORIA REJEITADA — NÃO REUTILIZAR AUTOMATICAMENTE</div> : null}
+              {!c.rejeitada && !c.compativel ? <div style={{ color: "#fbbf24", fontWeight: "bold" }}>⚠ Não passou na conferência do PAIIA (só com conferência explícita)</div> : null}
+              <DadosCategoria c={c} evidencia={evidencia} />
+              {c.compativel ? (
+                <button type="button" data-paiia-categoria-confirmar={c.id} style={{ ...botao, marginTop: "6px" }} onClick={() => onConfirmar(c, null)}>
+                  Usar esta categoria
+                </button>
+              ) : (
+                <Revisao c={c} onUsar={onConfirmar} />
+              )}
+              {!c.rejeitada ? <RejeitarManual c={c} onRejeitar={onRejeitarManual} /> : null}
             </div>
           ))}
+          {rejeicoes.length || restricoes.length ? (
+            <div data-paiia-categoria-historico style={{ marginTop: "6px" }}>
+              <div style={{ color: "#fca5a5", fontSize: "12px" }}>Histórico do SKU: {rejeicoes.length} categoria(s) rejeitada(s) · {restricoes.length} restrição(ões) sem motivo confirmado</div>
+              {rejeicoes.map((r) => <div key={`${r.categoria_id}-${r.mlb}-${r.justificativa || ""}`} style={{ fontSize: "12px", color: "#fca5a5" }}>⛔ {r.categoria_id}{r.mlb ? ` · ${r.mlb}` : ""}: {r.motivo}</div>)}
+              {restricoes.map((r) => (
+                <div key={`r-${r.mlb}`} data-paiia-categoria-restricao={r.mlb} style={{ fontSize: "12px", color: "#fde68a" }}>
+                  ⓘ {r.mlb} ({r.status_ml || "?"}{r.sub_status_ml?.length ? ` · ${r.sub_status_ml.join(", ")}` : ""}){r.categoria_id ? ` · categoria ${r.categoria_id}` : ""}: {r.motivo || TEXTO_RESTRICAO_NAO_CONFIRMADA} — não marca a categoria como rejeitada.
+                </div>
+              ))}
+            </div>
+          ) : null}
         </details>
       ) : null}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "10px", alignItems: "end" }}>
-        <label style={{ fontSize: "12px", color: "#94a3b8" }}>
-          Buscar outras categorias (nome técnico da peça, sem palavras que confundam — ex.: evite "segmento" para peça de câmbio)
-          <input data-paiia-categoria-termo value={termo} onChange={(e) => onTermo(e.target.value)} style={{ width: "100%", marginTop: "4px", padding: "8px", background: "#020617", color: "#e2e8f0", border: "1px solid #475569", borderRadius: "8px" }} />
-        </label>
-        <button type="button" data-paiia-categoria-buscar disabled={carregando} style={{ ...botao, background: "#2563eb", opacity: carregando ? 0.6 : 1 }} onClick={onBuscar}>
-          {carregando ? "⏳ Conferindo…" : "🔎 Buscar e conferir"}
-        </button>
-      </div>
     </div>
   );
 }

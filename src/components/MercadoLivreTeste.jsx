@@ -30,6 +30,7 @@ import {
 import { GARANTIA_ML, LINHAS_FIXAS, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import PainelCategoriaML from "./PainelCategoriaML";
 import { avaliarCategorias, registrarConfirmacao, desfazerConfirmacao, conferirCategoriaParaPublicar, mesclarRejeicoes, rejeicaoManual, ORIGEM_CATEGORIA } from "../services/categoriaML";
+import { montarAtributosCategoria, registrarAtributo, assinaturaAtributos } from "../services/atributosCategoriaML";
 import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import {
@@ -2515,6 +2516,8 @@ const [rejeicoesSKU, setRejeicoesSKU] = useState(() => (Array.isArray(decisaoIni
 const [restricoesSKU, setRestricoesSKU] = useState(() => (Array.isArray(decisaoInicial?.restricoes) ? decisaoInicial.restricoes : []));
 const cacheDetalhesCategoriaRef = useRef({});
 const termosExtrasCategoriaRef = useRef([]);
+const categoriaManualRef = useRef("");
+const [categoriaPreferida, setCategoriaPreferida] = useState("");
 // Obrigatórios/condicionais da categoria selecionada (motivo sem GTIN).
 const exigenciaCategoria = useMemo(() => {
   const d = categoriaId ? detalhesCategoria[categoriaId] : null;
@@ -2538,6 +2541,14 @@ const exigenciaGtin = useMemo(() => {
     escolhido: exigenciaCategoria.motivoSemGtin,
   };
 }, [exigenciaCategoria, detalhesCategoria, categoriaId]);
+// (06/11/2026) Atributos obrigatórios da categoria confirmada: preenchidos só com o que é
+// confiável na ficha (campo próprio ou linha “Nome: valor” com o MESMO nome); o resto é pendente.
+const atributosCategoria = useMemo(() => montarAtributosCategoria({
+  categoriaId: decisaoCategoria?.confirmada?.id === categoriaId ? categoriaId : "",
+  atributosBrutos: categoriaId ? detalhesCategoria[categoriaId]?.atributosBrutos || null : null,
+  ficha: { marca, numeroPeca: numeroPeca || codigo, tipoVeiculo, textos: [especificacaoTecnica, caracteristicasSecundarias, descricao] },
+  salvos: decisaoCategoria?.atributos || null,
+}), [categoriaId, detalhesCategoria, decisaoCategoria, marca, numeroPeca, codigo, tipoVeiculo, especificacaoTecnica, caracteristicasSecundarias, descricao]);
 
   // Cópia aprovada montada com os dados ATUAIS da Conferência. É a mesma
   // usada ao aprovar e para conferir, depois, se a aprovação ainda vale.
@@ -2558,7 +2569,8 @@ const exigenciaGtin = useMemo(() => {
       categoriaId,
       // Decisão da categoria (confirmação do usuário + rastreabilidade) e
       // motivo de não ter GTIN: a Publicação confere de novo antes de publicar.
-      categoriaDecisao: copiaLeve(decisaoCategoria, 60000),
+      // (06/11) Com os atributos obrigatórios da categoria (os da ficha e os escolhidos por você).
+      categoriaDecisao: copiaLeve(atributosCategoria.paraGravar ? { ...(decisaoCategoria || {}), atributos: atributosCategoria.paraGravar } : decisaoCategoria, 60000),
       compatibilidades,
       // Tipo de veículo aprovado (vai como VEHICLE_TYPE na Publicação).
       tipoVeiculo,
@@ -2622,6 +2634,8 @@ const exigenciaGtin = useMemo(() => {
     // (09/10/2026) Categoria CONFIRMADA e motivo de não ter GTIN.
     decisaoCategoria?.confirmada?.id || "",
     decisaoCategoria?.motivoSemGtin?.id || "",
+    // (06/11) Atributos obrigatórios da categoria (no fim: aprovação antiga não cai).
+    assinaturaAtributos(atributosCategoria.paraGravar),
   ]);
 
   // A aprovação compara o CONTEÚDO (não o formato): abrir/revisar, F5,
@@ -3474,10 +3488,13 @@ async function avaliarCategoria() {
     setRestricoesSKU(rej.restricoes || []);
     // Histórico do SKU gravado na ficha (só acrescenta; nunca apaga).
     if (anuncioIdPAIIA && rej.lista.length) registrarCategoriasRejeitadas({ anuncioId: anuncioIdPAIIA, rejeicoes: rej.lista }).catch(() => {});
+    // (06/11) Código MLB digitado na busca entra como candidata (conferida pelas mesmas regras).
+    const manuais = categoriaManualRef.current ? [{ id: categoriaManualRef.current, origem: ORIGEM_CATEGORIA.BUSCA }] : [];
     const ids = new Set([
       ...consultas.flatMap((q) => q.sugestoes.map((x) => x.category_id)),
       ...Object.keys(evidencia.porCategoria || {}),
       ...herdadasCategoria.map((h) => h.id),
+      ...manuais.map((h) => h.id),
       ...rejeicoes.map((r) => r.categoria_id),
       categoriaIdRef.current,
     ].filter(Boolean));
@@ -3485,7 +3502,7 @@ async function avaliarCategoria() {
     await Promise.all([...ids].slice(0, 16).map(async (id) => {
       detalhes[id] = await lerDetalheCategoria(id, undefined, cacheDetalhesCategoriaRef.current);
     }));
-    const av = avaliarCategorias({ tipoVeiculo, textoPeca: textoPecaCategoria(), consultas, detalhes, evidencia, rejeicoes, herdadas: herdadasCategoria });
+    const av = avaliarCategorias({ tipoVeiculo, textoPeca: textoPecaCategoria(), consultas, detalhes, evidencia, rejeicoes, herdadas: [...herdadasCategoria, ...manuais] });
     if (conflitoPrincipal) {
       av.conflitos.unshift("Conflito na identificação do produto principal (Base/nome da peça × título): confirme qual é a peça antes de escolher a categoria.");
       av.sugerida = null;
@@ -3537,8 +3554,17 @@ function rejeitarCategoriaManual(candidata, justificativa) {
 // Busca manual: acrescenta o termo às consultas e confere tudo de novo.
 async function buscarCategoriaManual() {
   const termo = String(termoCategoria || "").trim();
-  if (termo) termosExtrasCategoriaRef.current = [...new Set([...termosExtrasCategoriaRef.current, termo])].slice(-3);
+  // (06/11) Código da categoria (MLB…): conferido direto; texto: vai ao preditor do ML.
+  const codigoMLB = /^MLB\d+$/i.test(termo) ? termo.toUpperCase() : "";
+  categoriaManualRef.current = codigoMLB;
+  setCategoriaPreferida(codigoMLB);
+  if (termo && !codigoMLB) termosExtrasCategoriaRef.current = [...new Set([...termosExtrasCategoriaRef.current, termo])].slice(-3);
   await avaliarCategoria();
+}
+// (06/11) Atributo obrigatório escolhido pelo usuário: fica na decisão da categoria (ficha).
+function escolherAtributoCategoria(atributo, { valueId = "", valueName = "" } = {}) {
+  if (!categoriaId) return;
+  setDecisaoCategoria((d) => ({ ...(d || {}), atributos: registrarAtributo(d?.atributos, { categoriaId, atributo, valueId, valueName }) }));
 }
 
 // Ao abrir a Conferência: confere SEMPRE (inclusive a categoria herdada).
@@ -4562,6 +4588,10 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
     });
     if (!confCategoria.ok) {
       faltando.push(...confCategoria.motivos.map((m) => `Categoria (bloco ⑮): ${m}`));
+    }
+    // (06/11) Atributos obrigatórios da categoria: todos preenchidos antes de aprovar.
+    if (confCategoria.ok && atributosCategoria.lido && atributosCategoria.pendentes.length) {
+      faltando.push(`Atributos obrigatórios da categoria (bloco ⑮): ${atributosCategoria.pendentes.map((a) => a.nome).join(", ")}`);
     }
 
     if (!marca.trim()) {
@@ -6647,6 +6677,10 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
   termo={termoCategoria}
   onTermo={setTermoCategoria}
   onBuscar={buscarCategoriaManual}
+  preferida={categoriaPreferida}
+  atributos={atributosCategoria}
+  onAtributo={escolherAtributoCategoria}
+  onSeguir={() => document.getElementById("conf-bloco-16")?.scrollIntoView({ behavior: "smooth", block: "start" })}
 />
 
 </section>
