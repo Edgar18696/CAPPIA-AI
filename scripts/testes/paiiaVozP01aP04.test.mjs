@@ -32,3 +32,10 @@ test("P-04) Compatibilidade traz a base sozinha (fichas antigas: consulta UMA ve
   assert.ok(t.includes('if (b?.estado === "encontrado") aproveitarBase(); else consultarBase(cp0.codigo);'));
   assert.ok(ler("src/modules/paiiaVoz/servicos/consultaBaseVoz.js").includes("versao: txt(l.versao),"));
 });
+
+test("rev.2) calculadora SEMPRE visível com 'Custo da Mercadoria (R$)'; versão na tela e aviso de versão nova publicada", () => {
+  const c = ler("src/modules/paiiaVoz/CalculadoraPrecoVoz.jsx");
+  assert.ok(!c.includes("setAberta") && c.includes('"Custo da Mercadoria (R$)"') && c.includes("Preço de Venda Sugerido"));
+  assert.ok(t.includes("export const VERSAO_PAIIA_VOZ") && t.includes("data-pv-versao") && t.includes("data-pv-nova-versao"));
+  assert.ok(t.includes("fetch(`/?v=${Date.now()}`, { cache: \"no-store\" })") && t.includes("/(^|\\.)paiia\\.com\\.br$/.test(window.location.hostname)"));
+});

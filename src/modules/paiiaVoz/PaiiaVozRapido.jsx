@@ -121,6 +121,9 @@ function marcaCompletos(ficha) {
 
 const VEIC_VAZIO = Object.freeze({ montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "" });
 
+// Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
+export const VERSAO_PAIIA_VOZ = "14/11 · P-01 a P-04 rev.2";
+
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
   const [aviso, setAviso] = useState("");
@@ -490,6 +493,24 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (P-04) Etapa Compatibilidade: as aplicações da base aparecem SOZINHAS, sem nova pesquisa pedida por você.
   // Ficha consultada antes desta versão (não aproveitada ou "não encontrada" com a busca antiga): refaz a
   // consulta UMA vez, em silêncio, e traz as aplicações como "da base, a conferir".
+  // (rev.2) O celular pode continuar com a versão ANTIGA aberta (a página não recarrega sozinha).
+  // Compara o pacote em uso com o publicado e oferece atualizar. Só no site real.
+  const [novaVersao, setNovaVersao] = useState(false);
+  useEffect(() => {
+    if (!/(^|\.)paiia\.com\.br$/.test(window.location.hostname)) return undefined;
+    let vivo = true;
+    const conferir = async () => {
+      try {
+        const atual = [...document.querySelectorAll('script[type="module"][src]')].map((x) => new URL(x.src).pathname).find((p) => /\/assets\/index-/.test(p)) || "";
+        const html = await (await fetch(`/?v=${Date.now()}`, { cache: "no-store" })).text();
+        const publicado = (html.match(/\/assets\/index-[^"']+\.js/) || [""])[0];
+        if (vivo && atual && publicado && atual !== publicado) setNovaVersao(true);
+      } catch { /* sem rede: tenta depois */ }
+    };
+    conferir();
+    const t = setInterval(conferir, 5 * 60_000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
   const baseCompatRef = useRef("");
   useEffect(() => {
     if (etapa !== "compat") return undefined;
@@ -1084,7 +1105,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
 
   return (
     <div className="pr" lang="pt-BR" data-paiia-voz data-pr-etapa={etapa}>
+      {novaVersao && (
+        <button type="button" className="pr-botao pr-grande" data-pv-nova-versao onClick={() => window.location.reload()} style={{ marginBottom: 8 }}>
+          ⟳ Há uma versão nova do PAIIA publicada. Toque para atualizar (nada da ficha se perde).
+        </button>
+      )}
       <style>{CSS_RAPIDO}</style>
+      <div className="pr-fonte" data-pv-versao style={{ textAlign: "right", fontSize: 11, opacity: 0.7 }}>Versão {VERSAO_PAIIA_VOZ}</div>
       <div className="pr-topo">
         <button type="button" className="pr-voltar" onClick={() => setScreen?.("home")}>← Início</button>
         <h1>🎙️ PAIIA Voz</h1>
