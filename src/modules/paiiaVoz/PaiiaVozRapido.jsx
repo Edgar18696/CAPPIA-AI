@@ -76,7 +76,7 @@ import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVo
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
 // (03/11/2026) Pacote C: conversa “Completar a ficha” (só o que falta) na etapa final.
 import CompletarVoz from "./CompletarVoz";
-import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling, camposDaEtapa, definirTipoVeiculoVoz, estadoEtapasVoz, situacaoAplicacao } from "./servicos/completarVoz";
+import { camposDaFicha, CAMPOS_DIRETOS, valoresCamposDiretos, definirCampoDireto, proximoCampoDireto, usarDadosDoBling, camposDaEtapa, definirTipoVeiculoVoz, estadoEtapasVoz, situacaoAplicacao, valoresCalculadoraDaFicha, definirValorCalculadora } from "./servicos/completarVoz";
 import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
 import CategoriaVoz from "./CategoriaVoz";
@@ -519,9 +519,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (16/11) Calculadora: valores guardados NA FICHA (voltam ao avançar/voltar e no F5).
   const [calcOuvido, setCalcOuvido] = useState({});
   function mudarCalculadora(k, valor, origem = "digitado") {
-    const f = JSON.parse(JSON.stringify(fichaRef.current));
-    f.calculadoraPreco = { ...valoresIniciaisCalculadora(f.calculadoraPreco || {}, estadoRapido(f).tipoAnuncio || "classico"), [k]: { valor: String(valor), origem } };
-    mudarFicha(f);
+    // (07/11) O Custo da Mercadoria também fica no custo da ficha (não existe mais o campo "Custo (R$)" fora da calculadora).
+    mudarFicha(definirValorCalculadora(fichaRef.current, k, valor, { origem, tipoAnuncio: estadoRapido(fichaRef.current).tipoAnuncio || "classico" }));
   }
   const baseCompatRef = useRef("");
   useEffect(() => {
@@ -1391,15 +1390,15 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             {cp?.codigo && (
               <button type="button" className="pr-link" disabled={lendoBlingVoz} onClick={trazerDoBling} data-pv-dados-bling>{lendoBlingVoz ? "⏳ Lendo o cadastro Bling…" : "⬇️ Trazer do Bling (só leitura; preenche só o que está vazio)"}</button>
             )}
-            {camposDaEtapa("preco").map(renderCampo)}
-            {/* (P-03) Opcional: custo → preço sugerido; só preenche o Preço com o seu toque. */}
+            {/* (07/11) Ordem: 1 Calculadora (Custo da Mercadoria só aqui) → 2 Preço de Venda → 3 Marca → 4 Estoque. */}
             <CalculadoraPrecoVoz
-              valores={valoresIniciaisCalculadora(ficha.calculadoraPreco || {}, estadoRapido(ficha).tipoAnuncio || "classico")}
+              valores={valoresIniciaisCalculadora(valoresCalculadoraDaFicha(ficha), estadoRapido(ficha).tipoAnuncio || "classico")}
               ouvido={calcOuvido}
               mic={micCampo}
               onMudar={mudarCalculadora}
-              aoUsarPreco={(v) => { const r2 = definirCampoDireto(fichaRef.current, "preco", v, { origem: "digitado" }); mudarFicha(r2.ficha); setAviso(r2.ok ? `✅ Preço de venda do anúncio: R$ ${v}. Agora a marca e o estoque.` : r2.erro); }}
+              aoUsarPreco={(v) => { const r2 = definirCampoDireto(fichaRef.current, "preco", v, { origem: "digitado" }); mudarFicha(r2.ficha); setAviso(r2.ok ? `✅ Preço de Venda do anúncio: R$ ${v}. Para usar outro preço, digite no campo Preço de Venda. Agora a marca e o estoque.` : r2.erro); }}
             />
+            {camposDaEtapa("preco").map(renderCampo)}
             <p className="pr-fonte" style={{ margin: 0 }}>O estoque aqui é a quantidade a anunciar; o estoque oficial continua o do Bling.</p>
           </div>
           {navEtapa("descricao", "envio")}

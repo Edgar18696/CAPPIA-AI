@@ -269,11 +269,12 @@ test("celular: 8 etapas; estado de cada etapa (concluída/pendência); campos se
   let f = criarFichaVoz({ agora: 1, id: "e7" });
   let e = C.estadoEtapasVoz(f, { fotos: 0, etapaAtual: "preco", ordem: ETAPAS });
   assert.equal(e.fotos, "pe"); assert.equal(e.codigo, "pe"); assert.equal(e.envio, "");
-  assert.equal(C.proximoCampoDireto(f, "", { etapa: "preco" }), "marca");
-  f = C.definirCampoDireto(f, "marca", "Torken").ficha;
-  assert.equal(C.proximoCampoDireto(f, "marca", { etapa: "preco" }), "preco");
+  // (07/11) Ordem da etapa: Preço de Venda → Marca → Estoque (custo só na calculadora).
+  assert.equal(C.proximoCampoDireto(f, "", { etapa: "preco" }), "preco");
   f = C.definirCampoDireto(f, "preco", "39,90").ficha;
-  assert.equal(C.proximoCampoDireto(f, "preco", { etapa: "preco" }), "quantidade", "custo é opcional");
+  assert.equal(C.proximoCampoDireto(f, "preco", { etapa: "preco" }), "marca");
+  f = C.definirCampoDireto(f, "marca", "Torken").ficha;
+  assert.equal(C.proximoCampoDireto(f, "marca", { etapa: "preco" }), "quantidade", "custo fica na calculadora");
   f = C.definirCampoDireto(f, "quantidade", "10").ficha;
   assert.equal(C.proximoCampoDireto(f, "quantidade", { etapa: "preco" }), "", "fim da etapa: não pula para outra");
   e = C.estadoEtapasVoz(f, { fotos: 2, etapaAtual: "envio", ordem: ETAPAS });

@@ -39,7 +39,7 @@ export const PERGUNTAS = {
   fotos: "Tire ou escolha até 5 fotos da peça. Pode continuar com menos. Quando terminar, toque em Continuar ou diga “próximo”.",
   codigo: "Qual é o código da peça? Fale ou digite. Se não tiver, diga “sem código”.",
   descricao: "Primeiro o Título: toque no 🎤 do Título e fale. Depois a Descrição (cada fala é acrescentada).",
-  preco: "Toque no 🎤 e fale: marca, preço de venda, custo (opcional) e estoque. Ele passa sozinho para o próximo campo.",
+  preco: "Calculadora (opcional, com o Custo da Mercadoria) e depois toque no 🎤 e fale: preço de venda, marca e estoque. Ele passa sozinho para o próximo campo.",
   envio: "Toque no 🎤 e fale o peso embalado (gramas) e as medidas — “20 por 10 por 5” preenche as três.",
   compat: "Diga o veículo e os anos (ex.: Renault Master 2013 a 2022) e marque só as aplicações certas.",
   categoria: "Confira a categoria do Mercado Livre. Se estiver certa, é só seguir; se não, toque em Alterar categoria.",

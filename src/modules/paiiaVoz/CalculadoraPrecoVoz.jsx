@@ -5,7 +5,7 @@
 // - Conferência: quanto SOBRA após comissão, impostos, frete, despesas e RECOMPRA da peça.
 // Valores não informados por você aparecem como ESTIMATIVA. Nada vai para o Preço sem "Usar".
 // =============================================================
-import { analisarVenda, calcularPrecoVenda, reais } from "./servicos/calculadoraPreco";
+import { analisarVenda, calcularPrecoVenda, precoParaUsar, reais } from "./servicos/calculadoraPreco";
 
 const CAMPOS = [
   ["custo", "Custo da Mercadoria", "R$", "o que você pagou"],
@@ -23,6 +23,7 @@ export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () =>
   const val = (k) => valores[k]?.valor ?? "";
   const plano = Object.fromEntries(CAMPOS.map(([k]) => [k, val(k)]));
   const sug = calcularPrecoVenda(plano);
+  const usar = precoParaUsar(plano);
   const vendaConf = val("venda") || (sug.ok ? String(sug.preco) : "");
   const an = analisarVenda({ ...plano, venda: vendaConf });
   const estimativas = CAMPOS.filter(([k]) => valores[k]?.origem === "estimativa" || (["frete", "impostos"].includes(k) && !val(k))).map(([, r]) => r);
@@ -61,10 +62,10 @@ export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () =>
           Venda {reais(an.venda)} − comissão {reais(an.partes.comissao)} − impostos {reais(an.partes.impostos)} − frete {reais(an.partes.frete)} − despesas {reais(an.partes.despesas)} − recompra {reais(an.partes.recompra)} = <b style={{ color: AZUL.texto }}>{reais(an.sobra)}</b>. Estimativa para decisão, não é lucro líquido contábil.
         </p>
       )}
-      {sug.ok && (
-        <button type="button" data-pv-calc-usar onClick={() => aoUsarPreco?.(String(val("venda") || sug.preco.toFixed(2)).replace(".", ","))}
+      {usar && (
+        <button type="button" data-pv-calc-usar onClick={() => aoUsarPreco?.(usar.texto)}
           style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 15 }}>
-          ✅ Usar {reais(Number(String(val("venda") || sug.preco).replace(",", ".")))} como Preço de Venda do anúncio
+          {usar.sugerido ? `✅ Usar Preço Sugerido (${reais(usar.preco)})` : `✅ Usar ${reais(usar.preco)} como Preço de Venda`}
         </button>
       )}
     </section>

@@ -23,6 +23,7 @@ import { lerPesoEMedidas } from "./pesoMedidasVoz.js";
 import { dadosCompletosVoz } from "./fichaCompletaVoz.js";
 import { estadoRapido, definirTextoDescricao, definirTitulo, lerCodigoDaFala, LIMITE_TITULO, pesoMedidasParaEnvio } from "./rascunhoRapido.js";
 import { TIPO_CARRO, TIPO_PESADA } from "../../../services/tipoVeiculoAnuncio.js";
+import { valoresIniciaisCalculadora } from "./calculadoraPreco.js";
 
 export const VERSAO_COMPLETAR = "2026-11-03.1";
 const txt = (v) => String(v ?? "").trim();
@@ -447,10 +448,12 @@ export function camposDaFicha(ficha, { fotos = 0 } = {}) {
 // ou digite). Mesmas regras da conversa: só o que foi dito; nada é inventado.
 // ---------------------------------------------------------------
 export const CAMPOS_DIRETOS = Object.freeze([
+  // (07/11) Etapa de preço: Calculadora (na tela) → Preço de Venda → Marca → Estoque.
+  { id: "preco", rotulo: "Preço de Venda (R$)", etapa: "preco" },
   { id: "marca", rotulo: "Marca", etapa: "preco" },
-  { id: "preco", rotulo: "Preço de venda (R$)", etapa: "preco" },
-  { id: "custo", rotulo: "Custo (R$)", opcional: true, etapa: "preco" },
   { id: "quantidade", rotulo: "Estoque (quantidade a anunciar)", etapa: "preco" },
+  // (07/11) Custo só existe DENTRO da calculadora (Custo da Mercadoria); não é campo de etapa.
+  { id: "custo", rotulo: "Custo da Mercadoria (R$)", opcional: true, etapa: "calculadora" },
   { id: "peso", rotulo: "Peso embalado (gramas)", etapa: "envio" },
   { id: "comprimento", rotulo: "Comprimento (cm)", etapa: "envio" },
   { id: "largura", rotulo: "Largura (cm)", etapa: "envio" },
@@ -532,6 +535,35 @@ export function definirCampoDireto(ficha, campoId, texto, { origem = "voz", agor
     return { ficha: gravarMedidas(f, { [`${campoId}_cm`]: v }), ok: true, valor: virg(v) };
   }
   return { ficha, ok: false, erro: "Campo desconhecido." };
+}
+
+/**
+ * (07/11) Valores da calculadora vindos da ficha. O custo já salvo na ficha
+ * (fichas antigas, "Trazer do Bling") aparece no Custo da Mercadoria.
+ */
+export function valoresCalculadoraDaFicha(ficha) {
+  const calc = { ...(ficha?.calculadoraPreco || {}) };
+  if (!txt(calc.custo?.valor)) {
+    const c = valoresCamposDiretos(ficha).custo;
+    if (txt(c)) calc.custo = { valor: String(c), origem: "ficha" };
+    else delete calc.custo;
+  }
+  return calc;
+}
+
+/**
+ * (07/11) Muda um campo da calculadora e guarda na ficha. O Custo da Mercadoria
+ * também fica no custo da ficha (o mesmo valor que segue para a nuvem/Bling).
+ */
+export function definirValorCalculadora(ficha, campo, valor, { origem = "digitado", tipoAnuncio = "classico", agora = Date.now() } = {}) {
+  let f = JSON.parse(JSON.stringify(ficha));
+  f.calculadoraPreco = { ...valoresIniciaisCalculadora(valoresCalculadoraDaFicha(f), tipoAnuncio), [campo]: { valor: String(valor), origem } };
+  if (campo === "custo") {
+    const r = txt(valor) ? definirCampoDireto(f, "custo", valor, { origem, agora }) : { ok: false };
+    if (r.ok) f = r.ficha;
+    else if (f.campos?.custo) delete f.campos.custo;
+  }
+  return f;
 }
 
 /** Próximo campo direto ainda vazio, depois de `atual` (ou o primeiro). */

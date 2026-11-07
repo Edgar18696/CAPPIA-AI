@@ -226,9 +226,9 @@ test("microfone: “sim” e depois “sim” (duas perguntas) são duas respost
 test("campos diretos: marca, preço, estoque, peso (g) e medidas (cm) — e avança para o próximo vazio", () => {
   let f = criarFichaVoz({ agora: 1, id: "dd" });
   const passo = (c, t, o) => { const r = C.definirCampoDireto(f, c, t, o); assert.ok(r.ok, `${c}: ${r.erro}`); f = r.ficha; return r; };
-  assert.equal(C.proximoCampoDireto(f), "marca");
+  assert.equal(C.proximoCampoDireto(f), "preco", "(07/11) ordem da etapa: Preço de Venda → Marca → Estoque");
   passo("marca", "Torken");
-  assert.equal(C.proximoCampoDireto(f, "marca"), "preco");
+  assert.equal(C.proximoCampoDireto(f, "marca"), "quantidade");
   assert.equal(passo("preco", "39,90").valor, "39,90");
   passo("quantidade", "10 peças");
   assert.equal(passo("peso", "200").valor, "200", "campo em gramas");

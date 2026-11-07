@@ -6,6 +6,18 @@ import { COMISSOES_REFERENCIA_PADRAO, CHAVE_COMISSOES_REFERENCIA, lerComissoesRe
 const num = (v) => { const t = String(v ?? "").trim().replace(/\s/g, ""); if (!t) return 0; const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t); return Number.isFinite(n) ? n : 0; };
 export const reais = (v) => `R$ ${(Math.round(v * 100) / 100).toFixed(2).replace(".", ",")}`;
 
+/**
+ * (07/11) Preço que o botão da calculadora leva ao Preço de Venda: o "preço para conferir"
+ * informado ou, sem ele, o PREÇO SUGERIDO. null quando não há sugestão (sem custo).
+ */
+export function precoParaUsar(plano = {}) {
+  const sug = calcularPrecoVenda(plano);
+  if (!sug.ok) return null;
+  const venda = num(plano.venda);
+  const preco = venda > 0 ? venda : sug.preco;
+  return { preco, sugerido: !(venda > 0), texto: preco.toFixed(2).replace(".", ",") };
+}
+
 export function calcularPrecoVenda({ custo, frete = 0, despesas = 0, comissao = 0, impostos = 0, margem = 0 }) {
   const c = num(custo);
   if (!(c > 0)) return { ok: false, erro: "Informe o custo da peça." };

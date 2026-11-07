@@ -49,7 +49,9 @@ test("5) estimativas sinalizadas: comissão e margem de referência marcadas; fr
 
 test("6) tela: valores guardados NA FICHA (voltam ao avançar/voltar); 'Usar' é o único caminho para o Preço do anúncio; não é lucro contábil", () => {
   const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(t.includes("f.calculadoraPreco = {") && t.includes("valores={valoresIniciaisCalculadora(ficha.calculadoraPreco || {}"));
+  // (07/11) A gravação na ficha passou para definirValorCalculadora (completarVoz.js).
+  assert.ok(t.includes("mudarFicha(definirValorCalculadora(fichaRef.current, k, valor") && t.includes("valores={valoresIniciaisCalculadora(valoresCalculadoraDaFicha(ficha)"));
+  assert.ok(ler("src/modules/paiiaVoz/servicos/completarVoz.js").includes("f.calculadoraPreco = {"));
   assert.ok(t.includes('if (String(campoVozRef.current || "").startsWith("calc:")) {'));
   const c = ler("src/modules/paiiaVoz/CalculadoraPrecoVoz.jsx");
   assert.ok(c.includes("não é lucro líquido contábil") && c.includes("data-pv-calc-usar") && c.includes("Acréscimo sobre o custo") && c.includes("minmax(min(100%, max(165px, 45%)), 1fr)"));
