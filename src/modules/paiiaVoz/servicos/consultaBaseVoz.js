@@ -11,6 +11,30 @@
 import { normalizarCodigo } from "../../../services/paizinhoPesquisa/codigoPaizinho.js";
 
 const txt = (v) => String(v ?? "").trim();
+
+/**
+ * (07/11) Códigos de referência: a base às vezes guarda vários num TEXTO só
+ * ("IWP211, 50174302, 501 743 02, 9S4G9F593CA"). Separa por , ; / e quebra de linha,
+ * tira o próprio SKU e repetições da mesma forma normalizada (50174302 = 501 743 02),
+ * mantendo a primeira grafia.
+ */
+export function listaCodigos(valores, alvo) {
+  const vistos = new Set([alvo]);
+  const lista = [];
+  for (const v of [valores].flat(Infinity)) {
+    for (const parte of String(v ?? "").split(/[,;/\n]+/)) {
+      const c = txt(parte);
+      const n = normalizarCodigo(c);
+      if (!c || !n || vistos.has(n)) continue;
+      vistos.add(n);
+      lista.push(c);
+    }
+  }
+  return lista;
+}
+
+/** (07/11) Textos de andamento da busca do Criar Anúncio que falam em "anúncio" ganham um texto neutro no PAIIA Voz. */
+const etapaNeutra = (etapa) => (/an[uú]ncio/i.test(etapa) ? "Mesma busca do Criar Anúncio: conferindo aplicações e códigos…" : etapa);
 const ano = (v) => {
   const n = Number(v);
   return Number.isInteger(n) && n >= 1950 && n <= 2100 ? n : null;
@@ -99,8 +123,7 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
         const aplicacoes = linhas
           .map((l) => aplicacaoDaLinha(l, (Array.isArray(l.fontes) && l.fontes.length ? l.fontes.map(txt).filter(Boolean).join(" · ") : "") || rotulo))
           .filter(Boolean);
-        const codigos = [...new Set(linhas.flatMap((l) => [...(l.codigos_oem || []), ...(l.codigos_equivalentes || [])]).map(txt).filter(Boolean))]
-          .filter((c) => normalizarCodigo(c) !== alvo);
+        const codigos = listaCodigos(linhas.map((l) => [l.codigos_oem || [], l.codigos_equivalentes || []]), alvo);
         const descricao = txt((linhas.find((l) => txt(l.peca)) || {}).peca);
         return fim({ encontrado: true, origem: "base_validada", rotulo, aplicacoes, codigos, descricao, erro: "" });
       }
@@ -120,8 +143,7 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
           const fonte = ["Catálogo interno PAIIA", txt(r.arquivo || r.origem_catalogo), r.pagina ? `pág. ${r.pagina}` : ""].filter(Boolean).join(" · ");
           return aplicacaoDaLinha(r, fonte);
         }).filter(Boolean);
-        const codigos = [...new Set(registros.flatMap((r) => String(r.equivalencias || r.codigo_equivalente || "").split(/[,;/]/)).map(txt).filter(Boolean))]
-          .filter((c) => normalizarCodigo(c) !== alvo);
+        const codigos = listaCodigos(registros.map((r) => r.equivalencias || r.codigo_equivalente || ""), alvo);
         const descricao = txt((registros.find((r) => txt(r.peca)) || {}).peca);
         return fim({ encontrado: true, origem: "catalogo", rotulo: "Catálogo interno PAIIA", aplicacoes, codigos, descricao, erro: "" });
       }
@@ -138,7 +160,7 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
     try {
       const r = await comLimite(Promise.resolve().then(() => preencherAutomatico({
         codigo, oem: "", permitirBuscaInternet: false,
-        ...(querAndamento ? { onProgresso: (p, etapa) => andamento(60 + Math.max(0, Math.min(100, Number(p) || 0)) * 0.35, txt(etapa) || "Mesma busca do Criar Anúncio: consultando…") } : {}),
+        ...(querAndamento ? { onProgresso: (p, etapa) => andamento(60 + Math.max(0, Math.min(100, Number(p) || 0)) * 0.35, etapaNeutra(txt(etapa)) || "Mesma busca do Criar Anúncio: consultando…") } : {}),
       })));
       const peca = r?.pecaEncontrada || null;
       const fontes = [r?.baseMestre?.aplicacoes, r?.diagnostico?.baseMestre?.aplicacoes, r?.inteligencia?.registros, peca?.aplicacoes, r?.resultadosCatalogo, r?.aplicacoes].find((a) => Array.isArray(a) && a.length) || [];
@@ -148,7 +170,7 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
         .filter((l) => String(l?.tipo_referencia || "").toLowerCase() !== "nota_tecnica")
         .map((l) => aplicacaoDaLinha(l, rotulo))
         .filter((a) => { if (!a) return false; const k = [a.montadora, a.modelos[0], a.motores[0], a.anoInicio, a.anoFim].join("|").toLowerCase(); if (vistos.has(k)) return false; vistos.add(k); return true; });
-      const codigos = [...new Set([peca?.codigo_oem, ...(peca?.codigos_oem || []), ...(peca?.codigos_equivalentes || []), ...(peca?.codigos_alternativos || []), r?.oem].map(txt).filter(Boolean))].filter((c) => normalizarCodigo(c) !== alvo);
+      const codigos = listaCodigos([peca?.codigo_oem, peca?.codigos_oem || [], peca?.codigos_equivalentes || [], peca?.codigos_alternativos || [], r?.oem], alvo);
       const descricao = txt(peca?.descricao || peca?.nome || peca?.peca || r?.descricao || "");
       if (aplicacoes.length || descricao || codigos.length) return fim({ encontrado: true, origem: "catalogo", rotulo, aplicacoes, codigos, descricao, erro: "" });
     } catch (e) {

@@ -109,3 +109,43 @@ test("tela (etapa Código): reaproveita a barra do Criar Anúncio; encontrado / 
   assert.ok(bloco.includes('data-pr-base="nada"') && bloco.includes("continue preenchendo manualmente"));
   assert.ok(bloco.includes('data-pr-base="falha"') && bloco.includes("data-pr-tentar-novamente") && bloco.includes("Tentar novamente"));
 });
+
+// (07/11) Dados reais da Base PAIIA para IWP211 (leitura de 07/11/2026): os códigos vêm num TEXTO único.
+const IWP211_REAL = async ({ onProgresso } = {}) => {
+  onProgresso?.(72, "🏭 Código localizado. Preparando dados do anúncio...");
+  onProgresso?.(93, "📝 Estou montando seu anúncio automaticamente...");
+  onProgresso?.(95, "✅ Pronto! Seu anúncio foi criado com sucesso.");
+  return {
+    pecaEncontrada: { descricao: "Bico Injetor", codigos_equivalentes: ["IWP211, 50174302, 501 743 02, 9S4G9F593CA"] },
+    baseMestre: { aplicacoes: [
+      { montadora: "Ford", modelo: "Ka", motor: "1.0", ano_inicio: 2008, ano_fim: 2010 },
+      { montadora: "Ford", modelo: "Ecosport", motor: "1.0", ano_inicio: 2008, ano_fim: 2010 },
+      { montadora: "Ford", modelo: "Fiesta", motor: "1.0", ano_inicio: 2008, ano_fim: 2010 },
+    ] },
+  };
+};
+
+test("IWP211 real: códigos de referência separados, sem repetir o SKU nem a mesma forma (50174302 = 501 743 02)", async () => {
+  const r = await B.consultarBaseVoz("IWP211", { buscarValidado: vazio, pesquisarCatalogo: vazio, preencherAutomatico: IWP211_REAL });
+  assert.equal(r.encontrado, true);
+  assert.equal(r.aplicacoes.length, 3);
+  assert.deepEqual(r.codigos, ["50174302", "9S4G9F593CA"]);
+  const f = R.registrarConsultaBase(F.criarFichaVoz({ id: "x", agora: 1 }), { ...r, codigo: "IWP211" });
+  assert.equal(R.estadoRapido(f).base.codigos.length, 2, "a tela mostra 2 código(s) de referência");
+});
+
+test("códigos em texto único também são separados na Base validada e no catálogo", async () => {
+  const v = await B.consultarBaseVoz("IWP211", { buscarValidado: async () => [{ modelo: "Ka", montadora: "Ford", codigos_oem: ["IWP211; 50174302 / 9S4G9F593CA"], codigos_equivalentes: ["501 743 02"] }] });
+  assert.deepEqual(v.codigos, ["50174302", "9S4G9F593CA"]);
+  const c = await B.consultarBaseVoz("IWP211", { buscarValidado: vazio, pesquisarCatalogo: async () => [{ modelo: "Ka", montadora: "Ford", equivalencias: "IWP211, 50174302, 501 743 02" }] });
+  assert.deepEqual(c.codigos, ["50174302"]);
+});
+
+test("andamento no PAIIA Voz não diz que um anúncio foi criado (textos do Criar Anúncio trocados)", async () => {
+  const { passos, onProgresso } = registrar();
+  await B.consultarBaseVoz("IWP211", { buscarValidado: vazio, pesquisarCatalogo: vazio, preencherAutomatico: IWP211_REAL, onProgresso });
+  const textos = passos.map((p) => p.etapa).join(" | ");
+  assert.ok(!/an[uú]ncio foi criado|seu an[uú]ncio|dados do an[uú]ncio/i.test(textos), textos);
+  assert.ok(passos.some((p) => p.progresso >= 90 && p.progresso < 100), "o andamento real continua (95% do Criar Anúncio = 93% aqui)");
+  assert.match(passos.at(-1).etapa, /IWP211 encontrado/);
+});
