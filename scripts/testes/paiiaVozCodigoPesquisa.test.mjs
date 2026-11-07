@@ -98,16 +98,34 @@ test("Base validada: erro do banco (engolido pelo serviço) é detectado pelo cl
   await assert.rejects(() => B.buscarValidadoVigiado(buscarComo, { from: () => consultaFn({ data: null, error: { message: "timeout" } }) })("IWP211"), /timeout/);
 });
 
-test("tela (etapa Código): reaproveita a barra do Criar Anúncio; encontrado / não encontrado / falha + Tentar novamente", () => {
+test("tela (etapa Código): barra FINA logo abaixo do campo SKU; sem o painel grande; sem número de porcentagem", () => {
   const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(t.includes('import PainelProcessamentoAnuncio from "../../components/PainelProcessamentoAnuncio"'), "mesma barra do Criar Anúncio");
+  assert.ok(!t.includes("PainelProcessamentoAnuncio"), "painel grande de progresso removido da etapa");
   const i = t.indexOf('data-pr-bloco="codigo"');
   const bloco = t.slice(i, t.indexOf("</section>", i));
-  assert.ok(bloco.includes("<PainelProcessamentoAnuncio"), "barra na etapa Código");
-  assert.ok(/setPesquisa\(\{ codigo: sku, progresso: 5, etapa: `Pesquisando \$\{sku\} na Base PAIIA` \}\)/.test(t), "mensagem imediata ao informar o SKU");
-  assert.ok(bloco.includes('data-pr-base="encontrado"') && bloco.includes("aplicação(ões)") && bloco.includes("código(s) de referência"));
-  assert.ok(bloco.includes('data-pr-base="nada"') && bloco.includes("continue preenchendo manualmente"));
-  assert.ok(bloco.includes('data-pr-base="falha"') && bloco.includes("data-pr-tentar-novamente") && bloco.includes("Tentar novamente"));
+  // ordem: campo SKU → estado da pesquisa → (ouvido) → códigos adicionais
+  const campo = bloco.indexOf('data-pv-campo-direto="codigo"');
+  const estado = bloco.indexOf("data-pr-pesquisa-sku");
+  const adicionais = bloco.indexOf("data-pv-codigos-adicionais");
+  assert.ok(campo > 0 && estado > campo && estado < adicionais, "estado da pesquisa imediatamente abaixo do campo Código da Peça");
+  assert.ok(bloco.includes("Pesquisando na Base PAIIA..."), "texto enquanto pesquisa");
+  assert.ok(bloco.includes('className="pr-barra-fina"') && bloco.includes('role="progressbar"'), "barra fina");
+  assert.ok(!/(?<!\$)\{pesquisa\.progresso\}%?/.test(bloco), "nenhum número de porcentagem na tela (o andamento só define a largura da barra)");
+  assert.ok(bloco.includes("width: `${pesquisa.progresso}%`"), "largura da barra = andamento real informado pela pesquisa");
+  assert.ok(/setPesquisa\(\{ codigo: sku, progresso: 5, etapa: `Pesquisando \$\{sku\} na Base PAIIA` \}\)/.test(t), "aparece na hora em que o SKU é informado");
+  assert.ok(/\.pr-barra-fina \{[^}]*height: 3px/.test(t), "barra discreta (3 px)");
+  // resultado resumido no mesmo lugar; funções preservadas
+  for (const k of ['data-pr-base="encontrado"', 'data-pr-base="nada"', 'data-pr-base="falha"', "data-pr-tentar-novamente", "data-pr-aproveitar", "data-pr-base-codigos"]) assert.ok(bloco.includes(k), k);
+  assert.equal((bloco.match(/data-pr-base="encontrado"/g) || []).length, 1, "um resultado só (sem cartão repetido no fim da etapa)");
+});
+
+test("resultado resumido: “Encontrado na Base PAIIA — 3 aplicações e 2 códigos de referência.”", () => {
+  assert.equal(R.resumoDaBase({ estado: "encontrado", aplicacoes: 3, codigos: ["50174302", "9S4G9F593CA"] }), "Encontrado na Base PAIIA — 3 aplicações e 2 códigos de referência.");
+  assert.equal(R.resumoDaBase({ estado: "encontrado", aplicacoes: 1, codigos: ["X"] }), "Encontrado na Base PAIIA — 1 aplicação e 1 código de referência.");
+  assert.equal(R.resumoDaBase({ estado: "encontrado", aplicacoes: 0, codigos: [] }), "Encontrado na Base PAIIA — 0 aplicações e 0 códigos de referência.");
+  assert.equal(R.resumoDaBase({ estado: "nada" }), "Não encontrado na Base PAIIA — continue preenchendo manualmente.");
+  assert.equal(R.resumoDaBase({ estado: "falha" }), "Falha na pesquisa na Base PAIIA — tente novamente ou continue manualmente.");
+  assert.equal(R.resumoDaBase(null), "");
 });
 
 // (07/11) Dados reais da Base PAIIA para IWP211 (leitura de 07/11/2026): os códigos vêm num TEXTO único.

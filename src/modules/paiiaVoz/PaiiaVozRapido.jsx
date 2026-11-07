@@ -51,6 +51,7 @@ import {
   organizarDescricao,
   descricaoParaEnvio,
   registrarConsultaBase,
+  resumoDaBase,
   marcarBaseAproveitada,
   validarRapido,
   mapearRapidoParaNovoAnuncio,
@@ -61,7 +62,6 @@ import { entenderTrecho } from "./servicos/conversaVoz";
 import { criarReconhecedor, suportaReconhecimento, diagnosticoVoz } from "./servicos/reconhecimentoVoz";
 import TesteMicrofone from "./TesteMicrofone";
 import { consultarBaseVoz, montarDescricaoDaBase, buscarValidadoVigiado } from "./servicos/consultaBaseVoz";
-import PainelProcessamentoAnuncio from "../../components/PainelProcessamentoAnuncio";
 import { preencherAnuncioAutomaticamente } from "../../services/preencherAnuncioService";
 // Laboratório: a busca do Criar Anúncio pode ser simulada SÓ no modo de teste.
 const preencherBase = (...a) => (globalThis.__paiiaModoTeste && globalThis.__paiiaPreencherTeste ? globalThis.__paiiaPreencherTeste(...a) : preencherAnuncioAutomaticamente(...a));
@@ -1308,6 +1308,39 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             <CampoTexto id="pr-codigo" valor={cp?.codigo || ""} ditando={ouvindo && campoVoz !== "codigoAdicional" && parcial ? parcial : ""} onSalvar={(v) => { const c = lerCodigoDaFala(v); if (c.codigo) definirCodigo(c.codigo); else if (c.pular) tratarFala(v, "digitado"); else if (c.erro) setAviso(c.erro); }} data="codigo" />
             {micCampo("codigo", "Código")}
           </div>
+          {/* (07/11) Estado REAL da pesquisa, logo abaixo do campo: barra fina enquanto pesquisa; ao terminar, o resultado resumido. */}
+          {(pesquisa || (!consultando && ["encontrado", "nada", "falha"].includes(r.base?.estado))) && (
+            <div className="pr-pesquisa-sku" data-pr-pesquisa-sku aria-live="polite">
+              {pesquisa ? (
+                <div data-pr-pesquisa={pesquisa.codigo}>
+                  <div className="pr-pesquisa-texto">
+                    <b>Pesquisando na Base PAIIA...</b>
+                    {pesquisa.etapa && !/^Pesquisando /.test(pesquisa.etapa) && <span className="pr-fonte"> {pesquisa.etapa}</span>}
+                  </div>
+                  <div className="pr-barra-fina" role="progressbar" aria-label="Andamento da pesquisa na Base PAIIA" aria-valuetext={pesquisa.etapa}>
+                    <span style={{ width: `${pesquisa.progresso}%` }} />
+                  </div>
+                </div>
+              ) : r.base.estado === "encontrado" ? (
+                <div data-pr-base="encontrado">
+                  <div className="pr-pesquisa-texto pr-ok">✅ {resumoDaBase(r.base)}</div>
+                  <div className="pr-fonte">{[r.base.codigo, r.base.descricao, r.base.rotulo].filter(Boolean).join(" · ")}</div>
+                  {r.base.codigos.length > 0 && <div className="pr-fonte" data-pr-base-codigos>Códigos de referência: {r.base.codigos.join(", ")}</div>}
+                  {r.base.aproveitado
+                    ? <div className="pr-fonte">✓ Sugestões aproveitadas (as aplicações entram desmarcadas para você conferir).</div>
+                    : <button type="button" className="pr-link" onClick={aproveitarBase} data-pr-aproveitar>Aproveitar sugestões</button>}
+                </div>
+              ) : r.base.estado === "nada" ? (
+                <div data-pr-base="nada" className="pr-pesquisa-texto">❌ {resumoDaBase(r.base)}</div>
+              ) : (
+                <div data-pr-base="falha" role="alert">
+                  <div className="pr-pesquisa-texto" style={{ color: "#fecaca" }}>⚠️ {resumoDaBase(r.base)}</div>
+                  {r.base.erro && <div className="pr-fonte">Erro: {r.base.erro}</div>}
+                  <button type="button" className="pr-link" onClick={() => consultarBase(r.base.codigo || cp?.codigo || "")} disabled={!(r.base.codigo || cp?.codigo)} data-pr-tentar-novamente>⟳ Tentar novamente</button>
+                </div>
+              )}
+            </div>
+          )}
           {ouvidoCodigo && ouvidoCodigo.codigo === (cp?.codigo || "") && <p className="pr-fonte" data-pr-ouvido>🎤 O celular ouviu: “{ouvidoCodigo.ouvido}” → anotei <b>{ouvidoCodigo.codigo}</b>. Traço só entra se você disser “traço”; para corrigir, digite acima.</p>}
           {/* (04/11) Códigos adicionais da mesma peça: todos os conferidos vão para a descrição (Códigos de Referência). */}
           <div className="pr-cartao pr-cinza" data-pv-codigos-adicionais>
@@ -1333,40 +1366,6 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             <div className="pr-linha">
               <button type="button" className="pr-link" onClick={lerCodigoNasFotos} disabled={lendoFoto.estado === "lendo"}>{lendoFoto.estado === "lendo" ? "Lendo a foto…" : "Ler código na foto (beta)"}</button>
               {lendoFoto.candidatos.map((c) => <button key={c} type="button" className="pr-chip" onClick={() => definirCodigo(c, { soletrado: true })}>{c}</button>)}
-            </div>
-          )}
-          {/* (07/11) Andamento real da pesquisa do SKU: a mesma barra do Criar Anúncio. */}
-          {pesquisa && (
-            <div data-pr-pesquisa={pesquisa.codigo} aria-live="polite">
-              <strong style={{ display: "block", marginTop: 10, fontSize: 16, color: "#67e8f9" }}>🔎 Pesquisando {pesquisa.codigo} na Base PAIIA</strong>
-              <PainelProcessamentoAnuncio processando etapa={pesquisa.etapa} progresso={pesquisa.progresso} />
-            </div>
-          )}
-          {!consultando && r.base?.estado === "encontrado" && (
-            <div className="pr-cartao" data-pr-base="encontrado">
-              <strong>✅ {r.base.codigo ? `${r.base.codigo} encontrado` : "Encontrado"} na {r.base.rotulo}</strong>
-              {r.base.descricao && <p>Peça: {r.base.descricao}</p>}
-              <p>{r.base.aplicacoes} aplicação(ões) com fonte · {r.base.codigos.length} código(s) de referência — para você conferir</p>
-              {r.base.codigos.length > 0 && <p className="pr-fonte" data-pr-base-codigos>Códigos de referência: {r.base.codigos.join(", ")}</p>}
-              {r.base.aproveitado
-                ? <p className="pr-ok">✓ Sugestões aproveitadas (as aplicações entram desmarcadas para você conferir).</p>
-                : <button type="button" className="pr-botao" onClick={aproveitarBase} data-pr-aproveitar>Aproveitar sugestões</button>}
-            </div>
-          )}
-          {!consultando && r.base?.estado === "nada" && (
-            <div className="pr-cartao pr-cinza" data-pr-base="nada">
-              <strong>❌ {r.base.codigo || "Código"} não encontrado na Base PAIIA</strong>
-              <p style={{ margin: 0 }}>Nenhuma aplicação foi inventada: continue preenchendo manualmente (toque em Continuar).</p>
-            </div>
-          )}
-          {!consultando && r.base?.estado === "falha" && (
-            <div className="pr-cartao" data-pr-base="falha" role="alert" style={{ borderColor: "#f87171" }}>
-              <strong style={{ color: "#fecaca" }}>⚠️ Falha na pesquisa de {r.base.codigo || "código"} na Base PAIIA</strong>
-              {r.base.erro && <p className="pr-fonte" style={{ margin: 0 }}>Erro: {r.base.erro}</p>}
-              <div className="pr-linha">
-                <button type="button" className="pr-botao" onClick={() => consultarBase(r.base.codigo || cp?.codigo || "")} disabled={!(r.base.codigo || cp?.codigo)} data-pr-tentar-novamente>⟳ Tentar novamente</button>
-                <span className="pr-fonte">ou continue preenchendo manualmente.</span>
-              </div>
             </div>
           )}
           <div className="pr-cartao pr-cinza" data-pr-internet>
@@ -1785,6 +1784,12 @@ const CSS_RAPIDO = `
 .pr-quem { color: #67e8f9; font-size: 11px; font-weight: 800; letter-spacing: .6px; }
 .pr-parcial { display: block; color: #a5f3fc; font-size: 13px; margin-top: 4px; }
 .pr-aviso-geral { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: #0f172a; border: 1px solid #1e293b; font-size: 14px; color: #e2e8f0; }
+.pr-pesquisa-sku { margin: 6px 0 2px; display: grid; gap: 3px; font-size: 13px; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+.pr-pesquisa-sku > div { display: grid; gap: 3px; min-width: 0; }
+.pr-pesquisa-texto { font-size: 13px; color: #e2e8f0; }
+.pr-barra-fina { height: 3px; width: 100%; background: #1e293b; border-radius: 999px; overflow: hidden; }
+.pr-barra-fina > span { display: block; height: 100%; background: linear-gradient(90deg, #2563eb, #22d3ee); transition: width .35s ease; }
+.pr-pesquisa-sku .pr-link { justify-self: start; padding: 2px 0; }
 .pr-erro { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: rgba(127,29,29,.35); border: 1px solid #f87171; color: #fecaca; font-size: 14px; }
 .pr-entrada { display: flex; gap: 6px; margin-top: 8px; }
 .pr-entrada input { flex: 1; min-width: 0; }

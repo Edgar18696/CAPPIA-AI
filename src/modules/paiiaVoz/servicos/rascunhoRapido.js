@@ -281,7 +281,19 @@ export function registrarConsultaBase(ficha, resultado, { agora = Date.now() } =
       : { estado: resultado?.falhou ? "falha" : "nada", codigo, rotulo: "", descricao: "", aplicacoes: 0, codigos: [], aproveitado: false, erro: resultado?.erro || "" };
   }, agora);
 }
-export const marcarBaseAproveitada = (ficha) => comRapido(ficha, (r) => { if (r.base) r.base.aproveitado = true; });
+/** (07/11) Resultado resumido da pesquisa do SKU (mostrado logo abaixo do campo Código da Peça). */
+export function resumoDaBase(base) {
+  if (!base) return "";
+  if (base.estado === "encontrado") {
+    const a = Number(base.aplicacoes) || 0;
+    const c = (base.codigos || []).length;
+    return `Encontrado na Base PAIIA — ${a} ${a === 1 ? "aplicação" : "aplicações"} e ${c} ${c === 1 ? "código" : "códigos"} de referência.`;
+  }
+  if (base.estado === "nada") return "Não encontrado na Base PAIIA — continue preenchendo manualmente.";
+  if (base.estado === "falha") return "Falha na pesquisa na Base PAIIA — tente novamente ou continue manualmente.";
+  return "";
+}
+export const marcarBaseAproveitada =(ficha) => comRapido(ficha, (r) => { if (r.base) r.base.aproveitado = true; });
 
 // ---------------------------------------------------------------
 // Conferir antes de enviar e montar os dados do Novo Anúncio
