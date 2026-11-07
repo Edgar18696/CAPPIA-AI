@@ -35,7 +35,7 @@ test("P-04) Compatibilidade traz a base sozinha (fichas antigas: consulta UMA ve
 
 test("rev.2) calculadora SEMPRE visível com 'Custo da Mercadoria (R$)'; versão na tela e aviso de versão nova publicada", () => {
   const c = ler("src/modules/paiiaVoz/CalculadoraPrecoVoz.jsx");
-  assert.ok(!c.includes("setAberta") && c.includes('"Custo da Mercadoria (R$)"') && c.includes("Preço de Venda Sugerido"));
+  assert.ok(!c.includes("setAberta") && c.includes('["custo", "Custo da Mercadoria", "R$"') && c.includes("Preço sugerido"));
   assert.ok(t.includes("export const VERSAO_PAIIA_VOZ") && t.includes("data-pv-versao") && t.includes("data-pv-nova-versao"));
   assert.ok(t.includes("fetch(`/?v=${Date.now()}`, { cache: \"no-store\" })") && t.includes("/(^|\\.)paiia\\.com\\.br$/.test(window.location.hostname)"));
 });

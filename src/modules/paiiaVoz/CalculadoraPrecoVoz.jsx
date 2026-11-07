@@ -1,44 +1,72 @@
 // =============================================================
-// PAIIA Voz — (P-03) Calcular Preço de Venda (opcional).
-// Você informa o CUSTO da peça; frete, despesas, comissão, impostos e margem vêm
-// dos parâmetros já existentes quando há (comissão de referência por modalidade,
-// margens padrão 10/15/20%) e podem ser ajustados. Só preenche o Preço de Venda
-// quando você toca em "Usar este preço". Não mexe no custo do Bling.
-//   preço = (custo + frete + despesas) ÷ (1 − (comissão + impostos + margem) / 100)
+// PAIIA Voz — Calcular Preço de Venda (opcional, separado do Preço do anúncio).
+// (16/11) Visual azul premium, duas colunas, microfone por campo, valores guardados na ficha.
+// - Preço sugerido: (custo + frete + despesas) ÷ (1 − comissão − impostos − margem).
+// - Conferência: quanto SOBRA após comissão, impostos, frete, despesas e RECOMPRA da peça.
+// Valores não informados por você aparecem como ESTIMATIVA. Nada vai para o Preço sem "Usar".
 // =============================================================
-import { useState } from "react";
-import { MARGENS_PADRAO } from "../../services/fretePrecificacao";
-import { calcularPrecoVenda, comissaoReferencia, reais } from "./servicos/calculadoraPreco";
+import { analisarVenda, calcularPrecoVenda, reais } from "./servicos/calculadoraPreco";
 
-export default function CalculadoraPrecoVoz({ tipoAnuncio = "classico", freteInicial = "", aoUsarPreco }) {
-  const [v, setV] = useState({ custo: "", frete: freteInicial ? String(freteInicial) : "", despesas: "", comissao: String(comissaoReferencia(tipoAnuncio)), impostos: "", margem: String(MARGENS_PADRAO[1].margem) });
-  const r = calcularPrecoVenda(v);
-  const campo = (k, rotulo, dica) => (
-    <label key={k} style={{ display: "grid", gap: 2 }}>
-      <span className="pr-rotulo">{rotulo}</span>
-      <input className="pr-entrada" inputMode="decimal" value={v[k]} placeholder={dica} onChange={(e) => { const val = e.target.value; setV((o) => ({ ...o, [k]: val })); }} data-pv-calc={k} />
-    </label>
-  );
+const CAMPOS = [
+  ["custo", "Custo da Mercadoria", "R$", "o que você pagou"],
+  ["venda", "Preço de venda para conferir", "R$", "opcional: usa o sugerido"],
+  ["frete", "Frete", "R$", "0 se não houver"],
+  ["despesas", "Despesas", "R$", "embalagem, etc."],
+  ["comissao", "Comissão do Marketplace", "%", "ex.: 12"],
+  ["impostos", "Impostos", "%", "alíquota da empresa"],
+  ["margem", "Margem Desejada (sobre a venda)", "%", "ex.: 20"],
+];
+const AZUL = { fundo: "linear-gradient(160deg,#0b1f4d 0%,#123a8a 100%)", borda: "#2f5fd0", campo: "#0a1838", texto: "#e8efff", sub: "#9fb6e8", destaque: "#38bdf8" };
+const pct = (v) => `${String(Math.round(v * 100) / 100).replace(".", ",")}%`;
+
+export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () => null, ouvido = {}, aoUsarPreco }) {
+  const val = (k) => valores[k]?.valor ?? "";
+  const plano = Object.fromEntries(CAMPOS.map(([k]) => [k, val(k)]));
+  const sug = calcularPrecoVenda(plano);
+  const vendaConf = val("venda") || (sug.ok ? String(sug.preco) : "");
+  const an = analisarVenda({ ...plano, venda: vendaConf });
+  const estimativas = CAMPOS.filter(([k]) => valores[k]?.origem === "estimativa" || (["frete", "impostos"].includes(k) && !val(k))).map(([, r]) => r);
   return (
-    <div className="pr-cartao pr-cinza" data-pv-calculadora style={{ display: "grid", gap: 6 }}>
-      <strong data-pv-calc-abrir>🧮 Calcular Preço de Venda</strong>
-      <p className="pr-fonte" style={{ margin: 0 }}>Opcional. O custo é o que VOCÊ pagou pela peça (não é preço de mercado). O preço sugerido só vai para o Preço de Venda se você tocar em “Usar”.</p>
-      {campo("custo", "Custo da Mercadoria (R$)", "o que você pagou pela peça")}
-      {campo("frete", "Frete (R$)", "0 se não houver")}
-      {campo("despesas", "Despesas (R$)", "embalagem, etc.")}
-      {campo("comissao", "Comissão do Marketplace (%)", "ex.: 12")}
-      {campo("impostos", "Impostos (%)", "ex.: 0")}
-      {campo("margem", "Margem Desejada (%)", "ex.: 15")}
-      {r.ok ? (
-        <div data-pv-calc-resultado>
-          <p style={{ margin: "4px 0" }}>Preço de Venda Sugerido: <b data-pv-calc-preco>{reais(r.preco)}</b></p>
-          <p className="pr-fonte" style={{ margin: 0 }}>Custo {reais(r.partes.custo)} · Frete {reais(r.partes.frete)} · Despesas {reais(r.partes.despesas)} · Comissão {reais(r.partes.comissao)} · Impostos {reais(r.partes.impostos)} · Lucro {reais(r.partes.lucro)}</p>
-          <div className="pr-linha" style={{ gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-            {MARGENS_PADRAO.map((m) => { const s = calcularPrecoVenda({ ...v, margem: m.margem }); return s.ok ? <button key={m.chave} type="button" className="pr-link" onClick={() => setV((o) => ({ ...o, margem: String(m.margem) }))}>{m.rotulo} {m.margem}%: {reais(s.preco)}</button> : null; })}
-          </div>
-          <button type="button" className="pr-botao pr-grande" onClick={() => aoUsarPreco?.(r.preco.toFixed(2).replace(".", ","))} data-pv-calc-usar>✅ Usar {reais(r.preco)} como Preço de Venda</button>
+    <section data-pv-calculadora style={{ boxSizing: "border-box", maxWidth: "100%", overflow: "hidden", background: AZUL.fundo, border: `1px solid ${AZUL.borda}`, borderRadius: 16, padding: 14, color: AZUL.texto, display: "grid", gap: 10 }}>
+      <div data-pv-calc-abrir style={{ fontWeight: 800, fontSize: 17 }}>🧮 Calcular Preço de Venda <span style={{ fontSize: 12, fontWeight: 500, color: AZUL.sub }}>· opcional</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, max(165px, 45%)), 1fr))", gap: 8 }}>
+        {CAMPOS.map(([k, rotulo, un, dica]) => (
+          <label key={k} data-pv-calc-campo={k} style={{ minWidth: 0, display: "grid", gap: 3, background: AZUL.campo, borderRadius: 10, padding: "8px 10px", outline: ouvido[k] ? `2px solid ${AZUL.destaque}` : "none" }}>
+            <span style={{ fontSize: 12, color: AZUL.sub }}>{rotulo} ({un}){valores[k]?.origem === "estimativa" && <b style={{ color: "#fbbf24" }}> · estimativa</b>}</span>
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input inputMode="decimal" value={val(k)} placeholder={dica} data-pv-calc={k}
+                onChange={(e) => onMudar?.(k, e.target.value, "digitado")}
+                style={{ flex: 1, width: "100%", minWidth: 0, background: "transparent", border: "none", borderBottom: `1px solid ${AZUL.borda}`, color: AZUL.texto, fontSize: 17, padding: "2px 0" }} />
+              {mic(`calc:${k}`, rotulo)}
+            </span>
+            {ouvido[k] && <span data-pv-calc-ouvido={k} style={{ fontSize: 11, color: AZUL.destaque }}>🎤 “{ouvido[k]}” → {un === "R$" ? `R$ ${val(k)}` : `${val(k)}%`}</span>}
+          </label>
+        ))}
+      </div>
+      {estimativas.length > 0 && <p data-pv-calc-estimativas style={{ margin: 0, fontSize: 12, color: "#fbbf24" }}>⚠ Estimativa: {estimativas.join(", ")} — confirme com os valores reais (impostos dependem da tributação da empresa e do produto).</p>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, max(165px, 45%)), 1fr))", gap: 8 }}>
+        <div data-pv-calc-resultado style={{ background: "#0e7490", borderRadius: 12, padding: 10 }}>
+          <div style={{ fontSize: 12 }}>Preço sugerido (margem {val("margem") || 0}%)</div>
+          <div data-pv-calc-preco style={{ fontSize: 24, fontWeight: 800 }}>{sug.ok ? reais(sug.preco) : "—"}</div>
+          {!sug.ok && <div style={{ fontSize: 12 }}>{sug.erro}</div>}
         </div>
-      ) : <p className="pr-fonte" data-pv-calc-erro>{r.erro}</p>}
-    </div>
+        <div data-pv-calc-sobra style={{ background: an.ok && an.sobra < 0 ? "#7f1d1d" : "#166534", borderRadius: 12, padding: 10 }}>
+          <div style={{ fontSize: 12 }}>Sobra após recompra{val("venda") ? "" : " (no preço sugerido)"}</div>
+          <div style={{ fontSize: 24, fontWeight: 800 }}>{an.ok ? reais(an.sobra) : "—"}</div>
+          {an.ok && <div style={{ fontSize: 12 }}>Margem sobre a venda {pct(an.margemSobreVenda)} · Acréscimo sobre o custo {pct(an.acrescimoSobreCusto)}</div>}
+        </div>
+      </div>
+      {an.ok && (
+        <p data-pv-calc-partes style={{ margin: 0, fontSize: 12, color: AZUL.sub }}>
+          Venda {reais(an.venda)} − comissão {reais(an.partes.comissao)} − impostos {reais(an.partes.impostos)} − frete {reais(an.partes.frete)} − despesas {reais(an.partes.despesas)} − recompra {reais(an.partes.recompra)} = <b style={{ color: AZUL.texto }}>{reais(an.sobra)}</b>. Estimativa para decisão, não é lucro líquido contábil.
+        </p>
+      )}
+      {sug.ok && (
+        <button type="button" data-pv-calc-usar onClick={() => aoUsarPreco?.(String(val("venda") || sug.preco.toFixed(2)).replace(".", ","))}
+          style={{ background: "#2563eb", color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 15 }}>
+          ✅ Usar {reais(Number(String(val("venda") || sug.preco).replace(",", ".")))} como Preço de Venda do anúncio
+        </button>
+      )}
+    </section>
   );
 }

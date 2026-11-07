@@ -81,6 +81,8 @@ import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
 import CategoriaVoz from "./CategoriaVoz";
 import CalculadoraPrecoVoz from "./CalculadoraPrecoVoz";
+import { valorFaladoCalculadora, valoresIniciaisCalculadora } from "./servicos/calculadoraPreco";
+import { lerPreco } from "./servicos/numerosFalados";
 import { lerAplicacaoFalada, valorDoCampoFalado, proximoCampoVeiculo } from "./servicos/aplicacaoFalada";
 import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
 import { descartarRascunhoLocalDaFicha } from "../../services/exclusaoFicha";
@@ -122,7 +124,7 @@ function marcaCompletos(ficha) {
 const VEIC_VAZIO = Object.freeze({ montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "" });
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "15/11 · descrição da base";
+export const VERSAO_PAIIA_VOZ = "16/11 · calculadora de preço";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
@@ -514,6 +516,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const t = setInterval(conferir, 5 * 60_000);
     return () => { vivo = false; clearInterval(t); };
   }, []);
+  // (16/11) Calculadora: valores guardados NA FICHA (voltam ao avançar/voltar e no F5).
+  const [calcOuvido, setCalcOuvido] = useState({});
+  function mudarCalculadora(k, valor, origem = "digitado") {
+    const f = JSON.parse(JSON.stringify(fichaRef.current));
+    f.calculadoraPreco = { ...valoresIniciaisCalculadora(f.calculadoraPreco || {}, estadoRapido(f).tipoAnuncio || "classico"), [k]: { valor: String(valor), origem } };
+    mudarFicha(f);
+  }
   const baseCompatRef = useRef("");
   useEffect(() => {
     if (etapa !== "compat") return undefined;
@@ -677,6 +686,17 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       }
     }
     setAviso("");
+    // (16/11) Calculadora: "trinta reais", "dezessete por cento"… vão para o campo escolhido, com confirmação.
+    if (String(campoVozRef.current || "").startsWith("calc:")) {
+      const k = campoVozRef.current.slice(5);
+      const v = valorFaladoCalculadora(k, t, lerPreco);
+      if (v === null) { setAviso(`⚠️ Não entendi o valor. Fale de novo (ex.: “trinta reais”, “dezessete por cento”) ou digite.`); return; }
+      mudarCalculadora(k, v, "voz");
+      setCalcOuvido((o) => ({ ...o, [k]: t }));
+      setAviso(`✅ ${k === "comissao" || k === "impostos" || k === "margem" ? `${v}%` : `R$ ${v}`} anotado.`);
+      setCampoVoz("");
+      return;
+    }
     const f = fichaRef.current;
     const rr = estadoRapido(f);
     const nav = comandoNavegacao(t);
@@ -1375,7 +1395,13 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             )}
             {camposDaEtapa("preco").map(renderCampo)}
             {/* (P-03) Opcional: custo → preço sugerido; só preenche o Preço com o seu toque. */}
-            <CalculadoraPrecoVoz tipoAnuncio={estadoRapido(ficha).tipoAnuncio || "classico"} aoUsarPreco={(v) => { const r2 = definirCampoDireto(fichaRef.current, "preco", v, { origem: "digitado" }); mudarFicha(r2.ficha); setAviso(r2.ok ? `✅ Preço de venda: R$ ${v}. Agora a marca e o estoque.` : r2.erro); }} />
+            <CalculadoraPrecoVoz
+              valores={valoresIniciaisCalculadora(ficha.calculadoraPreco || {}, estadoRapido(ficha).tipoAnuncio || "classico")}
+              ouvido={calcOuvido}
+              mic={micCampo}
+              onMudar={mudarCalculadora}
+              aoUsarPreco={(v) => { const r2 = definirCampoDireto(fichaRef.current, "preco", v, { origem: "digitado" }); mudarFicha(r2.ficha); setAviso(r2.ok ? `✅ Preço de venda do anúncio: R$ ${v}. Agora a marca e o estoque.` : r2.erro); }}
+            />
             <p className="pr-fonte" style={{ margin: 0 }}>O estoque aqui é a quantidade a anunciar; o estoque oficial continua o do Bling.</p>
           </div>
           {navEtapa("descricao", "envio")}
