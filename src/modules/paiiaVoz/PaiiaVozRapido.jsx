@@ -60,7 +60,8 @@ import { editarPorVoz, comandoNavegacao } from "./servicos/edicaoPorVoz";
 import { entenderTrecho } from "./servicos/conversaVoz";
 import { criarReconhecedor, suportaReconhecimento, diagnosticoVoz } from "./servicos/reconhecimentoVoz";
 import TesteMicrofone from "./TesteMicrofone";
-import { consultarBaseVoz, montarDescricaoDaBase } from "./servicos/consultaBaseVoz";
+import { consultarBaseVoz, montarDescricaoDaBase, buscarValidadoVigiado } from "./servicos/consultaBaseVoz";
+import PainelProcessamentoAnuncio from "../../components/PainelProcessamentoAnuncio";
 import { preencherAnuncioAutomaticamente } from "../../services/preencherAnuncioService";
 // Laboratório: a busca do Criar Anúncio pode ser simulada SÓ no modo de teste.
 const preencherBase = (...a) => (globalThis.__paiiaModoTeste && globalThis.__paiiaPreencherTeste ? globalThis.__paiiaPreencherTeste(...a) : preencherAnuncioAutomaticamente(...a));
@@ -134,6 +135,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [erroVoz, setErroVoz] = useState("");
   const [fotos, setFotos] = useState([]);
   const [consultando, setConsultando] = useState(false);
+  const [pesquisa, setPesquisa] = useState(null); // (07/11) { codigo, progresso, etapa } enquanto pesquisa o SKU
   const [lendoFoto, setLendoFoto] = useState({ estado: "", candidatos: [] });
   const [confirmandoEnvio, setConfirmandoEnvio] = useState(false);
   const [confirmandoNova, setConfirmandoNova] = useState(false);
@@ -434,10 +436,23 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   }, [mudarFicha]);
 
   // ---------------- Código ----------------
+  // (07/11) Andamento da pesquisa do SKU (mesma barra do Criar Anúncio). Só a pesquisa mais recente vale.
+  const pesquisaIdRef = useRef(0);
   const consultarBase = useCallback(async (codigo) => {
+    const id = ++pesquisaIdRef.current;
+    const sku = String(codigo || "").trim().toUpperCase();
     setConsultando(true);
+    setPesquisa({ codigo: sku, progresso: 5, etapa: `Pesquisando ${sku} na Base PAIIA` });
     try {
-      const res = await consultarBaseVoz(codigo, { buscarValidado: buscarConhecimentoValidado, pesquisarCatalogo, preencherAutomatico: preencherBase });
+      const res0 = await consultarBaseVoz(codigo, {
+        buscarValidado: buscarValidadoVigiado(buscarConhecimentoValidado, supabase),
+        pesquisarCatalogo,
+        preencherAutomatico: preencherBase,
+        tempoLimiteMs: 60_000,
+        onProgresso: (progresso, etapa) => { if (id === pesquisaIdRef.current) setPesquisa({ codigo: sku, progresso, etapa }); },
+      });
+      if (id !== pesquisaIdRef.current) return;
+      const res = { ...res0, codigo: sku };
       let f = registrarConsultaBase(fichaRef.current, res);
       // (13/11) Encontrado: aproveita SOZINHO o que a base tem. Aplicações entram como "da base, a conferir"
       // (desmarcadas, sem duplicar); códigos como adicionais não conferidos; nada confirmado é sobrescrito.
@@ -450,13 +465,15 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         if (descBase && !String(estadoRapido(f).descricao?.texto || "").trim()) f = definirTextoDescricao(f, descBase);
       }
       mudarFicha(f);
-      if (res.encontrado) setAviso(`Encontrei o código na ${res.rotulo}: ${res.aplicacoes.length} aplicação(ões) e ${res.codigos.length} código(s) trazidos para conferir.`);
-      else setAviso("Não encontrei esse código na base PAIIA. Pode seguir normalmente.");
+      if (res.encontrado) setAviso(`Encontrei ${sku} na ${res.rotulo}: ${res.aplicacoes.length} aplicação(ões) e ${res.codigos.length} código(s) trazidos para conferir.`);
+      else if (res.falhou) setAviso(`A pesquisa de ${sku} na Base PAIIA falhou. Toque em “Tentar novamente” ou continue manualmente.`);
+      else setAviso(`${sku} não foi encontrado na Base PAIIA. Pode continuar preenchendo manualmente.`);
     } catch (e) {
-      mudarFicha(registrarConsultaBase(fichaRef.current, { encontrado: false, erro: String(e?.message || e) }));
-      setAviso("A consulta à base não respondeu agora. Pode seguir normalmente.");
+      if (id !== pesquisaIdRef.current) return;
+      mudarFicha(registrarConsultaBase(fichaRef.current, { encontrado: false, falhou: true, codigo: sku, erro: String(e?.message || e) }));
+      setAviso(`A pesquisa de ${sku} na Base PAIIA falhou. Toque em “Tentar novamente” ou continue manualmente.`);
     } finally {
-      setConsultando(false);
+      if (id === pesquisaIdRef.current) { setConsultando(false); setPesquisa(null); }
     }
   }, [mudarFicha]);
 
@@ -1318,18 +1335,40 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               {lendoFoto.candidatos.map((c) => <button key={c} type="button" className="pr-chip" onClick={() => definirCodigo(c, { soletrado: true })}>{c}</button>)}
             </div>
           )}
-          {consultando && <p className="pr-vazio">Consultando a base PAIIA…</p>}
-          {r.base?.estado === "encontrado" && (
+          {/* (07/11) Andamento real da pesquisa do SKU: a mesma barra do Criar Anúncio. */}
+          {pesquisa && (
+            <div data-pr-pesquisa={pesquisa.codigo} aria-live="polite">
+              <strong style={{ display: "block", marginTop: 10, fontSize: 16, color: "#67e8f9" }}>🔎 Pesquisando {pesquisa.codigo} na Base PAIIA</strong>
+              <PainelProcessamentoAnuncio processando etapa={pesquisa.etapa} progresso={pesquisa.progresso} />
+            </div>
+          )}
+          {!consultando && r.base?.estado === "encontrado" && (
             <div className="pr-cartao" data-pr-base="encontrado">
-              <strong>Encontrado na {r.base.rotulo}</strong>
+              <strong>✅ {r.base.codigo ? `${r.base.codigo} encontrado` : "Encontrado"} na {r.base.rotulo}</strong>
               {r.base.descricao && <p>Peça: {r.base.descricao}</p>}
-              <p>{r.base.aplicacoes} aplicação(ões) com fonte · {r.base.codigos.length} código(s) de referência</p>
+              <p>{r.base.aplicacoes} aplicação(ões) com fonte · {r.base.codigos.length} código(s) de referência — para você conferir</p>
+              {r.base.codigos.length > 0 && <p className="pr-fonte" data-pr-base-codigos>Códigos de referência: {r.base.codigos.join(", ")}</p>}
               {r.base.aproveitado
                 ? <p className="pr-ok">✓ Sugestões aproveitadas (as aplicações entram desmarcadas para você conferir).</p>
                 : <button type="button" className="pr-botao" onClick={aproveitarBase} data-pr-aproveitar>Aproveitar sugestões</button>}
             </div>
           )}
-          {r.base?.estado === "nada" && <p className="pr-vazio" data-pr-base="nada">Não encontrado na base PAIIA. Pode seguir normalmente.</p>}
+          {!consultando && r.base?.estado === "nada" && (
+            <div className="pr-cartao pr-cinza" data-pr-base="nada">
+              <strong>❌ {r.base.codigo || "Código"} não encontrado na Base PAIIA</strong>
+              <p style={{ margin: 0 }}>Nenhuma aplicação foi inventada: continue preenchendo manualmente (toque em Continuar).</p>
+            </div>
+          )}
+          {!consultando && r.base?.estado === "falha" && (
+            <div className="pr-cartao" data-pr-base="falha" role="alert" style={{ borderColor: "#f87171" }}>
+              <strong style={{ color: "#fecaca" }}>⚠️ Falha na pesquisa de {r.base.codigo || "código"} na Base PAIIA</strong>
+              {r.base.erro && <p className="pr-fonte" style={{ margin: 0 }}>Erro: {r.base.erro}</p>}
+              <div className="pr-linha">
+                <button type="button" className="pr-botao" onClick={() => consultarBase(r.base.codigo || cp?.codigo || "")} disabled={!(r.base.codigo || cp?.codigo)} data-pr-tentar-novamente>⟳ Tentar novamente</button>
+                <span className="pr-fonte">ou continue preenchendo manualmente.</span>
+              </div>
+            </div>
+          )}
           <div className="pr-cartao pr-cinza" data-pr-internet>
             <strong>Pesquisa na internet</strong>
             <p>Desligada nesta versão de teste: precisa da sua autorização (fonte e custo estão no relatório).</p>

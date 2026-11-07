@@ -31,18 +31,69 @@ function aplicacaoDaLinha(l, fonte) {
   };
 }
 
+/** (07/11) Mensagens da busca do Criar Anúncio que significam "a Base PAIIA não tem esse código" (iguais às do NovoAnuncio). */
+export function ehNaoEncontradoNaBase(mensagem) {
+  const t = txt(mensagem);
+  return t === "Produto ainda não encontrado na Base PAIIA." || t.startsWith("Nenhum resultado foi encontrado para");
+}
+
 /**
- * @returns {Promise<{ encontrado, origem, rotulo, aplicacoes[], codigos[], descricao, erro }>}
+ * (07/11) A Base validada devolve [] quando o banco dá erro (o Criar Anúncio depende disso).
+ * Aqui o cliente é "vigiado": se o banco respondeu com erro, a consulta do PAIIA Voz
+ * vira FALHA (com "Tentar novamente") em vez de "não encontrado". Só leitura.
  */
-export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalogo, preencherAutomatico } = {}) {
+function vigiar(alvo, aoErro) {
+  return new Proxy(alvo, {
+    get(t, p) {
+      if (p === "then") return (ok, nok) => t.then((r) => { if (r?.error) aoErro(r.error); return r; }).then(ok, nok);
+      const v = Reflect.get(t, p, t);
+      if (typeof v !== "function") return v;
+      return (...a) => { const r = v.apply(t, a); return r && (typeof r === "object" || typeof r === "function") ? vigiar(r, aoErro) : r; };
+    },
+  });
+}
+export function buscarValidadoVigiado(buscar, cliente) {
+  return async (codigo) => {
+    let erro = null;
+    const linhas = await buscar(codigo, { cliente: { from: (...a) => vigiar(cliente.from(...a), (e) => { erro = erro || e; }) } });
+    if (erro) throw new Error(erro.message || String(erro));
+    return linhas;
+  };
+}
+
+/**
+ * @param onProgresso (progresso 0–100, etapa) — andamento REAL: uma etapa por fonte consultada.
+ * @param tempoLimiteMs cada fonte que não responder nesse tempo conta como falha.
+ * @returns {Promise<{ encontrado, falhou, origem, rotulo, aplicacoes[], codigos[], descricao, erro }>}
+ */
+export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalogo, preencherAutomatico, onProgresso, tempoLimiteMs = 0 } = {}) {
   const alvo = normalizarCodigo(codigo);
-  const vazio = { encontrado: false, origem: "", rotulo: "", aplicacoes: [], codigos: [], descricao: "", erro: "" };
+  const vazio = { encontrado: false, falhou: false, origem: "", rotulo: "", aplicacoes: [], codigos: [], descricao: "", erro: "" };
   if (!alvo) return { ...vazio, erro: "Informe o código da peça antes de consultar." };
+  const sku = txt(codigo).toUpperCase();
+  let atual = 0;
+  let encerrado = false;
+  const querAndamento = typeof onProgresso === "function"; // sem andamento pedido, as chamadas às fontes ficam iguais às de antes
+  const andamento = (p, etapa) => { if (encerrado || typeof onProgresso !== "function") return; atual = Math.max(atual, Math.min(100, Math.round(p))); onProgresso(atual, etapa); };
+  const comLimite = (promessa) => {
+    if (!(tempoLimiteMs > 0)) return promessa;
+    let tm;
+    const limite = new Promise((_, nok) => { tm = setTimeout(() => nok(new Error(`a Base PAIIA não respondeu em ${Math.round(tempoLimiteMs / 1000)} s`)), tempoLimiteMs); });
+    return Promise.race([promessa, limite]).finally(() => clearTimeout(tm));
+  };
+  const fim = (res) => {
+    const final = { ...vazio, ...res, falhou: !res.encontrado && Boolean(res.falhou) };
+    andamento(100, final.encontrado ? `${sku} encontrado na ${final.rotulo}` : final.falhou ? `Falha na consulta de ${sku}` : `${sku} não encontrado na Base PAIIA`);
+    encerrado = true;
+    return final;
+  };
+  andamento(5, `Pesquisando ${sku} na Base PAIIA`);
 
   // 1) Base validada PAIIA
   if (typeof buscarValidado === "function") {
+    andamento(10, "Base validada PAIIA: consultando…");
     try {
-      const linhas = await buscarValidado(codigo);
+      const linhas = await comLimite(Promise.resolve().then(() => buscarValidado(codigo)));
       if (Array.isArray(linhas) && linhas.length) {
         const rotulo = "Base validada PAIIA";
         const aplicacoes = linhas
@@ -51,17 +102,19 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
         const codigos = [...new Set(linhas.flatMap((l) => [...(l.codigos_oem || []), ...(l.codigos_equivalentes || [])]).map(txt).filter(Boolean))]
           .filter((c) => normalizarCodigo(c) !== alvo);
         const descricao = txt((linhas.find((l) => txt(l.peca)) || {}).peca);
-        return { encontrado: true, origem: "base_validada", rotulo, aplicacoes, codigos, descricao, erro: "" };
+        return fim({ encontrado: true, origem: "base_validada", rotulo, aplicacoes, codigos, descricao, erro: "" });
       }
     } catch (e) {
       vazio.erro = `Base validada indisponível: ${e?.message || e}`;
+      vazio.falhou = true;
     }
   }
 
   // 2) Catálogos internos (catalogo_mestre / catalogo_pecas)
   if (typeof pesquisarCatalogo === "function") {
+    andamento(35, "Catálogos internos PAIIA: consultando…");
     try {
-      const registros = await pesquisarCatalogo({ termo: codigo });
+      const registros = await comLimite(Promise.resolve().then(() => pesquisarCatalogo({ termo: codigo, ...(querAndamento ? { onProgresso: (p) => andamento(Math.min(55, atual + 3), txt(p?.mensagem) || "Catálogos internos PAIIA: consultando…") } : {}) })));
       if (Array.isArray(registros) && registros.length) {
         const aplicacoes = registros.map((r) => {
           const fonte = ["Catálogo interno PAIIA", txt(r.arquivo || r.origem_catalogo), r.pagina ? `pág. ${r.pagina}` : ""].filter(Boolean).join(" · ");
@@ -70,18 +123,23 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
         const codigos = [...new Set(registros.flatMap((r) => String(r.equivalencias || r.codigo_equivalente || "").split(/[,;/]/)).map(txt).filter(Boolean))]
           .filter((c) => normalizarCodigo(c) !== alvo);
         const descricao = txt((registros.find((r) => txt(r.peca)) || {}).peca);
-        return { encontrado: true, origem: "catalogo", rotulo: "Catálogo interno PAIIA", aplicacoes, codigos, descricao, erro: "" };
+        return fim({ encontrado: true, origem: "catalogo", rotulo: "Catálogo interno PAIIA", aplicacoes, codigos, descricao, erro: "" });
       }
     } catch (e) {
       vazio.erro = [vazio.erro, `Catálogo indisponível: ${e?.message || e}`].filter(Boolean).join(" · ");
+      vazio.falhou = true;
     }
   }
 
   // 3) (13/11) A MESMA busca do Criar Anúncio (catálogo mestre, catálogos internos, base de anúncios),
   // sem internet. Mesma ordem de fontes de aplicações que o Criar Anúncio usa. Nada é inventado.
   if (typeof preencherAutomatico === "function") {
+    andamento(60, "Mesma busca do Criar Anúncio: consultando…");
     try {
-      const r = await preencherAutomatico({ codigo, oem: "", permitirBuscaInternet: false });
+      const r = await comLimite(Promise.resolve().then(() => preencherAutomatico({
+        codigo, oem: "", permitirBuscaInternet: false,
+        ...(querAndamento ? { onProgresso: (p, etapa) => andamento(60 + Math.max(0, Math.min(100, Number(p) || 0)) * 0.35, txt(etapa) || "Mesma busca do Criar Anúncio: consultando…") } : {}),
+      })));
       const peca = r?.pecaEncontrada || null;
       const fontes = [r?.baseMestre?.aplicacoes, r?.diagnostico?.baseMestre?.aplicacoes, r?.inteligencia?.registros, peca?.aplicacoes, r?.resultadosCatalogo, r?.aplicacoes].find((a) => Array.isArray(a) && a.length) || [];
       const rotulo = "Base PAIIA (mesma busca do Criar Anúncio)";
@@ -92,12 +150,16 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
         .filter((a) => { if (!a) return false; const k = [a.montadora, a.modelos[0], a.motores[0], a.anoInicio, a.anoFim].join("|").toLowerCase(); if (vistos.has(k)) return false; vistos.add(k); return true; });
       const codigos = [...new Set([peca?.codigo_oem, ...(peca?.codigos_oem || []), ...(peca?.codigos_equivalentes || []), ...(peca?.codigos_alternativos || []), r?.oem].map(txt).filter(Boolean))].filter((c) => normalizarCodigo(c) !== alvo);
       const descricao = txt(peca?.descricao || peca?.nome || peca?.peca || r?.descricao || "");
-      if (aplicacoes.length || descricao || codigos.length) return { encontrado: true, origem: "catalogo", rotulo, aplicacoes, codigos, descricao, erro: "" };
+      if (aplicacoes.length || descricao || codigos.length) return fim({ encontrado: true, origem: "catalogo", rotulo, aplicacoes, codigos, descricao, erro: "" });
     } catch (e) {
-      vazio.erro = vazio.erro || `Busca da base indisponível: ${e?.message || e}`;
+      // Mesma regra do Criar Anúncio: estas mensagens significam "a base não tem o código" (não é falha).
+      if (!ehNaoEncontradoNaBase(e?.message)) {
+        vazio.erro = vazio.erro || `Busca da base indisponível: ${e?.message || e}`;
+        vazio.falhou = true;
+      }
     }
   }
-  return { ...vazio, erro: vazio.erro || "" };
+  return fim({ ...vazio, erro: vazio.erro || "" });
 }
 
 export const MENSAGEM_NAO_ENCONTRADO = "Código não encontrado na base PAIIA. Complete os dados manualmente — nenhuma aplicação foi inventada.";

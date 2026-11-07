@@ -274,9 +274,11 @@ export function descricaoParaEnvio(ficha) {
 // ---------------------------------------------------------------
 export function registrarConsultaBase(ficha, resultado, { agora = Date.now() } = {}) {
   return comRapido(ficha, (r) => {
+    // (07/11) "falha": a consulta não terminou (erro/sem resposta) — diferente de "nada" (base respondeu sem o código).
+    const codigo = txt(resultado?.codigo);
     r.base = resultado?.encontrado
-      ? { estado: "encontrado", rotulo: resultado.rotulo, descricao: txt(resultado.descricao), aplicacoes: (resultado.aplicacoes || []).length, codigos: [...(resultado.codigos || [])], aproveitado: false }
-      : { estado: "nada", rotulo: "", descricao: "", aplicacoes: 0, codigos: [], aproveitado: false, erro: resultado?.erro || "" };
+      ? { estado: "encontrado", codigo, rotulo: resultado.rotulo, descricao: txt(resultado.descricao), aplicacoes: (resultado.aplicacoes || []).length, codigos: [...(resultado.codigos || [])], aproveitado: false }
+      : { estado: resultado?.falhou ? "falha" : "nada", codigo, rotulo: "", descricao: "", aplicacoes: 0, codigos: [], aproveitado: false, erro: resultado?.erro || "" };
   }, agora);
 }
 export const marcarBaseAproveitada = (ficha) => comRapido(ficha, (r) => { if (r.base) r.base.aproveitado = true; });
