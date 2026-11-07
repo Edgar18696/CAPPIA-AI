@@ -101,3 +101,22 @@ export async function consultarBaseVoz(codigo, { buscarValidado, pesquisarCatalo
 }
 
 export const MENSAGEM_NAO_ENCONTRADO = "Código não encontrado na base PAIIA. Complete os dados manualmente — nenhuma aplicação foi inventada.";
+
+/**
+ * (15/11) Descrição montada SÓ com o que a base tem — nada inventado.
+ * - Texto da peça da base: sempre (é o que a base diz da peça).
+ * - Aplicações e códigos entram no texto SÓ quando vêm da Base validada PAIIA (dados confirmados).
+ *   Os do catálogo continuam como "a conferir" na Compatibilidade e nos códigos, fora do texto.
+ */
+export function montarDescricaoDaBase(res) {
+  if (!res?.encontrado) return "";
+  const linhas = [];
+  const desc = String(res.descricao || "").trim();
+  if (desc) linhas.push(desc.charAt(0).toUpperCase() + desc.slice(1));
+  if (res.origem === "base_validada") {
+    const ap = (res.aplicacoes || []).map((a) => [a.montadora, (a.modelos || []).join("/"), (a.motores || []).join("/"), a.anoInicio ? (a.anoFim && a.anoFim !== a.anoInicio ? `${a.anoInicio} a ${a.anoFim}` : String(a.anoInicio)) : ""].filter(Boolean).join(" ")).filter(Boolean);
+    if (ap.length) linhas.push(`Aplicação: ${ap.join("; ")}.`);
+    if ((res.codigos || []).length) linhas.push(`Códigos de referência: ${res.codigos.join(", ")}.`);
+  }
+  return linhas.join("\n");
+}

@@ -60,7 +60,7 @@ import { editarPorVoz, comandoNavegacao } from "./servicos/edicaoPorVoz";
 import { entenderTrecho } from "./servicos/conversaVoz";
 import { criarReconhecedor, suportaReconhecimento, diagnosticoVoz } from "./servicos/reconhecimentoVoz";
 import TesteMicrofone from "./TesteMicrofone";
-import { consultarBaseVoz } from "./servicos/consultaBaseVoz";
+import { consultarBaseVoz, montarDescricaoDaBase } from "./servicos/consultaBaseVoz";
 import { preencherAnuncioAutomaticamente } from "../../services/preencherAnuncioService";
 // Laboratório: a busca do Criar Anúncio pode ser simulada SÓ no modo de teste.
 const preencherBase = (...a) => (globalThis.__paiiaModoTeste && globalThis.__paiiaPreencherTeste ? globalThis.__paiiaPreencherTeste(...a) : preencherAnuncioAutomaticamente(...a));
@@ -122,7 +122,7 @@ function marcaCompletos(ficha) {
 const VEIC_VAZIO = Object.freeze({ montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "" });
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "14/11 · P-01 a P-04 rev.2";
+export const VERSAO_PAIIA_VOZ = "15/11 · descrição da base";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
@@ -443,6 +443,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         const inc = incorporarResultadoBase(f, res);
         f = marcarBaseAproveitada(inc.ficha);
         if (!estadoRapido(f).titulo.valor) { const sug = sugestoesTitulo(f)[0]; if (sug) f = definirTitulo(f, sug, { origem: "base" }); }
+        // (15/11) Descrição vazia: montada com o que a base tem (sem novo ditado). A voz só complementa.
+        const descBase = montarDescricaoDaBase(res);
+        if (descBase && !String(estadoRapido(f).descricao?.texto || "").trim()) f = definirTextoDescricao(f, descBase);
       }
       mudarFicha(f);
       if (res.encontrado) setAviso(`Encontrei o código na ${res.rotulo}: ${res.aplicacoes.length} aplicação(ões) e ${res.codigos.length} código(s) trazidos para conferir.`);
@@ -528,6 +531,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     consultarBaseVoz(cp.codigo, { buscarValidado: buscarConhecimentoValidado, pesquisarCatalogo, preencherAutomatico: preencherBase }).then((res) => {
       const inc = incorporarResultadoBase(fichaRef.current, res);
       let f = marcarBaseAproveitada(inc.ficha);
+      const descBase = montarDescricaoDaBase(res);
+      if (descBase && !String(estadoRapido(f).descricao?.texto || "").trim()) f = definirTextoDescricao(f, descBase);
       const rr = estadoRapido(f);
       if (!rr.titulo.valor) {
         const sug = sugestoesTitulo(f)[0];
