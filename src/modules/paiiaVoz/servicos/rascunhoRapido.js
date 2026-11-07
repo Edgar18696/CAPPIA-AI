@@ -295,7 +295,8 @@ export function validarRapido(ficha, { fotos = 0 } = {}) {
   const org = organizarDescricao(ficha);
   if (!org.informacoes.length && r.descricao.final === null) faltando.push("descrição (fale ou digite como é a peça)");
   if (!codigoPrincipal(ficha)) avisos.push("Sem código: o SKU terá de ser preenchido no Novo Anúncio.");
-  (ficha?.codigos || []).filter((c) => c.conferido === false).forEach((c) => avisos.push(`Confira o código ${c.codigo} letra por letra (foi ditado).`));
+  // (07/11) Só os códigos ADICIONAIS pedem conferência; o principal já foi confirmado no próprio campo.
+  (ficha?.codigos || []).filter((c) => !c.principal && c.conferido === false).forEach((c) => avisos.push(`Confira o código ${c.codigo} letra por letra (foi ditado).`));
   if (!fotos) avisos.push("Nenhuma foto: adicione no Novo Anúncio.");
   const pend = (ficha?.aplicacoes || []).filter((a) => !a.confirmada).length;
   if (pend) avisos.push(`${pend} aplicação(ões) não conferida(s) ficam de fora da descrição.`);

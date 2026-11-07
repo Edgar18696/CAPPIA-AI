@@ -1312,9 +1312,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             </div>
             <p className="pr-fonte" style={{ margin: 0 }}>Só os conferidos entram na descrição. Códigos sugeridos pela base não são considerados equivalentes sem a sua conferência.</p>
           </div>
-          {cp && cp.conferido === false && (
-            <label className="pr-check"><input type="checkbox" onChange={(e) => mudarFicha(conferirCodigo(fichaRef.current, cp.normalizado, e.target.checked))} /> Conferi o código letra por letra</label>
-          )}
+          {/* (07/11) Código principal: uma só confirmação (o próprio campo + "O celular ouviu…"); sem checkbox extra. */}
           {fotos.length > 0 && (
             <div className="pr-linha">
               <button type="button" className="pr-link" onClick={lerCodigoNasFotos} disabled={lendoFoto.estado === "lendo"}>{lendoFoto.estado === "lendo" ? "Lendo a foto…" : "Ler código na foto (beta)"}</button>
