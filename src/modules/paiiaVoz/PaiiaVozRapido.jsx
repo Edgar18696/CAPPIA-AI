@@ -52,6 +52,7 @@ import {
   descricaoParaEnvio,
   registrarConsultaBase,
   resumoDaBase,
+  situacaoNaDescricao,
   marcarBaseAproveitada,
   validarRapido,
   mapearRapidoParaNovoAnuncio,
@@ -123,6 +124,9 @@ function marcaCompletos(ficha) {
 }
 
 const VEIC_VAZIO = Object.freeze({ montadora: "", modelo: "", motor: "", anoInicio: "", anoFim: "" });
+// (08/11) Rótulo e dica de cada campo do Veículo compatível (o texto completo fica no microfone).
+const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (opcional)", anoInicio: "Ano Inicial", anoFim: "Ano Final (opcional)" };
+const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
 export const VERSAO_PAIIA_VOZ = "16/11 · calculadora de preço";
@@ -564,7 +568,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
         if (sug) f = definirTitulo(f, sug, { origem: "base" });
       }
       mudarFicha(f);
-      setAviso("Sugestões da base aproveitadas: confira o título e marque só as aplicações certas na Descrição.");
+      setAviso("Sugestões da base aproveitadas: confira o título; as aplicações já estão na descrição — confirme na Compatibilidade.");
     });
   }
 
@@ -1327,7 +1331,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
                   <div className="pr-fonte">{[r.base.codigo, r.base.descricao, r.base.rotulo].filter(Boolean).join(" · ")}</div>
                   {r.base.codigos.length > 0 && <div className="pr-fonte" data-pr-base-codigos>Códigos de referência: {r.base.codigos.join(", ")}</div>}
                   {r.base.aproveitado
-                    ? <div className="pr-fonte">✓ Sugestões aproveitadas (as aplicações entram desmarcadas para você conferir).</div>
+                    ? <div className="pr-fonte">✓ Sugestões aproveitadas (as aplicações já estão na descrição; confirme na Compatibilidade).</div>
                     : <button type="button" className="pr-link" onClick={aproveitarBase} data-pr-aproveitar>Aproveitar sugestões</button>}
                 </div>
               ) : r.base.estado === "nada" ? (
@@ -1468,21 +1472,27 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {etapa === "compat" && (
         <section className="pr-bloco" data-pr-bloco="compat">
           {/* (Etapa 1) Só Montadora, Modelo e Ano. O motor é interno (descrição ou catálogo do ML). */}
-          <div className="pr-cartao" data-pv-veiculo-rapido style={{ display: "grid", gap: 8 }}>
-            <span className="pr-rotulo">Veículo compatível</span>
+          {/* (08/11) Mesmo azul premium da calculadora: campos escuros, borda azul, 2 colunas no computador e 1 no celular. */}
+          <div className="pr-veic" data-pv-veiculo-rapido>
+            <div className="pr-veic-titulo">🚗 Veículo compatível</div>
             {micCampo("veic:tudo", "a aplicação inteira") && (
-              <button type="button" className={`pr-botao ${campoVoz === "veic:tudo" && ouvindo ? "pr-mic-ouvindo" : ""}`} data-pv-veic-falar-tudo
+              <button type="button" className={`pr-botao pr-veic-botao ${campoVoz === "veic:tudo" && ouvindo ? "pr-mic-ouvindo" : ""}`} data-pv-veic-falar-tudo
                 onClick={() => tocarMicCampo("veic:tudo")}>
                 🎤 Falar a aplicação (ex.: “Fiat Uno motor 1.0 de 2010 a 2014”)
               </button>
             )}
-            {[["montadora", "Montadora (ex.: Fiat)", "text"], ["modelo", "Modelo (ex.: Uno)", "text"], ["motor", "Motor (opcional, ex.: 1.0, 1.6 16V, Diesel)", "text"], ["anoInicio", "Ano inicial (ou único)", "numeric"], ["anoFim", "Ano final (opcional)", "numeric"]].map(([k, ph, modo]) => (
-              <div key={k} className={`pr-linha ${campoVoz === `veic:${k}` ? "pr-campo-ativo" : ""}`} data-pv-campo-direto={`veic:${k}`} style={{ gap: 6, alignItems: "center" }}>
-                <input className="pr-entrada" style={{ flex: 1 }} placeholder={ph} inputMode={modo} value={veic[k]} onChange={(e) => { const val = e.target.value; setVeic((v) => ({ ...v, [k]: val })); }} onKeyDown={(e) => { if (e.key === "Enter") adicionarVeiculoRapido(); }} data-pv-veic={k} />
-                {micCampo(`veic:${k}`, ph.split(" (")[0])}
-              </div>
-            ))}
-            <button type="button" className="pr-botao pr-grande" onClick={adicionarVeiculoRapido} data-pv-veic-adicionar>➕ Adicionar veículo</button>
+            <div className="pr-veic-grade">
+              {[["montadora", "Montadora (ex.: Fiat)", "text"], ["modelo", "Modelo (ex.: Uno)", "text"], ["motor", "Motor (opcional, ex.: 1.0, 1.6 16V, Diesel)", "text"], ["anoInicio", "Ano inicial (ou único)", "numeric"], ["anoFim", "Ano final (opcional)", "numeric"]].map(([k, ph, modo]) => (
+                <label key={k} className={`pr-veic-campo ${campoVoz === `veic:${k}` ? "pr-veic-ativo" : ""}`} data-pv-campo-direto={`veic:${k}`}>
+                  <span className="pr-veic-rotulo">{ROTULOS_VEIC[k]}</span>
+                  <span className="pr-veic-linha">
+                    <input type="text" placeholder={DICAS_VEIC[k]} inputMode={modo} value={veic[k]} onChange={(e) => { const val = e.target.value; setVeic((v) => ({ ...v, [k]: val })); }} onKeyDown={(e) => { if (e.key === "Enter") adicionarVeiculoRapido(); }} data-pv-veic={k} />
+                    {micCampo(`veic:${k}`, ph.split(" (")[0])}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <button type="button" className="pr-botao pr-grande pr-veic-botao" onClick={adicionarVeiculoRapido} data-pv-veic-adicionar>➕ Adicionar veículo</button>
           </div>
           <details open={campoVoz === "aplicacoes" || undefined} data-pv-aplicacao-completa>
             <summary className="pr-fonte">Falar ou digitar a aplicação completa (opcional)</summary>
@@ -1496,12 +1506,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {!ficha.aplicacoes.length && <p className="pr-vazio">Nenhuma aplicação. Fale o veículo e os anos (ex.: “Renault Master 2013 a 2022”).</p>}
           <ul className="pr-lista">
             {ficha.aplicacoes.map((a) => (
-              <li key={a.id} data-pv-aplicacao={a.chave} data-pv-aplicacao-estado={situacaoAplicacao(a).estado}>
+              <li key={a.id} data-pv-aplicacao={a.chave} data-pv-aplicacao-estado={situacaoAplicacao(a).estado} data-pv-aplicacao-origem={situacaoNaDescricao(a).estado}>
                 <label className="pr-check">
                   <input type="checkbox" checked={a.confirmada} onChange={(e) => mudarFicha(confirmarAplicacao(fichaRef.current, a.id, e.target.checked))} data-pv-confirmar-aplicacao />
                   <span>{[a.tipoVeiculo, a.montadora].filter(Boolean).join(" ")}{a.tipoVeiculo || a.montadora ? " · " : ""}{resumoAplicacao(a)}</span>
                 </label>
                 <span className={`pr-fonte pr-ap-${situacaoAplicacao(a).estado}`}>{situacaoAplicacao(a).estado === "confirmada" ? "✅" : situacaoAplicacao(a).estado === "ambigua" ? "⚠️" : "⏳"} {situacaoAplicacao(a).texto}</span>
+                {/* (08/11) Encontrada na base (já na descrição) ≠ confirmada por você. */}
+                <span className={`pr-ap-selo pr-ap-selo-${situacaoNaDescricao(a).estado}`} data-pv-aplicacao-selo>{situacaoNaDescricao(a).estado === "confirmada" ? "✔" : situacaoNaDescricao(a).estado === "base" ? "📋" : "—"} {situacaoNaDescricao(a).texto}</span>
                 <span className="pr-fonte">{a.origem === "usuario" ? "informada por você" : (a.fontes || []).join(" · ")}{a.editadaEm ? " · corrigida" : ""}</span>
                 {/* (05/11) Corrigir a MESMA aplicação (teclado ou microfone), sem criar outra. */}
                 {campoVoz === `ap:${a.id}` || editandoAp === a.id ? (
@@ -1859,4 +1871,23 @@ const CSS_RAPIDO = `
 .pr img { max-width: 100%; }
 .pr-rodape { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-bottom: 32px; color: #94a3b8; font-size: 13px; }
 @media (max-width: 480px) { .pr-topo h1 { font-size: 19px !important; } .pr-sub { display: none; } }
+/* (08/11) Veículo compatível: mesmo azul premium da calculadora de preços. */
+.pr-veic { box-sizing: border-box; max-width: 100%; overflow: hidden; background: linear-gradient(160deg,#0b1f4d 0%,#123a8a 100%); border: 1px solid #2f5fd0; border-radius: 16px; padding: 14px; color: #e8efff; display: grid; gap: 10px; }
+.pr-veic-titulo { font-weight: 800; font-size: 17px; }
+.pr-veic-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(165px, 45%)), 1fr)); gap: 8px; }
+.pr-veic-campo { min-width: 0; display: grid; gap: 3px; background: #0a1838; border-radius: 10px; padding: 8px 10px; cursor: text; }
+.pr-veic-ativo { outline: 2px solid #38bdf8; }
+.pr-veic-rotulo { font-size: 12px; color: #9fb6e8; }
+.pr-veic-linha { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.pr .pr-veic-campo input { flex: 1; width: 100%; min-width: 0; background: transparent; border: none; border-bottom: 1px solid #2f5fd0; border-radius: 0; color: #e8efff; font-size: 17px; padding: 4px 0; }
+.pr .pr-veic-campo input::placeholder { color: #6f86b8; }
+.pr .pr-veic-campo input:focus { outline: none; border-bottom-color: #38bdf8; }
+.pr-veic .pr-mic-campo { width: 42px; min-height: 40px; border-color: #2f5fd0; background: #0b1f4d; color: #e8efff; }
+.pr-veic .pr-mic-campo.pr-mic-ouvindo { background: #0ea5e9; }
+.pr-veic-botao { width: 100%; min-height: 46px; background: #2563eb; }
+.pr-veic-botao.pr-mic-ouvindo { background: #dc2626; }
+.pr-ap-selo { font-size: 12px; font-weight: 700; justify-self: start; align-self: flex-start; padding: 2px 8px; border-radius: 999px; }
+.pr-ap-selo-confirmada { color: #86efac; background: rgba(34,197,94,.12); }
+.pr-ap-selo-base { color: #7dd3fc; background: rgba(56,189,248,.12); }
+.pr-ap-selo-fora { color: #94a3b8; background: rgba(148,163,184,.1); }
 `;

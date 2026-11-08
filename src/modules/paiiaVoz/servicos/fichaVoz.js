@@ -236,6 +236,8 @@ export function confirmarAplicacao(ficha, id, confirmada = true, { agora = Date.
   const a = f.aplicacoes.find((x) => x.id === id);
   if (!a) return f;
   a.confirmada = Boolean(confirmada);
+  // (08/11) Desmarcada por você = recusada: sai da descrição mesmo se veio da Base PAIIA.
+  a.recusada = !a.confirmada;
   return tocar(f, agora);
 }
 

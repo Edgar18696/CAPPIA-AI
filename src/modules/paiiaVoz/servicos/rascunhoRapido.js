@@ -7,7 +7,8 @@
 //  • Descrição: o seu texto é preservado e organizado no modelo da loja.
 //    Medidas e peso NÃO vão para a descrição (ficam para os campos da
 //    plataforma). Marca e "original/genuína" são retirados, com aviso.
-//  • Aplicações: só as conferidas entram em "Compatível com os veículos".
+//  • Aplicações: as conferidas por você E as encontradas na Base PAIIA (08/11)
+//    entram em "Compatível com os veículos"; desmarcadas por você ficam de fora.
 // Funções puras: guardam tudo dentro da ficha do PAIIA Voz (F5 não perde).
 // =============================================================
 
@@ -179,6 +180,20 @@ export function sugestoesTitulo(ficha) {
 // ---------------------------------------------------------------
 // Descrição
 // ---------------------------------------------------------------
+/**
+ * (08/11) Como cada aplicação entra na Descrição Organizada:
+ *  "confirmada" (marcada por você) · "base" (encontrada na Base PAIIA, já na descrição, a conferir)
+ *  · "fora" (informada por você e não marcada, ou desmarcada). A validação do Mercado Livre
+ *  continua na Finalizar e usa só as confirmadas.
+ */
+export function situacaoNaDescricao(a) {
+  if (a?.confirmada) return { estado: "confirmada", texto: "confirmada por você · na descrição" };
+  if (a && a.origem && a.origem !== "usuario" && !a.recusada) return { estado: "base", texto: "encontrada na Base PAIIA · já na descrição (marque para confirmar)" };
+  return { estado: "fora", texto: a?.recusada ? "desmarcada · fora da descrição" : "fora da descrição até você marcar" };
+}
+export const aplicacoesDaDescricao = (ficha) => (ficha?.aplicacoes || []).filter((a) => situacaoNaDescricao(a).estado !== "fora");
+const RE_LINHA_APLICACAO = /^Aplica[çc](?:ão|ões|ao|oes)\s*:/i;
+
 const RE_MEDIDA = /(\b\d+(?:[.,]\d+)?\s*(?:mm|cm|m|metros?|cent[ií]metros?|mil[ií]metros?|kg|quilos?|g|gramas?|pol(?:egadas?)?|")(?![\p{L}])|\b(?:peso|pesa|medidas?|mede|comprimento|largura|altura|di[aâ]metro|espessura)\b)/iu;
 
 /** Frases do texto livre (cada fala vira uma linha; pontuação também separa). */
@@ -207,7 +222,11 @@ export function organizarDescricao(ficha) {
   const medidas = [];
   const informacoes = [];
   const marcas = marcasProibidas(ficha);
-  for (const bruta of frasesDoTexto(r.descricao.texto)) {
+  const aps = aplicacoesDaDescricao(ficha);
+  // (08/11) Com a lista "Compatível com os veículos", a linha "Aplicação: …" do texto (Base validada)
+  // não se repete — retirada INTEIRA antes de separar as frases (ela usa ";" entre os veículos).
+  const texto = aps.length ? String(r.descricao.texto ?? "").split("\n").filter((l) => !RE_LINHA_APLICACAO.test(l.trim())).join("\n") : r.descricao.texto;
+  for (const bruta of frasesDoTexto(texto)) {
     if (RE_MEDIDA.test(bruta)) {
       medidas.push(arrumarFrase(bruta));
       continue;
@@ -233,7 +252,6 @@ export function organizarDescricao(ficha) {
   const linhas = [];
   if (nome) linhas.push(nome, "");
   if (informacoes.length) linhas.push(...informacoes, "");
-  const aps = aplicacoesConfirmadas(ficha);
   if (aps.length) {
     linhas.push("Compatível com os veículos:");
     for (const a of aps) {
@@ -312,8 +330,11 @@ export function validarRapido(ficha, { fotos = 0 } = {}) {
   // (07/11) Só os códigos ADICIONAIS pedem conferência; o principal já foi confirmado no próprio campo.
   (ficha?.codigos || []).filter((c) => !c.principal && c.conferido === false).forEach((c) => avisos.push(`Confira o código ${c.codigo} letra por letra (foi ditado).`));
   if (!fotos) avisos.push("Nenhuma foto: adicione no Novo Anúncio.");
-  const pend = (ficha?.aplicacoes || []).filter((a) => !a.confirmada).length;
+  const sit = (ficha?.aplicacoes || []).map((a) => situacaoNaDescricao(a).estado);
+  const pend = sit.filter((e) => e === "fora").length;
+  const daBase = sit.filter((e) => e === "base").length;
   if (pend) avisos.push(`${pend} aplicação(ões) não conferida(s) ficam de fora da descrição.`);
+  if (daBase) avisos.push(`${daBase} aplicação(ões) da Base PAIIA já estão na descrição; confirme na Compatibilidade — a validação do Mercado Livre é feita na Finalizar.`);
   if (!aplicacoesConfirmadas(ficha).length) avisos.push("Nenhuma aplicação conferida: a compatibilidade será feita na Conferência.");
   if (org.medidas.length) avisos.push("Medidas/peso ditos ficam para os campos da plataforma (não vão na descrição).");
   return { pronto: faltando.length === 0, faltando, avisos: [...new Set(avisos)] };
