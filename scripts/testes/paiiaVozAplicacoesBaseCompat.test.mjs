@@ -120,5 +120,5 @@ test("8) a tela de produção usa ESTE componente: App → PaiiaVoz → PaiiaVoz
 
 test("9) versão visível no topo identifica a publicação (para conferir no site)", () => {
   const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(t.includes('export const VERSAO_PAIIA_VOZ = "08/11 · envio antes do preço"'));
+  assert.ok(t.includes('export const VERSAO_PAIIA_VOZ = "08/11 · galeria com barra fixa"'));
 });

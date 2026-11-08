@@ -104,6 +104,7 @@ import { comporFotoFinal } from "../../services/fotoIA/composicaoFotoIA";
 import { supabase } from "../../supabase";
 import GaleriaSeletor from "../../components/fotos/GaleriaSeletor";
 import { baixarFotoGaleria, vagasFotos } from "./servicos/galeriaVoz";
+import { consumirAbrirGaleria, marcarRetornoAposLogin, pedidoAbrirGaleria } from "./servicos/retornoLoginVoz";
 import { consumirAcaoPaiiaVoz } from "./servicos/acaoInicial";
 import { iniciarAnuncioNovo, abrirFichaNoNovoAnuncio } from "../../services/aberturaNovoAnuncio";
 import { buscarConhecimentoValidado } from "../../services/paizinhoPesquisa/conhecimentoValidado";
@@ -131,7 +132,7 @@ const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (
 const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "08/11 · envio antes do preço";
+export const VERSAO_PAIIA_VOZ = "08/11 · galeria com barra fixa";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
@@ -172,8 +173,15 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const veicRef = useRef(VEIC_VAZIO);
   const setVeic = useCallback((v) => { const novo = typeof v === "function" ? v(veicRef.current) : v; veicRef.current = novo; setVeicEstado(novo); }, []);
   const fotoRef = useRef(null);
-  const [galeriaAberta, setGaleriaAberta] = useState(false); // (06/11) Galeria interna do PAIIA (fotos da conta)
+  // (06/11) Galeria interna do PAIIA (fotos da conta). (08/11) Volta do login pedido pela Galeria: já abre aberta.
+  const [galeriaAberta, setGaleriaAberta] = useState(() => Boolean(usuario?.id) && pedidoAbrirGaleria());
   const galeriaRef = useRef(null);
+  // (08/11) Galeria sem login do PAIIA: entra na conta e volta para esta etapa (rascunho guardado neste aparelho).
+  const entrarParaGaleria = useCallback(() => {
+    marcarRetornoAposLogin({ tela: "paiiaVoz", abrirGaleria: true });
+    setScreen?.("login");
+  }, [setScreen]);
+  useEffect(() => { if (galeriaAberta) consumirAbrirGaleria(); }, [galeriaAberta]); // o pedido vale uma vez só
   const trocarRef = useRef({ input: null, id: null });
   const fotosRef = useRef([]);
   // Fundo branco com o Foto IA: real só com autorização (variável de build); no teste, simulação.
@@ -1260,6 +1268,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               onEscolher={usarFotosDaGaleria}
               onFechar={() => setGaleriaAberta(false)}
               onArquivo={() => galeriaRef.current?.click()}
+              onEntrar={entrarParaGaleria}
+              barraFixa
+              fecharAoUsar
               classeBotao="pr-botao"
               classeLink="pr-link"
             />

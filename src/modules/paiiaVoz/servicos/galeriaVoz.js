@@ -8,9 +8,27 @@
 
 export const PAGINA_GALERIA_VOZ = 24;
 
+// (08/11) A Galeria é da sua conta PAIIA (login do PAIIA). Conta do Mercado Livre conectada NÃO é login do PAIIA.
+export const AVISO_SEM_LOGIN_GALERIA = "Você não está conectado à sua conta PAIIA neste navegador. A Galeria mostra as fotos da sua conta PAIIA (a conta do Mercado Livre conectada não serve para entrar no PAIIA).";
+
+/**
+ * (08/11) Quem é o usuário da Galeria: o que a tela recebeu; sem ele (ex.: tela aberta antes
+ * de a sessão ser recuperada), a sessão válida deste navegador. Sem sessão: "sem-login".
+ */
+export async function usuarioDaGaleria(supabase, userId) {
+  if (userId) return { id: String(userId), origem: "tela" };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const id = data?.session?.user?.id;
+    return id ? { id: String(id), origem: "sessao" } : { id: "", origem: "sem-login" };
+  } catch {
+    return { id: "", origem: "sem-login" };
+  }
+}
+
 /** Lista as fotos da Galeria do usuário (mais novas primeiro). */
 export async function listarFotosGaleria(supabase, userId, { inicio = 0, quantidade = PAGINA_GALERIA_VOZ } = {}) {
-  if (!userId) return { fotos: [], temMais: false, erro: "Entre na sua conta para ver a Galeria do PAIIA." };
+  if (!userId) return { fotos: [], temMais: false, semLogin: true, erro: AVISO_SEM_LOGIN_GALERIA };
   let resposta;
   try {
     resposta = await supabase

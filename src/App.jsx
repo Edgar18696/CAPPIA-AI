@@ -33,6 +33,7 @@ import {
 } from "./components/constants/apiConstants";
 import CentralPublicacaoScreen from "./components/screens/CentralPublicacaoScreen";
 import PaiiaVoz from "./modules/paiiaVoz/PaiiaVoz";
+import { telaAposLogin } from "./modules/paiiaVoz/servicos/retornoLoginVoz";
 import TelaFinalizarAnuncio from "./modules/paiiaVoz/TelaFinalizarAnuncio";
 import FotoIAScreen from "./components/screens/FotoIAScreen";
 import BannerStudio from "./components/BannerStudio";
@@ -750,7 +751,8 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
     }
 
     setUsuario(data.user);
-    setScreen("home");
+    // (08/11) volta para onde pediu o login (ex.: Galeria do PAIIA Voz); sem pedido, a Home.
+    setScreen(telaAposLogin());
   }
 
   async function cadastrarUsuario(
