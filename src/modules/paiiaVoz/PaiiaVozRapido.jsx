@@ -129,7 +129,7 @@ const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (
 const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "16/11 · calculadora de preço";
+export const VERSAO_PAIIA_VOZ = "08/11 · veículo compatível azul";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());

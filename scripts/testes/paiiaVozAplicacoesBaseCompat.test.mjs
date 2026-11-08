@@ -106,3 +106,19 @@ test("7) tela Veículo compatível: azul premium da calculadora, campos escuros,
   assert.match(css, /\.pr-veic-campo input \{[^}]*background: transparent[^}]*border-bottom: 1px solid #2f5fd0[^}]*color: #e8efff/, "texto legível com borda azul");
   assert.match(css, /\.pr-veic-linha \{[^}]*align-items: center/, "microfone alinhado ao campo");
 });
+
+test("8) a tela de produção usa ESTE componente: App → PaiiaVoz → PaiiaVozRapido → etapa compat com o cartão azul", () => {
+  const app = ler("src/App.jsx");
+  assert.ok(app.includes('import PaiiaVoz from "./modules/paiiaVoz/PaiiaVoz"') && app.includes('screen === "paiiaVoz"'));
+  const voz = ler("src/modules/paiiaVoz/PaiiaVoz.jsx");
+  assert.ok(voz.includes('import PaiiaVozRapido from "./PaiiaVozRapido"') && voz.includes("<PaiiaVozRapido {...props}"));
+  const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  const compat = t.slice(t.indexOf('{etapa === "compat" && ('), t.indexOf('{etapa === "categoria" && ('));
+  assert.ok(compat.includes('<div className="pr-veic" data-pv-veiculo-rapido>'), "o cartão azul está dentro da etapa compat renderizada");
+  assert.equal((t.match(/data-pv-veiculo-rapido/g) || []).length, 1, "não há outro cartão de veículo");
+});
+
+test("9) versão visível no topo identifica a publicação com o Veículo compatível azul (para conferir no site)", () => {
+  const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
+  assert.ok(t.includes('export const VERSAO_PAIIA_VOZ = "08/11 · veículo compatível azul"'));
+});
