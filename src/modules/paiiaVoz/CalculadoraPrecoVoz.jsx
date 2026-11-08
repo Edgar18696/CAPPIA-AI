@@ -1,7 +1,9 @@
 // =============================================================
 // PAIIA Voz — Calcular Preço de Venda (opcional, separado do Preço do anúncio).
 // (16/11) Visual azul premium, duas colunas, microfone por campo, valores guardados na ficha.
-// - Preço sugerido: (custo + frete + despesas) ÷ (1 − comissão − impostos − margem).
+// - Preço sugerido: (custo + frete de compra + frete de venda + despesas) ÷ (1 − comissão − impostos − margem).
+// - (08/11) Frete de VENDA vem do Envio (cotação do Mercado Livre), separado do frete de COMPRA.
+//   Sem ele: "Frete pendente" (não sugere preço) ou uma estimativa sua, identificada.
 // - Conferência: quanto SOBRA após comissão, impostos, frete, despesas e RECOMPRA da peça.
 // Valores não informados por você aparecem como ESTIMATIVA. Nada vai para o Preço sem "Usar".
 // =============================================================
@@ -10,7 +12,7 @@ import { analisarVenda, calcularPrecoVenda, precoParaUsar, reais } from "./servi
 const CAMPOS = [
   ["custo", "Custo da Mercadoria", "R$", "o que você pagou"],
   ["venda", "Preço de venda para conferir", "R$", "opcional: usa o sugerido"],
-  ["frete", "Frete", "R$", "0 se não houver"],
+  ["frete", "Frete de compra", "R$", "para receber a peça (0 se não houver)"],
   ["despesas", "Despesas", "R$", "embalagem, etc."],
   ["comissao", "Comissão do Marketplace", "%", "ex.: 12"],
   ["impostos", "Impostos", "%", "alíquota da empresa"],
@@ -19,10 +21,17 @@ const CAMPOS = [
 const AZUL = { fundo: "linear-gradient(160deg,#0b1f4d 0%,#123a8a 100%)", borda: "#2f5fd0", campo: "#0a1838", texto: "#e8efff", sub: "#9fb6e8", destaque: "#38bdf8" };
 const pct = (v) => `${String(Math.round(v * 100) / 100).replace(".", ",")}%`;
 
-export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () => null, ouvido = {}, aoUsarPreco }) {
+const numBR = (v) => { const t = String(v ?? "").trim(); if (!t) return 0; const n = Number(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t); return Number.isFinite(n) ? n : 0; };
+
+export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () => null, ouvido = {}, aoUsarPreco, situacaoFrete = null, precoFicha = "", aoEstimarFrete, aoRecotarFrete, recotando = false }) {
   const val = (k) => valores[k]?.valor ?? "";
-  const plano = Object.fromEntries(CAMPOS.map(([k]) => [k, val(k)]));
+  // (08/11) Frete de venda: situação dada pela tela (Envio). Sem ela (uso antigo), a calculadora fica como antes.
+  const fv0 = situacaoFrete ? situacaoFrete(0) : null;
+  const fvUsavel = Boolean(fv0) && fv0.estado !== "pendente" && Number(fv0.valor) >= 0;
+  const plano = { ...Object.fromEntries(CAMPOS.map(([k]) => [k, val(k)])), ...(fv0 ? (fvUsavel ? { freteVenda: String(fv0.valor) } : { fretePendente: true }) : {}) };
   const sug = calcularPrecoVenda(plano);
+  const precoAlvo = numBR(val("venda")) || numBR(precoFicha) || (sug.ok ? sug.preco : 0);
+  const fv = situacaoFrete ? situacaoFrete(precoAlvo) : null;
   const usar = precoParaUsar(plano);
   const vendaConf = val("venda") || (sug.ok ? String(sug.preco) : "");
   const an = analisarVenda({ ...plano, venda: vendaConf });
@@ -44,11 +53,32 @@ export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () =>
           </label>
         ))}
       </div>
+      {fv && (
+        <div data-pv-calc-frete-venda data-estado={fv.estado} style={{ display: "grid", gap: 6, background: AZUL.campo, borderRadius: 10, padding: "8px 10px", border: `1px solid ${fv.estado === "ok" ? "#22c55e" : fv.estado === "pendente" ? "#fbbf24" : AZUL.borda}` }}>
+          <span style={{ fontSize: 12, color: AZUL.sub }}>🚚 Frete de venda (Mercado Livre) · vem da etapa Envio</span>
+          <b style={{ fontSize: 17, color: fv.estado === "pendente" ? "#fbbf24" : AZUL.texto }}>{fv.estado === "pendente" ? "Frete pendente" : reais(fv.valor)}{fv.estado === "estimativa" ? " · estimativa" : ""}</b>
+          <span style={{ fontSize: 12, color: AZUL.sub }}>{fv.texto}</span>
+          {(fv.estado === "outra_faixa" || fv.estado === "pendente") && aoRecotarFrete && precoAlvo > 0 && (
+            <button type="button" data-pv-calc-recotar disabled={recotando} onClick={() => aoRecotarFrete(precoAlvo)}
+              style={{ background: "#1d4ed8", color: "#fff", border: `1px solid ${AZUL.borda}`, borderRadius: 10, padding: "8px 10px", fontWeight: 700 }}>
+              {recotando ? "⏳ Consultando o Mercado Livre…" : `🔄 Consultar o frete no preço ${reais(precoAlvo)}`}
+            </button>
+          )}
+          {(fv.estado === "pendente" || fv.estado === "estimativa") && (
+            <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: AZUL.sub }}>
+              Estimativa (R$)
+              <input inputMode="decimal" data-pv-calc-frete-estimativa defaultValue={fv.estado === "estimativa" ? String(fv.valor).replace(".", ",") : ""} placeholder="só se não houver cotação"
+                onBlur={(e) => aoEstimarFrete?.(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                style={{ flex: 1, width: "100%", minWidth: 0, background: "transparent", border: "none", borderBottom: `1px solid ${AZUL.borda}`, color: AZUL.texto, fontSize: 16, padding: "2px 0" }} />
+            </label>
+          )}
+        </div>
+      )}
       {estimativas.length > 0 && <p data-pv-calc-estimativas style={{ margin: 0, fontSize: 12, color: "#fbbf24" }}>⚠ Estimativa: {estimativas.join(", ")} — confirme com os valores reais (impostos dependem da tributação da empresa e do produto).</p>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, max(165px, 45%)), 1fr))", gap: 8 }}>
         <div data-pv-calc-resultado style={{ background: "#0e7490", borderRadius: 12, padding: 10 }}>
           <div style={{ fontSize: 12 }}>Preço sugerido (margem {val("margem") || 0}%)</div>
-          <div data-pv-calc-preco style={{ fontSize: 24, fontWeight: 800 }}>{sug.ok ? reais(sug.preco) : "—"}</div>
+          <div data-pv-calc-preco style={{ fontSize: 24, fontWeight: 800 }}>{sug.ok ? reais(sug.preco) : sug.pendente ? <span data-pv-calc-frete-pendente>Frete pendente</span> : "—"}</div>
           {!sug.ok && <div style={{ fontSize: 12 }}>{sug.erro}</div>}
         </div>
         <div data-pv-calc-sobra style={{ background: an.ok && an.sobra < 0 ? "#7f1d1d" : "#166534", borderRadius: 12, padding: 10 }}>
@@ -59,7 +89,7 @@ export default function CalculadoraPrecoVoz({ valores = {}, onMudar, mic = () =>
       </div>
       {an.ok && (
         <p data-pv-calc-partes style={{ margin: 0, fontSize: 12, color: AZUL.sub }}>
-          Venda {reais(an.venda)} − comissão {reais(an.partes.comissao)} − impostos {reais(an.partes.impostos)} − frete {reais(an.partes.frete)} − despesas {reais(an.partes.despesas)} − recompra {reais(an.partes.recompra)} = <b style={{ color: AZUL.texto }}>{reais(an.sobra)}</b>. Estimativa para decisão, não é lucro líquido contábil.
+          Venda {reais(an.venda)} − comissão {reais(an.partes.comissao)} − impostos {reais(an.partes.impostos)} − frete de compra {reais(an.partes.frete)}{an.partes.freteVenda !== undefined ? ` − frete de venda ${reais(an.partes.freteVenda)}` : ""} − despesas {reais(an.partes.despesas)} − recompra {reais(an.partes.recompra)} = <b style={{ color: AZUL.texto }}>{reais(an.sobra)}</b>. Estimativa para decisão, não é lucro líquido contábil.
         </p>
       )}
       {usar && (

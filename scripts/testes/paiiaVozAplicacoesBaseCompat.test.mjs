@@ -118,7 +118,7 @@ test("8) a tela de produção usa ESTE componente: App → PaiiaVoz → PaiiaVoz
   assert.equal((t.match(/data-pv-veiculo-rapido/g) || []).length, 1, "não há outro cartão de veículo");
 });
 
-test("9) versão visível no topo identifica a publicação com o Veículo compatível azul (para conferir no site)", () => {
+test("9) versão visível no topo identifica a publicação (para conferir no site)", () => {
   const t = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(t.includes('export const VERSAO_PAIIA_VOZ = "08/11 · veículo compatível azul"'));
+  assert.ok(t.includes('export const VERSAO_PAIIA_VOZ = "08/11 · envio antes do preço"'));
 });

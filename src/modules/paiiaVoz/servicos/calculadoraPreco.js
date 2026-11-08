@@ -18,14 +18,17 @@ export function precoParaUsar(plano = {}) {
   return { preco, sugerido: !(venda > 0), texto: preco.toFixed(2).replace(".", ",") };
 }
 
-export function calcularPrecoVenda({ custo, frete = 0, despesas = 0, comissao = 0, impostos = 0, margem = 0 }) {
+// (08/11) frete = frete de COMPRA (o que você paga para receber a peça); freteVenda = frete de VENDA
+// do Mercado Livre (vem do Envio). fretePendente: sem frete de venda — não sugere preço (nada de zero presumido).
+export function calcularPrecoVenda({ custo, frete = 0, freteVenda, fretePendente = false, despesas = 0, comissao = 0, impostos = 0, margem = 0 }) {
   const c = num(custo);
   if (!(c > 0)) return { ok: false, erro: "Informe o custo da peça." };
-  const fixo = c + num(frete) + num(despesas);
+  if (fretePendente) return { ok: false, pendente: true, erro: "Frete pendente: consulte o frete de venda no Envio ou informe uma estimativa." };
+  const fixo = c + num(frete) + num(freteVenda) + num(despesas);
   const perc = (num(comissao) + num(impostos) + num(margem)) / 100;
   if (perc >= 1) return { ok: false, erro: "Comissão + impostos + margem precisam somar menos de 100%." };
   const preco = Math.ceil((fixo / (1 - perc)) * 100) / 100;
-  return { ok: true, preco, partes: { custo: c, frete: num(frete), despesas: num(despesas), comissao: preco * num(comissao) / 100, impostos: preco * num(impostos) / 100, lucro: preco * num(margem) / 100 } };
+  return { ok: true, preco, partes: { custo: c, frete: num(frete), ...(freteVenda !== undefined ? { freteVenda: num(freteVenda) } : {}), despesas: num(despesas), comissao: preco * num(comissao) / 100, impostos: preco * num(impostos) / 100, lucro: preco * num(margem) / 100 } };
 }
 
 export function comissaoReferencia(tipoAnuncio) {
@@ -41,12 +44,12 @@ export function comissaoReferencia(tipoAnuncio) {
 // Não é lucro líquido contábil (não inclui IR/CSLL, custos fixos etc.).
 // -------------------------------------------------------------
 const cent = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
-export function analisarVenda({ venda, custo, frete = 0, despesas = 0, comissao = 0, impostos = 0 }) {
+export function analisarVenda({ venda, custo, frete = 0, freteVenda, despesas = 0, comissao = 0, impostos = 0 }) {
   const v = num(venda); const c = num(custo);
   if (!(v > 0)) return { ok: false, erro: "Informe o preço de venda (ou use o sugerido)." };
   if (!(c > 0)) return { ok: false, erro: "Informe o custo da mercadoria." };
-  const partes = { comissao: cent(v * num(comissao) / 100), impostos: cent(v * num(impostos) / 100), frete: cent(num(frete)), despesas: cent(num(despesas)), recompra: cent(c) };
-  const sobra = cent(v - partes.comissao - partes.impostos - partes.frete - partes.despesas - partes.recompra);
+  const partes = { comissao: cent(v * num(comissao) / 100), impostos: cent(v * num(impostos) / 100), frete: cent(num(frete)), ...(freteVenda !== undefined ? { freteVenda: cent(num(freteVenda)) } : {}), despesas: cent(num(despesas)), recompra: cent(c) };
+  const sobra = cent(v - partes.comissao - partes.impostos - partes.frete - (partes.freteVenda || 0) - partes.despesas - partes.recompra);
   return { ok: true, venda: cent(v), partes, sobra, margemSobreVenda: cent((sobra / v) * 100), acrescimoSobreCusto: cent(((v - c) / c) * 100) };
 }
 

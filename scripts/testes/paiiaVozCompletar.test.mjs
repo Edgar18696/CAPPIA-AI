@@ -46,7 +46,7 @@ function fichaPresilha() {
 const ROTEIRO = { marca: "Torken", preco: "39,90", quantidade: "10", peso: "200 gramas", medidas: "20 por 10 por 5", montadora: "Renault", confirmarAplicacao: "sim", aplicacaoDescricao: "sim", maisAplicacao: "não", tipoVeiculo: "carro", conta: "Loja Online", modalidade: "Premium" };
 
 test("8 etapas (Rodada 1): Fotos, Código, Descrição/Título, Preço, Envio, Compat., Categoria, Finalizar", () => {
-  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"]);
+  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "envio", "preco", "compat", "categoria", "finalizar"]); // (08/11) Envio antes do Preço
   assert.equal(ROTULOS_ETAPAS.finalizar, "Finalizar");
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
   assert.ok(f.includes('onClick={() => irPara("codigo")} data-pr-continuar>Continuar →</button></div>'), "Continuar das fotos vai para o Código");
@@ -277,7 +277,8 @@ test("campos diretos: custo opcional, aplicações ditas ficam SEM confirmação
 
 test("tela: frete não estimado; envio mostra pendências e revisão; conversa só opcional", () => {
   const f = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(f.includes("data-pv-frete-info") && f.includes("O PAIIA não estima frete"));
+  // (08/11) Envio consulta o frete de venda do ML; sem cotação fica "Frete pendente" (estimativa só identificada).
+  assert.ok(f.includes("data-pv-frete-venda") && !f.includes("O PAIIA não estima frete"));
   assert.ok(f.includes("data-pv-pendencias-envio") && f.includes("data-pv-ficha-completa"));
   assert.ok(f.includes("data-pv-conversa-opcional") && f.includes("useState(false);\n  const conversaAbertaRef"), "conversa fechada por padrão");
   assert.ok(f.includes("data-pv-dados-bling"), "Bling só quando pedido");

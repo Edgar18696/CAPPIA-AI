@@ -30,7 +30,8 @@ import { padronizarTitulo, padronizarDescricao } from "../../../services/padroni
 
 // (04/11/2026) 7 etapas aprovadas: Fotos, Código, Descrição/Título, Preço/Custo/Estoque,
 // Peso/Medidas/Frete, Compatibilidade e Finalizar (as antigas “titulo”/“enviar” viram “descricao”/“finalizar”).
-export const ETAPAS = ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"];
+// (08/11) Envio ANTES do Preço: o frete de venda do Mercado Livre entra no preço sugerido.
+export const ETAPAS = ["fotos", "codigo", "descricao", "envio", "preco", "compat", "categoria", "finalizar"];
 export const ROTULOS_ETAPAS = { fotos: "Fotos", codigo: "Código", descricao: "Título e Descrição", preco: "Preço", envio: "Envio", compat: "Compat.", categoria: "Categoria", finalizar: "Finalizar" };
 const ETAPAS_ANTIGAS = { titulo: "descricao", enviar: "finalizar" };
 export const LIMITE_TITULO = 60;

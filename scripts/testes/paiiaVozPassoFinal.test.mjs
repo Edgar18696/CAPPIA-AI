@@ -16,7 +16,7 @@ const ID = "73ebf08c-93e0-44d4-84fe-1acd1c5fac5f";
 
 /** Ficha do BCK001 preenchida etapa por etapa; `ate` = última etapa preenchida. */
 function fichaAte(ate) {
-  const ordem = ["codigo", "descricao", "preco", "envio", "compat", "categoria"];
+  const ordem = ["codigo", "descricao", "envio", "preco", "compat", "categoria"]; // (08/11) Envio antes do Preço
   let f = V.criarFichaVoz({ agora: 1, id: "pf" });
   for (const e of ordem.slice(0, ordem.indexOf(ate) + 1)) {
     if (e === "codigo") f = { ...f, codigos: [{ codigo: "BCK001", normalizado: "BCK001", principal: true, conferido: true, origem: "digitado" }] };
@@ -30,16 +30,16 @@ function fichaAte(ate) {
 }
 
 test("1) ficha incompleta: 'Completar ficha' leva à PRIMEIRA etapa pendente, na ordem das 7 etapas", () => {
-  assert.deepEqual(ETAPAS_OBRIGATORIAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria"]);
+  assert.deepEqual(ETAPAS_OBRIGATORIAS, ["fotos", "codigo", "descricao", "envio", "preco", "compat", "categoria"]); // (08/11) Envio antes do Preço
   assert.equal(decidirPassoFinal(fichaAte("categoria"), { fotos: 0 }).etapa, "fotos", "sem foto → Fotos");
-  const casos = [["", "codigo"], ["codigo", "descricao"], ["descricao", "preco"], ["preco", "envio"], ["envio", "compat"], ["compat", "categoria"]];
+  const casos = [["", "codigo"], ["codigo", "descricao"], ["descricao", "envio"], ["envio", "preco"], ["preco", "compat"], ["compat", "categoria"]];
   for (const [ate, espera] of casos) {
     const d = decidirPassoFinal(ate ? fichaAte(ate) : V.criarFichaVoz({ agora: 1, id: "v" }), { fotos: 2 });
     assert.equal(d.acao, "completar", ate);
     assert.equal(d.etapa, espera, `preenchido até ${ate || "nada"} → ${espera}`);
   }
   const d = decidirPassoFinal(fichaAte("descricao"), { fotos: 2 });
-  assert.deepEqual(d.faltam, ["Preço", "Envio", "Compat.", "Categoria"]);
+  assert.deepEqual(d.faltam, ["Envio", "Preço", "Compat.", "Categoria"]);
 });
 
 test("2) ficha completa: 'Continuar para Publicação'", () => {

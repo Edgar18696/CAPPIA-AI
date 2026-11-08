@@ -265,10 +265,10 @@ test("tela única: confere sozinha, uma confirmação + um botão; Bling com aut
 });
 
 test("celular: 8 etapas; estado de cada etapa (concluída/pendência); campos seguem só dentro da etapa", () => {
-  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "preco", "envio", "compat", "categoria", "finalizar"]);
+  assert.deepEqual(ETAPAS, ["fotos", "codigo", "descricao", "envio", "preco", "compat", "categoria", "finalizar"]); // (08/11) Envio antes do Preço
   let f = criarFichaVoz({ agora: 1, id: "e7" });
   let e = C.estadoEtapasVoz(f, { fotos: 0, etapaAtual: "preco", ordem: ETAPAS });
-  assert.equal(e.fotos, "pe"); assert.equal(e.codigo, "pe"); assert.equal(e.envio, "");
+  assert.equal(e.fotos, "pe"); assert.equal(e.codigo, "pe"); assert.equal(e.envio, "pe", "(08/11) Envio vem antes do Preço"); assert.equal(e.compat, "");
   // (07/11) Ordem da etapa: Preço de Venda → Marca → Estoque (custo só na calculadora).
   assert.equal(C.proximoCampoDireto(f, "", { etapa: "preco" }), "preco");
   f = C.definirCampoDireto(f, "preco", "39,90").ficha;

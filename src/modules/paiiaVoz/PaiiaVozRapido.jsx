@@ -83,7 +83,9 @@ import { TIPO_CARRO, TIPO_PESADA } from "../../services/tipoVeiculoAnuncio";
 import FinalizarAnuncioVoz from "./FinalizarAnuncioVoz";
 import CategoriaVoz from "./CategoriaVoz";
 import CalculadoraPrecoVoz from "./CalculadoraPrecoVoz";
-import { valorFaladoCalculadora, valoresIniciaisCalculadora } from "./servicos/calculadoraPreco";
+import { valorFaladoCalculadora, valoresIniciaisCalculadora, reais } from "./servicos/calculadoraPreco";
+import { cotarFreteVendaVoz, registrarFreteVenda, definirFreteEstimado, situacaoFreteVenda, precoParaCotar, chaveMedida } from "./servicos/freteVendaVoz";
+import { consultorML, modalidadesDaConta } from "../../services/consultaMLLeitura";
 import { lerPreco } from "./servicos/numerosFalados";
 import { lerAplicacaoFalada, valorDoCampoFalado, proximoCampoVeiculo } from "./servicos/aplicacaoFalada";
 import { excluirFichaDefinitivamente } from "../../services/exclusaoFichaService";
@@ -129,7 +131,7 @@ const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (
 const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "08/11 · veículo compatível azul";
+export const VERSAO_PAIIA_VOZ = "08/11 · envio antes do preço";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
@@ -610,6 +612,35 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // serviços de sempre. Nada aqui aprova nem publica (isso continua na Revisão).
   const estadoContasML = useContasML();
   const contasCompletar = useMemo(() => contasMLConectadas(estadoContasML).filter((c) => String(c.ml_user_id || "").trim()).map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) })), [estadoContasML]);
+  // (08/11) FRETE DE VENDA (etapa Envio, antes do Preço): cotação oficial do Mercado Livre, SÓ LEITURA,
+  // na conta escolhida aqui (a única conectada já vem marcada). Fica na ficha (não se perde ao navegar).
+  const [contaFrete, setContaFrete] = useState("");
+  const [freteConsulta, setFreteConsulta] = useState({ rodando: false, erro: "", precoRef: "" });
+  const contaFreteAtual = contaFrete || ficha?.freteVenda?.conta || (contasCompletar.length === 1 ? contasCompletar[0].id : "");
+  const planoDaFicha = (f) => Object.fromEntries(Object.entries(valoresIniciaisCalculadora(valoresCalculadoraDaFicha(f), estadoRapido(f).tipoAnuncio || "classico")).map(([k, v]) => [k, v?.valor ?? ""]));
+  const consultarFreteVenda = useCallback(async (precoForcado = 0, conta = contaFreteAtual) => {
+    const f0 = fichaRef.current;
+    const alvo = Number(precoForcado) > 0 ? { preco: Number(precoForcado), origem: "sugerido" } : precoParaCotar(f0, planoDaFicha(f0));
+    setFreteConsulta({ rodando: true, erro: "", precoRef: alvo.origem });
+    const r = await cotarFreteVendaVoz(f0, { conta, preco: alvo.preco, tipoAnuncio: estadoRapido(f0).tipoAnuncio || "classico", deps: { consultar: consultorML(conta), modalidades: modalidadesDaConta } });
+    if (!r.ok) { setFreteConsulta({ rodando: false, erro: r.erro, precoRef: alvo.origem }); return; }
+    mudarFicha(registrarFreteVenda(fichaRef.current, r.registro));
+    setFreteConsulta({ rodando: false, erro: "", precoRef: alvo.origem });
+    setAviso(`🚚 Frete de venda do Mercado Livre: ${reais(r.registro.valor)} por envio (${r.registro.faixaRotulo}). Ele entra no preço sugerido da etapa Preço.`);
+  }, [contaFreteAtual, mudarFicha]);
+  // Ao abrir o Envio com peso + 3 medidas e conta: consulta sozinha UMA vez por (conta, peso/medidas).
+  const autoFreteRef = useRef("");
+  const medidaChaveAtual = chaveMedida(dadosCompletosVoz(ficha, { fotos: 1 }).medida);
+  useEffect(() => {
+    if (etapa !== "envio" || !medidaChaveAtual || !contaFreteAtual || freteConsulta.rodando) return undefined;
+    const fv = fichaRef.current?.freteVenda;
+    if (fv && fv.origem !== "estimativa_informada" && fv.conta === contaFreteAtual && fv.medida === medidaChaveAtual) return undefined;
+    const chave = `${contaFreteAtual}|${medidaChaveAtual}`;
+    if (autoFreteRef.current === chave) return undefined;
+    autoFreteRef.current = chave;
+    const t = setTimeout(() => consultarFreteVenda(), 600);
+    return () => clearTimeout(t);
+  }, [etapa, medidaChaveAtual, contaFreteAtual]); // eslint-disable-line react-hooks/exhaustive-deps
   const [completarOcupado, setCompletarOcupado] = useState("");
   const [versaoRevisao, setVersaoRevisao] = useState(0);
   const [removendo, setRemovendo] = useState(null); // (04/11) confirmação de “Remover ficha de teste”
@@ -1421,11 +1452,51 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           {r.descricao.final !== null && editandoFinal
             ? <AreaTexto id="pr-final" valor={r.descricao.final} onSalvar={(v) => mudarFicha(definirDescricaoFinal(fichaRef.current, v))} data="descricao-final" linhas={14} />
             : <pre className="pr-previa" data-pr-descricao>{descricaoParaEnvio(ficha)}</pre>}
-          {navEtapa("codigo", "preco")}
+          {navEtapa("codigo", "envio")}
         </section>
       )}
 
-      {/* ---------------- 4 Preço, custo e estoque ---------------- */}
+      {/* ---------------- 4 Envio: peso, medidas e frete de venda (08/11: ANTES do Preço) ---------------- */}
+      {etapa === "envio" && (
+        <section className="pr-bloco" data-pr-bloco="envio">
+          <div className="pr-cartao" data-pv-dados-diretos>
+            {camposDaEtapa("envio").map(renderCampo)}
+            <p className="pr-fonte" style={{ margin: 0 }}>“20 por 10 por 5” preenche as três medidas.</p>
+          </div>
+          {(() => {
+            const sf = situacaoFreteVenda(ficha, Number(String(ficha?.campos?.preco?.valor ?? "").replace(",", ".")) || 0);
+            return (
+              <div className="pr-cartao" data-pv-frete-venda data-estado={sf.estado}>
+                <span className="pr-rotulo">🚚 Frete de venda (Mercado Livre)</span>
+                {contasCompletar.length > 1 && (
+                  <div className="pr-linha" data-pv-frete-contas>
+                    {contasCompletar.map((c) => <button key={c.id} type="button" className={`pr-chip ${c.id === contaFreteAtual ? "pr-chip-on" : ""}`} onClick={() => { setContaFrete(c.id); autoFreteRef.current = ""; }} data-pv-frete-conta={c.nome}>{c.nome}</button>)}
+                  </div>
+                )}
+                {!contasCompletar.length && <p className="pr-aviso" data-pv-frete-sem-conta>Nenhuma conta Mercado Livre conectada: o frete fica pendente (ou informe uma estimativa na etapa Preço).</p>}
+                <p className={sf.estado === "pendente" ? "pr-aviso" : "pr-ok"} data-pv-frete-situacao>{sf.estado === "pendente" ? "⏳ " : "✅ "}{sf.texto}</p>
+                {freteConsulta.erro && <p className="pr-aviso" data-pv-frete-erro>⚠️ {freteConsulta.erro} O frete continua pendente (não é zero).</p>}
+                <button type="button" className="pr-botao" disabled={freteConsulta.rodando || !contaFreteAtual || !medidaChaveAtual} onClick={() => consultarFreteVenda()} data-pv-frete-consultar>
+                  {freteConsulta.rodando ? "⏳ Consultando o Mercado Livre…" : sf.estado === "pendente" ? "🚚 Consultar frete de venda" : "🔄 Consultar de novo"}
+                </button>
+                <p className="pr-fonte" style={{ margin: 0 }}>Só leitura no Mercado Livre. Sem preço ainda, a consulta usa {Number(ficha?.campos?.preco?.valor) > 0 ? "o Preço de Venda" : "o preço sugerido pelo custo ou a faixa de R$ 79–99,99"}; a etapa Preço confere a faixa e pede nova consulta se mudar.</p>
+              </div>
+            );
+          })()}
+          {organizada.medidas.length > 0 && (
+            <div className="pr-cartao pr-cinza" data-pr-medidas>
+              <strong>Ditos na descrição (vão só para os campos da plataforma)</strong>
+              {organizada.medidas.map((m) => <p key={m}>{m}</p>)}
+              {pesoMedidas ? (
+                <p data-pr-peso-medidas-envio>➡️ Vai para os Dados técnicos do Novo Anúncio (só nos campos vazios), para você conferir: <b>{pesoMedidas.texto}</b>{pesoMedidas.duvidas.length ? <span style={{ display: "block", color: "#fde68a" }}>⚠ {pesoMedidas.duvidas.join(" ")}</span> : null}</p>
+              ) : <p className="pr-vazio">Não entendi peso ou medidas da embalagem aqui (ex.: “peso 350 gramas”, “medidas 20 por 10 por 10”).</p>}
+            </div>
+          )}
+          {navEtapa("descricao", "preco")}
+        </section>
+      )}
+
+      {/* ---------------- 5 Preço, custo e estoque (frete de venda vem do Envio) ---------------- */}
       {etapa === "preco" && (
         <section className="pr-bloco" data-pr-bloco="preco">
           <div className="pr-cartao" data-pv-dados-diretos>
@@ -1438,33 +1509,17 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               ouvido={calcOuvido}
               mic={micCampo}
               onMudar={mudarCalculadora}
+              situacaoFrete={(preco) => situacaoFreteVenda(ficha, preco)}
+              precoFicha={ficha?.campos?.preco?.valor ?? ""}
+              aoEstimarFrete={(v) => mudarFicha(definirFreteEstimado(fichaRef.current, v))}
+              aoRecotarFrete={contaFreteAtual ? (p) => consultarFreteVenda(p) : undefined}
+              recotando={freteConsulta.rodando}
               aoUsarPreco={(v) => { const r2 = definirCampoDireto(fichaRef.current, "preco", v, { origem: "digitado" }); mudarFicha(r2.ficha); setAviso(r2.ok ? `✅ Preço de Venda do anúncio: R$ ${v}. Para usar outro preço, digite no campo Preço de Venda. Agora a marca e o estoque.` : r2.erro); }}
             />
             {camposDaEtapa("preco").map(renderCampo)}
             <p className="pr-fonte" style={{ margin: 0 }}>O estoque aqui é a quantidade a anunciar; o estoque oficial continua o do Bling.</p>
           </div>
-          {navEtapa("descricao", "envio")}
-        </section>
-      )}
-
-      {/* ---------------- 5 Peso, medidas e frete ---------------- */}
-      {etapa === "envio" && (
-        <section className="pr-bloco" data-pr-bloco="envio">
-          <div className="pr-cartao" data-pv-dados-diretos>
-            {camposDaEtapa("envio").map(renderCampo)}
-            <p className="pr-fonte" style={{ margin: 0 }}>“20 por 10 por 5” preenche as três medidas.</p>
-          </div>
-          <p className="pr-fonte" data-pv-frete-info>🚚 <b>Frete:</b> calculado pelo Mercado Livre na finalização, com o preço, o peso e as medidas acima. O PAIIA não estima frete.</p>
-          {organizada.medidas.length > 0 && (
-            <div className="pr-cartao pr-cinza" data-pr-medidas>
-              <strong>Ditos na descrição (vão só para os campos da plataforma)</strong>
-              {organizada.medidas.map((m) => <p key={m}>{m}</p>)}
-              {pesoMedidas ? (
-                <p data-pr-peso-medidas-envio>➡️ Vai para os Dados técnicos do Novo Anúncio (só nos campos vazios), para você conferir: <b>{pesoMedidas.texto}</b>{pesoMedidas.duvidas.length ? <span style={{ display: "block", color: "#fde68a" }}>⚠ {pesoMedidas.duvidas.join(" ")}</span> : null}</p>
-              ) : <p className="pr-vazio">Não entendi peso ou medidas da embalagem aqui (ex.: “peso 350 gramas”, “medidas 20 por 10 por 10”).</p>}
-            </div>
-          )}
-          {navEtapa("preco", "compat")}
+          {navEtapa("envio", "compat")}
         </section>
       )}
 
@@ -1546,7 +1601,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
               </div>
             );
           })()}
-          {navEtapa("envio", "categoria")}
+          {navEtapa("preco", "categoria")}
         </section>
       )}
 
