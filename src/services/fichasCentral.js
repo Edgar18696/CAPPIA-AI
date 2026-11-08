@@ -9,6 +9,7 @@
 // =============================================================
 
 import { lojaBlingDaConta } from "./vinculoBlingPublicacao.js";
+import { pendenciaPos } from "./posPublicacao.js";
 import { TEXTO_AGUARDANDO_INTEGRACAO, fichaAguardandoIntegracao, selecaoDaFicha, resumoCanais } from "./canaisPublicacao.js";
 
 export const ESTADO_CENTRAL = Object.freeze({
@@ -106,7 +107,8 @@ export function resumoFichaCentral(row) {
     // Etapa onde a ficha continua (o "Continuar" abre ali).
     noNovoAnuncio: !fichaJaPublicada(row) && row?.status_fluxo === "rascunho" && row?.etapa_fluxo === "novo_anuncio" && !row?.etapa_conferencia,
     completa: row?.etapa_fluxo === "novo_anuncio" ? String(row?.na_completa) === "true" : null,
-    pendencia: row?.status_fluxo === "erro_publicacao" ? "A última tentativa de publicação deu erro." : "",
+    // (08/11) + pendências das conferências depois da publicação (Bling/ML, em segundo plano).
+    pendencia: [row?.status_fluxo === "erro_publicacao" ? "A última tentativa de publicação deu erro." : "", fichaJaPublicada(row) ? pendenciaPos(row?.pos_publicacao) : ""].filter(Boolean).join(" · "),
     canais: selecaoDaFicha({ canais_publicacao: row?.canais }) ? resumoCanais(selecaoDaFicha({ canais_publicacao: row?.canais })) : "",
   };
 }

@@ -41,9 +41,13 @@ const pausa = (etapa, texto) => ({ ok: false, etapa, texto });
  */
 export async function executarPiloto(p, { limites = {} } = {}) {
   const L = { passo: 45_000, ativo: 15 * 60_000, vinculo: 20 * 60_000, intervalo: 1_500, intervaloML: 10_000, ...limites };
+  // (08/11) Depois do MLB confirmado, a tela pode ser liberada (Fechar / Criar Próximo Anúncio):
+  // p.encerrado() = true para de esperar aqui; as conferências seguem em segundo plano pela ficha.
+  let depoisDoMLB = false;
+  const encerrado = () => depoisDoMLB && Boolean(p.encerrado?.());
   const esperarAte = async (fn, ms, intervalo = L.intervalo) => {
     const fim = Date.now() + ms;
-    for (;;) { const v = await fn(); if (v) return v; if (Date.now() > fim) return null; await p.esperar(intervalo); }
+    for (;;) { if (encerrado()) return null; const v = await fn(); if (v) return v; if (Date.now() > fim) return null; await p.esperar(intervalo); }
   };
   const visivel = (sel) => { const e = p.achar(sel); return e && !e.disabled ? e : null; };
 
@@ -118,7 +122,10 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   if (!mlb || !/^publicado/.test(estadoRes)) return pausa("publicar", p.texto(res).slice(0, 300) || "O Mercado Livre não publicou. Nada foi reenviado.");
   // MLB confirmado pelo Mercado Livre e gravado: avisa "publicado" JÁ; o resto segue sem prender ninguém.
   const link = (res.querySelector?.("a")?.href) || "";
-  p.publicado?.({ mlb, link });
+  depoisDoMLB = true;
+  await p.publicado?.({ mlb, link });
+  const segundoPlano = { ok: true, mlb, link, segundoPlano: true, pendencia: "conferências seguem em segundo plano (Central de Publicação)" };
+  if (encerrado()) return segundoPlano;
   const avisos = [];
   // 6) Acompanhar até ATIVO (pausado processando fotos = continua esperando).
   p.progresso("ativo", "Aguardando o Mercado Livre ativar o anúncio…");
@@ -126,10 +133,12 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   const ativo = await esperarAte(async () => { sit = situacaoAnuncioML(await p.consultarItem(mlb).catch(() => null)); if (!sit.fim) p.progresso("ativo", sit.texto); return sit.fim ? sit : null; }, L.ativo, L.intervaloML);
   if (!ativo) avisos.push(`o Mercado Livre ainda não ativou o ${mlb} (fotos em processamento?): confira mais tarde`);
   else if (!ativo.ok) avisos.push(`${String(ativo.texto).replace(/\.$/, "")}: confira no Mercado Livre`);
+  if (encerrado()) return segundoPlano;
   // 7) Vínculo no Bling (LOJA ONLINE: o Bling traz o anúncio; o PAIIA só confere).
   p.progresso("vinculo", "Conferindo o vínculo do anúncio no Bling…");
   const vinc = await esperarAte(async () => ((await p.relerIntegracao()) === "integrado" ? true : null), L.vinculo, L.intervaloML);
   if (!vinc) avisos.push("vínculo no Bling ainda não confirmado: confira a Gestão de Anúncios do Bling");
+  if (encerrado()) return segundoPlano;
   // 8) Central (a ficha já foi marcada publicada) + pendências da conferência posterior, sem esconder nada.
   p.progresso("central");
   const resFinal = p.achar("[data-paiia-resultado-publicacao]");

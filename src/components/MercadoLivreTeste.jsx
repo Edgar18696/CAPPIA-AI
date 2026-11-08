@@ -5027,7 +5027,18 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               ativo={Boolean(autoPiloto) || publicacaoManual}
               onManual={() => setPublicacaoManual(true)}
             />
-            <PilotoAutomaticoPublicacao conta={contaDestinoML || ""} sku={anuncioConferido?.codigo || ""} autoId={autoPiloto} />
+            <PilotoAutomaticoPublicacao
+              conta={contaDestinoML || ""}
+              sku={anuncioConferido?.codigo || ""}
+              autoId={autoPiloto}
+              anuncioId={anuncioIdPAIIA}
+              quantidade={quantidadeEstoque}
+              onProximo={() => {
+                // (08/11) Publicado: abre o PAIIA Voz com uma ficha nova e limpa (a anterior fica salva na conta).
+                try { window.history.replaceState(window.history.state, "", "/?tela=paiiaVoz"); } catch { /* segue */ }
+                setScreen?.("paiiaVoz");
+              }}
+            />
             {/* (Caminho único) Com a autorização única disponível (LOJA ONLINE), o fluxo antigo fica ESCONDIDO:
                 continua montado só para o piloto executar os mesmos passos; aparece para outras contas ou se você pedir. */}
             <div data-paiia-fluxo-antigo={modoAutorizacaoUnica ? "oculto" : "visivel"} style={modoAutorizacaoUnica ? { display: "none" } : undefined}>

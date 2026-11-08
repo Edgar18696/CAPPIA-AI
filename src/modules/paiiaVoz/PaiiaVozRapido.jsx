@@ -12,7 +12,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   criarFichaVoz,
-  lerFichaVoz,
   guardarFichaVoz,
   listarFichasGuardadas,
   guardarNaListaVoz,
@@ -73,6 +72,8 @@ import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, g
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
 import { decidirPassoFinal, enderecoPublicacaoDaFicha } from "./servicos/passoFinalVoz";
 import { situacaoEnvioFotos } from "./servicos/fichaVozNuvem"; // (03/11) aviso das fotos em segundo plano
+// (08/11) Publicou → o Voz abre com ficha nova e limpa (a anterior fica salva na conta).
+import { abrirFichaVoz, avisoFichaPublicada, conferirPublicadaNaConta, limparAposPublicacao } from "./servicos/limpezaPosPublicacaoVoz";
 // (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
 import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVoz";
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
@@ -132,11 +133,13 @@ const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (
 const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "08/11 · galeria com barra fixa";
+export const VERSAO_PAIIA_VOZ = "08/11 · publicou, limpou e pronto";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
-  const [ficha, setFicha] = useState(() => lerFichaVoz() || criarFichaVoz());
-  const [aviso, setAviso] = useState("");
+  // (08/11) Ficha já publicada → abre limpa (a anterior fica salva na conta e no histórico deste aparelho).
+  const [abertura] = useState(() => abrirFichaVoz());
+  const [ficha, setFicha] = useState(abertura.ficha);
+  const [aviso, setAviso] = useState(abertura.aviso);
   const [parcial, setParcial] = useState("");
   const [ouvindo, setOuvindo] = useState(false);
   const [erroVoz, setErroVoz] = useState("");
@@ -1155,6 +1158,24 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const f = retirarDaListaVoz(id);
     if (f) iniciarFichaNova(f);
   }
+  // (08/11) Ficha enviada à Publicação e publicada (em outro aparelho ou depois de abrir esta tela):
+  // ao abrir e ao voltar para a aba, confere na conta (só leitura). Publicada com MLB → ficha nova e limpa.
+  // Não publicada ou erro de leitura → nada muda (o rascunho fica como está).
+  useEffect(() => {
+    if (!usuario?.id) return undefined;
+    let vivo = true;
+    const conferir = async () => {
+      const atual = fichaRef.current;
+      const mlb = await conferirPublicadaNaConta(atual, { lerFicha: lerFichaNovoAnuncio });
+      if (!vivo || !mlb || fichaRef.current.id !== atual.id) return;
+      iniciarFichaNova(limparAposPublicacao(atual, mlb));
+      setAviso(avisoFichaPublicada(atual, mlb));
+    };
+    conferir();
+    const aoVoltar = () => { if (document.visibilityState === "visible") conferir(); };
+    document.addEventListener("visibilitychange", aoVoltar);
+    return () => { vivo = false; document.removeEventListener("visibilitychange", aoVoltar); };
+  }, [usuario?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cp = codigoPrincipal(ficha);
   const estEtapas = estadoEtapasVoz(ficha, { fotos: fotosUsadas.length, etapaAtual: etapa, ordem: ETAPAS });

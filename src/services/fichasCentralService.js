@@ -8,7 +8,7 @@ import { supabase } from "../supabase";
  * mas continuam intactas na base (histórico, MLB, Bling, duplicidade).
  * Desarquivar = tirar a ficha da tabela de arquivo.
  */
-const CAMPOS_CENTRAL = "id, codigo, titulo, status_fluxo, conta_destino_ml_user_id, conta_destino_nome, updated_at, integracao_bling:dados_conferencia->integracao_bling, etapa_fluxo:dados_conferencia->>etapa_fluxo, na_completa:dados_conferencia->novo_anuncio->>completa, etapa_conferencia:dados_conferencia->ficha->>etapa, canais:dados_conferencia->canais_publicacao, paiia_anuncios_publicacoes(mlb_id, status_publicacao, conta_nome, publicado_em, ml_user_id, bling_produto_id)";
+const CAMPOS_CENTRAL = "id, codigo, titulo, status_fluxo, conta_destino_ml_user_id, conta_destino_nome, updated_at, integracao_bling:dados_conferencia->integracao_bling, pos_publicacao:dados_conferencia->pos_publicacao, etapa_fluxo:dados_conferencia->>etapa_fluxo, na_completa:dados_conferencia->novo_anuncio->>completa, etapa_conferencia:dados_conferencia->ficha->>etapa, canais:dados_conferencia->canais_publicacao, paiia_anuncios_publicacoes(mlb_id, status_publicacao, conta_nome, publicado_em, ml_user_id, bling_produto_id)";
 
 export async function listarFichasCentral({ limite = 50 } = {}) {
   let { data, error } = await supabase
