@@ -33,16 +33,16 @@ export function armazenamentoMemoria() {
 }
 
 /** Armazenamento no IndexedDB do navegador. */
-export function armazenamentoIndexedDB(idb = globalThis.indexedDB) {
+export function armazenamentoIndexedDB(idb = globalThis.indexedDB, { banco = BANCO, tabela = TABELA } = {}) {
   if (!idb) return null;
   let aberto = null;
   const abrir = () => {
     if (aberto) return aberto;
     aberto = new Promise((ok, falha) => {
-      const req = idb.open(BANCO, 1);
+      const req = idb.open(banco, 1);
       req.onupgradeneeded = () => {
         const db = req.result;
-        if (!db.objectStoreNames.contains(TABELA)) db.createObjectStore(TABELA, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(tabela)) db.createObjectStore(tabela, { keyPath: "id" });
       };
       req.onsuccess = () => ok(req.result);
       req.onerror = () => { aberto = null; falha(req.error || new Error("IndexedDB indisponível")); };
@@ -52,8 +52,8 @@ export function armazenamentoIndexedDB(idb = globalThis.indexedDB) {
   const operar = async (modo, fazer) => {
     const db = await abrir();
     return new Promise((ok, falha) => {
-      const tx = db.transaction(TABELA, modo);
-      const req = fazer(tx.objectStore(TABELA));
+      const tx = db.transaction(tabela, modo);
+      const req = fazer(tx.objectStore(tabela));
       tx.oncomplete = () => ok(req?.result);
       tx.onerror = () => falha(tx.error || new Error("falha no IndexedDB"));
       tx.onabort = () => falha(tx.error || new Error("operação cancelada (espaço cheio?)"));
@@ -68,8 +68,8 @@ export function armazenamentoIndexedDB(idb = globalThis.indexedDB) {
     atualizar: async (id, mudar) => {
       const db = await abrir();
       return new Promise((ok, falha) => {
-        const tx = db.transaction(TABELA, "readwrite");
-        const loja = tx.objectStore(TABELA);
+        const tx = db.transaction(tabela, "readwrite");
+        const loja = tx.objectStore(tabela);
         let novo = null;
         const g = loja.get(id);
         g.onsuccess = () => {

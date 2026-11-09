@@ -54,6 +54,7 @@ import MeusAnuncios from "./components/MeusAnuncios";
 import CentralPrecificacaoScreen from "./components/screens/CentralPrecificacaoScreen";
 import MercadoLivreTeste from "./components/MercadoLivreTeste";
 import ConferenciasSegundoPlano from "./components/ConferenciasSegundoPlano";
+import FotosCameraSegundoPlano from "./components/FotosCameraSegundoPlano";
 import PublicacaoSite from "./components/PublicacaoSite";
 import MidiasAppia from "./components/MidiasAppia";
 import PlanosPagamentos from "./components/PlanosPagamentos";
@@ -4038,6 +4039,7 @@ setQualidadeFoto={setQualidadeFoto}
     produtoCopilot={produtoCopilot}
 
     setScreen={setScreen}
+    usuarioId={usuario?.id}
   />
 )}
 
@@ -4102,6 +4104,7 @@ setQualidadeFoto={setQualidadeFoto}
 
 {/* (08/11) Conferências pós-publicação em segundo plano (Bling/ML, só leitura), em qualquer tela. */}
 <ConferenciasSegundoPlano userId={usuario?.id} />
+<FotosCameraSegundoPlano userId={usuario?.id} />
 
 {screen === "mercadoLivreTeste" && (
   <MercadoLivreTeste

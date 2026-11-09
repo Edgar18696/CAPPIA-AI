@@ -70,6 +70,8 @@ import { armazenamentoIndexedDB, armazenamentoMemoria, criarGuardaFotos, MAX_FOT
 import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
 // (31/10/2026) Ficha na conta: fotos e dados do Voz na MESMA ficha do Novo Anúncio (celular ⇄ computador).
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
+import { garantirTratadaNaNuvem } from "./servicos/fichaVozNuvem";
+import { marcaRegistro, registrarFotoVozNaGaleria } from "./servicos/galeriaVozRegistro";
 import { decidirPassoFinal, enderecoPublicacaoDaFicha } from "./servicos/passoFinalVoz";
 import { situacaoEnvioFotos } from "./servicos/fichaVozNuvem"; // (03/11) aviso das fotos em segundo plano
 // (08/11) Publicou → o Voz abre com ficha nova e limpa (a anterior fica salva na conta).
@@ -133,7 +135,7 @@ const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (
 const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "08/11 · publicou, limpou e pronto";
+export const VERSAO_PAIIA_VOZ = "09/11 · fotos na Galeria";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (08/11) Ficha já publicada → abre limpa (a anterior fica salva na conta e no histórico deste aparelho).
@@ -331,6 +333,24 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     if (filaRef.current && idsFotos) filaRef.current.enfileirarNovas(fichaId).catch(() => {});
   }, [modoIA, usuario?.id, idsFotos, fichaId]);
   const marcaFotos = fotos.map((f) => `${f.id}:${f.versao}:${f.usarNoAnuncio ? 1 : 0}:${f.ia?.estado || ""}:${f.reg?.nuvem?.original ? 1 : 0}:${f.reg?.nuvem?.tratada ? 1 : 0}`).join(",");
+  // (09/11) Foto do Voz também vai para a GALERIA PAIIA na hora (original; a tratada é
+  // ligada à mesma linha quando fica pronta). Mesmo envio da ficha: nada é enviado duas vezes.
+  const galeriaRegistradasRef = useRef(new Set());
+  useEffect(() => {
+    if (!usuario?.id) return;
+    const deps = {
+      supabase,
+      usuarioId: usuario.id,
+      garantirOriginal: (reg) => garantirOriginalNaNuvem(reg, depsNuvemRef.current),
+      garantirTratada: (reg) => garantirTratadaNaNuvem(reg, depsNuvemRef.current),
+    };
+    for (const f of fotos) {
+      const m = marcaRegistro(f.reg);
+      if (!f.reg || galeriaRegistradasRef.current.has(m)) continue;
+      galeriaRegistradasRef.current.add(m);
+      registrarFotoVozNaGaleria(f.reg, deps).catch(() => galeriaRegistradasRef.current.delete(m));
+    }
+  }, [marcaFotos, usuario?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const r0 = estadoRapido(ficha);
   // (05/11) Ao chegar na Finalizar, grava na conta na hora (a conferência usa os dados mais novos).
   useEffect(() => {

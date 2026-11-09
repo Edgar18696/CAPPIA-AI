@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import useFotoState from "./hooks/useFotoState";
+import TirarFotoCamera from "./components/TirarFotoCamera";
 
 function PaizinhoFotoIA({
   arquivosFotos = [],
@@ -281,11 +283,14 @@ export default function FotoIA({
   buttonRed,
   produtoCopilot,
   setScreen,
+  usuarioId,
 }) {
   const {
     imagemAmpliada,
     setImagemAmpliada,
   } = useFotoState();
+  // (09/11) "Escolher Foto" abre a escolha de sempre (lotes de até 8).
+  const escolherRef = useRef(null);
 
   function liberarPreviewsLocais() {
     arquivosFotos.forEach((foto) => {
@@ -412,6 +417,12 @@ export default function FotoIA({
         resultadosFotos={resultadosFotos}
       />
 
+      <TirarFotoCamera
+        usuarioId={usuarioId}
+        aoEscolherFoto={() => escolherRef.current?.click()}
+        abrirGaleria={abrirGaleria}
+      />
+
       {produtoCopilot && (
         <div
           style={{
@@ -457,6 +468,7 @@ export default function FotoIA({
           type="file"
           multiple
           accept="image/*"
+          ref={escolherRef}
           onChange={selecionarFotos}
           disabled={processando}
         />
