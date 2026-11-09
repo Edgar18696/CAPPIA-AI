@@ -253,7 +253,9 @@ test("tela: texto ditado aparece no próprio campo; campo ativo à vista; voz da
   assert.ok(f.includes('ditando={ouvindo && !campoVoz && parcial ? parcial : ""} acrescentar'), "descrição");
   assert.ok(f.includes('ditando={campoVoz === "titulo" && ouvindo && parcial ? parcial : ""}'), "título");
   assert.ok(f.includes("data-pv-campo-mic") && f.includes("data-pv-dados-diretos"));
-  assert.ok(f.includes('el.scrollIntoView?.({ block: "nearest" })') && f.includes("r.bottom > window.innerHeight"), "só rola se estiver fora da tela");
+  // (09/11) Só rola se o campo estiver fora da tela OU atrás do cabeçalho fixo (SKU + assistente).
+  assert.ok(f.includes("mostrarCampo(seletorDoCampo(campoVoz, etapa))"), "só rola se estiver fora da tela");
+  assert.match(ler("src/modules/paiiaVoz/servicos/rolagemEtapaVoz.js"), /topo < alturaFixa || (alturaTela > 0 && base > alturaTela)/);
   assert.ok(f.includes("|${marcaCompletos(ficha)}|"), "custo/peso/medidas/aplicações salvam na conta");
   assert.ok(f.includes('localStorage.getItem("paiiaVozFalar") === "1"'), "perguntas faladas só se ligadas");
   assert.ok(!ler("src/modules/paiiaVoz/CompletarVoz.jsx").includes("scrollIntoView"), "o cartão não puxa a página");

@@ -1341,7 +1341,9 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     (async () => {
       if (ativo) setFreteConf({ carregando: true });
       if (!contaOk) return;
-      const r = await conferirFretePublicacao();
+      // (09/11) Falha na consulta = motivo na tela (antes ficava "Conferindo..." para sempre).
+      let r;
+      try { r = await conferirFretePublicacao(); } catch (e) { r = { ok: false, motivo: `não consegui consultar o frete no Mercado Livre agora (${e?.message || e}). Nada foi publicado; tente de novo.` }; }
       if (ativo) setFreteConf(r);
     })();
     return () => { ativo = false; };
@@ -1371,7 +1373,9 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     let ativo = true;
     (async () => {
       if (ativo) setCategoriaConf({ carregando: true });
-      const r = await conferirCategoriaAgora();
+      // (09/11) Falha na consulta = motivo na tela (antes ficava "Conferindo a categoria..." para sempre).
+      let r;
+      try { r = await conferirCategoriaAgora(); } catch (e) { r = { ok: false, motivos: [`Não consegui conferir a categoria no Mercado Livre agora (${e?.message || e}). Nada foi publicado; tente de novo.`] }; }
       if (ativo) setCategoriaConf(r);
     })();
     return () => { ativo = false; };
@@ -1398,6 +1402,17 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // bloqueiam. Conferências complementares viram pendência para depois (nunca são escondidas).
   const bloqueios = conferencia.filter((c) => c.nivel === "erro" && !(autoPublicacao && COMPLEMENTARES_AUTO.has(c.item)));
   const pendenciasPosteriores = autoPublicacao ? conferencia.filter((c) => c.nivel === "erro" && COMPLEMENTARES_AUTO.has(c.item)) : [];
+  // (09/11) Por que o botão Publicar está desligado quando NÃO há pendência na lista (o piloto informa
+  // isto em vez de "não foi liberada pela conferência"). Só leitura do estado da tela.
+  const motivoPublicarDesligado = (() => {
+    if (resultado?.publicado) return "este anúncio já foi publicado (nada será repetido).";
+    if (!contaEscolhida) return "nenhuma conta do Mercado Livre foi escolhida para esta ficha.";
+    if (!contaOk) return conexao && ocupado !== "conexao" ? `a conta do Mercado Livre escolhida não está conectada ou não é sua (${conexao?.erro || "confira a conta de destino"}).` : "ainda conferindo a conexão com a conta do Mercado Livre.";
+    if (ocupado) return ocupado === "preparar" ? "ainda preparando os dados do anúncio no Mercado Livre." : `o PAIIA ainda está ocupado (${ocupado}).`;
+    if (!autoPublicacao && !validacao?.valido) return "falta validar os dados no Mercado Livre.";
+    if (!modoSimples && !autorizado) return "falta marcar a autorização de publicação.";
+    return "";
+  })();
   // A opção só aparece quando Compatibilidades (sem aplicação) é o ÚNICO
   // bloqueio. Ela libera exclusivamente esse item; nada mais é aprovado.
   const soCompatPendente = bloqueios.length > 0 && bloqueios.every((b) => b.semCompatOpcao);
@@ -2072,6 +2087,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
             )}
             {bloqueios.length > 0 && <p style={erro} data-paiia-bloqueios-publicar={bloqueios.map((b) => b.item).join("|")}>Corrija antes de publicar: {bloqueios.map((b) => b.item).join(", ")}.</p>}
             {pendenciasPosteriores.length > 0 && <div style={{ display: "none" }} data-paiia-pendencias-posteriores>{pendenciasPosteriores.map((b) => `${b.item}: ${b.texto}`).join(" · ")}</div>}
+            {motivoPublicarDesligado && <div style={{ display: "none" }} data-paiia-publicar-motivo>{motivoPublicarDesligado}</div>}
             {bloqueios.length > 0 && <div style={{ display: "none" }} data-paiia-bloqueios-detalhe>{bloqueios.map((b) => `${b.item}: ${b.texto}`).join(" · ")}</div>}
             {!mostrarOpcaoSemCompat && bloqueios.some((b) => b.item === "Compatibilidades") && onVoltarCompatibilidades && (
               <button type="button" data-paiia-navegacao data-paiia-voltar-compat onClick={() => onVoltarCompatibilidades()} style={botaoVoltarEtapa}>

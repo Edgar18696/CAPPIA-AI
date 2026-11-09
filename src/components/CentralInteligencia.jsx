@@ -119,7 +119,7 @@ export default function CentralInteligencia({
   ["💰", "Precificação", "centralPrecificacao"],
   ["📤", "Publicar", "centralPublicacao"],
   ["📸", "Foto IA", "foto"],
-  ["🎨", "Banner IA", "banner"],
+  // (09/11) "Banner IA" saiu do Dashboard (atalho descontinuado; a tela continua existindo).
   ["📚", "Catálogos", "importadorUniversal"],
 ];
 

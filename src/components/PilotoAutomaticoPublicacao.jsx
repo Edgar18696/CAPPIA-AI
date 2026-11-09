@@ -9,18 +9,20 @@ import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
 import { marcarFichaLiberada } from "../modules/paiiaVoz/servicos/limpezaPosPublicacaoVoz";
 
-export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoId = "", anuncioId = "", quantidade = "", onProximo }) {
+export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoId = "", anuncioId = "", quantidade = "", onProximo, onCorrigir }) {
   // Nº da autorização: do PAIIA Voz (?auto= na URL) ou da autorização única do Novo Anúncio (autoId).
   const auto = autoId || autorizacaoDaUrl(window.location.href);
   const [st, setSt] = useState({ etapa: "canais", texto: "", fim: null });
-  const rodou = useRef(false);
+  // (09/11) "Tentar de novo" (só antes do envio): nova rodada com a MESMA autorização, pelo seu toque.
+  const [rodada, setRodada] = useState(0);
+  const rodou = useRef(-1);
   const [fechado, setFechado] = useState(false);
   const encerradoRef = useRef(false);
   const dadosRef = useRef({ anuncioId, quantidade, conta, sku });
   useEffect(() => { dadosRef.current = { anuncioId, quantidade, conta, sku }; }, [anuncioId, quantidade, conta, sku]);
   useEffect(() => {
-    if (!auto || rodou.current) return;
-    rodou.current = true;
+    if (!auto || rodou.current >= rodada) return;
+    rodou.current = rodada;
     globalThis.__paiiaAutorizacaoPublicacao = auto;
     const p = {
       achar: (s) => document.querySelector(s),
@@ -50,7 +52,7 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
       },
     };
     executarPiloto(p, { limites: globalThis.__paiiaLimitesPiloto || {} }).then((r) => setSt((s) => ({ ...s, fim: r })), (e) => setSt((s) => ({ ...s, fim: { ok: false, etapa: s.etapa, texto: String(e?.message || e) } })));
-  }, [auto, conta]);
+  }, [auto, conta, rodada]);
   if (!auto || fechado) return null;
   const liberar = (proximo) => {
     encerradoRef.current = true;
@@ -77,6 +79,25 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
     <div data-paiia-piloto-liberar style={{ marginTop: 12 }}>
       <button type="button" data-paiia-salvar-proximo onClick={salvarEProximo} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #2f5fd0", background: "linear-gradient(160deg,#1d4ed8 0%,#123a8a 100%)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>💾 Salvar e Criar Próximo Anúncio</button>
       <p style={{ fontSize: 13, color: "#94a3b8", margin: "6px 0 0" }}>A ficha já está salva na sua conta. {st.fim ? "A publicação" : "Se você sair agora, a publicação"} fica pendente na Central de Publicação; nada é enviado ao Mercado Livre sem você autorizar de novo.</p>
+    </div>
+  ) : null;
+  // (09/11) Pausa ANTES do envio ao ML: corrigir na MESMA ficha (fecha esta tela e abre a pendência) ou
+  // tentar de novo. Nada é enviado sem o seu toque; a ficha, as fotos, o preço e a conta continuam.
+  const pausadoAntes = Boolean(st.fim && !st.fim.ok && !st.fim.liberado && st.fim.antesDoEnvio && !st.publicado);
+  const corrigir = () => {
+    encerradoRef.current = true;
+    setFechado(true);
+    onCorrigir?.({ etapa: st.fim?.etapa || "", item: st.fim?.item || "", texto: st.fim?.texto || "" });
+  };
+  const tentarDeNovo = () => {
+    encerradoRef.current = false;
+    setSt({ etapa: "canais", texto: "", fim: null });
+    setRodada((r) => r + 1);
+  };
+  const botoesPausa = pausadoAntes ? (
+    <div data-paiia-piloto-corrigir-bloco style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+      {onCorrigir && <button type="button" data-paiia-piloto-corrigir onClick={corrigir} style={{ flex: "1 1 200px", padding: "12px 14px", borderRadius: 10, border: "1px solid #f59e0b", background: "#451a03", color: "#fde68a", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>🔧 Corrigir nesta ficha{st.fim.item ? ` — ${st.fim.item}` : ""}</button>}
+      <button type="button" data-paiia-piloto-tentar onClick={tentarDeNovo} style={{ flex: "1 1 140px", padding: "12px 14px", borderRadius: 10, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>↻ Tentar de novo</button>
     </div>
   ) : null;
   const i = ETAPAS_PILOTO.indexOf(st.etapa);
@@ -109,8 +130,9 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
           </div>
         )}
         {st.fim && !st.fim.ok && (
-          <p data-paiia-piloto-pausa style={{ fontSize: 16, color: "#fde68a" }}>⏸ Pausado em “{ROTULO_ETAPA[st.fim.etapa] || st.fim.etapa}”: {st.fim.texto} O que já foi feito ficou salvo.</p>
+          <p data-paiia-piloto-pausa data-paiia-piloto-pendencia-item={st.fim.item || undefined} style={{ fontSize: 16, color: "#fde68a" }}>⏸ Pausado em “{ROTULO_ETAPA[st.fim.etapa] || st.fim.etapa}”: {st.fim.texto} O que já foi feito ficou salvo.</p>
         )}
+        {botoesPausa}
         {botaoLiberar}
         <ol style={{ margin: "10px 0 0", paddingLeft: 20, fontSize: 14 }}>
           {ETAPAS_PILOTO.map((e, k) => (

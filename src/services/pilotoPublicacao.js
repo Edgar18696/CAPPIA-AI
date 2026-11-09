@@ -32,7 +32,32 @@ export function situacaoAnuncioML(item) {
   return { fim: true, ok: false, texto: `O Mercado Livre deixou o anúncio como "${st}${sub.length ? ` (${sub.join(", ")})` : ""}".` };
 }
 
-const pausa = (etapa, texto) => ({ ok: false, etapa, texto });
+const pausa = (etapa, texto, extra = {}) => ({ ok: false, etapa, texto, ...extra });
+
+const EM_CONFERENCIA = /Conferindo|Procurando|Consultando/i;
+/**
+ * (09/11) Motivo ESPECÍFICO de o botão Publicar não ter sido liberado (antes: "A publicação não foi
+ * liberada pela conferência", sem dizer o quê). textoBloqueios = "Item: texto · Item: texto" (tela);
+ * motivoBotao = por que o botão está desligado sem bloqueio na lista. → { texto, item }
+ */
+export function motivoDoBloqueio(textoBloqueios = "", motivoBotao = "", { segundos = 45 } = {}) {
+  const itens = String(textoBloqueios || "").split(" · ").map((x) => x.trim()).filter(Boolean).map((x) => {
+    const i = x.indexOf(": ");
+    return i > 0 ? { item: x.slice(0, i), texto: x.slice(i + 2) } : { item: "", texto: x };
+  });
+  const conferindo = itens.filter((x) => EM_CONFERENCIA.test(x.texto));
+  const erros = itens.filter((x) => !conferindo.includes(x));
+  const nomes = (l) => l.map((x) => x.item || "conferência").join(", ");
+  if (erros.length) {
+    const resto = conferindo.length ? ` (ainda sem resposta: ${nomes(conferindo)})` : "";
+    return { item: erros[0].item, texto: `Corrija antes de publicar — ${erros.map((x) => (x.item ? `${x.item}: ${x.texto}` : x.texto)).join(" · ").slice(0, 500)}${resto}` };
+  }
+  if (conferindo.length) {
+    return { item: conferindo[0].item, texto: `A conferência de ${nomes(conferindo)} não terminou em ${segundos} s (${conferindo.map((x) => x.texto).join(" · ").slice(0, 300)}). Nada foi enviado ao Mercado Livre.${String(motivoBotao || "").trim() ? ` Também: ${String(motivoBotao).trim().slice(0, 200)}` : ""}` };
+  }
+  if (String(motivoBotao || "").trim()) return { item: "", texto: `O botão Publicar não foi liberado: ${String(motivoBotao).trim().slice(0, 300)}` };
+  return { item: "", texto: "A publicação não foi liberada pela conferência e a tela não informou o motivo. Toque em “Corrigir nesta ficha” para ver a verificação técnica." };
+}
 
 /**
  * Executa o piloto. `p` (interface com a tela, trocável nos testes):
@@ -48,10 +73,12 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   // Entre o toque em Publicar e a resposta do ML NUNCA interrompe (enviando).
   let depoisDoMLB = false;
   let enviando = false;
+  let enviou = false; // (09/11) já tocou em Publicar: "Tentar de novo" não é oferecido
+
   const encerrado = () => !enviando && Boolean(p.encerrado?.());
   const pausar = (etapa, texto) => (!depoisDoMLB && encerrado()
     ? { ok: false, etapa, liberado: true, texto: "Liberado para a próxima peça: a ficha ficou salva e a publicação pendente na Central de Publicação; nada foi enviado ao Mercado Livre." }
-    : pausa(etapa, texto));
+    : pausa(etapa, texto, { antesDoEnvio: !enviou }));
   const esperarAte = async (fn, ms, intervalo = L.intervalo) => {
     const fim = Date.now() + ms;
     for (;;) { if (encerrado()) return null; const v = await fn(); if (v) return v; if (Date.now() > fim) return null; await p.esperar(intervalo); }
@@ -121,9 +148,17 @@ export async function executarPiloto(p, { limites = {} } = {}) {
     estavel = bloq && !conferindo ? estavel + 1 : 0;
     return estavel >= (L.estavel || 4) ? { bloqueio: p.texto(bloq) } : null;
   }, L.passo);
-  if (!pub || pub.bloqueio) return pausar("publicar", pub?.bloqueio ? `Corrija antes de publicar — ${pub.bloqueio.slice(0, 400)}` : "A publicação não foi liberada pela conferência.");
+  if (!pub || pub.bloqueio) {
+    // (09/11) Diz QUAL pendência impede (e qual item abrir), mesmo se algo ficou "Conferindo…".
+    const bloq = p.achar("[data-paiia-bloqueios-detalhe]");
+    const motivo = p.achar("[data-paiia-publicar-motivo]");
+    const m = motivoDoBloqueio(pub?.bloqueio || (bloq ? p.texto(bloq) : ""), motivo ? p.texto(motivo) : "", { segundos: Math.round(L.passo / 1000) });
+    const r = pausar("publicar", m.texto);
+    return m.item && !r.liberado ? { ...r, item: m.item } : r;
+  }
   if (encerrado()) return pausar("publicar");
   enviando = true;
+  enviou = true;
   p.clicar(pub);
   // A tela pede 2 toques (autorizar + confirmar): a ÚNICA autorização do Voz cobre os dois.
   // O 2º toque só acontece UMA vez e só se nada começou; a trava do servidor impede repetição.

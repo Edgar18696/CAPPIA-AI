@@ -6,6 +6,8 @@ import {
 } from "react";
 import { supabase } from "../supabase";
 import { obterIdProcessamento } from "../services/processamentosService";
+// (09/11) Galeria só com Fotos: Mascotes, Banners e Vídeos fora da vista (nada apagado).
+import { ABAS_GALERIA, filtroDaGaleriaNormal, mostrarBarraDeAbas } from "../config/galeriaPaiia";
 
 function chaveVisualGaleria(item) {
   return (
@@ -283,6 +285,19 @@ useEffect(() => {
   selecionarAbaGaleria,
   setFiltroGaleria,
 ]);
+
+// (09/11) Galeria normal: só Fotos. Um filtro antigo (Banners, Vídeos, Mascotes)
+// guardado de outra visita volta para Fotos.
+const galeriaNormal =
+  !selecionandoParaAnuncio &&
+  !selecionandoParaBanner &&
+  !selecionandoParaClip;
+
+useEffect(() => {
+  if (!galeriaNormal) return;
+  if (filtroDaGaleriaNormal(filtroGaleria) === filtroGaleria) return;
+  setFiltroGaleria?.("foto");
+}, [galeriaNormal, filtroGaleria, setFiltroGaleria]);
 
 const abaGaleriaFixa = (() => {
   if (!selecionandoParaAnuncio) {
@@ -624,19 +639,24 @@ const galeriaFiltrada =
           );
 
         if (!selecionandoParaAnuncio) {
-          if (filtroGaleria === "foto" && !ehFoto) {
+          // (09/11) Galeria normal: só as abas visíveis (Fotos).
+          const filtroGaleriaAtivo =
+            selecionandoParaBanner || selecionandoParaClip
+              ? filtroGaleria
+              : filtroDaGaleriaNormal(filtroGaleria);
+          if (filtroGaleriaAtivo === "foto" && !ehFoto) {
             return false;
           }
 
-          if (filtroGaleria === "banner" && !ehBanner) {
+          if (filtroGaleriaAtivo === "banner" && !ehBanner) {
             return false;
           }
 
-          if (filtroGaleria === "video" && !ehClipOuVideo) {
+          if (filtroGaleriaAtivo === "video" && !ehClipOuVideo) {
             return false;
           }
 
-          if (filtroGaleria === "mascote" && !ehMascote) {
+          if (filtroGaleriaAtivo === "mascote" && !ehMascote) {
             return false;
           }
         }
@@ -719,6 +739,8 @@ const galeriaFiltrada =
     filtroGaleria,
     buscaGaleria,
     selecionandoParaAnuncio,
+    selecionandoParaBanner,
+    selecionandoParaClip,
     abaMidiaAnuncio,
     abaGaleriaFixa,
   ]);
@@ -1239,7 +1261,8 @@ function confirmarImagemParaBanner() {
       {/* FILTROS DA GALERIA DE MÍDIAS */}
       {!selecionandoParaAnuncio &&
         !selecionandoParaBanner &&
-        !selecionandoParaClip && (
+        !selecionandoParaClip &&
+        mostrarBarraDeAbas() && (
           <div
             className="paiia-galeria-filtros"
             style={{
@@ -1250,24 +1273,7 @@ function confirmarImagemParaBanner() {
               marginBottom: "20px",
             }}
           >
-            {[
-              {
-                valor: "foto",
-                label: "📸 Fotos",
-              },
-              {
-                valor: "mascote",
-                label: "🎭 Mascotes",
-              },
-              {
-                valor: "banner",
-                label: "🎨 Banners",
-              },
-              {
-                valor: "video",
-                label: "🎬 Vídeos",
-              },
-            ].map((opcao) => {
+            {ABAS_GALERIA.map((opcao) => {
               const ativo =
                 filtroGaleria ===
                 opcao.valor;
@@ -1804,37 +1810,7 @@ item.tipo === "clip" ? (
         ⬇️ Baixar
       </button>
 
-      {item.tipo === "foto" && (
-        <button
-          type="button"
-          onClick={(e) => {
-  e.stopPropagation();
-
-  // Coloca a foto diretamente no estado do Banner
-  setImagemBanner?.(url);
-
-  // Mantém também como segurança
-  localStorage.setItem(
-    "imagemBannerSelecionada",
-    url
-  );
-
-  localStorage.setItem(
-    "abrirBannerAutomatico",
-    "true"
-  );
-
-  localStorage.removeItem(
-    "modoGaleria"
-  );
-
-  setScreen("bannerStudio");
-}}
-          style={botaoAzulPequeno}
-        >
-          🖼️ Usar no Banner
-        </button>
-      )}
+      {/* (09/11) "Usar no Banner" saiu da Galeria (atalho descontinuado). */}
 
       {item.tipo === "banner" && (
         <button
@@ -2028,40 +2004,7 @@ item.tipo === "clip" ? (
           ⬇️ Baixar
         </button>
 
-        {imagemAberta.tipo ===
-          "foto" && (
-          <button
-  type="button"
-  onClick={() => {
-    setImagemBanner?.(
-      imagemAberta.url
-    );
-
-    localStorage.setItem(
-      "imagemBannerSelecionada",
-      imagemAberta.url
-    );
-
-    localStorage.setItem(
-      "abrirBannerAutomatico",
-      "true"
-    );
-
-    localStorage.removeItem(
-      "modoGaleria"
-    );
-
-    setImagemAberta(null);
-
-    setScreen(
-      "bannerStudio"
-    );
-  }}
-  style={botaoAzul}
->
-  🖼️ Usar no Banner
-</button>
-        )}
+        {/* (09/11) "Usar no Banner" saiu da Galeria (atalho descontinuado). */}
 
         <button
           type="button"

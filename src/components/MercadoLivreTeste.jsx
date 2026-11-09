@@ -5033,6 +5033,20 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               autoId={autoPiloto}
               anuncioId={anuncioIdPAIIA}
               quantidade={quantidadeEstoque}
+              onCorrigir={({ item }) => {
+                // (09/11) Pausa antes do envio: mostra a Publicação desta MESMA ficha e leva à pendência.
+                // Nada é publicado aqui: publicar de novo exige o seu toque (com a mesma trava do servidor).
+                setPublicacaoManual(true);
+                if (item === "Compatibilidades") { voltarParaBloco("conf-bloco-9"); return; }
+                setTimeout(() => {
+                  try {
+                    const linha = item ? [...document.querySelectorAll("[data-paiia-ml-conferencia] tr[data-item]")].find((tr) => tr.getAttribute("data-item") === item) : null;
+                    const alvo = linha || document.getElementById("pub-etapa-publicar");
+                    alvo?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    if (linha) { linha.setAttribute("data-paiia-pendencia-destaque", "1"); linha.style.outline = "2px solid #f59e0b"; }
+                  } catch { /* sem rolagem */ }
+                }, 300);
+              }}
               onProximo={() => {
                 // (08/11) Publicado: abre o PAIIA Voz com uma ficha nova e limpa (a anterior fica salva na conta).
                 try { window.history.replaceState(window.history.state, "", "/?tela=paiiaVoz"); } catch { /* segue */ }

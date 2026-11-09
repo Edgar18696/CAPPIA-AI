@@ -112,6 +112,8 @@ import { consumirAcaoPaiiaVoz } from "./servicos/acaoInicial";
 import { iniciarAnuncioNovo, abrirFichaNoNovoAnuncio } from "../../services/aberturaNovoAnuncio";
 import { buscarConhecimentoValidado } from "../../services/paizinhoPesquisa/conhecimentoValidado";
 import { pesquisarCatalogo } from "../../services/catalogoService";
+// (09/11) Navegação de cima para baixo: cada etapa abre no início, campos nunca atrás do cabeçalho fixo.
+import { rolarParaInicioDaEtapa, mostrarCampo, seletorDoCampo, alturasFixas } from "./servicos/rolagemEtapaVoz";
 
 const CHAVE_MANTER_MIC = "paiiaVozManterMicrofone";
 function manterMicPadrao() {
@@ -162,6 +164,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const setCampoVoz = useCallback((id) => { campoVozRef.current = id; setCampoVozEstado(id); }, []); // (03/11) o que o celular ouviu no código (diagnóstico)
   const fichaRef = useRef(ficha);
   const reconhecedorRef = useRef(null);
+  const manterMicRef = useRef(manterMic); // (09/11) microfone mantido ao trocar de etapa
   // (P-01/P-02) Microfone contínuo: depois de tratar uma fala, volta a ouvir sozinho (sem clique).
   const seguirOuvindo = useCallback(() => {
     setTimeout(() => { const rec = reconhecedorRef.current; try { if (rec && !rec.ouvindo) rec.iniciar(); } catch { /* precisa de toque */ } }, 450);
@@ -467,9 +470,15 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     setEditandoAp("");
     setConfirmandoEnvio(false);
     setAviso("");
+    const rec = reconhecedorRef.current;
+    const ouviaAntes = Boolean(rec?.ouvindo);
     mudarFicha(irParaEtapa(fichaRef.current, e));
-    // (04/11) Finalizar abre no topo (a escolha da conta é a primeira coisa da tela)
-    if (e === "finalizar") setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); } catch { /* sem rolagem */ } }, 30);
+    // (09/11) Toda etapa abre no INÍCIO do seu conteúdo (não na rolagem da etapa anterior), logo abaixo
+    // do SKU e do assistente fixos. (04/11) Em Finalizar, o início é a escolha da conta.
+    setTimeout(() => rolarParaInicioDaEtapa(e), 40);
+    setTimeout(() => rolarParaInicioDaEtapa(e), 260); // de novo depois do conteúdo da etapa montar
+    // (09/11) Microfone ligado + "Manter o microfone ligado": continua ouvindo na etapa nova.
+    if (ouviaAntes && manterMicRef.current) setTimeout(() => { try { const r2 = reconhecedorRef.current; if (r2 && !r2.ouvindo) r2.iniciar(); } catch { /* precisa de toque */ } }, 450);
   }, [mudarFicha]);
 
   // ---------------- Código ----------------
@@ -931,6 +940,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     return () => reconhecedorRef.current?.parar();
   }, [suporta, tratarFala]);
   useEffect(() => {
+    manterMicRef.current = manterMic;
     if (reconhecedorRef.current) reconhecedorRef.current.manterLigado = manterMic;
     try { localStorage.setItem(CHAVE_MANTER_MIC, manterMic ? "1" : "0"); } catch { /* sem localStorage */ }
   }, [manterMic]);
@@ -945,16 +955,41 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (04/11) O campo que está recebendo a fala fica sempre à vista (só rola se estiver fora da tela).
   useEffect(() => {
     if (!ouvindo) return;
-    const sel = campoVoz === "titulo" ? "#pr-titulo" : campoVoz ? `[data-pv-campo-direto="${campoVoz}"]` : `[data-pr-bloco="${etapa}"] .pr-campo`;
-    const t = setTimeout(() => {
-      try {
-        const el = document.querySelector(sel);
-        const r = el?.getBoundingClientRect?.();
-        if (r && (r.top < 0 || r.bottom > window.innerHeight)) el.scrollIntoView?.({ block: "nearest" });
-      } catch { /* sem rolagem */ }
-    }, 60);
+    // (09/11) Também quando o campo está ATRÁS do cabeçalho fixo (SKU + assistente), não só fora da tela.
+    const t = setTimeout(() => mostrarCampo(seletorDoCampo(campoVoz, etapa)), 60);
     return () => clearTimeout(t);
   }, [ouvindo, campoVoz, etapa, aviso, temParcial]);
+  // (09/11) Erro em um campo (⚠️): a tela vai direto ao campo que precisa de correção.
+  useEffect(() => {
+    if (!String(aviso || "").startsWith("⚠️") || !campoVozRef.current) return undefined;
+    const t = setTimeout(() => mostrarCampo(seletorDoCampo(campoVozRef.current, etapa), { sempre: true }), 80);
+    return () => clearTimeout(t);
+  }, [aviso, etapa]);
+  const temSkuFixo = Boolean(codigoPrincipal(ficha)?.codigo);
+  // (09/11) Cabeçalhos fixos empilhados (SKU em cima, assistente logo abaixo) e o foco/rolagem do
+  // navegador (teclado do celular, Tab no computador) param ABAIXO deles: nenhum campo fica escondido.
+  useEffect(() => {
+    const raiz = document.documentElement;
+    const anterior = raiz.style.scrollPaddingTop;
+    let quadro = 0;
+    const medir = () => {
+      clearTimeout(quadro);
+      quadro = setTimeout(() => {
+        const { sku, total } = alturasFixas();
+        const pr = document.querySelector("[data-paiia-voz]");
+        pr?.style?.setProperty("--pr-sku-h", `${sku}px`);
+        raiz.style.scrollPaddingTop = `${total + 8}px`;
+      }, 0);
+    };
+    medir();
+    let obs = null;
+    try {
+      obs = new ResizeObserver(medir);
+      document.querySelectorAll(".pr-assistente, [data-pv-sku-fixo]").forEach((el) => obs.observe(el));
+    } catch { /* sem ResizeObserver: mede só agora */ }
+    window.addEventListener("resize", medir);
+    return () => { clearTimeout(quadro); obs?.disconnect(); window.removeEventListener("resize", medir); raiz.style.scrollPaddingTop = anterior; };
+  }, [etapa, temSkuFixo]);
   // Ação pedida pela página inicial (microfone/foto/digitar).
   useEffect(() => {
     const t = setTimeout(() => {
@@ -1903,7 +1938,7 @@ const CSS_RAPIDO = `
 .pr-pendente { color: #fcd34d; }
 .pr-chip-on { background: #0e7490; color: #fff; }
 @media (max-width: 480px) { .pr-etapas { gap: 3px; } .pr-etapa { font-size: 8px; padding: 4px 0; letter-spacing: -0.2px; } .pr-etapa span { width: 20px; height: 20px; font-size: 11px; } }
-.pr-assistente { position: sticky; top: 0; z-index: 5; padding: 10px; border-radius: 14px; background: linear-gradient(145deg, #0f172a, #082f49); border: 1px solid rgba(56,189,248,.35); margin-bottom: 10px; }
+.pr-assistente { position: sticky; top: var(--pr-sku-h, 0px); z-index: 5; padding: 10px; border-radius: 14px; background: linear-gradient(145deg, #0f172a, #082f49); border: 1px solid rgba(56,189,248,.35); margin-bottom: 10px; }
 .pr-mic-linha { display: flex; gap: 10px; align-items: center; }
 .pr-mic { width: 60px; height: 60px; flex: none; border-radius: 50%; border: 0; cursor: pointer; color: #fff; display: grid; place-items: center; background: radial-gradient(circle at 30% 25%, #22d3ee, #0284c7 55%, #1d4ed8); box-shadow: 0 8px 20px rgba(14,165,233,.4); }
 .pr-mic-ouvindo { background: radial-gradient(circle at 30% 25%, #f87171, #dc2626 60%, #991b1b); box-shadow: 0 0 0 7px rgba(248,113,113,.2); }

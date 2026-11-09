@@ -439,7 +439,8 @@ test("códigos: ditado/da base só entra depois de conferido; remover/corrigir a
 
 test("Finalizar abre no topo com a escolha da conta primeiro (LOJA ONLINE, REVELAÇÃO, CIEBR); trocar a conta pede nova autorização", () => {
   const tela = ler("src/modules/paiiaVoz/PaiiaVozRapido.jsx");
-  assert.ok(tela.includes('if (e === "finalizar") setTimeout(() => { try { window.scrollTo({ top: 0, behavior: "auto" }); }'), "Continuar e a barra usam irPara → topo");
+  // (09/11) Toda etapa (Finalizar inclusive) abre no início do seu conteúdo, abaixo dos cabeçalhos fixos.
+  assert.ok(tela.includes("setTimeout(() => rolarParaInicioDaEtapa(e), 40);"), "Continuar e a barra usam irPara → topo");
   assert.ok(tela.includes("depoisDaConta={blocoFicha}"), "conta antes do resumo da ficha");
   const f = ler("src/modules/paiiaVoz/FinalizarAnuncioVoz.jsx");
   // (Rodada 2) ordem aprovada: resumo/conferências → conta → modalidade → Bling → decisão → botão no final
