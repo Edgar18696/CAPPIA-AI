@@ -808,9 +808,19 @@ export async function registrarMLBPublicado({ anuncioId, contaId, mlb, link, sku
     ...(blingProdutoId ? { bling_produto_id: blingProdutoId } : {}),
     updated_at: agora,
   };
-  const { error } = await supabase.from(T_PUBLICACOES).update(pub).eq("anuncio_id", anuncioId).eq("marketplace", MARKETPLACE_ML);
+  let { data: atualizadas, error } = await supabase.from(T_PUBLICACOES).update(pub).eq("anuncio_id", anuncioId).eq("marketplace", MARKETPLACE_ML).select("id");
+  // (10/11) Sem a linha da publicação (nenhuma linha atualizada): cria agora, senão o MLB não ficava
+  // na publicação e a Central mostrava a ficha como "pronta para publicar".
+  if (!error && Array.isArray(atualizadas) && !atualizadas.length) {
+    const usuarioId = await usuarioAtual();
+    ({ error } = await supabase.from(T_PUBLICACOES).upsert({ anuncio_id: anuncioId, ...(usuarioId ? { usuario_id: usuarioId } : {}), marketplace: MARKETPLACE_ML, ...pub }, { onConflict: "anuncio_id,marketplace" }));
+  }
+  // (10/11) A ficha conta como publicada JÁ (não só no fim das conferências, que pode não chegar se a
+  // tela for fechada). A pendência, se houver, é gravada depois por registrarResultadoPublicacao.
+  const fluxo = await supabase.from(T_ANUNCIOS).update({ status_fluxo: "publicado", updated_at: agora }).eq("id", anuncioId).in("status_fluxo", ["rascunho", "conferencia_aprovada", "publicando", "erro_publicacao"]);
   const r2 = await garantirRegistroIntegracaoBling({ anuncioId, registro });
   if (error) return { ...falha(error), registroIntegracao: r2.ok };
+  if (fluxo?.error) return { ok: false, erro: `MLB gravado, mas o status da ficha não foi atualizado (${fluxo.error.message || "erro"}).`, registroIntegracao: r2.ok };
   return { ok: r2.ok, erro: r2.ok ? "" : r2.erro };
 }
 

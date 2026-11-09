@@ -118,8 +118,10 @@ class Consulta {
       return { data: null, error: null };
     }
     if (this.op === "update") {
-      t.filter(casa).forEach((l) => Object.assign(l, clone(this.dados)));
-      return { data: null, error: null };
+      const alvo = t.filter(casa);
+      alvo.forEach((l) => Object.assign(l, clone(this.dados)));
+      // (10/11) update(...).select(...) devolve as linhas atualizadas (como o PostgREST).
+      return { data: this.retornar ? alvo.map((l) => projetar(this.tabela, l, this.retornar)) : null, error: null };
     }
     let linhas = t.filter(casa);
     if (this.lim) linhas = linhas.slice(0, this.lim);

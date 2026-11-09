@@ -51,7 +51,10 @@ const txt = (v) => String(v ?? "").trim();
 /** O MLB já existe para esta ficha? (com ou sem pendência) */
 export function fichaJaPublicada(row) {
   const pub = row?.publicacao || null;
-  return Boolean(txt(pub?.mlb_id)) || STATUS_PUBLICADOS.includes(pub?.status_publicacao) || STATUS_PUBLICADOS.includes(row?.status_fluxo);
+  // (10/11) MLB gravado no registro do Bling (salvo NA HORA em que o ML devolve o MLB) também é
+  // publicação feita: a gravação na tabela de publicações pode ter falhado ou a tela ter sido fechada.
+  const mlbRegistro = /^MLB\d{6,}$/i.test(txt(row?.integracao_bling?.mlb));
+  return Boolean(txt(pub?.mlb_id)) || mlbRegistro || STATUS_PUBLICADOS.includes(pub?.status_publicacao) || STATUS_PUBLICADOS.includes(row?.status_fluxo);
 }
 
 /**
@@ -251,6 +254,9 @@ export function enderecoDaFicha(href, id) {
   const url = new URL(href);
   if (/^[0-9a-f-]{36}$/i.test(String(id || ""))) url.searchParams.set("ficha", id);
   url.searchParams.set("tela", "mercadoLivreTeste");
+  // (10/11) "Continuar" nunca herda o nº de autorização de uma rodada anterior (religaria a publicação
+  // automática). Publicar de novo só com uma autorização dada nesta ficha.
+  url.searchParams.delete("auto");
   url.hash = "";
   return url.toString();
 }

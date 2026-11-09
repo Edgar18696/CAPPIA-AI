@@ -121,6 +121,21 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   };
   const visivel = (sel) => { const e = p.achar(sel); return e && !e.disabled ? e : null; };
 
+  // (10/11) Ficha que JÁ tem MLB (F5, "Continuar" na Central, rodada repetida): NUNCA publica de novo.
+  // Reconhece o MLB gravado na ficha e segue só com as conferências (anúncio ativo, vínculo no Bling).
+  // Sem conseguir ler a ficha: pausa antes de tudo (nada é enviado sem ter certeza).
+  if (p.mlbJaPublicado) {
+    let ja;
+    try { ja = await p.mlbJaPublicado(); } catch (e) { ja = { erro: String(e?.message || e) }; }
+    if (ja?.erro) return pausa("canais", `Não consegui conferir se esta ficha já foi publicada (${ja.erro}). Nada foi enviado ao Mercado Livre.`, { antesDoEnvio: true });
+    const mlbJa = String(ja?.mlb || "").toUpperCase();
+    if (/^MLB\d{6,}$/.test(mlbJa)) {
+      enviou = true;
+      p.progresso("publicar", `Esta ficha já está publicada no Mercado Livre (${mlbJa}): nada é publicado de novo.`);
+      return depoisDoEnvio(mlbJa, String(ja?.link || ""), { jaExistia: true });
+    }
+  }
+
   // 1) Canais: "somente este anúncio" + Mercado Livre + continuar.
   p.progresso("canais");
   if (await esperarAte(() => p.achar("[data-paiia-revisao-ml]") || p.achar("[data-paiia-base-nao]") || p.achar('[data-paiia-salvar-canais="ml"]'), L.passo) === null) return pausar("canais", "A Publicação desta ficha não abriu.");
@@ -207,9 +222,13 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   if (!mlb || !/^publicado/.test(estadoRes)) return pausar("publicar", p.texto(res).slice(0, 300) || "O Mercado Livre não publicou. Nada foi reenviado.");
   // MLB confirmado pelo Mercado Livre e gravado: avisa "publicado" JÁ; o resto segue sem prender ninguém.
   const link = (res.querySelector?.("a")?.href) || "";
+  return depoisDoEnvio(mlb, link);
+
+  // Depois do MLB (publicado agora ou já existente na ficha): só conferências, nunca outra publicação.
+  async function depoisDoEnvio(mlb, link, { jaExistia = false } = {}) {
   depoisDoMLB = true;
-  await p.publicado?.({ mlb, link });
-  const segundoPlano = { ok: true, mlb, link, segundoPlano: true, pendencia: "conferências seguem em segundo plano (Central de Publicação)" };
+  await p.publicado?.({ mlb, link, ...(jaExistia ? { jaExistia: true } : {}) });
+  const segundoPlano = { ok: true, mlb, link, segundoPlano: true, ...(jaExistia ? { jaExistia: true } : {}), pendencia: "conferências seguem em segundo plano (Central de Publicação)" };
   if (encerrado()) return segundoPlano;
   const avisos = [];
   // 6) Acompanhar até ATIVO (pausado processando fotos = continua esperando).
@@ -221,8 +240,11 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   if (encerrado()) return segundoPlano;
   // 7) Vínculo no Bling (LOJA ONLINE: o Bling traz o anúncio; o PAIIA só confere).
   p.progresso("vinculo", "Conferindo o vínculo do anúncio no Bling…");
-  const vinc = await esperarAte(async () => ((await p.relerIntegracao()) === "integrado" ? true : null), L.vinculo, L.intervaloML);
-  if (!vinc) avisos.push("vínculo no Bling ainda não confirmado: confira a Gestão de Anúncios do Bling");
+  // (10/11) Ficha já publicada: uma leitura só (a conferência do vínculo segue em segundo plano pela ficha).
+  const vinc = jaExistia
+    ? (await p.relerIntegracao().catch(() => "")) === "integrado"
+    : await esperarAte(async () => ((await p.relerIntegracao()) === "integrado" ? true : null), L.vinculo, L.intervaloML);
+  if (!vinc) avisos.push(jaExistia ? "vínculo no Bling em conferência: segue sozinho em segundo plano (Central de Publicação)" : "vínculo no Bling ainda não confirmado: confira a Gestão de Anúncios do Bling");
   if (encerrado()) return segundoPlano;
   // 8) Central (a ficha já foi marcada publicada) + pendências da conferência posterior, sem esconder nada.
   p.progresso("central");
@@ -230,5 +252,19 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   if (resFinal?.getAttribute?.("data-paiia-resultado-publicacao") === "publicado_com_pendencia") avisos.push(p.texto(resFinal).replace(/\s+/g, " ").slice(0, 300));
   const posteriores = p.achar("[data-paiia-pendencias-posteriores]");
   if (posteriores) avisos.push(p.texto(posteriores).replace(/;?\s*a publicação fica bloqueada[^.]*\./gi, ".").replace(/Volte ao Novo Anúncio \([^)]*\) e recalcule/gi, "recalcule no Novo Anúncio").replace(/\s+/g, " ").slice(0, 300));
-  return { ok: true, mlb, link, pendencia: avisos.join(" · "), ativo: Boolean(ativo?.ok), vinculo: Boolean(vinc) };
+  return { ok: true, mlb, link, ...(jaExistia ? { jaExistia: true } : {}), pendencia: avisos.join(" · "), ativo: Boolean(ativo?.ok), vinculo: Boolean(vinc) };
+  }
+}
+
+/**
+ * (10/11) MLB já gravado na ficha (qualquer um dos registros da publicação): tabela de publicações,
+ * registro do Bling (integracao_bling) ou conferência pós-publicação (pos_publicacao).
+ * Aceita a ficha completa (dados_conferencia) ou a linha da Central (campos já extraídos).
+ */
+export function mlbRegistradoDaFicha(ficha) {
+  const f = ficha || {};
+  const dc = f.dados_conferencia || {};
+  const pubs = Array.isArray(f.publicacao) ? f.publicacao : f.publicacao ? [f.publicacao] : [];
+  const candidatos = [...pubs.map((x) => x?.mlb_id), (f.integracao_bling || dc.integracao_bling)?.mlb, (f.pos_publicacao || dc.pos_publicacao)?.mlb];
+  return candidatos.map((m) => String(m || "").trim().toUpperCase()).find((m) => /^MLB\d{6,}$/.test(m)) || "";
 }

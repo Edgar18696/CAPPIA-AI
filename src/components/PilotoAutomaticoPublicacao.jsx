@@ -4,7 +4,8 @@
 // seguem em segundo plano (ConferenciasSegundoPlano), mesmo saindo desta tela.
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabase";
-import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl } from "../services/pilotoPublicacao";
+import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl, mlbRegistradoDaFicha } from "../services/pilotoPublicacao";
+import { obterAnuncio } from "../services/anuncioPublicacaoService";
 import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
 import { marcarFichaLiberada } from "../modules/paiiaVoz/servicos/limpezaPosPublicacaoVoz";
@@ -37,6 +38,16 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         const v = document.querySelector("[data-paiia-verificar-bling]");
         if (v && !v.disabled) v.click();
         return document.querySelector("[data-paiia-integracao-bling]")?.getAttribute("data-paiia-integracao-bling") || "";
+      },
+      // (10/11) Antes de tudo: a ficha já tem MLB? (F5, "Continuar" na Central) → nunca publica de novo.
+      mlbJaPublicado: async () => {
+        let id = dadosRef.current.anuncioId;
+        if (!id) { try { id = new URL(window.location.href).searchParams.get("ficha") || ""; } catch { id = ""; } }
+        if (!/^[0-9a-f-]{36}$/i.test(String(id || ""))) return { mlb: "" };
+        const t = globalThis.__paiiaModoTeste && globalThis.__paiiaLerFichaPiloto;
+        const r = await (t || obterAnuncio)(id);
+        if (!r?.ok) return r?.naoEncontrado ? { mlb: "" } : { erro: r?.erro || "ficha não lida" };
+        return { mlb: mlbRegistradoDaFicha(r.anuncio), link: r.anuncio?.publicacao?.mlb_link || "" };
       },
       progresso: (etapa, texto = "") => setSt((s) => ({ ...s, etapa, texto })),
       encerrado: () => encerradoRef.current,
@@ -107,7 +118,7 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         {!st.fim && !st.publicado && <p style={{ fontSize: 18, fontWeight: 700 }}>⏳ O PAIIA está publicando sozinho. Não é preciso tocar em nada.</p>}
         {!st.fim && st.publicado && (
           <div data-paiia-piloto-publicado style={{ fontSize: 17, fontWeight: 800, lineHeight: 1.5 }}>
-            <div>✅ Anúncio Publicado Com Sucesso</div>
+            <div>{st.publicado.jaExistia ? "✅ Este anúncio já está publicado — nada foi publicado de novo" : "✅ Anúncio Publicado Com Sucesso"}</div>
             <p style={{ fontSize: 15, fontWeight: 600 }}>SKU <b>{sku}</b> · <b>{st.publicado.mlb}</b>{st.publicado.link && <> · <a href={st.publicado.link} target="_blank" rel="noreferrer" style={{ color: "#67e8f9" }}>abrir anúncio</a></>}</p>
             <p data-paiia-piloto-segundo-plano={st.publicado.registrada ? "ficha" : "tela"} style={{ fontSize: 13, color: "#94a3b8", fontWeight: 400 }}>
               {st.publicado.registrada
