@@ -60,7 +60,9 @@ export function skuAusenteNoBling(row) {
  */
 export function compatSemCatalogo(row) {
   const v = row?.dados_conferencia?.paiia_voz?.preparo?.verificacoes?.compatibilidade;
-  return Boolean(v && v.estado === "pergunta" && /nenhum veículo do catálogo confirmou/i.test(txt(v.texto)));
+  // (10/11) Também quando há versões do catálogo para confirmar: "publicar sem compatibilidade validada"
+  // continua sendo uma escolha EXPLÍCITA sua (nunca automática).
+  return Boolean(v && v.estado === "pergunta" && (/nenhum veículo do catálogo confirmou/i.test(txt(v.texto)) || v.perguntaVeiculos));
 }
 
 /** (05/11) Veículos validados pelo catálogo do ML na última conferência (ids). */

@@ -13,7 +13,7 @@
 import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU } from "../../../services/categoriaMLBusca.js";
 import { avaliarCategorias, conferirCategoriaParaPublicar, registrarConfirmacao, mesclarRejeicoes, ORIGEM_CATEGORIA } from "../../../services/categoriaML.js";
 import { preferenciaDaPeca, preferenciaDoTermo, resolverCategoriaPreferida, atributosFixosDaPreferencia, caminhoDaPreferencia } from "../../../services/categoriaPreferidaML.js";
-import { resolverCompatibilidades, compatibilidadeNaoExigivel } from "../../../services/compatibilidadeML.js";
+import { resolverCompatibilidades, compatibilidadeNaoExigivel, aplicarVeiculosConfirmados } from "../../../services/compatibilidadeML.js";
 import { montarAtributosCategoria } from "../../../services/atributosCategoriaML.js";
 import { verificarDuplicidadeML, avaliarRegistrosBase, situacaoMLBRegistrado, nomeDaLoja } from "../../../services/duplicidadeML.js";
 import { conferirEstoque } from "../../../services/estoqueBlingPAIIA.js";
@@ -46,6 +46,8 @@ export function entradaDaFicha(row) {
     marca: txt(comp.marca),
     quantidade: txt(comp.quantidadeEstoque),
     aplicacoes: Array.isArray(voz.aplicacoes) ? voz.aplicacoes : [],
+    // (10/11) Versões do catálogo que você confirmou (catálogo sem a informação das válvulas).
+    veiculosConfirmados: d.compat_veiculos_confirmados_ml && typeof d.compat_veiculos_confirmados_ml === "object" ? d.compat_veiculos_confirmados_ml : {},
     conta: txt(voz.preparo?.conta),
     categoriaDecisao: voz.preparo?.categoria?.decisao || null,
   };
@@ -256,7 +258,7 @@ async function conferirCompatibilidade(e, deps, conta) {
   if (!e.aplicacoes.length) return item("pergunta", "Compatibilidade: nenhuma aplicação confirmada. Confirme as aplicações ou diga que o anúncio sai sem compatibilidade.");
   const consultar = (caminho, metodo = "GET", corpo) => deps.chamarPublicacao({ acao: "ml_consulta", conta_ml: txt(conta), metodo, caminho, ...(corpo ? { corpo } : {}) });
   let r;
-  try { r = await resolverCompatibilidades(e.aplicacoes, consultar); } catch (x) { r = { erro: x?.message || String(x) }; }
+  try { r = await resolverCompatibilidades(aplicarVeiculosConfirmados(e.aplicacoes, e.veiculosConfirmados), consultar); } catch (x) { r = { erro: x?.message || String(x) }; }
   if (r?.erro) return item("erro", `Compatibilidade: catálogo de veículos não consultado (${r.erro}).`);
   const n = r.veiculos.length;
   if (n) {
@@ -269,8 +271,16 @@ async function conferirCompatibilidade(e, deps, conta) {
   // Falta o motor de uma aplicação: UMA pergunta com as opções do próprio catálogo (nada presumido).
   const pm = (r.perguntasMotor || [])[0];
   if (pm && !compatibilidadeNaoExigivel(e.tipoVeiculo)) return item("pergunta", `Compatibilidade: qual é o motor do ${pm.aplicacao}? (opções do catálogo do Mercado Livre)`, { veiculos: [], perguntaMotor: pm });
+  // (10/11) Aplicação informada que o catálogo confere quase toda (falta só a informação das válvulas):
+  // nunca "sem compatibilidade" — as versões do próprio catálogo viram opções para você confirmar.
+  const pv = (r.paraConfirmar || [])[0];
+  if (pv && !compatibilidadeNaoExigivel(e.tipoVeiculo)) {
+    const informadas = e.aplicacoes.map((a) => `${a.montadora} ${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`.replace(/\s+/g, " ")).join("; ");
+    return item("pergunta", `Compatibilidade: aplicação informada por você (${informadas}) ainda não validada pelo Mercado Livre — ${pv.opcoes.length} versão(ões) do catálogo conferem em marca, modelo, ano e cilindrada, mas o catálogo não informa as válvulas. Confirme quais servem.`, { veiculos: [], perguntaVeiculos: pv });
+  }
   if (compatibilidadeNaoExigivel(e.tipoVeiculo)) return item("ok", "Compatibilidade: Linha Pesada — o catálogo do Mercado Livre não tem estas aplicações; ficam na ficha e na descrição, sem pendência.", { veiculos: [] });
-  return item("pergunta", `Compatibilidade: nenhum veículo do catálogo confirmou as aplicações (${r.semCatalogo.map((s) => s.motivo).slice(0, 2).join("; ")}). Publicar sem compatibilidade?`, { veiculos: [] });
+  // (10/11) As aplicações informadas continuam na ficha: o que falta é a validação do catálogo do ML.
+  return item("pergunta", `Compatibilidade: ${e.aplicacoes.length} aplicação(ões) informada(s) por você continuam na ficha, mas nenhum veículo do catálogo confirmou as aplicações (${r.semCatalogo.map((s) => s.motivo).slice(0, 2).join("; ")}). Validadas pelo Mercado Livre: 0. Publicar sem compatibilidade validada?`, { veiculos: [] });
 }
 
 async function conferirDuplicidade(e, deps, conta) {

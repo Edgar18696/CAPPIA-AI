@@ -404,7 +404,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -582,6 +582,44 @@ export async function lerCorrespondenciasModeloML(anuncioId) {
   if (!r.ok) return r;
   const c = r.anuncio.dados_conferencia?.correspondencias_modelo_ml;
   return { ok: true, correspondencias: c && typeof c === "object" ? c : {} };
+}
+
+/**
+ * (10/11) Versões do catálogo do ML que VOCÊ confirmou para UMA aplicação (o catálogo confere marca,
+ * modelo, ano e cilindrada, mas não informa as válvulas). Grava SÓ a chave
+ * compat_veiculos_confirmados_ml[chaveAplicacao]; as aplicações cadastradas não são tocadas.
+ * veiculos = [] desfaz. Ficha já publicada não é alterada.
+ */
+export async function registrarVeiculosConfirmadosML({ anuncioId, chaveAplicacao, aplicacao = "", veiculos = [] }) {
+  if (!anuncioId) return { ok: false, erro: "Sem a ficha gravada na base PAIIA." };
+  if (!chaveAplicacao) return { ok: false, erro: "Aplicação não identificada." };
+  const lista = (Array.isArray(veiculos) ? veiculos : []).filter((v) => /^MLB\d+$/.test(String(v?.id || "")));
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  if (publicacaoExiste(atual.anuncio.publicacao)) return { ok: false, erro: "Esta ficha já foi publicada: não é alterada." };
+  const dados = atual.anuncio.dados_conferencia || {};
+  const mapa = { ...(dados.compat_veiculos_confirmados_ml && typeof dados.compat_veiculos_confirmados_ml === "object" ? dados.compat_veiculos_confirmados_ml : {}) };
+  if (lista.length) mapa[chaveAplicacao] = { aplicacao: String(aplicacao || ""), ids: lista.map((v) => String(v.id)), nomes: lista.map((v) => String(v.nome || "")), confirmado_em: new Date().toISOString() };
+  else delete mapa[chaveAplicacao];
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, compat_veiculos_confirmados_ml: mapa } })
+    .eq("id", anuncioId)
+    .eq("updated_at", atual.anuncio.updated_at);
+  if (error) return falha(error);
+  const relida = await obterAnuncio(anuncioId);
+  const gravado = relida.ok ? relida.anuncio.dados_conferencia?.compat_veiculos_confirmados_ml || {} : null;
+  const confere = gravado && (lista.length ? (gravado[chaveAplicacao]?.ids || []).join(",") === lista.map((v) => String(v.id)).join(",") : !gravado[chaveAplicacao]);
+  if (!confere) return { ok: false, erro: "A ficha mudou ao mesmo tempo: a confirmação não foi gravada. Tente de novo." };
+  return { ok: true, confirmados: gravado };
+}
+
+export async function lerVeiculosConfirmadosML(anuncioId) {
+  if (!anuncioId) return { ok: true, confirmados: {} };
+  const r = await obterAnuncio(anuncioId);
+  if (!r.ok) return r;
+  const c = r.anuncio.dados_conferencia?.compat_veiculos_confirmados_ml;
+  return { ok: true, confirmados: c && typeof c === "object" ? c : {} };
 }
 
 /**

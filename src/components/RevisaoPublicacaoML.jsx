@@ -19,6 +19,8 @@ import {
   registrarPublicacaoSemCompatibilidade,
   registrarCorrespondenciaModeloML,
   lerCorrespondenciasModeloML,
+  registrarVeiculosConfirmadosML,
+  lerVeiculosConfirmadosML,
   registrarMLBPublicado,
   salvarRegistroIntegracaoBling,
   garantirRegistroIntegracaoBling,
@@ -39,6 +41,7 @@ import {
   resolverCompatibilidades,
   aplicacoesDaFicha,
   aplicarCorrespondencias,
+  aplicarVeiculosConfirmados,
   idsCompatibilidadesLidas,
   resultadoCompatibilidades,
   chaveModeloML,
@@ -210,8 +213,17 @@ function conferir({ usoBling = null, freteConf = null, campos, quantidadeConfirm
     if (!compatML || compatML.carregando) itens.push({ item: "Compatibilidades", nivel: "erro", texto: `Procurando no catálogo do ML os veículos das ${aplicacoes.length} aplicação(ões) aprovada(s)...` });
     else if (compatML.erro) itens.push({ item: "Compatibilidades", nivel: "erro", texto: `Catálogo de veículos não consultado (${compatML.erro}). Reconsulte antes de publicar.` });
     else if (!compatML.veiculos.length && compatibilidadeNaoExigivel(tipoVeiculoPub?.tipoFicha || tipoVeiculoPub?.nome)) itens.push({ item: "Compatibilidades", nivel: "ok", texto: `Linha Pesada: o catálogo de veículos do Mercado Livre não tem estas aplicações; elas ficam na ficha e na descrição, sem pendência.` });
-    else if (!compatML.veiculos.length) itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `${aplicacoes.length} aplicação(ões) registrada(s) e gravada(s) na ficha, mas nenhuma versão do catálogo do Mercado Livre as confirma (não é erro de gravação). Se publicar assim, o anúncio fica PUBLICADO COM PENDÊNCIA de compatibilidade.` });
-    else itens.push({ item: "Compatibilidades", nivel: "ok", texto: `${compatML.veiculos.length} veículo(s) do catálogo serão vinculados (${compatML.descartados.length} descartado(s) por não confirmar os dados aprovados).` });
+    else if (!compatML.veiculos.length) {
+      // (10/11) "Aplicação informada" ≠ "validada pelo Mercado Livre". Sem nenhuma validada, só publica
+      // com a autorização EXPLÍCITA "Publicar sem compatibilidade" (a aplicação continua na ficha).
+      const nConfirmar = (compatML.paraConfirmar || []).reduce((s, p) => s + (p.opcoes?.length || 0), 0);
+      const base = `Aplicação informada: ${aplicacoes.length} (gravada na ficha). Validada pelo Mercado Livre: 0`;
+      if (semCompatConfirmada || semCompatAutorizadaPublicacao) itens.push({ item: "Compatibilidades", nivel: "aviso", texto: `${base}. Publicação sem compatibilidade validada, autorizada por você: o anúncio fica PUBLICADO COM PENDÊNCIA de compatibilidade (cadastro no Mercado Livre depois).` });
+      else itens.push({ item: "Compatibilidades", nivel: "erro", semCompatOpcao: true, texto: nConfirmar
+        ? `${base} — ${nConfirmar} versão(ões) do catálogo conferem em marca, modelo, ano e cilindrada, mas o catálogo não informa as válvulas. Confirme as versões em "Compatibilidades aprovadas por você" (ou autorize publicar sem compatibilidade).`
+        : `${base} — nenhuma versão do catálogo do Mercado Livre confirma os dados informados (não é erro de gravação). Ajuste a aplicação na Conferência ou autorize publicar sem compatibilidade.` });
+    }
+    else itens.push({ item: "Compatibilidades", nivel: "ok", texto: `${compatML.veiculos.length} veículo(s) do catálogo serão vinculados (${compatML.descartados.length} descartado(s) por não confirmar os dados aprovados)${(compatML.paraConfirmar || []).length ? `; outras versões aguardam a sua confirmação em "Compatibilidades aprovadas por você"` : ""}.` });
   }
 
   // Fotos
@@ -733,17 +745,31 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   const modelosSemDetalhes = separadas.semDetalhes;
   // Correspondências de MODELO com o catálogo do ML confirmadas pelo usuário
   // (gravadas na ficha; voltam no F5 e ao reabrir). Nunca automáticas.
-  const [correspondencias, setCorrespondencias] = useState({ carregado: false, mapa: {}, gravando: "", erro: "" });
+  // (10/11) + versões do catálogo que você confirmou (catálogo sem a informação das válvulas),
+  // lidas junto: a primeira consulta ao catálogo já sai com elas.
+  const [correspondencias, setCorrespondencias] = useState({ carregado: false, mapa: {}, confirmados: {}, gravando: "", erro: "" });
   useEffect(() => {
     let ativo = true;
     (async () => {
       if (!ficha.anuncioId) { if (ativo) setCorrespondencias((c) => ({ ...c, carregado: true })); return; }
-      const r = await lerCorrespondenciasModeloML(ficha.anuncioId);
-      if (ativo) setCorrespondencias((c) => ({ ...c, carregado: true, mapa: r.ok ? r.correspondencias : {}, erro: r.ok ? "" : r.erro || "" }));
+      const [r, rv] = await Promise.all([lerCorrespondenciasModeloML(ficha.anuncioId), lerVeiculosConfirmadosML(ficha.anuncioId)]);
+      if (ativo) setCorrespondencias((c) => ({ ...c, carregado: true, mapa: r.ok ? r.correspondencias : {}, confirmados: rv.ok ? rv.confirmados : {}, erro: r.ok ? "" : r.erro || "" }));
     })();
     return () => { ativo = false; };
   }, [ficha.anuncioId]);
-  const aplicacoes = useMemo(() => aplicarCorrespondencias(separadas.detalhadas, correspondencias.mapa), [separadas, correspondencias.mapa]);
+  const comConfirmados = (lista, confirmados = correspondencias.confirmados) => aplicarVeiculosConfirmados(lista, confirmados);
+  const aplicacoes = useMemo(() => aplicarVeiculosConfirmados(aplicarCorrespondencias(separadas.detalhadas, correspondencias.mapa), correspondencias.confirmados), [separadas, correspondencias.mapa, correspondencias.confirmados]);
+  // (10/11) Confirma as versões marcadas para UMA aplicação (grava na ficha) e reconsulta o catálogo.
+  const [versoesMarcadas, setVersoesMarcadas] = useState({});
+  async function confirmarVersoesCatalogo(pv, lista) {
+    if (!ficha.anuncioId || !pv?.chaveAplicacao) return;
+    setCorrespondencias((c) => ({ ...c, gravando: pv.chaveAplicacao, erro: "" }));
+    const r = await registrarVeiculosConfirmadosML({ anuncioId: ficha.anuncioId, chaveAplicacao: pv.chaveAplicacao, aplicacao: pv.aplicacao, veiculos: lista });
+    if (!r.ok) { setCorrespondencias((c) => ({ ...c, gravando: "", erro: r.erro || "Não foi possível gravar." })); return; }
+    setCorrespondencias((c) => ({ ...c, gravando: "", confirmados: r.confirmados }));
+    setArmado(false);
+    await resolverCompat(contaEscolhida, aplicarVeiculosConfirmados(aplicarCorrespondencias(separadas.detalhadas, correspondencias.mapa), r.confirmados));
+  }
   const [compatML, setCompatML] = useState(null);
   async function resolverCompat(conta, lista = aplicacoes) {
     if (!conta || !lista.length) { setCompatML(null); return; }
@@ -764,7 +790,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     if (!r.ok) { setCorrespondencias((c) => ({ ...c, gravando: "", erro: r.erro || "Não foi possível gravar." })); return; }
     setCorrespondencias((c) => ({ ...c, gravando: "", mapa: r.correspondencias }));
     setArmado(false);
-    await resolverCompat(contaEscolhida, aplicarCorrespondencias(separadas.detalhadas, r.correspondencias));
+    await resolverCompat(contaEscolhida, comConfirmados(aplicarCorrespondencias(separadas.detalhadas, r.correspondencias)));
   }
   async function desfazerModeloCatalogo(chave) {
     if (!ficha.anuncioId) return;
@@ -774,7 +800,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     if (!r.ok) { setCorrespondencias((c) => ({ ...c, gravando: "", erro: r.erro || "Não foi possível gravar." })); return; }
     setCorrespondencias((c) => ({ ...c, gravando: "", mapa: r.correspondencias }));
     setArmado(false);
-    await resolverCompat(contaEscolhida, aplicarCorrespondencias(separadas.detalhadas, r.correspondencias));
+    await resolverCompat(contaEscolhida, comConfirmados(aplicarCorrespondencias(separadas.detalhadas, r.correspondencias)));
   }
 
   // Leitura (com nova tentativa) do MLB criado e das compatibilidades dele.
@@ -1365,7 +1391,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contaOk, contaEscolhida]);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mesma consulta do efeito acima, quando as correspondências chegam
+    // mesma consulta do efeito acima, quando as correspondências (e as versões confirmadas) chegam
     if (contaOk && correspondencias.carregado) resolverCompat(contaEscolhida);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [correspondencias.carregado]);
@@ -1871,7 +1897,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
                     <div key={r.rotulo} data-paiia-compat-linha={r.rotulo} data-paiia-compat-linha-estado={r.estado}>
                       {[r.marca, r.modelo, r.motor, r.periodo].filter(Boolean).join(" · ")}{r.versao ? ` (${r.versao})` : ""}
                       {r.estado === "ok" && <span style={{ color: "#86efac" }}> — ✓ validada no catálogo{r.versoes ? ` (${r.versoes} versão(ões))` : ""}</span>}
-                      {r.estado === "sem" && <span style={{ color: "#facc15" }}> — ⚠ {r.aviso}</span>}
+                      {(r.estado === "sem" || r.estado === "confirmar") && <span style={{ color: "#facc15" }}> — ⚠ {r.aviso}</span>}
                     </div>
                   ))}
                 </div>
@@ -1891,6 +1917,25 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
                       {compatML.descartados.length > 0 && <div style={{ marginTop: 4, color: "#94a3b8" }}>Descartados (não confirmam os dados aprovados):</div>}
                       {compatML.descartados.map((d) => <div key={d.id} data-paiia-compat-descartado={d.id} style={{ color: "#94a3b8" }}>✗ {d.nome} — {d.motivo}</div>)}
                     </details>
+                    {(compatML.paraConfirmar || []).map((pv) => {
+                      const marcadas = pv.opcoes.filter((o) => versoesMarcadas[o.id]);
+                      const gravando = correspondencias.gravando === pv.chaveAplicacao;
+                      return (
+                        <div key={pv.chaveAplicacao} data-paiia-compat-confirmar={pv.chaveAplicacao} style={{ margin: "6px 0", padding: 8, border: "1px solid #a16207", borderRadius: 8, color: "#e2e8f0" }}>
+                          <div>⚠ <b>Aplicação informada:</b> {pv.aplicacao} — <b>ainda não validada pelo Mercado Livre.</b> Estas versões do catálogo conferem em marca, modelo, ano e cilindrada, mas o catálogo não informa as válvulas. Marque as que servem (nada é vinculado sem a sua confirmação; a aplicação continua na ficha):</div>
+                          {pv.opcoes.map((o) => (
+                            <label key={o.id} data-paiia-compat-versao-opcao={o.id} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginTop: 4, cursor: "pointer" }}>
+                              <input type="checkbox" checked={Boolean(versoesMarcadas[o.id])} disabled={gravando} onChange={(e) => setVersoesMarcadas((m) => ({ ...m, [o.id]: e.target.checked }))} style={{ marginTop: 3 }} />
+                              <span>{o.nome}</span>
+                            </label>
+                          ))}
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                            <button type="button" data-paiia-compat-versoes-todas disabled={gravando} onClick={() => setVersoesMarcadas((m) => ({ ...m, ...Object.fromEntries(pv.opcoes.map((o) => [o.id, true])) }))} style={{ ...botaoCinza, padding: "4px 10px" }}>Marcar todas</button>
+                            <button type="button" data-paiia-compat-versoes-confirmar disabled={gravando || !marcadas.length} onClick={() => confirmarVersoesCatalogo(pv, marcadas)} style={{ ...botaoAzul, padding: "4px 10px" }}>{gravando ? "⏳ Gravando na ficha..." : `✔ Confirmar ${marcadas.length || ""} versão(ões)`}</button>
+                          </div>
+                        </div>
+                      );
+                    })}
                     {compatML.semCatalogo.filter((x) => x.chave).map((x) => (
                       <div key={x.aplicacao} data-paiia-compat-sem-catalogo={x.chave || ""} style={{ color: "#facc15" }}>
                         ⚠ {x.aplicacao}: {x.motivo}

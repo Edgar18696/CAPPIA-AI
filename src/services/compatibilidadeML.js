@@ -242,23 +242,34 @@ export function avaliarVeiculo(produto, aplicacao) {
   if (!aplicacao.motor) return { ok: false, motivo: "aplicação aprovada sem motor" };
   const versao = semAcento(`${atributo(produto, "TRIM")} ${atributo(produto, "SHORT_VERSION")}`);
   const motorV = semAcento(atributo(produto, "ENGINE"));
-  if (cil && !(motorV === cil || new RegExp(`(^|\\s)${cil.replace(".", "\\.")}(\\s|$)`).test(versao))) {
+  // (10/11) A cilindrada também vale escrita no MOTOR do catálogo ("1.4 Turbo", "1.4L", "1.4 16V"),
+  // sempre como número inteiro (1.4 ≠ 1.45 / 11.4).
+  const temCil = (t) => new RegExp(`(^|[^0-9.])${cil.replace(".", "\\.")}([^0-9]|$)`).test(t);
+  if (cil && !(motorV === cil || temCil(motorV) || new RegExp(`(^|\\s)${cil.replace(".", "\\.")}(\\s|$)`).test(versao))) {
     return { ok: false, motivo: `motor ${atributo(produto, "ENGINE") || "?"} diferente de ${aplicacao.motor}` };
   }
+  // Válvulas: confirmadas pelo nome da versão, pelo motor do catálogo ou por válvulas/cilindro × cilindros.
+  // Catálogo que NÃO informa as válvulas (sem conflito): não é vinculado sozinho — vira opção para você confirmar.
+  let valvulasNaoInformadas = false;
   if (valv) {
-    const temNaVersao = new RegExp(`\\b${valv}\\s*v\\b`).test(versao);
-    const outrasValvulas = /\b(8|12|16|20|24|32)\s*v\b/.test(versao) && !temNaVersao;
-    if (!temNaVersao) {
-      const vpc = atributo(produto, "VALVES_PER_CYLINDER");
-      const extra = vpc ? ` (${vpc} válvulas por cilindro)` : "";
-      return { ok: false, motivo: outrasValvulas ? `versão não é ${valv}v` : `versão do catálogo não confirma ${valv}v${extra}` };
-    }
+    const textoV = `${versao} ${motorV}`;
+    const temNaVersao = new RegExp(`\\b${valv}\\s*v\\b`).test(textoV);
+    const outrasValvulas = /\b(8|12|16|20|24|32)\s*v\b/.test(textoV) && !temNaVersao;
+    const vpc = Number(String(atributo(produto, "VALVES_PER_CYLINDER")).replace(",", ".")) || 0;
+    const cilindros = Number(atributo(produto, "NUMBER_OF_CYLINDERS") || atributo(produto, "CYLINDERS_NUMBER") || atributo(produto, "CYLINDERS")) || 0;
+    const total = vpc && cilindros ? vpc * cilindros : 0;
+    if (outrasValvulas || (total && total !== Number(valv))) return { ok: false, motivo: `versão não é ${valv}v` };
+    if (!temNaVersao && total !== Number(valv)) valvulasNaoInformadas = true;
   }
   // Versão aprovada (quando informada): todas as palavras dela precisam
   // aparecer na versão do veículo no catálogo.
   if (limpar(aplicacao.versao)) {
     const faltam = semAcento(aplicacao.versao).split(/[\s/-]+/).filter((w) => w.length >= 2 && !new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(versao));
     if (faltam.length) return { ok: false, motivo: `versão ${aplicacao.versao} não confirmada no catálogo` };
+  }
+  if (valvulasNaoInformadas) {
+    const vpcTxt = atributo(produto, "VALVES_PER_CYLINDER");
+    return { ok: false, aConfirmar: true, motivo: `marca, modelo, ano e motor ${cil || ""} conferem, mas o catálogo não informa as válvulas (${valv}v)${vpcTxt ? `; informa ${vpcTxt} válvulas por cilindro` : ""}: confirme se serve` };
   }
   return { ok: true, motivo: "" };
 }
@@ -272,6 +283,24 @@ export function avaliarVeiculo(produto, aplicacao) {
 /** Rótulo interno de uma aplicação no cruzamento com o catálogo (mesmo texto em veiculos/semCatalogo). */
 export function rotuloAplicacaoML(a) {
   return `${a.modelo} ${a.motor} ${a.anoInicio || "?"}–${a.anoFim || "?"}`.replace(/\s+/g, " ");
+}
+
+/** (10/11) Chave estável de UMA aplicação (montadora|modelo|motor|início|fim), sem acento/caixa. */
+export function chaveAplicacaoML(a = {}) {
+  return [a.montadora, a.modelo, a.motor, a.anoInicio || "", a.anoFim || ""].map((v) => semAcento(v)).join("|");
+}
+
+/**
+ * (10/11) Versões do catálogo que VOCÊ confirmou para cada aplicação (gravadas na ficha em
+ * compat_veiculos_confirmados_ml). Só servem para versões que conferem em tudo e às quais falta
+ * apenas a informação das válvulas no catálogo: nada fora do ano/motor/modelo é aceito por isso.
+ */
+export function aplicarVeiculosConfirmados(aplicacoes = [], mapa = {}) {
+  const m = mapa && typeof mapa === "object" ? mapa : {};
+  return (Array.isArray(aplicacoes) ? aplicacoes : []).map((a) => {
+    const ids = m[chaveAplicacaoML(a)]?.ids;
+    return Array.isArray(ids) && ids.length ? { ...a, veiculosConfirmados: ids.map(String) } : a;
+  });
 }
 
 /**
@@ -292,6 +321,7 @@ export function resumoCompatAprovadas(aplicacoes, compat) {
     const s = sem.find((x) => x.aplicacao === rotulo);
     // (um veículo do catálogo é contado na 1ª aplicação que o aceitou; “sem” só quando o cruzamento não achou nenhum)
     if (!s) return { ...base, estado: "ok", versoes, aviso: "" };
+    if (s?.versoesAConfirmar) return { ...base, estado: "confirmar", versoes: 0, aviso: "aplicação informada; ainda não validada pelo Mercado Livre: confirme as versões abaixo", chave: "" };
     return { ...base, estado: "sem", versoes: 0, aviso: s?.chave ? "modelo não encontrado no catálogo: escolha abaixo" : "sem correspondência no catálogo do ML: não será enviada", chave: s?.chave || "" };
   });
 }
@@ -304,6 +334,7 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
   // (Etapa 1 simplificação) Aplicação SEM motor: nada é presumido — os motores que o
   // próprio catálogo lista para o modelo/período viram UMA pergunta simples.
   const perguntasMotor = [];
+  const paraConfirmar = [];
   const rotulo = rotuloAplicacaoML;
   const cacheMarca = new Map();
   for (const a of aplicacoes) {
@@ -376,12 +407,18 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
       if (!lote.length || produtos.length >= total || lote.length < 50) break;
     }
     let algum = false;
+    // (10/11) Versões que só faltam confirmar as válvulas: vinculadas SÓ se você já as confirmou nesta ficha.
+    const confirmados = new Set((Array.isArray(a.veiculosConfirmados) ? a.veiculosConfirmados : []).map(String));
+    const opcoesDaAplicacao = [];
     for (const p of produtos) {
       if (!/^MLB\d+$/.test(String(p?.id || ""))) continue;
       const av = avaliarVeiculo(p, a);
-      if (av.ok) {
+      const confirmadoPorVoce = !av.ok && av.aConfirmar && confirmados.has(String(p.id));
+      if (av.ok || confirmadoPorVoce) {
         algum = true;
-        if (!veiculos.has(p.id)) veiculos.set(p.id, { id: p.id, nome: nomeVeiculo(p), aplicacao: rotulo(a), ...(viaCorrespondencia ? { modeloCatalogo: limpar(modelo.name), correspondencia: automatica ? "automatica" : "confirmada" } : {}) });
+        if (!veiculos.has(p.id)) veiculos.set(p.id, { id: p.id, nome: nomeVeiculo(p), aplicacao: rotulo(a), ...(confirmadoPorVoce ? { confirmadoPor: "usuario" } : {}), ...(viaCorrespondencia ? { modeloCatalogo: limpar(modelo.name), correspondencia: automatica ? "automatica" : "confirmada" } : {}) });
+      } else if (av.aConfirmar) {
+        if (!opcoesDaAplicacao.some((o) => o.id === p.id)) opcoesDaAplicacao.push({ id: p.id, nome: nomeVeiculo(p), motivo: av.motivo });
       } else if (!veiculos.has(p.id) && !descartados.some((d) => d.id === p.id)) {
         descartados.push({ id: p.id, nome: nomeVeiculo(p), motivo: av.motivo, aplicacao: rotulo(a) });
       }
@@ -393,13 +430,17 @@ export async function resolverCompatibilidades(aplicacoes, consultar) {
       const opcoes = [...new Set(produtos.filter((p) => { if (!/^MLB\d+$/.test(String(p?.id || ""))) return false; const y = ano(atributo(p, "VEHICLE_YEAR")); return y != null && (!a.anoInicio || y >= a.anoInicio) && (!a.anoFim || y <= a.anoFim); }).map((p) => limpar(atributo(p, "ENGINE")) || (semAcento(`${atributo(p, "TRIM")} ${atributo(p, "SHORT_VERSION")}`).match(/\b\d\.\d\b/) || [""])[0]).filter(Boolean))].sort();
       if (opcoes.length) perguntasMotor.push({ aplicacao: rotulo(a), montadora: a.montadora, modelo: a.modelo, anoInicio: a.anoInicio || null, anoFim: a.anoFim || null, opcoes });
     }
-    if (!algum) semCatalogo.push({ aplicacao: rotulo(a), motivo: `nenhum veículo do catálogo${viaCorrespondencia ? ` (modelo ${limpar(modelo.name)})` : ""} confirma todos os dados aprovados (período, motor${a.versao ? ", versão" : ""})` });
+    const pendentes = opcoesDaAplicacao.filter((o) => !veiculos.has(o.id)).sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR"));
+    if (pendentes.length) paraConfirmar.push({ aplicacao: rotulo(a), chaveAplicacao: chaveAplicacaoML(a), montadora: a.montadora, modelo: a.modelo, motor: a.motor, anoInicio: a.anoInicio || null, anoFim: a.anoFim || null, opcoes: pendentes });
+    if (!algum && pendentes.length) semCatalogo.push({ aplicacao: rotulo(a), versoesAConfirmar: true, chaveAplicacao: chaveAplicacaoML(a), motivo: `${pendentes.length} versão(ões) do catálogo conferem em marca, modelo, ano e cilindrada, mas o catálogo não informa as válvulas: confirme quais servem (nada é vinculado sem a sua confirmação)` });
+    else if (!algum) semCatalogo.push({ aplicacao: rotulo(a), motivo: `nenhum veículo do catálogo${viaCorrespondencia ? ` (modelo ${limpar(modelo.name)})` : ""} confirma todos os dados aprovados (período, motor${a.versao ? ", versão" : ""})` });
   }
   // Um veículo aceito por uma aplicação não aparece como descartado por outra.
   const aceitos = [...veiculos.values()];
   return {
     veiculos: aceitos.sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR")),
     descartados: descartados.filter((d) => !veiculos.has(d.id)),
+    paraConfirmar,
     semCatalogo,
     correspondencias,
     perguntasMotor,

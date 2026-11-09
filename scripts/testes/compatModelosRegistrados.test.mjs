@@ -37,7 +37,11 @@ test("3) telas: Publicação e Conferência usam o texto dos modelos registrados
   const rev = ler("src/components/RevisaoPublicacaoML.jsx");
   assert.match(rev, /modelosSemDetalhes\.length\s*\n?\s*\? textoSoModelosSemDetalhes\(modelosSemDetalhes\)/);
   assert.match(rev, /semCompatOpcao: true, texto: modelosSemDetalhes\.length/);
-  assert.match(rev, /nivel: "aviso", texto: `\$\{aplicacoes\.length\} aplicação\(ões\) registrada\(s\) e gravada\(s\) na ficha, mas nenhuma versão do catálogo/);
+  // (10/11) Aplicação informada sem versão validada: pendência até você confirmar as versões ou autorizar
+  // "publicar sem compatibilidade"; com a autorização vira AVISO (publicado com pendência).
+  assert.match(rev, /Aplicação informada: \$\{aplicacoes\.length\} \(gravada na ficha\)\. Validada pelo Mercado Livre: 0/);
+  assert.match(rev, /if \(semCompatConfirmada \|\| semCompatAutorizadaPublicacao\) itens\.push\(\{ item: "Compatibilidades", nivel: "aviso"/);
+  assert.match(rev, /nenhuma versão do catálogo do Mercado Livre confirma os dados informados \(não é erro de gravação\)/);
   const conf = ler("src/components/MercadoLivreTeste.jsx");
   assert.match(conf, /modelosSemDetalhes\.length \? textoSoModelosSemDetalhes\(modelosSemDetalhes\) : TEXTO_SEM_APLICACAO/);
 });

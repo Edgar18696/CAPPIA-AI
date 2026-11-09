@@ -63,7 +63,7 @@ export function montarRevisao(row) {
   if (!p) pendencias.push({ id: "conferir", tipo: "conferir", texto: "Toque em “Conferir agora” para rodar as conferências." });
   else if (!prep.valido) pendencias.push({ id: "conferir", tipo: "conferir", texto: `Conferência desatualizada (${prep.motivo}): confira de novo.` });
   for (const [k, x] of Object.entries(v)) {
-    if (x?.estado && x.estado !== "ok") pendencias.push({ id: k, tipo: x.estado, texto: x.texto, ...(k === "categoria" && x.sugerida ? { sugerida: x.sugerida } : {}), ...(k === "compatibilidade" && x.perguntaMotor ? { perguntaMotor: x.perguntaMotor } : {}) });
+    if (x?.estado && x.estado !== "ok") pendencias.push({ id: k, tipo: x.estado, texto: x.texto, ...(k === "categoria" && x.sugerida ? { sugerida: x.sugerida } : {}), ...(k === "compatibilidade" && x.perguntaMotor ? { perguntaMotor: x.perguntaMotor } : {}), ...(k === "compatibilidade" && x.perguntaVeiculos ? { perguntaVeiculos: x.perguntaVeiculos } : {}) });
   }
   // (Etapa 2, decisão de 07/11) Clássico é o padrão e NÃO gera pergunta; trocar para Premium
   // continua disponível na tela, sem ser obrigatório.

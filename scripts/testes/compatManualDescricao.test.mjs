@@ -194,5 +194,5 @@ test("M11) tela da ficha publicada: correção no mesmo MLB, com confirmação; 
   assert.match(c, /disabled=\{!confirmo \|\| envio\.enviando\}/);
   const svc = ler("src/services/anuncioPublicacaoService.js");
   assert.match(svc, /correcoes_compatibilidade: \[\.\.\.lista, novo\]\.slice\(-30\)/);
-  assert.match(svc, /"correcoes_compatibilidade"\]\);/);
+  assert.match(svc, /"correcoes_compatibilidade"(, "[a-z_]+")*\]\);/); // (10/11) + compat_veiculos_confirmados_ml
 });

@@ -20,7 +20,7 @@ import { montarRevisao } from "./servicos/revisaoCelularVoz";
 import { aprovarRevisaoEGravar } from "./servicos/preparoVozService";
 import { prepararPublicacaoVoz } from "./servicos/publicarVozService";
 import { diagnosticarFichaVoz, textoDiagnostico } from "./servicos/localizarFichaVoz";
-import { listarAnunciosDoCodigo } from "../../services/anuncioPublicacaoService";
+import { listarAnunciosDoCodigo, registrarVeiculosConfirmadosML } from "../../services/anuncioPublicacaoService";
 import { supabase } from "../../supabase";
 
 // (Passo 7) Pendência da revisão → etapa do celular que a resolve.
@@ -65,6 +65,8 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
   const [versao, setVersao] = useState({ estado: "conferindo" });
   const [cat, setCat] = useState({ aberta: false, termo: "", avaliacao: null, carregando: false, erro: "" });
   const [resultado, setResultado] = useState(null);
+  // (10/11) Versões do catálogo marcadas por você (catálogo sem a informação das válvulas).
+  const [versoesMarcadas, setVersoesMarcadas] = useState({});
   const [sessao] = useState(() => `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
   const autoConferida = useRef("");
   const teste = depsTeste();
@@ -271,6 +273,32 @@ export default function FinalizarAnuncioVoz({ fichaId, usuarioId = "", aoIrEtapa
         {aoIrEtapa && <button type="button" className="pr-link" onClick={() => aoIrEtapa("compat")} data-pv-motor-nenhum>Nenhuma destas (ajustar a compatibilidade)</button>}
       </div>
     );
+    // (10/11) Aplicação informada ainda não validada: as versões REAIS do catálogo para você marcar.
+    // Nada é vinculado sem a sua confirmação; a aplicação cadastrada continua na ficha.
+    if (x.id === "compatibilidade" && x.perguntaVeiculos?.opcoes?.length) {
+      const pv = x.perguntaVeiculos;
+      const marcadas = pv.opcoes.filter((o) => versoesMarcadas[o.id]);
+      const gravar = (lista) => acao("compat-versoes", async () => {
+        const r = await (depsTeste()?.registrarVeiculos || registrarVeiculosConfirmadosML)({ anuncioId: fichaId, chaveAplicacao: pv.chaveAplicacao, aplicacao: pv.aplicacao, veiculos: lista });
+        return r.ok ? preparar(fichaId, { conta }) : r;
+      });
+      return (
+        <div style={{ display: "grid", gap: 6 }} data-pv-pergunta-versoes={pv.chaveAplicacao}>
+          <span className="pr-fonte">Aplicação informada: <b>{pv.aplicacao}</b>. Marque as versões do catálogo do Mercado Livre que servem:</span>
+          {pv.opcoes.map((o) => (
+            <label key={o.id} className="pr-linha" style={{ gap: 8, alignItems: "flex-start" }} data-pv-versao-opcao={o.id}>
+              <input type="checkbox" checked={Boolean(versoesMarcadas[o.id])} disabled={Boolean(rodando)} onChange={(ev) => setVersoesMarcadas((m) => ({ ...m, [o.id]: ev.target.checked }))} style={{ marginTop: 4 }} />
+              <span>{o.nome}</span>
+            </label>
+          ))}
+          <div className="pr-linha" style={{ gap: 6, flexWrap: "wrap" }}>
+            <button type="button" className="pr-link" disabled={Boolean(rodando)} onClick={() => setVersoesMarcadas((m) => ({ ...m, ...Object.fromEntries(pv.opcoes.map((o) => [o.id, true])) }))} data-pv-versoes-todas>Marcar todas</button>
+          </div>
+          <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando) || !marcadas.length} onClick={() => gravar(marcadas)} data-pv-versoes-confirmar>✅ Confirmar {marcadas.length || ""} versão(ões) para {pv.aplicacao}</button>
+          {aoIrEtapa && <button type="button" className="pr-link" onClick={() => aoIrEtapa("compat")} data-pv-versoes-nenhuma>Nenhuma destas (ajustar a compatibilidade)</button>}
+        </div>
+      );
+    }
     if (x.id === "modalidade") return <button type="button" className="pr-botao pr-grande" disabled={Boolean(rodando)} data-pv-resolver="modalidade" onClick={() => acao("modalidade", async () => { const r = await definirModalidadeEGravar(fichaId, "premium"); return r.ok ? preparar(fichaId, { conta }) : r; })}>Usar Premium (padrão da loja)</button>;
     const etapa = ETAPA_DA_PENDENCIA(x);
     if (etapa && aoIrEtapa) return <button type="button" className="pr-botao pr-grande" data-pv-resolver={`etapa:${etapa}`} onClick={() => aoIrEtapa(etapa)}>✏️ {etapa === "compat" ? "Ajustar a compatibilidade (ex.: motor e anos)" : "Resolver"}</button>;
