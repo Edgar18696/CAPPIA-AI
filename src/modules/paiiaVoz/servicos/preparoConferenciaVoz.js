@@ -11,7 +11,8 @@
 // =============================================================
 
 import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU } from "../../../services/categoriaMLBusca.js";
-import { avaliarCategorias, conferirCategoriaParaPublicar, registrarConfirmacao, mesclarRejeicoes } from "../../../services/categoriaML.js";
+import { avaliarCategorias, conferirCategoriaParaPublicar, registrarConfirmacao, mesclarRejeicoes, ORIGEM_CATEGORIA } from "../../../services/categoriaML.js";
+import { preferenciaDaPeca, preferenciaDoTermo, resolverCategoriaPreferida, atributosFixosDaPreferencia, caminhoDaPreferencia } from "../../../services/categoriaPreferidaML.js";
 import { resolverCompatibilidades, compatibilidadeNaoExigivel } from "../../../services/compatibilidadeML.js";
 import { montarAtributosCategoria } from "../../../services/atributosCategoriaML.js";
 import { verificarDuplicidadeML, avaliarRegistrosBase, situacaoMLBRegistrado, nomeDaLoja } from "../../../services/duplicidadeML.js";
@@ -64,27 +65,92 @@ function termosCategoria(e) {
   return [e.titulo, principal, ap ? [principal, ap.montadora, ap.modelo].filter(Boolean).join(" ") : ""];
 }
 
+// (09/11) Categoria preferida da peça (regra permanente: relés) — ID SEMPRE da API do ML.
+async function categoriaPreferida(pref, deps, cache) {
+  if (!pref) return null;
+  try {
+    return await resolverCategoriaPreferida(pref, { consultar: (t) => consultarPreditor(t, deps.lerJson), lerDetalhe: (id) => lerDetalheCategoria(id, deps.lerJson, cache), storage: deps.storage });
+  } catch (x) {
+    return { ok: false, motivo: `Categoria preferida não consultada (${x?.message || x}).` };
+  }
+}
+
+/**
+ * (09/11) Atributos obrigatórios da categoria para a tela do Voz (Modelo, Tipo de produto…).
+ * Marca, Número da peça e Tipo de veículo vêm dos campos da ficha (não aparecem aqui).
+ * exigir: categoria fora de “Acessórios para Veículos” — a etapa só fica feita com tudo preenchido.
+ */
+export function atributosDaCategoria(det, e, salvos) {
+  if (!det?.lido) return null;
+  const r = montarAtributosCategoria({ categoriaId: det.id, atributosBrutos: det.atributosBrutos, ficha: { marca: e.marca, numeroPeca: e.codigo, tipoVeiculo: e.tipoVeiculo, textos: [e.titulo] }, salvos });
+  if (!r.lido) return null;
+  const pendentes = r.pendentes.filter((p) => !p.campoProprio).map((p) => ({ id: p.id, nome: p.nome, tipo: p.tipo, valores: (p.valores || []).slice(0, 80), duvida: p.duvida || "" }));
+  return {
+    categoria_id: det.id,
+    completo: pendentes.length === 0,
+    exigir: (det.niveis || [])[0] !== "Acessórios para Veículos",
+    pendentes,
+    preenchidos: r.itens.filter((i) => !i.pendente && !i.campoProprio).map((i) => ({ id: i.id, nome: i.nome, valor: i.valor, origem: i.origem })),
+  };
+}
+
+/** (09/11) Categoria confirmada = a preferida da peça → grava os valores fixos (ex.: Tipo de produto “Relé”) que faltarem. */
+export function comAtributosFixos(decisao, det, titulo) {
+  const id = txt(decisao?.confirmada?.id).toUpperCase();
+  const pref = preferenciaDaPeca(titulo);
+  if (!id || !pref || !det?.lido || !caminhoDaPreferencia(det.niveis, pref)) return decisao;
+  const fixos = atributosFixosDaPreferencia(pref, { categoriaId: id, atributosBrutos: det.atributosBrutos });
+  if (!fixos) return decisao;
+  const antes = decisao.atributos && txt(decisao.atributos.categoria_id).toUpperCase() === id ? decisao.atributos.valores || {} : {};
+  if (Object.keys(fixos.valores).every((k) => antes[k])) return decisao;
+  return { ...decisao, preferencia: decisao.preferencia || pref.id, atributos: { categoria_id: id, valores: { ...fixos.valores, ...antes } } };
+}
+
 async function conferirCategoria(e, deps, conta) {
   if (!e.titulo) return item("pergunta", "Categoria: falta o título da peça.");
   if (!e.tipoVeiculo) return item("pergunta", "Categoria: diga o tipo de veículo (carro ou linha pesada).");
   const lerItem = (mlb, c) => deps.chamarPublicacao({ acao: "ml_consulta", conta_ml: txt(c || conta), metodo: "GET", caminho: `/items/${mlb}` });
-  const [consultas, rej, evidencia] = await Promise.all([
+  const conf = e.categoriaDecisao?.confirmada?.id;
+  const cache = {};
+  // Regra permanente (relés): só quando NÃO há categoria confirmada (nunca troca a sua escolha).
+  const pref = conf ? null : preferenciaDaPeca(e.titulo);
+  const [consultas, rej, evidencia, prefRes] = await Promise.all([
     consultarPreditor(termosCategoria(e), deps.lerJson),
     lerRejeicoesDoSKU({ codigo: e.codigo, listarFichas: deps.listarFichas, lerItem }),
     lerEvidenciaMesmoCodigo(e.codigo, (c) => deps.chamarPublicacao({ ...c, conta_ml: txt(conta) })),
+    categoriaPreferida(pref, deps, cache),
   ]);
   const rejeicoes = mesclarRejeicoes(e.categoriaDecisao?.rejeitadas || [], rej.lista).lista;
-  const ids = new Set([...consultas.flatMap((q) => q.sugestoes.map((s) => s.category_id)), ...Object.keys(evidencia.porCategoria || {}), ...rejeicoes.map((r) => r.categoria_id), e.categoriaDecisao?.confirmada?.id].filter(Boolean));
+  const ids = new Set([prefRes?.id, e.categoriaDecisao?.confirmada?.id, ...consultas.flatMap((q) => q.sugestoes.map((s) => s.category_id)), ...Object.keys(evidencia.porCategoria || {}), ...rejeicoes.map((r) => r.categoria_id)].filter(Boolean));
   const detalhes = {};
-  const cache = {};
   for (const id of [...ids].slice(0, 16)) detalhes[id] = await lerDetalheCategoria(id, deps.lerJson, cache);
-  const avaliacao = avaliarCategorias({ tipoVeiculo: e.tipoVeiculo, textoPeca: e.titulo, consultas, detalhes, evidencia, rejeicoes });
+  const avaliacao = avaliarCategorias({
+    tipoVeiculo: e.tipoVeiculo, textoPeca: e.titulo, textoProduto: e.titulo, consultas, detalhes, evidencia, rejeicoes,
+    herdadas: prefRes?.id ? [{ id: prefRes.id, origem: ORIGEM_CATEGORIA.PREFERENCIA }] : [],
+    preferencia: prefRes?.ok ? { id: prefRes.id, rotulo: pref.rotulo } : null,
+  });
   avaliacao.restricoes = rej.restricoes || [];
-  const conf = e.categoriaDecisao?.confirmada?.id;
+  if (pref && prefRes && !prefRes.ok) avaliacao.alertas.push(prefRes.motivo);
   if (conf) {
     const ok = conferirCategoriaParaPublicar({ categoriaId: conf, decisao: e.categoriaDecisao, rejeicoes, detalhe: detalhes[conf] || null, tipoVeiculo: e.tipoVeiculo, textoPeca: e.titulo });
-    if (ok.ok) return item("ok", `Categoria ${conf} — ${detalhes[conf]?.caminho || e.categoriaDecisao.confirmada.caminho} (confirmada por você).`, { id: conf, avaliacao: resumoAvaliacao(avaliacao), decisao: e.categoriaDecisao });
-    return item("bloqueio", `Categoria ${conf}: ${ok.motivos.join(" ")}`, { id: conf, avaliacao: resumoAvaliacao(avaliacao), decisao: e.categoriaDecisao });
+    const caminho = detalhes[conf]?.caminho || e.categoriaDecisao.confirmada.caminho;
+    const automatica = Boolean(e.categoriaDecisao?.automatica);
+    const decisao = comAtributosFixos(e.categoriaDecisao, detalhes[conf], e.titulo);
+    if (ok.ok) return item("ok", `Categoria ${conf} — ${caminho} (${automatica ? "selecionada automaticamente" : "confirmada por você"}).`, { id: conf, caminho, automatica, preferencia: decisao?.preferencia || "", avaliacao: resumoAvaliacao(avaliacao), decisao, atributos: atributosDaCategoria(detalhes[conf], e, decisao?.atributos) });
+    return item("bloqueio", `Categoria ${conf}: ${ok.motivos.join(" ")}`, { id: conf, caminho, avaliacao: resumoAvaliacao(avaliacao), decisao: e.categoriaDecisao });
+  }
+  // (09/11) Regra permanente: categoria preferida válida → já SELECIONADA (você pode trocar).
+  if (pref && avaliacao.preferida && avaliacao.preferida === avaliacao.sugerida) {
+    const c = avaliacao.candidatas.find((x) => x.id === avaliacao.preferida);
+    const det = detalhes[c.id];
+    if (det?.lido && det.listingAllowed !== false) {
+      const base = registrarConfirmacao(e.categoriaDecisao || null, { candidata: c, avaliacao, agora: new Date().toISOString() });
+      const fixos = atributosFixosDaPreferencia(pref, { categoriaId: c.id, atributosBrutos: det.atributosBrutos });
+      const antes = base.atributos && txt(base.atributos.categoria_id).toUpperCase() === c.id ? base.atributos.valores || {} : {};
+      const dec = { ...base, automatica: true, preferencia: pref.id, atributos: fixos ? { categoria_id: c.id, valores: { ...fixos.valores, ...antes } } : base.atributos };
+      const ok = conferirCategoriaParaPublicar({ categoriaId: c.id, decisao: dec, rejeicoes, detalhe: det, tipoVeiculo: e.tipoVeiculo, textoPeca: e.titulo });
+      if (ok.ok) return item("ok", `Categoria ${c.id} — ${c.caminho} (regra permanente do PAIIA: ${pref.rotulo}; ID conferido agora na API do Mercado Livre).`, { id: c.id, caminho: c.caminho, automatica: true, preferencia: pref.id, avaliacao: resumoAvaliacao(avaliacao), decisao: dec, atributos: atributosDaCategoria(det, e, dec.atributos) });
+    }
   }
   if (avaliacao.sugerida) {
     const c = avaliacao.candidatas.find((x) => x.id === avaliacao.sugerida);
@@ -106,8 +172,10 @@ async function conferirCategoria(e, deps, conta) {
 // Guarda o necessário para registrar a confirmação depois (sem respostas brutas).
 function resumoAvaliacao(a) {
   return {
-    versao: a.versao, sugerida: a.sugerida, conflitos: a.conflitos, alertas: a.alertas, restricoes: a.restricoes || [],
-    candidatas: (a.candidatas || []).slice(0, 8).map((c) => ({ id: c.id, caminho: c.caminho, dominio: c.dominio, origens: c.origens, compativel: c.compativel, rejeitada: c.rejeitada, rejeicoes: c.rejeicoes || [], evidencia: c.evidencia, bloqueios: c.bloqueios || [] })),
+    versao: a.versao, sugerida: a.sugerida, preferida: a.preferida || null, conflitos: a.conflitos, alertas: a.alertas, restricoes: a.restricoes || [],
+    candidatas: (a.candidatas || []).slice(0, 8).map((c) => ({ id: c.id, caminho: c.caminho, dominio: c.dominio, origens: c.origens, compativel: c.compativel, rejeitada: c.rejeitada, rejeicoes: c.rejeicoes || [], evidencia: c.evidencia, bloqueios: c.bloqueios || [],
+      // (09/11) Nomes dos atributos obrigatórios/condicionais (sem valores) para a tela mostrar.
+      atributos: c.atributos ? { obrigatorios: (c.atributos.obrigatorios || []).map((x) => ({ id: x.id, nome: x.nome })), condicionais: (c.atributos.condicionais || []).map((x) => ({ id: x.id, nome: x.nome })) } : null })),
   };
 }
 
@@ -129,21 +197,40 @@ export async function conferirSoCategoriaVoz(row, { deps } = {}) {
 export async function buscarCategoriasVoz(row, termo, { conta = "", deps } = {}) {
   const e = entradaDaFicha(row);
   const contaId = txt(conta || e.conta).replace(/\D/g, "");
-  const termos = [...new Set([txt(termo), ...termosCategoria(e)].filter(Boolean))];
-  if (!termos.length) return { ok: false, erro: "Digite o nome técnico da peça para buscar." };
+  // (09/11) Busca LIVRE: o termo digitado vale sozinho (antes ia junto com os termos da ficha e a
+  // sugestão antiga — ex.: MLB431130 — sempre voltava). Código MLB digitado: lido direto na API.
+  const digitado = txt(termo);
+  const idDigitado = /^MLB\d+$/i.test(digitado) ? digitado.toUpperCase() : "";
+  const termos = idDigitado ? [] : digitado ? [digitado] : [...new Set(termosCategoria(e).filter(Boolean))];
+  if (!termos.length && !idDigitado) return { ok: false, erro: "Digite o nome técnico da peça para buscar." };
+  // Categoria preferida (relés): da peça ou citada no termo (“Semicondutores”, “Componentes Eletrônicos”…).
+  const prefProduto = preferenciaDaPeca(e.titulo);
+  const pref = (digitado && !idDigitado ? preferenciaDoTermo(digitado) : null) || prefProduto;
+  const cache = {};
   const lerItem = (mlb, c) => deps.chamarPublicacao({ acao: "ml_consulta", conta_ml: txt(c || contaId), metodo: "GET", caminho: `/items/${mlb}` });
-  const [consultas, rej] = await Promise.all([
-    consultarPreditor(termos, deps.lerJson),
+  const [consultas, rej, prefRes] = await Promise.all([
+    termos.length ? consultarPreditor(termos, deps.lerJson) : Promise.resolve([]),
     lerRejeicoesDoSKU({ codigo: e.codigo, listarFichas: deps.listarFichas, lerItem }),
+    categoriaPreferida(pref, deps, cache),
   ]);
   const rejeicoes = mesclarRejeicoes(e.categoriaDecisao?.rejeitadas || [], rej.lista).lista;
-  const ids = new Set([...consultas.flatMap((q) => q.sugestoes.map((s) => s.category_id)), ...rejeicoes.map((r) => r.categoria_id)].filter(Boolean));
+  const doTermo = consultas.flatMap((q) => q.sugestoes.map((s) => s.category_id));
+  const ids = new Set([idDigitado, prefRes?.id, ...doTermo, ...rejeicoes.map((r) => r.categoria_id)].filter(Boolean));
   const detalhes = {};
-  const cache = {};
   for (const id of [...ids].slice(0, 16)) detalhes[id] = await lerDetalheCategoria(id, deps.lerJson, cache);
-  const avaliacao = avaliarCategorias({ tipoVeiculo: e.tipoVeiculo || "Carro/Caminhonete", textoPeca: txt(termo) || e.titulo, consultas, detalhes, evidencia: null, rejeicoes });
+  const herdadas = [
+    ...(idDigitado ? [{ id: idDigitado, origem: ORIGEM_CATEGORIA.BUSCA }] : []),
+    ...(prefRes?.id ? [{ id: prefRes.id, origem: ORIGEM_CATEGORIA.PREFERENCIA }] : []),
+  ];
+  const avaliacao = avaliarCategorias({ tipoVeiculo: e.tipoVeiculo || "Carro/Caminhonete", textoPeca: digitado && !idDigitado ? digitado : e.titulo, textoProduto: e.titulo, consultas, detalhes, evidencia: null, rejeicoes, herdadas });
   avaliacao.restricoes = rej.restricoes || [];
-  return { ok: true, avaliacao: resumoAvaliacao(avaliacao) };
+  if (prefRes && !prefRes.ok) avaliacao.alertas.push(prefRes.motivo);
+  // A escolha mostrada é a do SEU termo (nunca a sugestão anterior da ficha).
+  const porId = Object.fromEntries(avaliacao.candidatas.map((c) => [c.id, c]));
+  const doTermoCompat = doTermo.find((id) => porId[id]?.compativel) || "";
+  const termoCitaPref = Boolean(prefRes?.id && digitado && preferenciaDoTermo(digitado));
+  const buscada = idDigitado || doTermoCompat || (termoCitaPref ? prefRes.id : "") || doTermo[0] || "";
+  return { ok: true, avaliacao: resumoAvaliacao(avaliacao), buscada };
 }
 
 /** (05/11) Categoria ESCOLHIDA por você (sugerida ou de outra busca): mesmo registro da Conferência. */

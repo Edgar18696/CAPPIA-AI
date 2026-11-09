@@ -11,7 +11,7 @@ import { lerJsonPublico } from "../../../services/categoriaMLBusca";
 import { listarAnunciosDoCodigo, conferirDuplicidadeBase } from "../../../services/anuncioPublicacaoService";
 import { modalidadesDaConta } from "../../../services/consultaMLLeitura";
 import { prepararConferenciaVoz, confirmarCategoriaSugerida, buscarCategoriasVoz, confirmarCategoriaEscolhida, conferirSoCategoriaVoz } from "./preparoConferenciaVoz";
-import { mesclarPreparo } from "./preparoFicha";
+import { mesclarPreparo, atributoNoPreparo } from "./preparoFicha";
 import { aprovarRevisao, comModalidade, comRevisao } from "./revisaoCelularVoz";
 
 async function chamarPublicacao(corpo) {
@@ -81,6 +81,15 @@ export async function buscarCategoriasEmOutra(fichaId, termo, { conta = "" } = {
   const r = await lerFichaNovoAnuncio(fichaId);
   if (!r.ok) return { ok: false, erro: r.erro || "Ficha não encontrada." };
   return buscarCategoriasVoz(r.ficha, termo, { conta, deps: depsReais });
+}
+
+/**
+ * (09/11) Atributo obrigatório da categoria (ex.: Modelo) informado no Voz: grava na decisão da
+ * categoria da MESMA ficha (o mesmo registro que a Publicação usa). Nada vai ao ML aqui.
+ */
+export async function gravarAtributoCategoriaVoz(fichaId, { atributo, valueId = "", valueName = "" } = {}) {
+  if (!atributo?.id) return { ok: false, erro: "Atributo não informado." };
+  return gravar(fichaId, null, (dados) => atributoNoPreparo(dados, { atributo, valueId, valueName }));
 }
 
 /** (05/11) Confirma a categoria escolhida por você e grava na ficha (nada no ML). */

@@ -22,6 +22,8 @@
 // Testes: scripts/testes/categoriaML.test.mjs
 // =============================================================
 
+import { permitidaForaDeVeiculos } from "./categoriaPreferidaML.js";
+
 export const VERSAO_REGRA_CATEGORIA = "2026-10-09.1";
 
 export const ORIGEM_CATEGORIA = Object.freeze({
@@ -32,6 +34,7 @@ export const ORIGEM_CATEGORIA = Object.freeze({
   NAVEGADOR: "navegador",
   BUSCA: "busca_manual",
   REJEITADA: "historico_rejeicao",
+  PREFERENCIA: "preferencia_paiia",
 });
 
 export const ROTULO_ORIGEM_CATEGORIA = Object.freeze({
@@ -42,6 +45,7 @@ export const ROTULO_ORIGEM_CATEGORIA = Object.freeze({
   navegador: "escolha antiga guardada no navegador (herdada — revalidada)",
   busca_manual: "busca manual",
   historico_rejeicao: "histórico de rejeição do Mercado Livre",
+  preferencia_paiia: "regra permanente do PAIIA (categoria preferida da peça)",
 });
 
 const semAcento = (v) => String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -200,12 +204,15 @@ export function rejeicoesDaCategoria(id, rejeicoes = []) {
 /**
  * detalhe = { id, nome, niveis[], caminho, dominio, listingAllowed, atributos? (resumo), tipoVeiculo? {existe, valores[]} }
  */
-export function avaliarUmaCategoria(detalhe, { tipoVeiculo = "Carro/Caminhonete", sistemasPeca = [], rejeicoes = [] } = {}) {
+export function avaliarUmaCategoria(detalhe, { tipoVeiculo = "Carro/Caminhonete", sistemasPeca = [], rejeicoes = [], textoPeca = "" } = {}) {
   const alertas = [];
   const bloqueios = [];
   const niveis = Array.isArray(detalhe?.niveis) ? detalhe.niveis : [];
   if (!niveis.length) bloqueios.push("caminho da categoria não lido no Mercado Livre");
-  else if (niveis[0] !== "Acessórios para Veículos") bloqueios.push(`categoria fora de "Acessórios para Veículos" (${niveis[0]})`);
+  else if (niveis[0] !== "Acessórios para Veículos") {
+    // (09/11) Única exceção: a categoria preferida da própria peça (ex.: relé automotivo → Relés).
+    if (!permitidaForaDeVeiculos(detalhe, textoPeca)) bloqueios.push(`categoria fora de "Acessórios para Veículos" (${niveis[0]})`);
+  }
   else {
     const ramo = ramoEsperado(tipoVeiculo);
     if (ramo && niveis[1] !== ramo) bloqueios.push(`ramo "${niveis[1] || "?"}" não é o do tipo de veículo (${tipoVeiculo} → ${ramo})`);
@@ -246,7 +253,7 @@ export function avaliarUmaCategoria(detalhe, { tipoVeiculo = "Carro/Caminhonete"
  * Devolve { candidatas[], sugerida, conflitos[], alertas[], sistemasPeca[] }.
  * `sugerida` só existe SEM conflito — e mesmo assim precisa ser confirmada.
  */
-export function avaliarCategorias({ tipoVeiculo = "Carro/Caminhonete", textoPeca = "", consultas = [], detalhes = {}, evidencia = null, rejeicoes = [], herdadas = [] } = {}) {
+export function avaliarCategorias({ tipoVeiculo = "Carro/Caminhonete", textoPeca = "", textoProduto = "", consultas = [], detalhes = {}, evidencia = null, rejeicoes = [], herdadas = [], preferencia = null } = {}) {
   const sistemasPeca = sistemasDaPeca(textoPeca);
   const mapa = new Map();
   const garantir = (id) => {
@@ -286,7 +293,7 @@ export function avaliarCategorias({ tipoVeiculo = "Carro/Caminhonete", textoPeca
 
   const candidatas = [...mapa.values()].map((c) => {
     const d = detalhes?.[c.id] || { id: c.id };
-    const av = avaliarUmaCategoria({ ...d, id: c.id, dominio: d.dominio || c.dominioPreditor || "" }, { tipoVeiculo, sistemasPeca, rejeicoes });
+    const av = avaliarUmaCategoria({ ...d, id: c.id, dominio: d.dominio || c.dominioPreditor || "" }, { tipoVeiculo, sistemasPeca, rejeicoes, textoPeca: permitidaForaDeVeiculos(d, textoProduto) ? textoProduto : textoPeca });
     return {
       ...c,
       nome: txt(d.nome),
@@ -345,10 +352,25 @@ export function avaliarCategorias({ tipoVeiculo = "Carro/Caminhonete", textoPeca
     else if (votados.length === 1 && c.id !== votados[0]) conflitos.push(`A categoria herdada ${c.id} é diferente da indicada pelo preditor (${votados[0]}).`);
   }
 
-  const sugerida = conflitos.length === 0 && votados.length === 1 ? votados[0] : null;
+  let sugerida = conflitos.length === 0 && votados.length === 1 ? votados[0] : null;
+  // (09/11) Regra permanente (ex.: relés): a categoria preferida, válida e não rejeitada, é a
+  // sugestão — as divergências do preditor viram aviso. Inválida/rejeitada: diz o motivo e
+  // as alternativas continuam na lista.
+  let preferida = null;
+  const pc = preferencia?.id ? porId[idCat(preferencia.id)] : null;
+  if (pc && pc.compativel) {
+    preferida = pc.id;
+    if (!pc.origens.includes(ORIGEM_CATEGORIA.PREFERENCIA)) pc.origens.push(ORIGEM_CATEGORIA.PREFERENCIA);
+    const outras = votados.filter((id) => id !== pc.id);
+    if (outras.length) alertas.push(`O preditor do Mercado Livre indicou ${outras.join(", ")}; a regra permanente do PAIIA (${txt(preferencia.rotulo) || "categoria preferida"}) usa ${pc.id}.`);
+    for (const c of conflitos.splice(0)) if (!c.startsWith(`A categoria herdada ${pc.id} `)) alertas.push(c);
+    sugerida = pc.id;
+  } else if (pc) {
+    alertas.push(`A categoria preferida ${pc.id} (${txt(preferencia.rotulo) || "regra permanente"}) não serve agora: ${pc.rejeitada ? "categoria REJEITADA pelo Mercado Livre para este SKU" : pc.bloqueios.join("; ")}. Escolha uma das alternativas.`);
+  }
   const ordem = (c) => (c.id === sugerida ? 0 : c.rejeitada ? 4 : !c.compativel ? 3 : c.preditor.length || c.evidencia ? 1 : 2);
   candidatas.sort((a, b) => ordem(a) - ordem(b) || (b.evidencia?.anuncios || 0) - (a.evidencia?.anuncios || 0) || (Math.min(...a.preditor.map((p) => p.posicao), 99) - Math.min(...b.preditor.map((p) => p.posicao), 99)));
-  return { versao: VERSAO_REGRA_CATEGORIA, candidatas, sugerida, conflitos, alertas, sistemasPeca, votos };
+  return { versao: VERSAO_REGRA_CATEGORIA, candidatas, sugerida, conflitos, alertas, sistemasPeca, votos, preferida };
 }
 
 // ---------- Decisão do usuário (rastreabilidade) ----------
@@ -420,7 +442,7 @@ export function conferirCategoriaParaPublicar({ categoriaId, decisao, rejeicoes 
     const revisada = decisao?.revisao?.categoria_id === id && txt(decisao.revisao.justificativa).length >= 10;
     if (rej.length && !revisada) motivos.push(`CATEGORIA REJEITADA: ${id} já teve anúncio deste SKU encerrado pelo Mercado Livre (${rej.map((r) => `${r.mlb}: ${r.motivo}`).join("; ")}).`);
     if (detalhe) {
-      const av = avaliarUmaCategoria({ ...detalhe, id }, { tipoVeiculo, sistemasPeca: sistemasDaPeca(textoPeca), rejeicoes: [] });
+      const av = avaliarUmaCategoria({ ...detalhe, id }, { tipoVeiculo, sistemasPeca: sistemasDaPeca(textoPeca), rejeicoes: [], textoPeca });
       const revisadaIncompat = decisao?.revisao?.categoria_id === id && decisao.revisao.tipo === "incompativel" && txt(decisao.revisao.justificativa).length >= 10;
       if (av.bloqueios.length && !revisadaIncompat) motivos.push(`Categoria ${id} incompatível: ${av.bloqueios.join("; ")}.`);
     } else motivos.push(`Caminho/domínio da categoria ${id} não conferido agora no Mercado Livre.`);

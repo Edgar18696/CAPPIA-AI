@@ -175,6 +175,7 @@ export default function PainelCategoriaML({
   onTermo,
   onBuscar,
   preferida = "",
+  avancadoAberto = false,
   atributos = null,
   onAtributo = null,
   onSeguir = null,
@@ -211,7 +212,7 @@ export default function PainelCategoriaML({
         <div data-paiia-categoria-buscando style={{ ...cartao, border: "1px solid #334155", fontSize: "14px" }}>⏳ Buscando a categoria no Mercado Livre…</div>
       ) : melhor ? (
         <div data-paiia-categoria-sugerida={melhor.id} data-paiia-categoria-melhor={melhor.id} style={{ ...cartao, border: "1px solid #22d3ee", fontSize: "14px" }}>
-          <div style={{ color: "#67e8f9", fontWeight: "bold" }}>{melhor === pedida ? "Categoria do código informado" : "Melhor categoria encontrada"}</div>
+          <div style={{ color: "#67e8f9", fontWeight: "bold" }}>{melhor === pedida ? (/^\s*MLB\d+\s*$/i.test(termo) ? "Categoria do código informado" : "Categoria encontrada para a sua busca") : "Melhor categoria encontrada"}</div>
           <div style={{ color: "#f8fafc", fontSize: "15px", fontWeight: "bold", marginTop: "2px" }}>{caminho(melhor)} <span style={rotulo}>({melhor.id})</span></div>
           {divergencia ? <div style={{ color: "#fde68a" }}>As fontes do Mercado Livre indicaram mais de uma opção: confira o caminho antes de usar.</div> : null}
           <button type="button" data-paiia-categoria-confirmar={melhor.id} style={{ ...botao, marginTop: "8px", fontSize: "14px" }} onClick={() => onConfirmar(melhor, null)}>
@@ -265,7 +266,7 @@ export default function PainelCategoriaML({
 
       {/* Exceções e detalhes técnicos: recolhidos (não poluem a tela). */}
       {(confirmada || outras.length || conflitos.length || alertas.length || rejeicoes.length || restricoes.length) ? (
-        <details data-paiia-categoria-avancado style={{ marginBottom: "10px" }}>
+        <details data-paiia-categoria-avancado open={avancadoAberto || undefined} style={{ marginBottom: "10px" }}>
           <summary style={{ color: "#94a3b8", fontSize: "12px", cursor: "pointer" }}>Avançado (outras categorias, detalhes e exceções)</summary>
           {confirmada ? (
             <div style={{ ...cartao, marginTop: "6px" }}>
