@@ -637,8 +637,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     setUsoBling("usar");
     setEstoque(null);
     setLendoBlingPub(true);
-    setEstoque(comRegistroBling(await lerBling()));
-    setLendoBlingPub(false);
+    try { setEstoque(comRegistroBling(await lerBling())); } finally { setLendoBlingPub(false); }
   }
   function publicarSemBling() {
     setUsoBling("sem");
@@ -817,7 +816,11 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     const sku = String(skuBling || anuncio?.codigo || "").trim();
     if (!sku) return { ok: false, encontrado: false };
     try {
-      const { data } = await supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } });
+      // (10/11) Sem resposta do Bling não deixa a tela "Consultando…" para sempre.
+      const { data } = await Promise.race([
+        supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } }),
+        new Promise((ok) => setTimeout(() => ok({ data: { ok: false, mensagem: "o Bling não respondeu em 40 s" } }), 40_000)),
+      ]);
       return data || { ok: false };
     } catch {
       return { ok: false };
@@ -826,8 +829,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   async function relerBling() {
     setEstoque(null);
     setLendoBlingPub(true);
-    setEstoque(comRegistroBling(await lerBling()));
-    setLendoBlingPub(false);
+    try { setEstoque(comRegistroBling(await lerBling())); } finally { setLendoBlingPub(false); }
   }
   async function chamarBling(corpo) {
     const { data, error } = await supabase.functions.invoke("bling-integracao", { body: corpo });
@@ -1640,7 +1642,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
         ) : estoque === null ? (
 
           lendoBlingPub ? (
-            <p style={info}>⏳ Consultando o Bling pelo SKU {anuncio?.codigo || "—"}...</p>
+            <p data-paiia-bling-lendo style={info}>⏳ Consultando o Bling pelo SKU {anuncio?.codigo || "—"}...</p>
           ) : (
             <div style={info}>
               Este anúncio usa o Bling. O SKU {anuncio?.codigo || "—"} só é consultado quando você pedir.{" "}
@@ -1650,7 +1652,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
             </div>
           )
         ) : estoque?.ambiguo ? (
-          <div style={erro}>
+          <div data-paiia-bling-estado="ambiguo" style={erro}>
             ❌ Mais de um produto no Bling com o SKU {anuncio?.codigo}: {(estoque.candidatos || []).map((c) => `${c.codigo} (ID ${c.id})`).join(", ")}. Resolva no Bling: o PAIIA não escolhe sozinho e não cria outro.
           </div>
         ) : estoque?.encontrado ? (

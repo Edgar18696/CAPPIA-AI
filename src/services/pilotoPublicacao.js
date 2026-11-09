@@ -60,6 +60,42 @@ export function motivoDoBloqueio(textoBloqueios = "", motivoBotao = "", { segund
 }
 
 /**
+ * (10/11) Etapa 2 — Bling. Retomada (F5 / "Tentar de novo"): a ficha lembra "usar o Bling", mas a
+ * leitura do SKU só acontece por botão ("Consultar o SKU no Bling"). O piloto reconhece esse botão e
+ * faz a MESMA consulta (somente leitura), espera enquanto o Bling responde e, se a consulta falhar,
+ * relê UMA vez. Produto já cadastrado (pelo SKU ou pelo ID gravado na ficha) = reutiliza, nada é
+ * criado. Retorna null quando o bloco do Bling ficou pronto, ou { texto } com o motivo da pausa.
+ */
+export async function etapaBling(p, { L, esperarAte, encerrado = () => false }) {
+  const lendo = () => Boolean(p.achar("[data-paiia-bling-lendo]"));
+  // O estoque do Bling só aparece com o produto encontrado (inclui o cadastro gravado na ficha).
+  const estado = () => p.achar("[data-paiia-bling-estado]")?.getAttribute?.("data-paiia-bling-estado") || (p.achar("[data-paiia-bling-estoque]") ? "encontrado" : "");
+  const textoDo = (sel) => p.texto(p.achar(sel)).replace(/\s+/g, " ").replace(/^[⚠❌]\s*/u, "").trim().slice(0, 300);
+  const seg = Math.round(L.passo / 1000);
+  // Espera o bloco: resultado da leitura, o botão de consulta/uso, ou "sem Bling" (sem conexão).
+  const achou = await esperarAte(() => (lendo() ? null
+    : p.achar("[data-paiia-bling-estado]") || p.achar("[data-paiia-bling-estoque]") || p.achar("[data-paiia-usar-bling]") || p.achar("[data-paiia-consultar-bling]") || p.achar('[data-paiia-bling-escolha="sem"]')), L.passo);
+  if (encerrado()) return { texto: "" };
+  if (!achou) return { texto: lendo() ? `O Bling não respondeu à consulta do SKU em ${seg} s. Nada foi criado nem alterado no Bling.` : "O bloco do Bling não apareceu." };
+  const resultado = async () => (await esperarAte(() => (!lendo() ? estado() || null : null), 2 * L.passo)) || "";
+  let est = estado();
+  if (!est) {
+    const botao = p.achar("[data-paiia-usar-bling]") || p.achar("[data-paiia-consultar-bling]");
+    if (!botao) return { texto: "Nenhuma conta Bling conectada: o SKU não pôde ser conferido no Bling. Reconecte o Bling (ou escolha “Publicar sem Bling” na ficha) e toque em Tentar de novo. Nada foi enviado." };
+    p.clicar(botao); // consulta do SKU (somente leitura)
+    est = await resultado();
+    if (!est) return { texto: `O Bling não respondeu à consulta do SKU em ${2 * seg} s. Nada foi criado nem alterado no Bling.` };
+  }
+  if (est === "erro") {
+    const reler = p.achar("[data-paiia-reler-bling]");
+    if (reler && !reler.disabled) { p.clicar(reler); await p.esperar(L.intervalo); est = await resultado(); }
+    if (est === "erro" || !est) return { texto: `${(textoDo('[data-paiia-bling-estado="erro"]') || "Não foi possível consultar o Bling agora").replace(/[.\s]+$/, "")}. Nada foi criado nem alterado no Bling.` };
+  }
+  if (est === "ambiguo") return { texto: textoDo('[data-paiia-bling-estado="ambiguo"]') || "Mais de um produto no Bling com este SKU: resolva no Bling." };
+  return null;
+}
+
+/**
  * Executa o piloto. `p` (interface com a tela, trocável nos testes):
  *  achar(sel) → elemento | null ; clicar(el) ; texto(el) ; esperar(ms) ;
  *  consultarItem(mlb) → item ; relerIntegracao() → "integrado" | outro ; progresso(etapa, texto)
@@ -100,10 +136,8 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   }
   // 2) Bling: usar o Bling (o produto já foi cadastrado/conferido na etapa 8 do Voz).
   p.progresso("bling");
-  const usar = await esperarAte(() => p.achar("[data-paiia-usar-bling]") || p.achar("[data-paiia-bling-estoque]") || p.achar("[data-paiia-bling-estado]"), L.passo);
-  if (!usar) return pausar("bling", "O bloco do Bling não apareceu.");
-  if (encerrado()) return pausar("bling");
-  if (usar.hasAttribute?.("data-paiia-usar-bling")) p.clicar(usar);
+  const r2 = await etapaBling(p, { L, esperarAte, encerrado });
+  if (r2) return pausar("bling", r2.texto);
   // (Novo Anúncio) SKU ausente no Bling: o MESMO cadastro protegido da Publicação (criar_produto: confere
   // as escritas do SKU, trava, envia UMA vez, estoque por balanço). A autorização única cobre este passo.
   const abrirCriar = await esperarAte(() => visivel("[data-paiia-abrir-criar-bling]") || p.achar("[data-paiia-bling-estoque]") || (p.achar("[data-paiia-confirmar-quantidade]") ? { ja: true } : null), L.passo);

@@ -5033,7 +5033,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               autoId={autoPiloto}
               anuncioId={anuncioIdPAIIA}
               quantidade={quantidadeEstoque}
-              onCorrigir={({ item }) => {
+              onCorrigir={({ item, etapa }) => {
                 // (09/11) Pausa antes do envio: mostra a Publicação desta MESMA ficha e leva à pendência.
                 // Nada é publicado aqui: publicar de novo exige o seu toque (com a mesma trava do servidor).
                 setPublicacaoManual(true);
@@ -5041,7 +5041,8 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                 setTimeout(() => {
                   try {
                     const linha = item ? [...document.querySelectorAll("[data-paiia-ml-conferencia] tr[data-item]")].find((tr) => tr.getAttribute("data-item") === item) : null;
-                    const alvo = linha || document.getElementById("pub-etapa-publicar");
+                    // (10/11) Pausa no Bling: abre o próprio bloco do Bling (Reler / Criar / Publicar sem Bling).
+                    const alvo = linha || document.getElementById(etapa === "bling" ? "pub-etapa-bling" : "pub-etapa-publicar");
                     alvo?.scrollIntoView({ behavior: "smooth", block: "center" });
                     if (linha) { linha.setAttribute("data-paiia-pendencia-destaque", "1"); linha.style.outline = "2px solid #f59e0b"; }
                   } catch { /* sem rolagem */ }

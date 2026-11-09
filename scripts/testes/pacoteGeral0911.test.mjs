@@ -111,7 +111,7 @@ test("tela: pausa oferece Corrigir nesta ficha e Tentar de novo só antes do env
   assert.match(rev, /try \{ r = await conferirCategoriaAgora\(\); \} catch/);
   assert.match(rev, /try \{ r = await conferirFretePublicacao\(\); \} catch/);
   const mlt = ler("src/components/MercadoLivreTeste.jsx");
-  assert.match(mlt, /onCorrigir=\{\(\{ item \}\) => \{/);
+  assert.match(mlt, /onCorrigir=\{\(\{ item, etapa \}\) => \{/);
   assert.match(mlt, /setPublicacaoManual\(true\);/);
 });
 
