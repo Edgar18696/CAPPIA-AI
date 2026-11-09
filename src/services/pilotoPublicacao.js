@@ -43,8 +43,15 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   const L = { passo: 45_000, ativo: 15 * 60_000, vinculo: 20 * 60_000, intervalo: 1_500, intervaloML: 10_000, ...limites };
   // (08/11) Depois do MLB confirmado, a tela pode ser liberada (Fechar / Criar Próximo Anúncio):
   // p.encerrado() = true para de esperar aqui; as conferências seguem em segundo plano pela ficha.
+  // (09/11) ANTES do envio também ("Salvar e Criar Próximo Anúncio"): para na hora, sem tocar em
+  // mais nada; a publicação fica pendente (nada vai ao Mercado Livre sem nova autorização).
+  // Entre o toque em Publicar e a resposta do ML NUNCA interrompe (enviando).
   let depoisDoMLB = false;
-  const encerrado = () => depoisDoMLB && Boolean(p.encerrado?.());
+  let enviando = false;
+  const encerrado = () => !enviando && Boolean(p.encerrado?.());
+  const pausar = (etapa, texto) => (!depoisDoMLB && encerrado()
+    ? { ok: false, etapa, liberado: true, texto: "Liberado para a próxima peça: a ficha ficou salva e a publicação pendente na Central de Publicação; nada foi enviado ao Mercado Livre." }
+    : pausa(etapa, texto));
   const esperarAte = async (fn, ms, intervalo = L.intervalo) => {
     const fim = Date.now() + ms;
     for (;;) { if (encerrado()) return null; const v = await fn(); if (v) return v; if (Date.now() > fim) return null; await p.esperar(intervalo); }
@@ -53,46 +60,52 @@ export async function executarPiloto(p, { limites = {} } = {}) {
 
   // 1) Canais: "somente este anúncio" + Mercado Livre + continuar.
   p.progresso("canais");
-  if (await esperarAte(() => p.achar("[data-paiia-revisao-ml]") || p.achar("[data-paiia-base-nao]") || p.achar('[data-paiia-salvar-canais="ml"]'), L.passo) === null) return pausa("canais", "A Publicação desta ficha não abriu.");
+  if (await esperarAte(() => p.achar("[data-paiia-revisao-ml]") || p.achar("[data-paiia-base-nao]") || p.achar('[data-paiia-salvar-canais="ml"]'), L.passo) === null) return pausar("canais", "A Publicação desta ficha não abriu.");
   const base = p.achar("[data-paiia-base-nao]"); if (base) { p.clicar(base); await p.esperar(L.intervalo); }
   if (!p.achar("[data-paiia-revisao-ml]")) {
     const chk = await esperarAte(() => p.achar('[data-paiia-canal-check="mercado_livre"]'), L.passo);
-    if (!chk) return pausa("canais", "Não encontrei o canal Mercado Livre desta ficha.");
+    if (!chk) return pausar("canais", "Não encontrei o canal Mercado Livre desta ficha.");
     if (!chk.checked) p.clicar(chk);
     const salvar = await esperarAte(() => visivel('[data-paiia-salvar-canais="ml"]'), L.passo);
-    if (!salvar) return pausa("canais", "Não consegui confirmar o canal Mercado Livre.");
+    if (!salvar) return pausar("canais", "Não consegui confirmar o canal Mercado Livre.");
     p.clicar(salvar);
-    if (!(await esperarAte(() => p.achar("[data-paiia-revisao-ml]"), L.passo))) return pausa("canais", "A revisão do Mercado Livre não abriu.");
+    if (!(await esperarAte(() => p.achar("[data-paiia-revisao-ml]"), L.passo))) return pausar("canais", "A revisão do Mercado Livre não abriu.");
   }
   // 2) Bling: usar o Bling (o produto já foi cadastrado/conferido na etapa 8 do Voz).
   p.progresso("bling");
   const usar = await esperarAte(() => p.achar("[data-paiia-usar-bling]") || p.achar("[data-paiia-bling-estoque]") || p.achar("[data-paiia-bling-estado]"), L.passo);
-  if (!usar) return pausa("bling", "O bloco do Bling não apareceu.");
+  if (!usar) return pausar("bling", "O bloco do Bling não apareceu.");
+  if (encerrado()) return pausar("bling");
   if (usar.hasAttribute?.("data-paiia-usar-bling")) p.clicar(usar);
   // (Novo Anúncio) SKU ausente no Bling: o MESMO cadastro protegido da Publicação (criar_produto: confere
   // as escritas do SKU, trava, envia UMA vez, estoque por balanço). A autorização única cobre este passo.
   const abrirCriar = await esperarAte(() => visivel("[data-paiia-abrir-criar-bling]") || p.achar("[data-paiia-bling-estoque]") || (p.achar("[data-paiia-confirmar-quantidade]") ? { ja: true } : null), L.passo);
   if (abrirCriar && abrirCriar.hasAttribute?.("data-paiia-abrir-criar-bling")) {
+    if (encerrado()) return pausar("bling");
     p.progresso("bling", "Cadastrando o produto no Bling com o estoque da ficha…");
     p.clicar(abrirCriar);
     const conferi = await esperarAte(() => p.achar("[data-paiia-conferi-sku-bling] input"), L.passo);
-    if (!conferi) return pausa("bling", "O cadastro no Bling não abriu.");
+    if (!conferi) return pausar("bling", "O cadastro no Bling não abriu.");
+    if (encerrado()) return pausar("bling");
     if (!conferi.checked) p.clicar(conferi);
     const criar = await esperarAte(() => visivel("[data-paiia-confirmar-criar-bling]"), L.passo);
-    if (!criar) { const f = p.achar("[data-paiia-bling-faltando]"); return pausa("bling", f ? p.texto(f) : "Faltam dados para cadastrar no Bling."); }
+    if (!criar) { const f = p.achar("[data-paiia-bling-faltando]"); return pausar("bling", f ? p.texto(f) : "Faltam dados para cadastrar no Bling."); }
+    if (encerrado()) return pausar("bling");
     p.clicar(criar);
     const feito = await esperarAte(() => (p.achar("[data-paiia-abrir-criar-bling]") || p.achar("[data-paiia-conferir-criar-bling]") ? (p.achar("[data-paiia-bling-criacao]") && /n[ãa]o foi|incerto|bloquead|falt|erro|n[ãa]o confirm/i.test(p.texto(p.achar("[data-paiia-bling-criacao]"))) ? { erro: p.texto(p.achar("[data-paiia-bling-criacao]")) } : null) : { ok: true }), 3 * L.passo);
-    if (!feito || feito.erro) return pausa("bling", feito?.erro?.slice(0, 300) || "O cadastro no Bling não foi confirmado. Nada foi repetido.");
+    if (!feito || feito.erro) return pausar("bling", feito?.erro?.slice(0, 300) || "O cadastro no Bling não foi confirmado. Nada foi repetido.");
   }
   // 3) Quantidade da ficha.
   p.progresso("quantidade");
   const q = await esperarAte(() => visivel("[data-paiia-confirmar-quantidade]") || (p.achar('[data-paiia-quantidade-estado="confirmada"]') ? { ja: true } : null), L.passo);
+  if (encerrado()) return pausar("quantidade");
   if (q && !q.ja) p.clicar(q);
   // 4) (13/11 — "publicar primeiro, conferir depois") Sem pré-validação separada: o SERVIDOR valida no
   // Mercado Livre dentro da própria publicação (validarComVariacoes) e recusa o que o ML não aceitar.
   // Assim a mesma checagem não é feita 2–3 vezes e nada fica esperando por ela.
   p.progresso("validar", "O Mercado Livre valida na própria publicação");
   await p.esperar(L.intervalo);
+  if (encerrado()) return pausar("validar");
   const aut = visivel("[data-paiia-autorizo-ml]");
   // 5) Publicar UMA vez (o nº da autorização vai junto; o servidor recusa repetição).
   p.progresso("publicar");
@@ -108,7 +121,9 @@ export async function executarPiloto(p, { limites = {} } = {}) {
     estavel = bloq && !conferindo ? estavel + 1 : 0;
     return estavel >= (L.estavel || 4) ? { bloqueio: p.texto(bloq) } : null;
   }, L.passo);
-  if (!pub || pub.bloqueio) return pausa("publicar", pub?.bloqueio ? `Corrija antes de publicar — ${pub.bloqueio.slice(0, 400)}` : "A publicação não foi liberada pela conferência.");
+  if (!pub || pub.bloqueio) return pausar("publicar", pub?.bloqueio ? `Corrija antes de publicar — ${pub.bloqueio.slice(0, 400)}` : "A publicação não foi liberada pela conferência.");
+  if (encerrado()) return pausar("publicar");
+  enviando = true;
   p.clicar(pub);
   // A tela pede 2 toques (autorizar + confirmar): a ÚNICA autorização do Voz cobre os dois.
   // O 2º toque só acontece UMA vez e só se nada começou; a trava do servidor impede repetição.
@@ -116,10 +131,11 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   const pub2 = p.achar("[data-paiia-resultado-publicacao]") ? null : visivel("[data-paiia-publicar-ml]");
   if (pub2) p.clicar(pub2);
   const res = await esperarAte(() => p.achar("[data-paiia-resultado-publicacao]"), 3 * L.passo);
-  if (!res) return pausa("publicar", "Sem resposta da publicação. Nada foi reenviado: confira na conta.");
+  enviando = false;
+  if (!res) return pausar("publicar", "Sem resposta da publicação. Nada foi reenviado: confira na conta.");
   const estadoRes = res.getAttribute("data-paiia-resultado-publicacao");
   const mlb = (p.texto(res).match(/MLB\d{6,}/) || [])[0] || "";
-  if (!mlb || !/^publicado/.test(estadoRes)) return pausa("publicar", p.texto(res).slice(0, 300) || "O Mercado Livre não publicou. Nada foi reenviado.");
+  if (!mlb || !/^publicado/.test(estadoRes)) return pausar("publicar", p.texto(res).slice(0, 300) || "O Mercado Livre não publicou. Nada foi reenviado.");
   // MLB confirmado pelo Mercado Livre e gravado: avisa "publicado" JÁ; o resto segue sem prender ninguém.
   const link = (res.querySelector?.("a")?.href) || "";
   depoisDoMLB = true;

@@ -75,7 +75,7 @@ import { marcaRegistro, registrarFotoVozNaGaleria } from "./servicos/galeriaVozR
 import { decidirPassoFinal, enderecoPublicacaoDaFicha } from "./servicos/passoFinalVoz";
 import { situacaoEnvioFotos } from "./servicos/fichaVozNuvem"; // (03/11) aviso das fotos em segundo plano
 // (08/11) Publicou → o Voz abre com ficha nova e limpa (a anterior fica salva na conta).
-import { abrirFichaVoz, avisoFichaPublicada, conferirPublicadaNaConta, limparAposPublicacao } from "./servicos/limpezaPosPublicacaoVoz";
+import { abrirFichaVoz, avisoFichaPublicada, conferirPublicadaNaConta, limparAposPublicacao, liberarFichaPendente } from "./servicos/limpezaPosPublicacaoVoz";
 // (02/11/2026) Etapa 1: ficha completa (marca, estoque, tipo, peso/medidas, aplicações) direto do Voz.
 import { dadosCompletosVoz, camposDitosNaFala } from "./servicos/fichaCompletaVoz";
 // (02/11/2026) Etapa 2: conferências oficiais (só leitura) direto do Voz.
@@ -135,7 +135,7 @@ const ROTULOS_VEIC = { montadora: "Montadora", modelo: "Modelo", motor: "Motor (
 const DICAS_VEIC = { montadora: "ex.: Fiat", modelo: "ex.: Uno", motor: "ex.: 1.0, 1.6 16V, Diesel", anoInicio: "ex.: 2010 (ou ano único)", anoFim: "ex.: 2014" };
 
 // Versão do PAIIA Voz mostrada na tela: confira no celular se a versão publicada chegou.
-export const VERSAO_PAIIA_VOZ = "09/11 · fotos na Galeria";
+export const VERSAO_PAIIA_VOZ = "09/11 · próximo anúncio liberado";
 
 export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   // (08/11) Ficha já publicada → abre limpa (a anterior fica salva na conta e no histórico deste aparelho).
@@ -1169,6 +1169,14 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     iniciarFichaNova();
     setAviso(guardar ? "Ficha anterior guardada neste aparelho. Ficha nova, vazia." : "Ficha anterior descartada deste aparelho. Ficha nova, vazia.");
   }
+  // (09/11) Ficha já salva na conta com a publicação pendente/pausada: guarda inteira em
+  // “Fichas guardadas” e abre outra peça. NÃO marca publicada; nada vai ao Mercado Livre.
+  function salvarECriarProximo() {
+    const r = liberarFichaPendente(fichaRef.current);
+    if (!r.ok) { setAviso(`⚠️ ${r.motivo}`); return; }
+    iniciarFichaNova(r.nova);
+    setAviso(r.aviso);
+  }
   function abrirGuardada(id) {
     const atual = fichaRef.current;
     if (fichaEmAndamento(atual, fotosRef.current.length)) {
@@ -1261,7 +1269,8 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
       {ficha.enviadaEm && (
         <div className="pr-cartao pr-cinza" data-pr-enviada>
           <p>Esta ficha ({cp?.codigo || "sem código"}) já foi enviada {ficha.enviadaPara === "publicacao" ? "à Publicação" : "ao Novo Anúncio"} em {new Date(ficha.enviadaEm).toLocaleString("pt-BR")}. Os dados e as fotos continuam guardados aqui; mudanças feitas aqui não vão para aquela ficha.</p>
-          <p className="pr-fonte">Para continuar aquela ficha, use a etapa 7 (Finalizar) ou a Central no computador. Para outra peça, toque em “Nova ficha limpa” (na etapa Fotos).</p>
+          <p className="pr-fonte">Para continuar aquela ficha, use a etapa 7 (Finalizar) ou a Central no computador. Para outra peça, toque em “Salvar e Criar Próximo Anúncio”: esta ficha fica salva (Central de Publicação e “Fichas guardadas”).</p>
+          {ficha.fichaIdPAIIA && <button type="button" className="pr-botao" onClick={salvarECriarProximo} data-pv-salvar-proximo>💾 Salvar e Criar Próximo Anúncio</button>}
         </div>
       )}
       {envioFotos.texto && <p className="pr-fonte pr-envio-fundo" role="status" data-pr-envio-fundo={envioFotos.estado}>{envioFotos.texto}</p>}

@@ -7,6 +7,7 @@ import { supabase } from "../supabase";
 import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl } from "../services/pilotoPublicacao";
 import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
+import { marcarFichaLiberada } from "../modules/paiiaVoz/servicos/limpezaPosPublicacaoVoz";
 
 export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoId = "", anuncioId = "", quantidade = "", onProximo }) {
   // Nº da autorização: do PAIIA Voz (?auto= na URL) ou da autorização única do Novo Anúncio (autoId).
@@ -62,6 +63,22 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
       <button type="button" data-paiia-fechar-piloto onClick={() => liberar(false)} style={{ flex: "1 1 120px", padding: "12px 14px", borderRadius: 10, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>Fechar</button>
     </div>
   ) : null;
+  // (09/11) Publicação PAUSADA ou ainda antes do envio: a ficha já está salva na conta (anuncioId).
+  // "Salvar e Criar Próximo Anúncio": para o piloto (nada mais é tocado), a publicação fica pendente na
+  // Central (status real, NÃO publicada) e o PAIIA Voz abre vazio. Nunca aparece no envio ao ML.
+  const podeLiberar = Boolean(anuncioId) && !st.publicado && (st.fim ? !st.fim.ok : st.etapa !== "publicar");
+  const salvarEProximo = () => {
+    encerradoRef.current = true;
+    marcarFichaLiberada(anuncioId);
+    setFechado(true);
+    onProximo?.();
+  };
+  const botaoLiberar = podeLiberar ? (
+    <div data-paiia-piloto-liberar style={{ marginTop: 12 }}>
+      <button type="button" data-paiia-salvar-proximo onClick={salvarEProximo} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #2f5fd0", background: "linear-gradient(160deg,#1d4ed8 0%,#123a8a 100%)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>💾 Salvar e Criar Próximo Anúncio</button>
+      <p style={{ fontSize: 13, color: "#94a3b8", margin: "6px 0 0" }}>A ficha já está salva na sua conta. {st.fim ? "A publicação" : "Se você sair agora, a publicação"} fica pendente na Central de Publicação; nada é enviado ao Mercado Livre sem você autorizar de novo.</p>
+    </div>
+  ) : null;
   const i = ETAPAS_PILOTO.indexOf(st.etapa);
   return (
     <div data-paiia-piloto={st.fim ? (st.fim.ok ? "concluido" : "pausado") : "executando"} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(2,6,23,0.96)", color: "#e2e8f0", display: "grid", placeItems: "center", padding: 16, overflow: "auto" }}>
@@ -94,6 +111,7 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         {st.fim && !st.fim.ok && (
           <p data-paiia-piloto-pausa style={{ fontSize: 16, color: "#fde68a" }}>⏸ Pausado em “{ROTULO_ETAPA[st.fim.etapa] || st.fim.etapa}”: {st.fim.texto} O que já foi feito ficou salvo.</p>
         )}
+        {botaoLiberar}
         <ol style={{ margin: "10px 0 0", paddingLeft: 20, fontSize: 14 }}>
           {ETAPAS_PILOTO.map((e, k) => (
             <li key={e} data-paiia-piloto-etapa={e} style={{ color: st.fim?.ok || k < i ? "#86efac" : k === i ? (st.fim ? "#fde68a" : "#67e8f9") : "#64748b" }}>

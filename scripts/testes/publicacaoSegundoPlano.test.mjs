@@ -182,7 +182,8 @@ test("5) piloto: publica UMA vez, avisa 'publicado' e, liberada a tela (Criar Pr
   assert.equal(st.cliques.filter((c) => c === "data-paiia-publicar-ml").length, 1, "publicou UMA vez");
   // encerrado ANTES do MLB não interrompe a publicação (só vale depois do MLB)
   const piloto = ler("src/services/pilotoPublicacao.js");
-  assert.ok(piloto.includes("const encerrado = () => depoisDoMLB && Boolean(p.encerrado?.());"));
+  // (09/11) no MEIO do envio (entre o toque em Publicar e a resposta do ML) nunca interrompe
+  assert.ok(piloto.includes("const encerrado = () => !enviando && Boolean(p.encerrado?.());"));
 });
 
 test("6) tela da publicação: 'Anúncio Publicado Com Sucesso' + Criar Próximo Anúncio + Fechar; registra as conferências na ficha", () => {

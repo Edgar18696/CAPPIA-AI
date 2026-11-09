@@ -28,6 +28,7 @@ import {
 import { conferirCategoriaParaPublicar } from "../services/categoriaML";
 import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
 import { extrasDaDecisao } from "../services/atributosCategoriaML";
+import { blingIdDaPublicacao, lerAteEncontrar, leituraComCadastroRegistrado } from "../services/blingRegistrado";
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
@@ -636,7 +637,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     setUsoBling("usar");
     setEstoque(null);
     setLendoBlingPub(true);
-    setEstoque(await lerBling());
+    setEstoque(comRegistroBling(await lerBling()));
     setLendoBlingPub(false);
   }
   function publicarSemBling() {
@@ -808,6 +809,10 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // Conferência manual (17/10/2026): sem varredura do cadastro, o usuário
   // confirma que conferiu no Bling outras escritas do SKU antes de criar.
   const [conferiSkuBling, setConferiSkuBling] = useState(false);
+  // (09/11) Produto que ESTA ficha já cadastrou/vinculou no Bling: se a busca pelo SKU ainda não o
+  // devolve (cadastro recente), usa o registro da ficha e nunca oferece criar de novo.
+  const blingRegistradoRef = useRef(null);
+  const comRegistroBling = (leitura) => leituraComCadastroRegistrado(leitura, { blingProdutoId: blingRegistradoRef.current || blingIdDaPublicacao(ficha.publicacao), sku: anuncio?.codigo || "" });
   async function lerBling(skuBling = "") {
     const sku = String(skuBling || anuncio?.codigo || "").trim();
     if (!sku) return { ok: false, encontrado: false };
@@ -821,7 +826,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   async function relerBling() {
     setEstoque(null);
     setLendoBlingPub(true);
-    setEstoque(await lerBling());
+    setEstoque(comRegistroBling(await lerBling()));
     setLendoBlingPub(false);
   }
   async function chamarBling(corpo) {
@@ -830,9 +835,10 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   }
   // Usa um cadastro que JÁ existe no Bling (nada é criado): relê e vincula.
   async function usarCadastroExistente(produto, aviso = "") {
-    const depois = await lerBling(produto?.codigo || "");
-    setEstoque(depois);
+    const depois = await lerAteEncontrar(() => lerBling(produto?.codigo || ""));
     const idBling = produto?.id || depois?.produto?.id;
+    if (idBling) blingRegistradoRef.current = idBling;
+    setEstoque(comRegistroBling(depois));
     if (idBling && ficha.anuncioId) await registrarProdutoBlingCriado({ anuncioId: ficha.anuncioId, blingProdutoId: idBling });
     setCriacaoBling({ ocupado: false, ok: true, criado: false, jaExistia: true, produto: { id: idBling, codigo: produto?.codigo }, problemas: aviso ? [aviso] : [] });
     setPainelBling(false);
@@ -879,10 +885,12 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // Depois de criado: relê, confere ID/SKU/estoque e vincula à ficha.
   async function finalizarCriacaoBling(enviado, r) {
     setCriacaoBling({ ocupado: true, etapa: "Relendo o produto no Bling..." });
-    const depois = await lerBling();
-    setEstoque(depois);
+    // (09/11) Cadastro recente pode demorar a aparecer na busca do Bling: relê algumas vezes.
+    const depois = await lerAteEncontrar(() => lerBling());
     const confCriado = conferirProdutoCriado({ enviado, criado: r, releitura: depois });
     const idBling = r.produto?.id || depois?.produto?.id;
+    if (idBling) blingRegistradoRef.current = idBling;
+    setEstoque(comRegistroBling(depois));
     if (idBling && ficha.anuncioId) await registrarProdutoBlingCriado({ anuncioId: ficha.anuncioId, blingProdutoId: idBling });
     setCriacaoBling({ ocupado: false, ok: confCriado.ok, criado: true, jaExistia: false, produto: { id: idBling, codigo: enviado.codigo }, problemas: confCriado.problemas, estoqueInicial: r.estoque_inicial || null });
     setPainelBling(false);
@@ -1633,6 +1641,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
         ) : estoque?.encontrado ? (
           <div data-paiia-bling-estado="encontrado" style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>
             <div>✅ Produto já existe no Bling: <b>{estoque.produto?.nome}</b> (ID {estoque.produto?.id}, SKU {estoque.produto?.codigo}).</div>
+            {estoque.registradoNaFicha && <div data-paiia-bling-registrado style={info}>ℹ {estoque.mensagem}</div>}
             <div data-paiia-bling-estoque>Estoque no Bling: físico <b>{estoque.saldoFisicoTotal ?? "—"}</b> · disponível <b>{estoque.saldoVirtualTotal ?? "—"}</b>{estoque.ok === false && estoque.mensagem ? ` — ${estoque.mensagem}` : ""}</div>
             {/* (03/11/2026) Vínculo automático só nas contas com loja Bling mapeada (hoje só LojaOnlineSP). */}
             {lojaBlingDaConta(contaEscolhida)?.vinculo_automatico ? (
