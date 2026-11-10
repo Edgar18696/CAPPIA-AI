@@ -212,3 +212,45 @@ test("(06/11) Galeria: foto já tratada entra pronta (sem Foto IA, sem cobrança
   assert.equal(r.guardadas.length, 2); assert.equal(r.recusadas.length, 1);
   assert.equal((await g.listar("F")).length, 5);
 });
+
+test("(10/11) recorte LOCAL no Voz: sem foto-ia, original e tratada separadas, F5 retoma sozinho, limite de 5", async () => {
+  const g = G.criarGuardaFotos({ armazenamento: G.armazenamentoMemoria() });
+  await g.adicionar("F", Array.from({ length: 5 }, (_, i) => img(`f${i}.jpg`)));
+  const falsa = fotoIAFalsa();
+  const c = { locais: 0, normalizadas: 0, simult: 0, max: 0, compostas: [] };
+  const deps = {
+    ...falsa.deps,
+    garantirOriginal: async (reg) => ({ caminho: `u1/originais/${reg.nome}`, url: `https://x/${reg.nome}` }),
+    normalizar: async (arq) => { c.normalizadas++; return { arquivo: Object.assign(new Blob([new Uint8Array(5)], { type: "image/jpeg" }), { name: `n-${arq.name}` }) }; },
+    recortarLocal: async (arq) => { c.locais++; c.simult++; c.max = Math.max(c.max, c.simult); await espera(20); c.simult--; assert.equal(arq.size, 5, "recorta a foto reduzida"); return { blob: new Blob([new Uint8Array(4)], { type: "image/png" }) }; },
+    comporFotoFinal: async ({ original, recorte }) => { c.compostas.push([original.size, recorte.size]); return { blob: new Blob([new Uint8Array(7)], { type: "image/png" }) }; },
+  };
+  const fila = IA.criarFilaFotoIA({ guarda: g, executar: IA.criarExecutorFotoIA(deps), concorrencia: 2, recorteSemCusto: true });
+  await fila.enfileirarNovas("F");
+  assert.ok(await ate(async () => (await g.listar("F")).every((r) => r.ia?.estado === "pronta")));
+  const regs = await g.listar("F");
+  assert.equal(falsa.c.recortes, 0, "nenhuma chamada à função foto-ia (sem cota, sem créditos)");
+  assert.equal(c.locais, 5);
+  assert.ok(c.max <= 2, `no máximo 2 por vez: ${c.max}`);
+  assert.ok(c.compostas.every(([o, r]) => o === 5 && r === 4), "compõe a MESMA foto reduzida que foi recortada");
+  assert.ok(regs.every((r) => r.blob.size === 10 && r.tratada.blob.size === 7 && r.versao === "tratada" && r.ia.local), "original guardada à parte; tratada pronta");
+  const extra = await g.adicionar("F", [img("sexta.jpg")]);
+  assert.equal(extra.recusadas.length, 1, "limite de 5 fotos por ficha");
+
+  // F5 no meio do recorte local: retoma sozinho (não cobra nada)
+  const arm = G.armazenamentoMemoria();
+  const g2 = G.criarGuardaFotos({ armazenamento: arm });
+  await g2.adicionar("F", [img("meio.jpg")]);
+  const [m] = await g2.listar("F");
+  await g2.salvarIA(m.id, { estado: "recortando", chave: "k-m", caminhoOriginal: "u1/originais/meio.jpg" });
+  const fila2 = IA.criarFilaFotoIA({ guarda: G.criarGuardaFotos({ armazenamento: arm }), executar: IA.criarExecutorFotoIA(deps), recorteSemCusto: true });
+  await fila2.processar("F");
+  assert.ok(await ate(async () => (await g2.listar("F"))[0].ia.estado === "pronta"), "retomou sozinho");
+  assert.equal(falsa.c.recortes, 0);
+});
+
+test("(10/11) tela do Voz liga o recorte local da Foto IA", () => {
+  const fonte = fs.readFileSync(new URL("../../src/modules/paiiaVoz/PaiiaVozRapido.jsx", import.meta.url), "utf8");
+  assert.match(fonte, /recortarLocal: \(arquivo\) => recortarLocalmente\(arquivo\)/);
+  assert.match(fonte, /recorteSemCusto: modoIA === "real"/);
+});

@@ -4,7 +4,9 @@
 //
 // Usa EXATAMENTE as funções do Foto IA (src/services/fotoIA), sem alterá-las:
 //   1) envia a original (enviarOriginalFotoIA)
-//   2) recorte na função "foto-ia" (recortarFotoIA → Replicate · Recraft)
+//   2) recorte LOCAL no aparelho (recortarLocalmente, o mesmo da Foto IA —
+//      sem créditos e sem cota mensal). O recorte antigo na função "foto-ia"
+//      (recortarFotoIA → Replicate) só roda se o recorte local não for passado.
 //   3) composição no navegador com os pixels ORIGINAIS (comporFotoFinal)
 // Diferenças do Foto IA: o resultado fica na ficha do PAIIA Voz (não grava
 // na Galeria) e só vai ao anúncio se o usuário escolher "Fundo branco".
@@ -110,7 +112,18 @@ export function criarExecutorFotoIA(deps) {
       await salvar(ia);
     }
     let blobRecorte = reg.iaRecorte || null;
-    if (!blobRecorte) {
+    if (!blobRecorte && deps.recortarLocal) {
+      // (10/11/2026) RECORTE LOCAL (o mesmo da Foto IA): no próprio aparelho,
+      // sem a função "foto-ia", sem créditos e sem a cota mensal. A foto vai
+      // ao recorte já reduzida (até 2560 px) — a mesma usada na composição.
+      if (!enviado && deps.normalizar) {
+        try { enviado = (await deps.normalizar(arquivoDe(reg)))?.arquivo || null; } catch { enviado = null; }
+      }
+      const recorte = await deps.recortarLocal(enviado || reg.blob);
+      blobRecorte = recorte.blob;
+      ia = { ...ia, local: true, estado: "compondo" };
+      await salvar(ia, { iaRecorte: blobRecorte, ...(enviado ? { iaEnviado: enviado } : {}) });
+    } else if (!blobRecorte) {
       const recorte = await recortarFotoIA({
         supabase,
         caminho: ia.caminhoOriginal,
@@ -142,7 +155,7 @@ function arquivoDe(reg) {
  * Fila de tratamento: até N fotos ao mesmo tempo, retomável após F5.
  * @param { guarda, executar, concorrencia, aoMudar }
  */
-export function criarFilaFotoIA({ guarda, executar, concorrencia = CONCORRENCIA_PADRAO, aoMudar = () => {} }) {
+export function criarFilaFotoIA({ guarda, executar, concorrencia = CONCORRENCIA_PADRAO, aoMudar = () => {}, recorteSemCusto = false }) {
   const rodando = {}; // id → true enquanto trata (nesta fila)
   let parado = false;
 
@@ -178,7 +191,8 @@ export function criarFilaFotoIA({ guarda, executar, concorrencia = CONCORRENCIA_
     for (const reg of regs) {
       const e = reg.ia?.estado;
       const precisaRecorte = e === "recortando" || (e === "compondo" && !reg.iaRecorte);
-      if (precisaRecorte && !EM_ANDAMENTO[reg.id] && !rodando[reg.id]) {
+      // (10/11/2026) Recorte local não cobra nada: retoma sozinho.
+      if (precisaRecorte && !recorteSemCusto && !EM_ANDAMENTO[reg.id] && !rodando[reg.id]) {
         await salvarIA(reg.id, { ...reg.ia, estado: "interrompida" });
         reg.ia = { ...reg.ia, estado: "interrompida" };
       }

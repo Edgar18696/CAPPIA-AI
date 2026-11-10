@@ -103,7 +103,8 @@ import { salvarFichaNovoAnuncio, lerFichaNovoAnuncio } from "../../services/fich
 import { rascunhoDaFicha } from "../../services/fichaNovoAnuncio";
 // Foto IA OFICIAL, sem alteração (mesmas funções da tela Foto IA):
 import { enviarOriginalFotoIA, recortarFotoIA } from "../../services/fotoIA/pipelineFotoIA";
-import { comporFotoFinal } from "../../services/fotoIA/composicaoFotoIA";
+import { comporFotoFinal, normalizarArquivoParaEnvio } from "../../services/fotoIA/composicaoFotoIA";
+import { recortarLocalmente } from "../../services/fotoIA/recorteLocalFotoIA";
 import { supabase } from "../../supabase";
 import GaleriaSeletor from "../../components/fotos/GaleriaSeletor";
 import { baixarFotoGaleria, vagasFotos } from "./servicos/galeriaVoz";
@@ -316,8 +317,11 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
     const f = criarFilaFotoIA({
       guarda,
       executar: modoIA === "real"
-        ? criarExecutorFotoIA({ supabase, usuarioId: usuario.id, enviarOriginalFotoIA, recortarFotoIA, comporFotoFinal, garantirOriginal: (reg) => garantirOriginalNaNuvem(reg, depsNuvemRef.current) })
+        ? criarExecutorFotoIA({ supabase, usuarioId: usuario.id, enviarOriginalFotoIA, recortarFotoIA, comporFotoFinal, garantirOriginal: (reg) => garantirOriginalNaNuvem(reg, depsNuvemRef.current), recortarLocal: (arquivo) => recortarLocalmente(arquivo), normalizar: normalizarArquivoParaEnvio })
         : criarExecutorSimulado(),
+      // (10/11/2026) recorte local: sem custo, retoma sozinho; 2 por vez (memória do celular)
+      recorteSemCusto: modoIA === "real",
+      concorrencia: modoIA === "real" ? 2 : undefined,
       aoMudar: () => {
         clearTimeout(espera);
         espera = setTimeout(() => recarregarFotos(), 150);

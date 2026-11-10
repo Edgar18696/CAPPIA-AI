@@ -202,7 +202,8 @@ async function paraBlob(c) {
 }
 
 async function decodificar(fonte) {
-  if (typeof createImageBitmap === "function") return createImageBitmap(fonte);
+  // mesma orientação usada na composição (foto de celular com EXIF girado)
+  if (typeof createImageBitmap === "function") return createImageBitmap(fonte, { imageOrientation: "from-image" });
   const url = URL.createObjectURL(fonte);
   try {
     const img = new Image();
