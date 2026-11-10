@@ -119,10 +119,12 @@ export async function enviarOriginalFotoIA({ supabase, usuarioId, arquivo, signa
 // 2) Recorte (remoção de fundo) na Edge Function, com novas tentativas
 //    automáticas SÓ para falhas temporárias e sempre com a MESMA chave
 //    (a função não conta a mesma foto duas vezes).
-export async function recortarFotoIA({ supabase, caminho, chave, signal, aoTentar }) {
+export async function recortarFotoIA({ supabase, caminho, chave, signal, aoTentar, tentativas = TENTATIVAS_AUTOMATICAS }) {
   let ultimoErro = null;
+  // (10/11) Modo Econômico da tela Foto IA passa tentativas = 1 (sem repetição automática).
+  const limite = Math.max(1, Math.min(TENTATIVAS_AUTOMATICAS, Number(tentativas) || 1));
 
-  for (let tentativa = 0; tentativa < TENTATIVAS_AUTOMATICAS; tentativa += 1) {
+  for (let tentativa = 0; tentativa < limite; tentativa += 1) {
     verificarCancelamento(signal);
     await esperar(ESPERA_ENTRE_TENTATIVAS_MS[tentativa] || 0, signal);
     aoTentar?.(tentativa + 1);
@@ -250,6 +252,7 @@ export async function processarUmaFotoIA({
   fundo = "branco",
   signal,
   aoEtapa,
+  tentativasRecorte = TENTATIVAS_AUTOMATICAS,
 }) {
   const estado = { ...(item.estado || {}) };
   if (!estado.chave) estado.chave = chaveIdempotenciaFoto();
@@ -273,6 +276,7 @@ export async function processarUmaFotoIA({
     caminho: estado.caminhoOriginal,
     chave: estado.chave,
     signal,
+    tentativas: tentativasRecorte,
     aoTentar: (n) => aoEtapa?.(n > 1 ? `recortando-tentativa-${n}` : "recortando", estado),
   });
   estado.uso = recorte.uso || null;

@@ -29,7 +29,6 @@ import {
   API_ATENDIMENTO_IA,
   API_PROCESSAR_IMAGEM,
   API_PROCESSAR_CLIP,
-  API_PROCESSAR_FOTO,
 } from "./components/constants/apiConstants";
 import CentralPublicacaoScreen from "./components/screens/CentralPublicacaoScreen";
 import PaiiaVoz from "./modules/paiiaVoz/PaiiaVoz";
@@ -78,13 +77,11 @@ import {
   obterResumoComercial,
 } from "./services/resumoComercial";
 
-import {
-  processarFotoAction,
-  enviarFotoOriginalAction,
-  salvarFotoNaGaleriaAction,
-} from "./services/fotoActions";
+// (10/11) A tela Foto IA usa o Modo Econômico (fotoEconomicaTela). As ações do
+// Gemini (services/fotoActions) voltam no Modo Premium, com confirmação.
 
 import { caminhoStorageDaUrl } from "./services/fotoIA/pipelineFotoIA.js";
+import { produzirFotoEconomica, textoEtapaEconomica } from "./services/fotoIA/fotoEconomicaTela.js";
 
 import {
   gerarRespostaIAAction,
@@ -226,7 +223,6 @@ const {
   tipoFundoFoto,
   setTipoFundoFoto,
 
-  tamanhoFoto,
   setTamanhoFoto,
 
   qualidadeFoto,
@@ -1117,6 +1113,8 @@ async function carregarMaisGaleria() {
   }
 }
 
+// (10/11) Usado pelo Modo Premium (Gemini), que volta com confirmação de custo.
+// eslint-disable-next-line no-unused-vars
 async function padronizarImagemFinal1200({
   url,
   transparente = false,
@@ -2001,90 +1999,26 @@ async function processarSelecionadas() {
           );
         }
 
-        const {
-          urlPublica:
-            imagemOriginal,
-        } =
-          await enviarFotoOriginalAction({
+        // (10/11) MODO ECONÔMICO (padrão): recorte sem IA generativa + composição
+        // com os pixels originais (1200 x 1200, PNG) e salvamento na Galeria.
+        // Uma tentativa só: nada de nova cobrança automática.
+        const economica =
+          await produzirFotoEconomica({
             supabase,
-            usuario,
+            usuarioId: usuario.id,
             arquivo: foto.file,
-            logContext,
+            fundo: tipoFundoFoto,
+            aoEtapa: (etapa) =>
+              setStatusProcesso(
+                textoEtapaEconomica(etapa, i, fotosSelecionadas.length, nomeArquivo)
+              ),
           });
 
-        setUrlPublica(
-          imagemOriginal
-        );
+        const imagemOriginal = economica.imagemOriginal;
+        const imagemFinal1200 = economica.imagemProcessada;
+        const transparenteFinal = economica.transparente;
 
-        setStatusProcesso(
-          `🤖 Processando foto ${i + 1} de ${fotosSelecionadas.length} (${nomeArquivo})...`
-        );
-
-        const {
-          imagemProcessada,
-          fundoTransparente,
-        } =
-          await processarFotoAction({
-            apiProcessarImagem:
-              API_PROCESSAR_FOTO,
-
-            supabaseKey,
-
-            urlImagem:
-              imagemOriginal,
-
-            categoriaFoto,
-
-            tipoFundoFoto,
-
-            qualidadeFoto,
-
-            tamanhoFoto,
-
-            logContext,
-          });
-
-        if (!imagemProcessada) {
-          throw new Error(
-            "A IA não retornou a imagem processada."
-          );
-        }
-
-        const transparenteFinal =
-          tipoFundoFoto ===
-            "transparente" ||
-          Boolean(
-            fundoTransparente
-          );
-
-        setStatusProcesso(
-          `📐 Padronizando foto ${i + 1} em 1200 x 1200...`
-        );
-
-        const imagemFinal1200 =
-          await padronizarImagemFinal1200({
-            url:
-              imagemProcessada,
-
-            transparente:
-              transparenteFinal,
-          });
-
-        setStatusProcesso(
-          `💾 Salvando foto ${i + 1} na Galeria...`
-        );
-
-        await salvarFotoNaGaleriaAction({
-          supabase,
-          usuario,
-
-          imagemOriginal,
-
-          imagemProcessada:
-            imagemFinal1200,
-
-          logContext,
-        });
+        setUrlPublica(imagemOriginal);
 
         console.log("FOTO IA — FOTO CONCLUÍDA:", {
           ...logContext,
@@ -2114,6 +2048,10 @@ async function processarSelecionadas() {
               largura: 1200,
               altura: 1200,
 
+              modo: economica.modo,
+              modelo: economica.modelo,
+              baixaResolucao: economica.baixaResolucao,
+
               criadaEm:
                 new Date().toISOString(),
             },
@@ -2134,7 +2072,7 @@ async function processarSelecionadas() {
             (resolve) => {
               setTimeout(
                 resolve,
-                11000
+                800 // (10/11) Modo Econômico: sem a espera longa que o Gemini exigia
               );
             }
           );

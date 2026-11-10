@@ -267,8 +267,6 @@ export default function FotoIA({
   setTipoFundoFoto,
   aplicarSombra,
   setAplicarSombra,
-  qualidadeFoto,
-  setQualidadeFoto,
   processarSelecionadas,
   statusProcesso,
   resultadosFotos,
@@ -528,31 +526,24 @@ export default function FotoIA({
             </option>
           </select>
 
-          <select
-            value={qualidadeFoto}
-            onChange={(evento) =>
-              setQualidadeFoto(evento.target.value)
-            }
+          {/* (10/11) Modo Econômico (padrão): remove o fundo sem IA generativa e mantém a peça original. */}
+          <div
+            data-paiia-foto-modo="economico"
             style={{
-              padding: "12px",
+              display: "inline-block",
+              padding: "10px 14px",
               borderRadius: "10px",
-              background: "#0f172a",
-              color: "#ffffff",
-              border: "1px solid #2563eb",
+              background: "#052e16",
+              color: "#bbf7d0",
+              border: "1px solid #16a34a",
               marginTop: "15px",
               marginLeft: "15px",
+              fontSize: "14px",
+              maxWidth: "100%",
             }}
           >
-            <option value="standard">
-              🟢 Qualidade Standard
-            </option>
-            <option value="alta">
-              🔵 Qualidade Alta
-            </option>
-            <option value="ultra">
-              🟣 Qualidade Ultra
-            </option>
-          </select>
+            🟢 Modo Econômico: remove o fundo e mantém a peça original (PNG 1200 × 1200)
+          </div>
 
           {typeof setAplicarSombra === "function" && (
             <label
