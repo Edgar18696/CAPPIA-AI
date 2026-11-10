@@ -257,6 +257,26 @@ export async function executarPiloto(p, { limites = {} } = {}) {
 }
 
 /**
+ * (10/11) Como cada etapa aparece na lista do piloto. Concluído NÃO pinta tudo de verde: vínculo no Bling
+ * ou ativação não confirmados ficam ⚠ "a conferir" (seguem em segundo plano); ficha que já tinha MLB
+ * mostra a Publicação como "já existia". Antes do fim: igual a antes (feitas ✅, atual ⏳/⏸, resto •).
+ * Devolve { estado: "ok" | "conferir" | "atual" | "pausa" | "pendente", icone, sufixo }.
+ */
+export function situacaoEtapaPiloto(etapa, { fim = null, atual = "", texto = "" } = {}) {
+  const k = ETAPAS_PILOTO.indexOf(etapa);
+  const i = ETAPAS_PILOTO.indexOf(atual);
+  if (fim?.ok) {
+    if (etapa === "vinculo" && fim.vinculo === false) return { estado: "conferir", icone: "⚠", sufixo: " — a conferir (segue sozinho em segundo plano)" };
+    if (etapa === "ativo" && fim.ativo === false) return { estado: "conferir", icone: "⚠", sufixo: " — a conferir no Mercado Livre" };
+    if (etapa === "publicar" && fim.jaExistia) return { estado: "ok", icone: "✅", sufixo: " — já existia (nada foi publicado de novo)" };
+    return { estado: "ok", icone: "✅", sufixo: "" };
+  }
+  if (k < i) return { estado: "ok", icone: "✅", sufixo: "" };
+  if (k === i) return fim ? { estado: "pausa", icone: "⏸", sufixo: "" } : { estado: "atual", icone: "⏳", sufixo: texto ? ` — ${texto}` : "" };
+  return { estado: "pendente", icone: "•", sufixo: "" };
+}
+
+/**
  * (10/11) MLB já gravado na ficha (qualquer um dos registros da publicação): tabela de publicações,
  * registro do Bling (integracao_bling) ou conferência pós-publicação (pos_publicacao).
  * Aceita a ficha completa (dados_conferencia) ou a linha da Central (campos já extraídos).

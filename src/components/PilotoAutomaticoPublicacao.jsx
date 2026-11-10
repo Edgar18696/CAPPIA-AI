@@ -4,7 +4,9 @@
 // seguem em segundo plano (ConferenciasSegundoPlano), mesmo saindo desta tela.
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../supabase";
-import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl, mlbRegistradoDaFicha } from "../services/pilotoPublicacao";
+import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl, mlbRegistradoDaFicha, situacaoEtapaPiloto } from "../services/pilotoPublicacao";
+
+const COR_ETAPA = { ok: "#86efac", conferir: "#fde68a", atual: "#67e8f9", pausa: "#fde68a", pendente: "#64748b" };
 import { obterAnuncio } from "../services/anuncioPublicacaoService";
 import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
@@ -111,7 +113,6 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
       <button type="button" data-paiia-piloto-tentar onClick={tentarDeNovo} style={{ flex: "1 1 140px", padding: "12px 14px", borderRadius: 10, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>↻ Tentar de novo</button>
     </div>
   ) : null;
-  const i = ETAPAS_PILOTO.indexOf(st.etapa);
   return (
     <div data-paiia-piloto={st.fim ? (st.fim.ok ? "concluido" : "pausado") : "executando"} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(2,6,23,0.96)", color: "#e2e8f0", display: "grid", placeItems: "center", padding: 16, overflow: "auto" }}>
       <div style={{ maxWidth: 520, width: "100%", border: "1px solid #334155", borderRadius: 14, padding: 18, background: "#0f172a" }}>
@@ -130,7 +131,7 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         )}
         {st.fim?.ok && (
           <div data-paiia-piloto-sucesso={st.fim.pendencia ? "com-pendencia" : "completo"} style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.6 }}>
-            <div>✅ ANÚNCIO PUBLICADO{st.fim.pendencia ? "" : " COM SUCESSO"}</div>
+            <div data-paiia-piloto-ja-existia={st.fim.jaExistia ? "1" : undefined}>{st.fim.jaExistia ? "✅ ANÚNCIO JÁ PUBLICADO — nada foi publicado de novo" : `✅ ANÚNCIO PUBLICADO${st.fim.pendencia ? "" : " COM SUCESSO"}`}</div>
             <div>{st.fim.vinculo === false ? "⚠ BLING: vínculo a conferir" : "✅ BLING INTEGRADO"}</div>
             <div>{st.publicado?.registrada ? "⏳ ESTOQUE: conferência em segundo plano" : "✅ ESTOQUE CONFERIDO"}</div>
             <div>{st.fim.ativo === false ? "⚠ MERCADO LIVRE: ativação a conferir" : "✅ MERCADO LIVRE ATIVO"}</div>
@@ -146,11 +147,15 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         {botoesPausa}
         {botaoLiberar}
         <ol style={{ margin: "10px 0 0", paddingLeft: 20, fontSize: 14 }}>
-          {ETAPAS_PILOTO.map((e, k) => (
-            <li key={e} data-paiia-piloto-etapa={e} style={{ color: st.fim?.ok || k < i ? "#86efac" : k === i ? (st.fim ? "#fde68a" : "#67e8f9") : "#64748b" }}>
-              {st.fim?.ok || k < i ? "✅" : k === i ? (st.fim ? "⏸" : "⏳") : "•"} {ROTULO_ETAPA[e]}{k === i && st.texto && !st.fim ? ` — ${st.texto}` : ""}
-            </li>
-          ))}
+          {ETAPAS_PILOTO.map((e) => {
+            // (10/11) Concluído não pinta tudo de verde: vínculo/ativação não confirmados ficam ⚠.
+            const s = situacaoEtapaPiloto(e, { fim: st.fim, atual: st.etapa, texto: st.texto });
+            return (
+              <li key={e} data-paiia-piloto-etapa={e} data-paiia-piloto-etapa-estado={s.estado} style={{ color: COR_ETAPA[s.estado] }}>
+                {s.icone} {ROTULO_ETAPA[e]}{s.sufixo}
+              </li>
+            );
+          })}
         </ol>
       </div>
     </div>
