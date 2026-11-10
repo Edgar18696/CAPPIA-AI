@@ -1390,10 +1390,10 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
             {modosDisponiveis(ambienteIA).map((m) => (
               <label key={m} className="pr-check">
                 <input type="radio" name="modo-ia" checked={modoIA === m} onChange={() => trocarModoIA(m)} data-pr-modo-ia-opcao={m} />
-                {m === "desligado" ? "Desligado (só a foto original)" : m === "simulacao" ? "Simulação de teste — gratuita, sem Replicate (não remove o fundo de verdade)" : "Real — Foto IA oficial (conta no limite de 50 por mês)"}
+                {m === "desligado" ? "Desligado (só a foto original)" : m === "simulacao" ? "Simulação de teste — gratuita, sem Replicate (não remove o fundo de verdade)" : "Ligado — recorte no próprio aparelho, sem créditos e sem limite mensal"}
               </label>
             ))}
-            {!modosDisponiveis(ambienteIA).includes("real") && <p className="pr-fonte">Tratamento real (Foto IA oficial, Replicate/Recraft, pago): desligado — aguardando sua autorização.</p>}
+            {!modosDisponiveis(ambienteIA).includes("real") && <p className="pr-fonte">Fundo branco: desligado nesta versão.</p>}
             {modoIA !== "desligado" && !usuario?.id && <p className="pr-aviso">⚠️ Entre na sua conta para tratar as fotos.</p>}
           </div>
           {nuvem.texto && <p className="pr-fonte" data-pr-nuvem={nuvem.estado}>{nuvem.texto}</p>}
