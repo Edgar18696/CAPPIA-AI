@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import Button from "./ui/Button";
 import { supabase } from "../supabase";
 import PainelFichasCentral from "./PainelFichasCentral";
+// (10/11) TEMPORÁRIO: diagnóstico somente leitura (SKU/MLB/Bling). Retirar depois da conferência.
+import DiagnosticoPublicacao from "./DiagnosticoPublicacao";
 import { camposNovoAnuncioDaMedida } from "../services/dadosTecnicosAnuncio";
 import { consumirNovaCriacaoMidia } from "../services/limparEstadoTemporarioMidia";
 import { esquecerFotosDeOutraFicha } from "../services/fotosDaFicha";
@@ -1063,6 +1065,7 @@ export default function CentralPublicacao({
         </section>
         <div style={{ marginTop: "16px" }}>
           <PainelFichasCentral setScreen={setScreen} />
+          <DiagnosticoPublicacao />
         </div>
       </div>
     );
@@ -1077,6 +1080,7 @@ export default function CentralPublicacao({
       }}
     >
       <PainelFichasCentral setScreen={setScreen} />
+      <DiagnosticoPublicacao />
       <section
         style={{
           ...cardStyle,
