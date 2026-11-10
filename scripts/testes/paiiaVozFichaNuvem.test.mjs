@@ -288,7 +288,7 @@ test("regressão do código: Voz ligado à ficha, envio pela MESMA ficha, trava 
   assert.ok(tela.includes("abrirFichaNoNovoAnuncio({ ...rasc, ...extra });"), "Enviar abre a MESMA ficha");
   assert.ok(/executar: modoIA === "real"\n\s+\? criarExecutorFotoIA\([^)]*garantirOriginal/.test(tela), "real reaproveita a original enviada");
   assert.ok(tela.includes(": criarExecutorSimulado(),"), "fora do modo real nada pago é chamado");
-  assert.match(tela, /realLiberado: import\.meta\.env\?\.VITE_PAIIA_VOZ_FOTO_IA_REAL === "1"/, "modo real continua dependendo da autorização no build");
+  assert.match(tela, /realLiberado: true/, "(10/11) recorte local grátis: fundo branco ligado em qualquer build");
   assert.ok(tela.includes("data-pr-na-conta="), "cada foto mostra se já está na ficha");
   assert.ok(!/from\("processamentos"\)|comporESalvarFotoIA/.test(tela), "não grava na Galeria");
   const servico = ler("src/modules/paiiaVoz/servicos/fichaVozNuvem.js");

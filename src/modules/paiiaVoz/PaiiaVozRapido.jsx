@@ -67,7 +67,7 @@ import { preencherAnuncioAutomaticamente } from "../../services/preencherAnuncio
 const preencherBase = (...a) => (globalThis.__paiiaModoTeste && globalThis.__paiiaPreencherTeste ? globalThis.__paiiaPreencherTeste(...a) : preencherAnuncioAutomaticamente(...a));
 import { candidatosDeCodigo, lerTextoDaFoto } from "./servicos/codigoNaFoto";
 import { armazenamentoIndexedDB, armazenamentoMemoria, criarGuardaFotos, MAX_FOTOS_POR_FICHA } from "./servicos/fotosVozLocal";
-import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos } from "./servicos/fotoIAVoz";
+import { criarExecutorFotoIA, criarExecutorSimulado, criarFilaFotoIA, lerModo, gravarModo, modosDisponiveis, situacaoIA, resumoFotos, TEXTO_PREPARANDO } from "./servicos/fotoIAVoz";
 // (31/10/2026) Ficha na conta: fotos e dados do Voz na MESMA ficha do Novo Anúncio (celular ⇄ computador).
 import { sincronizarFichaVoz, garantirOriginalNaNuvem } from "./servicos/fichaVozNuvem";
 import { garantirTratadaNaNuvem } from "./servicos/fichaVozNuvem";
@@ -194,7 +194,9 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
   const trocarRef = useRef({ input: null, id: null });
   const fotosRef = useRef([]);
   // Fundo branco com o Foto IA: real só com autorização (variável de build); no teste, simulação.
-  const ambienteIA = useMemo(() => ({ modoTeste: Boolean(globalThis.__paiiaModoTeste), realLiberado: import.meta.env?.VITE_PAIIA_VOZ_FOTO_IA_REAL === "1" }), []);
+  // (10/11/2026) Recorte LOCAL (grátis, sem cota): o fundo branco vem ligado por padrão
+  // em qualquer build — não depende mais de VITE_PAIIA_VOZ_FOTO_IA_REAL.
+  const ambienteIA = useMemo(() => ({ modoTeste: Boolean(globalThis.__paiiaModoTeste), realLiberado: true }), []);
   const [modoIA, setModoIA] = useState(() => lerModo(ambienteIA));
   const suporta = useMemo(() => suportaReconhecimento(), []);
   // (22/10) Aviso já na abertura: navegador sem voz / endereço inseguro / sem microfone.
@@ -1386,7 +1388,7 @@ export default function PaiiaVozRapido({ setScreen, usuario, onModoConversa }) {
           </div>
           {!fotos.length && <p className="pr-vazio">Nenhuma foto ainda. Você também pode continuar e adicionar as fotos no Novo Anúncio.</p>}
           <div className="pr-cartao pr-cinza" data-pr-modo-ia={modoIA}>
-            <strong>Fundo branco com o Foto IA</strong>
+            <strong>Fundo branco automático</strong>
             {modosDisponiveis(ambienteIA).map((m) => (
               <label key={m} className="pr-check">
                 <input type="radio" name="modo-ia" checked={modoIA === m} onChange={() => trocarModoIA(m)} data-pr-modo-ia-opcao={m} />
@@ -1846,24 +1848,24 @@ function EstadoFotoIA({ f, modoIA, onRepetir, curto = false }) {
   if (ia.estado === "interrompida") {
     return (
       <span className="pr-status pr-falhou" data-pr-status="interrompida">
-        ⏸ Fundo branco interrompido ao atualizar a página.{" "}
+        ⏸ Fundo branco interrompido.{" "}
         {modoIA !== "desligado" && <button type="button" className="pr-link" onClick={onRepetir} data-pr-retomar>Retomar</button>}
-        {!curto && <span className="pr-fonte"> Não recomeça sozinho{modoIA === "real" ? " (no modo real o provedor pode cobrar de novo)" : ""}. A original continua valendo.</span>}
+        {!curto && <span className="pr-fonte"> A original continua valendo.</span>}
       </span>
     );
   }
   if (ia.estado === "falhou") {
+    // (10/11/2026) Aviso simples: a original segue no anúncio, nada trava.
     return (
-      <span className="pr-status pr-falhou" data-pr-status="falhou">
-        ✗ Fundo branco falhou: {ia.erro || "erro"}{" "}
+      <span className="pr-status pr-falhou" data-pr-status="falhou" title={ia.erro || ""}>
+        ⚠️ Não foi possível preparar o fundo branco desta foto. A original será usada.{" "}
         {modoIA !== "desligado" && <button type="button" className="pr-link" onClick={onRepetir} data-pr-repetir>Tentar de novo</button>}
-        {!curto && <span className="pr-fonte"> A original continua valendo.</span>}
       </span>
     );
   }
   return (
     <span className="pr-status" data-pr-status="tratando">
-      ⏳ {modoIA === "desligado" && ia.estado === "na-fila" ? "Fundo branco pausado (desligado)" : `Fundo branco: ${ia.rotulo}${ia.tentativa > 1 ? ` (tentativa ${ia.tentativa})` : ""}…`}
+      ⏳ {modoIA === "desligado" && ia.estado === "na-fila" ? "Fundo branco pausado (desligado)" : TEXTO_PREPARANDO}
     </span>
   );
 }

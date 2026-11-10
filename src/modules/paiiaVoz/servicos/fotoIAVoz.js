@@ -39,7 +39,10 @@ export const ROTULOS_ESTADO = {
   interrompida: "interrompida ao atualizar a página",
 };
 export const CONCORRENCIA_PADRAO = 3;
-const CHAVE_MODO = "paiiaVozFotoIAModo";
+// (10/11/2026) Chave nova: com o recorte local (grátis) o fundo branco começa
+// LIGADO para todos — um "desligado" antigo (da época da cota) não vale mais.
+const CHAVE_MODO = "paiiaVozFundoBrancoModo";
+export const TEXTO_PREPARANDO = "Preparando fundo branco...";
 
 const novaChave = () => (globalThis.crypto?.randomUUID?.() || `voz-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 

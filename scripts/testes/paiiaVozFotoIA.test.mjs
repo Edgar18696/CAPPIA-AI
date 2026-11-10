@@ -57,7 +57,7 @@ test("modos: real só existe com autorização no build; autorizado, começa soz
   assert.equal(IA.lerModo({ modoTeste: false }, arm), "desligado", "‘real’ guardado não vale sem autorização");
   assert.equal(IA.lerModo({ modoTeste: true }, arm), "simulacao");
   const fonte = fs.readFileSync(new URL("../../src/modules/paiiaVoz/PaiiaVozRapido.jsx", import.meta.url), "utf8");
-  assert.match(fonte, /realLiberado: import\.meta\.env\?\.VITE_PAIIA_VOZ_FOTO_IA_REAL === "1"/, "real depende de variável de build explícita");
+  assert.match(fonte, /realLiberado: true/, "(10/11) recorte local grátis: fundo branco ligado em qualquer build");
   assert.ok(!/comporESalvarFotoIA|processarUmaFotoIA|from\("processamentos"\)/.test(fonte), "não grava na Galeria");
 });
 
@@ -253,4 +253,19 @@ test("(10/11) tela do Voz liga o recorte local da Foto IA", () => {
   const fonte = fs.readFileSync(new URL("../../src/modules/paiiaVoz/PaiiaVozRapido.jsx", import.meta.url), "utf8");
   assert.match(fonte, /recortarLocal: \(arquivo\) => recortarLocalmente\(arquivo\)/);
   assert.match(fonte, /recorteSemCusto: modoIA === "real"/);
+});
+
+test("(10/11) fundo branco AUTOMÁTICO: ligado por padrão, 'desligado' antigo não vale, texto 'Preparando fundo branco...', falha simples", () => {
+  const amb = { modoTeste: false, realLiberado: true };
+  const arm = { m: new Map(), getItem(k) { return this.m.get(k) ?? null; }, setItem(k, v) { this.m.set(k, v); } };
+  arm.setItem("paiiaVozFotoIAModo", "desligado"); // escolha da época da cota
+  assert.equal(IA.lerModo(amb, arm), "real", "começa ligado para todos");
+  IA.gravarModo("desligado", arm);
+  assert.equal(IA.lerModo(amb, arm), "desligado", "quem desligar agora continua respeitado");
+  assert.equal(IA.TEXTO_PREPARANDO, "Preparando fundo branco...");
+  const fonte = fs.readFileSync(new URL("../../src/modules/paiiaVoz/PaiiaVozRapido.jsx", import.meta.url), "utf8");
+  assert.match(fonte, /: TEXTO_PREPARANDO\}/, "enquanto processa mostra 'Preparando fundo branco...'");
+  assert.match(fonte, /Não foi possível preparar o fundo branco desta foto\. A original será usada\./);
+  assert.match(fonte, /data-pr-original/, "dá para escolher a original");
+  assert.match(fonte, /<strong>Fundo branco automático<\/strong>/);
 });
