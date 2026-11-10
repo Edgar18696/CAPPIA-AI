@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
+import RelatorioManhaPaizinho from "./RelatorioManhaPaizinho";
 
 const TAREFAS = [
   {
@@ -443,6 +444,7 @@ export default function CentralPaizinho({ setScreen }) {
     <main style={S.pagina}>
       <button type="button" onClick={() => setScreen("home")} style={S.voltar}>← Voltar</button>
       <header style={S.cabecalho}><div style={S.icone}>👨‍🔧</div><div><h1 style={S.titulo}>Olá! O que posso fazer por você hoje?</h1><p style={S.subtitulo}>Escolha um trabalho pronto. O Paizinho fará somente as perguntas necessárias.</p></div></header>
+      <RelatorioManhaPaizinho />
       {(contexto.codigo || contexto.produto) && <div style={S.contexto}><strong>Dados já encontrados:</strong> {[contexto.produto, contexto.codigo, contexto.oem].filter(Boolean).join(" • ")}. Não serão solicitados novamente.</div>}
 
       <section style={S.atalhos}>{SUGESTOES.map((id) => { const t = TAREFAS.find((x) => x.id === id); return <button key={id} onClick={() => escolher(t)} style={S.sugestao}>{t.titulo}</button>; })}</section>
