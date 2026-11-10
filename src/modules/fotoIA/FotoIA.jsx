@@ -1,258 +1,19 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import useFotoState from "./hooks/useFotoState";
 import TirarFotoCamera from "./components/TirarFotoCamera";
 
-function PaizinhoFotoIA({
-  arquivosFotos = [],
-  processando = false,
-  statusProcesso = "",
-  resultadosFotos = [],
-}) {
-  const totalFotos = Array.isArray(arquivosFotos)
-    ? arquivosFotos.length
-    : 0;
-
-  const totalResultados = Array.isArray(resultadosFotos)
-    ? resultadosFotos.filter((item) => item?.processada && !item?.erro).length
-    : 0;
-
-  const concluido = totalResultados > 0;
-
-  let icone = "🤖";
-  let titulo = "Agora vamos produzir sua Foto IA.";
-  let mensagem =
-    "Escolha até 8 fotos, defina o fundo e a qualidade. Eu acompanho esta missão com você.";
-  let proximo =
-    "Selecione uma ou mais fotos para começar.";
-  let progresso = 0;
-
-  if (totalFotos > 0 && !processando && !concluido) {
-    icone = "🤖😊";
-    titulo = "Fotos recebidas.";
-    mensagem = `${totalFotos} foto${
-      totalFotos > 1 ? "s" : ""
-    } pronta${
-      totalFotos > 1 ? "s" : ""
-    } para processamento.`;
-    proximo =
-      'Confira as opções e clique em "Produzir Foto IA".';
-    progresso = 30;
-  }
-
-  if (processando) {
-    icone = "🤖⚙️";
-    titulo = "Estou produzindo sua Foto IA.";
-    mensagem =
-      statusProcesso ||
-      "Estou processando as imagens e preparando o resultado profissional.";
-    proximo =
-      "Acompanhe aqui. Eu aviso quando a missão estiver concluída.";
-    progresso = 70;
-  }
-
-  if (concluido) {
-    icone = "🤖🎉";
-    titulo = "Missão 2 concluída!";
-    mensagem = `${totalResultados} foto${
-      totalResultados > 1 ? "s" : ""
-    } processada${
-      totalResultados > 1 ? "s" : ""
-    } com sucesso.`;
-    proximo =
-      "Próxima missão: criar o Banner Studio.";
-    progresso = 100;
-  }
-
-  return (
-    <section
-      style={{
-        position: "sticky",
-        top: "8px",
-        zIndex: 80,
-        maxWidth: "950px",
-        margin: "0 auto 18px",
-        padding: "12px 16px",
-        borderRadius: "15px",
-        border: concluido
-          ? "1px solid #22c55e"
-          : "1px solid #2563eb",
-        background: concluido
-          ? "linear-gradient(135deg,#052e16,#14532d)"
-          : "linear-gradient(135deg,#0f172a,#172554)",
-        boxShadow:
-          "0 10px 26px rgba(0,0,0,.28)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "14px",
-        }}
-      >
-        <div
-          style={{
-            width: "56px",
-            height: "56px",
-            minWidth: "56px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            borderRadius: "50%",
-            fontSize: "29px",
-            background: "rgba(2,6,23,.75)",
-            border: "1px solid #38bdf8",
-            boxShadow:
-              "0 0 15px rgba(34,211,238,.25)",
-          }}
-        >
-          {icone}
-        </div>
-
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "10px",
-              flexWrap: "wrap",
-            }}
-          >
-            <strong
-              style={{
-                color: concluido
-                  ? "#bbf7d0"
-                  : "#67e8f9",
-                fontSize: "17px",
-              }}
-            >
-              Paizinho PAIIA
-            </strong>
-
-            <span
-              style={{
-                color: "#94a3b8",
-                fontSize: "11px",
-                fontWeight: "bold",
-              }}
-            >
-              {concluido
-                ? "Missão 2 de 5 concluída"
-                : "Missão 2 de 5"}
-            </span>
-          </div>
-
-          <div
-            style={{
-              marginTop: "3px",
-              color: "#ffffff",
-              fontWeight: "bold",
-              fontSize: "14px",
-            }}
-          >
-            {titulo}
-          </div>
-
-          <div
-            style={{
-              marginTop: "3px",
-              color: "#cbd5e1",
-              fontSize: "12px",
-              lineHeight: 1.4,
-            }}
-          >
-            {mensagem}
-          </div>
-        </div>
-      </div>
-
-      <div
-        style={{
-          height: "6px",
-          marginTop: "10px",
-          overflow: "hidden",
-          borderRadius: "999px",
-          background: "#020617",
-        }}
-      >
-        <div
-          style={{
-            height: "100%",
-            width: `${progresso}%`,
-            borderRadius: "999px",
-            background: concluido
-              ? "linear-gradient(90deg,#16a34a,#22c55e)"
-              : "linear-gradient(90deg,#2563eb,#22d3ee)",
-            transition: "width .3s ease",
-          }}
-        />
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "7px",
-          flexWrap: "wrap",
-          marginTop: "9px",
-          color: "#cbd5e1",
-          fontSize: "11px",
-          fontWeight: "bold",
-        }}
-      >
-        <span>✅ Anúncio</span>
-        <span style={{ color: "#475569" }}>→</span>
-
-        <span
-          style={{
-            color: concluido
-              ? "#bbf7d0"
-              : processando || totalFotos > 0
-                ? "#fde68a"
-                : "#94a3b8",
-          }}
-        >
-          {concluido
-            ? "✅"
-            : processando
-              ? "🟡"
-              : totalFotos > 0
-                ? "🟢"
-                : "⬜"}{" "}
-          Foto IA
-        </span>
-
-        <span style={{ color: "#475569" }}>→</span>
-        <span>⬜ Banner</span>
-        <span style={{ color: "#475569" }}>→</span>
-        <span>⬜ Clip</span>
-        <span style={{ color: "#475569" }}>→</span>
-        <span>⬜ Publicação</span>
-      </div>
-
-      <div
-        style={{
-          marginTop: "9px",
-          paddingTop: "8px",
-          borderTop:
-            "1px solid rgba(148,163,184,.18)",
-          color: concluido
-            ? "#dcfce7"
-            : "#bfdbfe",
-          fontSize: "12px",
-          fontWeight: "bold",
-        }}
-      >
-        ➡️ {proximo}
-      </div>
-    </section>
-  );
+// (10/11) Celular: câmera + Galeria. Computador: só a escolha de arquivos.
+function useEhCelular() {
+  const consulta = "(pointer: coarse), (max-width: 767px)";
+  const [celular, setCelular] = useState(() => Boolean(globalThis.matchMedia?.(consulta)?.matches));
+  useEffect(() => {
+    const mq = globalThis.matchMedia?.(consulta);
+    if (!mq) return undefined;
+    const mudar = () => setCelular(mq.matches);
+    mq.addEventListener?.("change", mudar);
+    return () => mq.removeEventListener?.("change", mudar);
+  }, []);
+  return celular;
 }
 
 export default function FotoIA({
@@ -271,7 +32,6 @@ export default function FotoIA({
   statusProcesso,
   resultadosFotos,
   setResultadosFotos,
-  preview,
   resultadoIA,
   limparTelaFoto,
   processando,
@@ -396,30 +156,29 @@ export default function FotoIA({
   const ultimaFotoProcessada =
     resultadosFotos?.[resultadosFotos.length - 1]?.processada || "";
 
+  const celular = useEhCelular();
+  const qtdFotos = arquivosFotos.length;
+
   return (
-    <div style={{ marginTop: "50px" }}>
+    <div data-paiia-foto-tela={celular ? "celular" : "computador"} style={{ marginTop: celular ? "24px" : "20px", maxWidth: "980px", marginLeft: "auto", marginRight: "auto" }}>
       <h2
         style={{
           color: "#67e8f9",
-          fontSize: "32px",
-          marginBottom: "10px",
+          fontSize: celular ? "26px" : "28px",
+          margin: "0 0 12px",
         }}
       >
-        📸 Foto Premium IA
+        📸 Foto IA
       </h2>
 
-      <PaizinhoFotoIA
-        arquivosFotos={arquivosFotos}
-        processando={processando}
-        statusProcesso={statusProcesso}
-        resultadosFotos={resultadosFotos}
-      />
-
-      <TirarFotoCamera
-        usuarioId={usuarioId}
-        aoEscolherFoto={() => escolherRef.current?.click()}
-        abrirGaleria={abrirGaleria}
-      />
+      {/* (10/11) Câmera e Galeria só no celular; no computador, só a escolha de arquivos. */}
+      {celular && (
+        <TirarFotoCamera
+          usuarioId={usuarioId}
+          aoEscolherFoto={() => escolherRef.current?.click()}
+          abrirGaleria={abrirGaleria}
+        />
+      )}
 
       {produtoCopilot && (
         <div
@@ -427,39 +186,26 @@ export default function FotoIA({
             background: "#0f172a",
             border: "1px solid #67e8f9",
             borderRadius: "12px",
-            padding: "15px",
-            marginBottom: "20px",
+            padding: "10px 14px",
+            marginBottom: "12px",
             color: "#e2e8f0",
           }}
         >
           <strong style={{ color: "#67e8f9" }}>
             🤖 Produto recebido do Copilot:
-          </strong>
-
-          <div style={{ marginTop: "8px" }}>
-            {produtoCopilot}
-          </div>
+          </strong>{" "}
+          {produtoCopilot}
         </div>
       )}
 
-      <p
-        style={{
-          color: "#94a3b8",
-          marginBottom: "25px",
-        }}
-      >
-        Transforme até 8 fotos em imagens profissionais para marketplace.
-      </p>
-
-      <h3 style={{ color: "#ffffff" }}>
-        Escolha até 8 fotos
-      </h3>
-
       <div
+        data-paiia-foto-area
         style={{
           ...cardStyle,
-          maxWidth: "950px",
-          margin: "30px auto",
+          maxWidth: "980px",
+          margin: "0 auto",
+          padding: celular ? "14px" : "18px",
+          boxSizing: "border-box",
         }}
       >
         <input
@@ -469,41 +215,72 @@ export default function FotoIA({
           ref={escolherRef}
           onChange={selecionarFotos}
           disabled={processando}
+          style={{ display: "none" }}
+          data-paiia-foto-arquivos
         />
 
-        {arquivosFotos.map((foto, index) => (
-          <div
-            key={`${foto.file?.name || "foto"}-${index}`}
+        {!celular && (
+          <button
+            type="button"
+            data-paiia-escolher-arquivos
+            onClick={() => escolherRef.current?.click()}
+            disabled={processando}
             style={{
-              background: "#0f172a",
-              border: "1px solid #2563eb",
-              borderRadius: "12px",
-              padding: "10px",
-              textAlign: "center",
-              width: "320px",
-              maxWidth: "100%",
-              margin: "15px auto",
+              width: "100%",
+              padding: "18px 16px",
+              borderRadius: "14px",
+              border: "2px dashed #38bdf8",
+              background: "#0b1a33",
+              color: "#e0f2fe",
+              fontSize: "18px",
+              fontWeight: 800,
+              cursor: processando ? "not-allowed" : "pointer",
             }}
           >
-            <img
-              src={foto.preview}
-              alt={`Foto selecionada ${index + 1}`}
-              style={{
-                width: "220px",
-                maxWidth: "100%",
-                height: "120px",
-                objectFit: "contain",
-                background: "#ffffff",
-                borderRadius: "8px",
-              }}
-            />
+            📁 Escolher Arquivos — Até 8 Fotos
+            <span style={{ display: "block", marginTop: "4px", fontSize: "13px", fontWeight: 600, color: "#94a3b8" }}>
+              {qtdFotos ? `${qtdFotos} foto${qtdFotos > 1 ? "s" : ""} escolhida${qtdFotos > 1 ? "s" : ""} — clique para trocar` : "JPG, PNG ou WEBP"}
+            </span>
+          </button>
+        )}
+
+        {qtdFotos > 0 && (
+          <div
+            data-paiia-foto-miniaturas
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginTop: "12px",
+            }}
+          >
+            {arquivosFotos.map((foto, index) => (
+              <img
+                key={`${foto.file?.name || "foto"}-${index}`}
+                src={foto.preview}
+                alt={`Foto selecionada ${index + 1}`}
+                onClick={() => setImagemAmpliada(foto.preview)}
+                style={{
+                  width: celular ? "72px" : "96px",
+                  height: celular ? "72px" : "96px",
+                  objectFit: "contain",
+                  background: "#ffffff",
+                  borderRadius: "8px",
+                  border: "1px solid #2563eb",
+                  cursor: "zoom-in",
+                }}
+              />
+            ))}
           </div>
-        ))}
+        )}
 
         <div
           style={{
-            marginTop: "20px",
-            textAlign: "center",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: "10px",
+            marginTop: "12px",
           }}
         >
           <select
@@ -512,12 +289,11 @@ export default function FotoIA({
               setTipoFundoFoto(evento.target.value)
             }
             style={{
-              padding: "12px",
+              padding: "10px 12px",
               borderRadius: "10px",
               background: "#0f172a",
               color: "#ffffff",
               border: "1px solid #2563eb",
-              marginTop: "15px",
             }}
           >
             <option value="branco">🎨 Fundo Branco</option>
@@ -529,20 +305,18 @@ export default function FotoIA({
           {/* (10/11) Modo Econômico (padrão): remove o fundo sem IA generativa e mantém a peça original. */}
           <div
             data-paiia-foto-modo="economico"
+            title="Recorte no próprio aparelho, sem créditos — mantém a peça original (PNG 1200 × 1200)"
             style={{
-              display: "inline-block",
-              padding: "10px 14px",
+              padding: "9px 12px",
               borderRadius: "10px",
               background: "#052e16",
               color: "#bbf7d0",
               border: "1px solid #16a34a",
-              marginTop: "15px",
-              marginLeft: "15px",
-              fontSize: "14px",
+              fontSize: "13px",
               maxWidth: "100%",
             }}
           >
-            🟢 Modo Econômico: recorte no próprio aparelho, sem créditos — mantém a peça original (PNG 1200 × 1200)
+            🟢 Modo Econômico · sem créditos · PNG 1200 × 1200
           </div>
 
           {typeof setAplicarSombra === "function" && (
@@ -551,8 +325,6 @@ export default function FotoIA({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "8px",
-                marginLeft: "15px",
-                marginTop: "15px",
                 color: "#cbd5e1",
               }}
             >
@@ -566,30 +338,36 @@ export default function FotoIA({
               Sombra suave
             </label>
           )}
-
-          <button
-            type="button"
-            style={{
-              ...buttonGreen,
-              marginLeft: "15px",
-              marginTop: "15px",
-            }}
-            onClick={processarSelecionadas}
-            disabled={
-              processando || arquivosFotos.length === 0
-            }
-          >
-            {processando
-              ? "🤖 Produzindo Foto IA..."
-              : "📸 Produzir Foto IA"}
-          </button>
         </div>
+
+        <button
+          type="button"
+          data-paiia-produzir-foto
+          style={{
+            ...buttonGreen,
+            display: "block",
+            width: "100%",
+            marginTop: "12px",
+            fontSize: "17px",
+            opacity: processando || qtdFotos === 0 ? 0.6 : 1,
+          }}
+          onClick={processarSelecionadas}
+          disabled={
+            processando || qtdFotos === 0
+          }
+        >
+          {processando
+            ? "🤖 Produzindo Foto IA..."
+            : qtdFotos
+              ? `📸 Produzir Foto IA (${qtdFotos})`
+              : "📸 Produzir Foto IA"}
+        </button>
 
         {statusProcesso && (
           <div
             style={{
-              marginTop: "25px",
-              padding: "15px",
+              marginTop: "12px",
+              padding: "12px",
               background: "#020617",
               border: "1px solid #38bdf8",
               borderRadius: "12px",
@@ -602,12 +380,12 @@ export default function FotoIA({
         )}
 
         {resultadosFotos?.length > 0 ? (
-          <div style={{ marginTop: "30px" }}>
+          <div style={{ marginTop: "18px" }}>
             <h3
               style={{
                 color: "#67e8f9",
                 textAlign: "center",
-                marginBottom: "25px",
+                margin: "0 0 12px",
               }}
             >
               ✅ Resultados processados
@@ -617,7 +395,7 @@ export default function FotoIA({
               style={{
                 display: "grid",
                 gridTemplateColumns: "1fr",
-                gap: "22px",
+                gap: "14px",
                 width: "100%",
               }}
             >
@@ -639,8 +417,8 @@ export default function FotoIA({
                     style={{
                       background: "#020617",
                       border: "1px solid #2563eb",
-                      borderRadius: "16px",
-                      padding: "18px",
+                      borderRadius: "14px",
+                      padding: "12px",
                     }}
                   >
                     <h4
@@ -648,7 +426,7 @@ export default function FotoIA({
                         color: "#ffffff",
                         textAlign: "center",
                         marginTop: 0,
-                        marginBottom: "18px",
+                        marginBottom: "10px",
                       }}
                     >
                       Foto {index + 1}
@@ -656,15 +434,14 @@ export default function FotoIA({
 
                     <div
                       style={{
-                        display: "grid",
-                        gridTemplateColumns:
-                          "repeat(2, minmax(0, 1fr))",
-                        gap: "22px",
+                        display: "flex",
+                        gap: celular ? "8px" : "12px",
                         width: "100%",
-                        alignItems: "start",
+                        alignItems: "flex-start",
                       }}
+                      data-paiia-foto-lado-a-lado
                     >
-                      <div>
+                      <div style={{ flex: "1 1 0", minWidth: 0 }}>
                         <h4
                           style={{
                             color: "#cbd5e1",
@@ -684,7 +461,7 @@ export default function FotoIA({
                             }
                             style={{
                               width: "100%",
-                              height: "320px",
+                              height: celular ? "170px" : "260px",
                               objectFit: "contain",
                               borderRadius: "12px",
                               background: "#ffffff",
@@ -694,7 +471,7 @@ export default function FotoIA({
                         ) : (
                           <div
                             style={{
-                              height: "320px",
+                              height: celular ? "170px" : "260px",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
@@ -708,7 +485,7 @@ export default function FotoIA({
                         )}
                       </div>
 
-                      <div>
+                      <div style={{ flex: "1 1 0", minWidth: 0 }}>
                         <h4
                           style={{
                             color: "#67e8f9",
@@ -722,7 +499,7 @@ export default function FotoIA({
                         {erroFoto ? (
                           <div
                             style={{
-                              minHeight: "320px",
+                              minHeight: celular ? "170px" : "260px",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
@@ -774,7 +551,7 @@ export default function FotoIA({
                             }}
                             style={{
                               width: "100%",
-                              height: "320px",
+                              height: celular ? "170px" : "260px",
                               objectFit: "contain",
                               borderRadius: "12px",
                               background: "#ffffff",
@@ -784,7 +561,7 @@ export default function FotoIA({
                         ) : (
                           <div
                             style={{
-                              height: "320px",
+                              height: celular ? "170px" : "260px",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
@@ -801,7 +578,7 @@ export default function FotoIA({
 
                     <div
                       style={{
-                        marginTop: "16px",
+                        marginTop: "10px",
                         display: "flex",
                         justifyContent: "center",
                         gap: "10px",
@@ -874,81 +651,32 @@ export default function FotoIA({
               })}
             </div>
 
-            <div
-              style={{
-                marginTop: "28px",
-                padding: "22px",
-                borderRadius: "16px",
-                background:
-                  "linear-gradient(135deg,#052e16,#14532d)",
-                border: "1px solid #22c55e",
-                textAlign: "center",
-              }}
-            >
-              <h3
-                style={{
-                  marginTop: 0,
-                  color: "#ffffff",
-                }}
-              >
-                🤖 Missão 2 concluída
-              </h3>
-            
         </div>
-        </div>
-      ) : (
-          preview && (
-            <div
-              style={{
-                marginTop: "30px",
-                textAlign: "center",
-              }}
-            >
-              <h3 style={{ color: "#cbd5e1" }}>
-                Foto original
-              </h3>
-
-              <img
-                src={preview}
-                alt="Foto original"
-                onClick={() =>
-                  setImagemAmpliada(preview)
-                }
-                style={{
-                  width: "400px",
-                  maxWidth: "100%",
-                  borderRadius: "10px",
-                  background: "#ffffff",
-                  cursor: "zoom-in",
-                }}
-              />
-            </div>
-          )
-        )}
+      ) : null}
       </div>
 
       <div
         style={{
           display: "flex",
           justifyContent: "center",
-          gap: "18px",
+          gap: "12px",
           flexWrap: "wrap",
-          marginTop: "25px",
+          marginTop: "14px",
         }}
       >
         <button
           type="button"
           onClick={abrirGaleria}
           style={{
-            padding: "16px 26px",
-            borderRadius: "14px",
+            padding: "11px 20px",
+            borderRadius: "12px",
             border: "none",
             background:
               "linear-gradient(135deg,#2563eb,#22d3ee)",
             color: "#ffffff",
             fontWeight: "bold",
             cursor: "pointer",
-            fontSize: "16px",
+            fontSize: "15px",
           }}
         >
           🖼️ Abrir Galeria
@@ -1006,8 +734,8 @@ export default function FotoIA({
             setScreen("novoAnuncio");
           }}
           style={{
-            padding: "16px 26px",
-            borderRadius: "14px",
+            padding: "11px 20px",
+            borderRadius: "12px",
             border: "none",
             background:
               "linear-gradient(135deg,#16a34a,#22c55e)",
