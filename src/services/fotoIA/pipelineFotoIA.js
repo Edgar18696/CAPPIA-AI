@@ -180,19 +180,23 @@ export async function comporESalvarFotoIA({
   arquivoEnviado,
   urlOriginal,
   recorteUrl,
+  recorteBlob = null, // (10/11) recorte LOCAL: já vem pronto do aparelho
   fundo,
   signal,
 }) {
   verificarCancelamento(signal);
 
-  const resposta = await fetch(recorteUrl, { signal });
-  if (!resposta.ok) {
-    throw new ErroFotoIA("Não foi possível baixar o recorte da foto.", {
-      status: resposta.status,
-      temporario: true,
-    });
+  let recorte = recorteBlob;
+  if (!recorte) {
+    const resposta = await fetch(recorteUrl, { signal });
+    if (!resposta.ok) {
+      throw new ErroFotoIA("Não foi possível baixar o recorte da foto.", {
+        status: resposta.status,
+        temporario: true,
+      });
+    }
+    recorte = await resposta.blob();
   }
-  const recorte = await resposta.blob();
 
   const final = await comporFotoFinal({ original: arquivoEnviado, recorte, fundo });
   verificarCancelamento(signal);

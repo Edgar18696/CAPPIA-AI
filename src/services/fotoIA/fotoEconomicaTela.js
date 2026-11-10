@@ -1,30 +1,31 @@
-// (10/11) Foto IA — MODO ECONÔMICO (padrão da tela Foto IA).
+// (10/11) Foto IA — MODO ECONÔMICO (padrão da tela Foto IA) com RECORTE LOCAL.
 //
-// Usa o mesmo caminho já usado pelo PAIIA Voz:
-//   envio da original → recorte na Edge Function "foto-ia" (remoção de fundo,
-//   sem IA generativa) → composição no navegador com os pixels ORIGINAIS
-//   (1200 × 1200, PNG, peça centralizada sem deformar) → Galeria PAIIA.
+//   1) envio da foto original ao Storage (pasta "originais" — guardada à parte);
+//   2) recorte NO PRÓPRIO APARELHO (recorteLocalFotoIA: modelo aberto rodando
+//      no navegador) — sem Replicate, sem Gemini, sem créditos e sem a cota
+//      mensal da função "foto-ia";
+//   3) composição com os pixels ORIGINAIS (1200 × 1200, PNG, fundo branco,
+//      peça centralizada sem deformar) e salvamento na Galeria PAIIA.
 //
-// Diferença para o Voz: aqui o recorte é tentado UMA vez só (sem novas
-// tentativas automáticas que possam gerar cobrança). A original e a tratada
-// ficam separadas (pastas "originais" e "processadas" + linha na Galeria).
+// O PAIIA Voz não usa este arquivo e continua com o caminho dele.
 
-import { processarUmaFotoIA } from "./pipelineFotoIA.js";
+import { enviarOriginalFotoIA, comporESalvarFotoIA } from "./pipelineFotoIA.js";
+import { recortarLocalmente, MODELO_PADRAO } from "./recorteLocalFotoIA.js";
 
 export const MODO_ECONOMICO = "economico";
-export const MODELO_ECONOMICO = "recraft-remove-background";
-export const TENTATIVAS_RECORTE_ECONOMICO = 1;
+export const MODELO_ECONOMICO = `local:${MODELO_PADRAO}`;
 export const TAMANHO_FOTO_ECONOMICA = 1200;
 
 export function textoEtapaEconomica(etapa, indice, total, nome) {
   const n = `${indice + 1} de ${total}`;
-  if (etapa === "enviando") return `⬆️ Enviando foto ${n} (${nome})...`;
+  if (etapa === "enviando") return `⬆️ Guardando a original da foto ${n} (${nome})...`;
+  if (etapa === "carregando-modelo") return "⏳ Preparando o recorte no aparelho (só na primeira foto)...";
   if (etapa === "compondo") return `📐 Centralizando foto ${n} em 1200 x 1200 com fundo...`;
-  return `✂️ Removendo o fundo da foto ${n} (${nome})...`;
+  return `✂️ Removendo o fundo da foto ${n} no aparelho (${nome})...`;
 }
 
-// Processa UMA foto no Modo Econômico. Só devolve sucesso quando a foto final
-// foi salva na Galeria; qualquer falha vira erro (nunca "concluída").
+// Processa UMA foto. Só devolve sucesso quando a foto final foi salva na
+// Galeria; qualquer falha vira erro (nunca "concluída").
 export async function produzirFotoEconomica({
   supabase,
   usuarioId,
@@ -32,32 +33,43 @@ export async function produzirFotoEconomica({
   fundo = "branco",
   signal,
   aoEtapa,
-  processarUma = processarUmaFotoIA,
+  deps = {},
 }) {
   if (!arquivo) throw new Error("Arquivo da foto não está disponível neste item.");
   if (!usuarioId) throw new Error("Faça login primeiro.");
+  const enviar = deps.enviarOriginal || enviarOriginalFotoIA;
+  const recortar = deps.recortar || recortarLocalmente;
+  const comporESalvar = deps.comporESalvar || comporESalvarFotoIA;
+  const fundoFinal = fundo === "transparente" ? "transparente" : "branco";
 
-  const resultado = await processarUma({
+  aoEtapa?.("enviando");
+  const envio = await enviar({ supabase, usuarioId, arquivo, signal });
+
+  aoEtapa?.("recortando");
+  const recorte = await recortar(envio.arquivoEnviado || arquivo, { aoProgresso: (e) => aoEtapa?.(e) });
+
+  aoEtapa?.("compondo");
+  const salvo = await comporESalvar({
     supabase,
     usuarioId,
-    item: { file: arquivo },
-    fundo: fundo === "transparente" ? "transparente" : "branco",
+    arquivoEnviado: envio.arquivoEnviado || arquivo,
+    urlOriginal: envio.url,
+    recorteBlob: recorte.blob,
+    fundo: fundoFinal,
     signal,
-    aoEtapa,
-    tentativasRecorte: TENTATIVAS_RECORTE_ECONOMICO,
   });
 
-  if (!resultado?.url) {
+  if (!salvo?.url) {
     throw new Error("A foto não foi salva na Galeria.");
   }
 
   return {
     modo: MODO_ECONOMICO,
     modelo: MODELO_ECONOMICO,
-    imagemOriginal: resultado.estado?.urlOriginal || "",
-    imagemProcessada: resultado.url,
-    transparente: Boolean(resultado.transparente),
-    baixaResolucao: Boolean(resultado.baixaResolucao),
-    galeriaId: resultado.id || null,
+    imagemOriginal: envio.url || "",
+    imagemProcessada: salvo.url,
+    transparente: Boolean(salvo.transparente),
+    baixaResolucao: Boolean(salvo.baixaResolucao),
+    galeriaId: salvo.id || null,
   };
 }

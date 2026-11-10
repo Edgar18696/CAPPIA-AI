@@ -17,6 +17,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "html-to-image": "^1.11.13",
+    "onnxruntime-web": "1.31.1",
     "openai": "^6.46.0",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^6.1.200",

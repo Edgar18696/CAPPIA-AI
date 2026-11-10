@@ -6,7 +6,6 @@ import { recortarFotoIA, TENTATIVAS_AUTOMATICAS } from "../../src/services/fotoI
 import {
   produzirFotoEconomica,
   textoEtapaEconomica,
-  TENTATIVAS_RECORTE_ECONOMICO,
   MODO_ECONOMICO,
   MODELO_ECONOMICO,
 } from "../../src/services/fotoIA/fotoEconomicaTela.js";
@@ -31,22 +30,28 @@ const erroHttp = (status, corpo) => ({
   error: { context: { status, json: async () => corpo, clone() { return this; } } },
 });
 
-test("Modo Econômico: uma foto → foto-ia uma vez, sem nova tentativa, resultado da Galeria", async () => {
-  let recebido = null;
-  const r = await produzirFotoEconomica({
-    supabase: {},
-    usuarioId: "u1",
-    arquivo: { name: "peca.jpg" },
-    fundo: "branco",
-    processarUma: async (args) => {
-      recebido = args;
-      return { estado: { urlOriginal: "https://x/originais/a.jpg" }, url: "https://x/processadas/a.png", id: 7, transparente: false, baixaResolucao: false };
+function depsLocais({ falhaRecorte = null, semUrl = false } = {}) {
+  const log = [];
+  return {
+    log,
+    deps: {
+      enviarOriginal: async ({ usuarioId, arquivo }) => { log.push(["enviar", usuarioId, arquivo.name]); return { url: "https://x/originais/a.jpg", arquivoEnviado: { name: "normalizada.jpg" } }; },
+      recortar: async (arq) => { log.push(["recortar", arq.name]); if (falhaRecorte) throw new Error(falhaRecorte); return { blob: { tipo: "png-com-alfa" } }; },
+      comporESalvar: async (a) => { log.push(["compor", a.arquivoEnviado.name, a.recorteBlob.tipo, a.fundo, a.urlOriginal]); return semUrl ? {} : { url: "https://x/processadas/a.png", id: 7, transparente: a.fundo === "transparente", baixaResolucao: false }; },
     },
-  });
-  assert.equal(recebido.tentativasRecorte, 1);
-  assert.equal(TENTATIVAS_RECORTE_ECONOMICO, 1);
-  assert.equal(recebido.fundo, "branco");
-  assert.equal(recebido.usuarioId, "u1");
+  };
+}
+
+test("Modo Econômico: guarda a original, recorta NO APARELHO e salva a tratada na Galeria", async () => {
+  const { deps, log } = depsLocais();
+  const etapas = [];
+  const r = await produzirFotoEconomica({ supabase: {}, usuarioId: "u1", arquivo: { name: "peca.jpg" }, fundo: "branco", aoEtapa: (e) => etapas.push(e), deps });
+  assert.deepEqual(log, [
+    ["enviar", "u1", "peca.jpg"],
+    ["recortar", "normalizada.jpg"],
+    ["compor", "normalizada.jpg", "png-com-alfa", "branco", "https://x/originais/a.jpg"],
+  ]);
+  assert.deepEqual(etapas, ["enviando", "recortando", "compondo"]);
   assert.deepEqual(r, {
     modo: MODO_ECONOMICO,
     modelo: MODELO_ECONOMICO,
@@ -56,28 +61,30 @@ test("Modo Econômico: uma foto → foto-ia uma vez, sem nova tentativa, resulta
     baixaResolucao: false,
     galeriaId: 7,
   });
-  assert.notEqual(r.imagemOriginal, r.imagemProcessada, "original e tratada ficam separadas");
+  assert.match(MODELO_ECONOMICO, /^local:/);
 });
 
 test("fundo transparente é respeitado; qualquer outro valor vira branco", async () => {
-  const fundos = [];
-  const processarUma = async (a) => { fundos.push(a.fundo); return { url: "https://x/p.png", estado: {} }; };
-  await produzirFotoEconomica({ usuarioId: "u", arquivo: {}, fundo: "transparente", processarUma });
-  await produzirFotoEconomica({ usuarioId: "u", arquivo: {}, fundo: "qualquer", processarUma });
-  assert.deepEqual(fundos, ["transparente", "branco"]);
+  const a = depsLocais(); const b = depsLocais();
+  await produzirFotoEconomica({ usuarioId: "u", arquivo: { name: "a" }, fundo: "transparente", deps: a.deps });
+  await produzirFotoEconomica({ usuarioId: "u", arquivo: { name: "a" }, fundo: "qualquer", deps: b.deps });
+  assert.equal(a.log[2][3], "transparente");
+  assert.equal(b.log[2][3], "branco");
 });
 
 test("falha nunca vira foto concluída", async () => {
-  await assert.rejects(
-    produzirFotoEconomica({ usuarioId: "u", arquivo: {}, processarUma: async () => ({ estado: {} }) }),
-    /não foi salva na Galeria/
-  );
-  await assert.rejects(
-    produzirFotoEconomica({ usuarioId: "u", arquivo: {}, processarUma: async () => { throw new Error("Você atingiu o limite"); } }),
-    /limite/
-  );
-  await assert.rejects(produzirFotoEconomica({ usuarioId: "u", arquivo: null, processarUma: async () => ({}) }), /Arquivo/);
-  await assert.rejects(produzirFotoEconomica({ usuarioId: "", arquivo: {}, processarUma: async () => ({}) }), /login/);
+  await assert.rejects(produzirFotoEconomica({ usuarioId: "u", arquivo: { name: "a" }, deps: depsLocais({ semUrl: true }).deps }), /não foi salva na Galeria/);
+  const f = depsLocais({ falhaRecorte: "Não foi possível identificar a peça" });
+  await assert.rejects(produzirFotoEconomica({ usuarioId: "u", arquivo: { name: "a" }, deps: f.deps }), /identificar a peça/);
+  assert.ok(!f.log.some((l) => l[0] === "compor"), "nada é salvo na Galeria quando o recorte falha");
+  await assert.rejects(produzirFotoEconomica({ usuarioId: "u", arquivo: null, deps: depsLocais().deps }), /Arquivo/);
+  await assert.rejects(produzirFotoEconomica({ usuarioId: "", arquivo: {}, deps: depsLocais().deps }), /login/);
+});
+
+test("Modo Econômico não chama a função foto-ia (sem cota de 50 nem créditos)", () => {
+  const c = ler("src/services/fotoIA/fotoEconomicaTela.js").replace(/^\/\/.*$/gm, "");
+  assert.ok(!/recortarFotoIA|processarUmaFotoIA|functions\.invoke|foto-ia|replicate|gemini/i.test(c));
+  assert.match(c, /recortarLocalmente/);
 });
 
 test("recorte com tentativas = 1: erro temporário (503) NÃO é repetido", async () => {
@@ -123,7 +130,7 @@ test("tela Foto IA usa o Modo Econômico e não chama mais o Gemini automaticame
 });
 
 test("textos de etapa", () => {
-  assert.match(textoEtapaEconomica("enviando", 0, 4, "a.jpg"), /Enviando foto 1 de 4/);
-  assert.match(textoEtapaEconomica("recortando", 1, 4, "b.jpg"), /Removendo o fundo da foto 2 de 4/);
+  assert.match(textoEtapaEconomica("enviando", 0, 4, "a.jpg"), /Guardando a original da foto 1 de 4/);
+  assert.match(textoEtapaEconomica("recortando", 1, 4, "b.jpg"), /Removendo o fundo da foto 2 de 4 no aparelho/);
   assert.match(textoEtapaEconomica("compondo", 3, 4, "d.jpg"), /1200 x 1200/);
 });

@@ -542,7 +542,7 @@ export default function FotoIA({
               maxWidth: "100%",
             }}
           >
-            🟢 Modo Econômico: remove o fundo e mantém a peça original (PNG 1200 × 1200)
+            🟢 Modo Econômico: recorte no próprio aparelho, sem créditos — mantém a peça original (PNG 1200 × 1200)
           </div>
 
           {typeof setAplicarSombra === "function" && (
