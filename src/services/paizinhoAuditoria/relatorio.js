@@ -121,7 +121,8 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   const vendasLidas = dados.leituras?.vendas !== false;
   const visitas30 = visitasLidas ? fichas.reduce((s, f) => s + (f.visitas30 || 0), 0) : null;
   const unidades30 = vendasLidas ? fichas.reduce((s, f) => s + (f.vendas30 || 0), 0) : null;
-  const faturamento30 = vendasLidas ? centavos(fichas.reduce((s, f) => s + (f.vendas30 || 0) * f.preco, 0)) : null;
+  // (12/11) Valor real dos pedidos pagos (antes: vendas × preço atual, que errava quando o preço mudou).
+  const faturamento30 = vendasLidas ? centavos(fichas.reduce((s, f) => s + (f.faturamento30 || 0), 0)) : null;
   const prejuizo = centavos(todos.reduce((s, a) => s + (a.impacto_rs && a.impacto_rs < 0 ? -a.impacto_rs : 0), 0));
   const fretesPorSku = agruparFretesPorSku(analise.linhasFrete);
   const contarClasse = (c) => analise.linhasFrete.filter((l) => l.classificacao === c).length;
@@ -210,7 +211,7 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     fretes_por_sku: fretesPorSku,
     classificacoes_medidas: CLASSIFICACOES_MEDIDAS,
     renault,
-    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
+    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, faturamento30: f.faturamento30, link: f.link, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
     limitacoes,
     falhas: resumirFalhas(dados.falhas),
     regras: REGRAS_DO_RELATORIO,

@@ -232,6 +232,13 @@ test("relatório: resumo, prioridades ordenadas, limitações honestas e regras"
   assert.equal(rel.resumo.visitas_30d, 415);
   // Prejuízo = só o calculado com custo real (margem do MLB1: R$ 14 × 2). Frete estimado não entra.
   assert.equal(rel.resumo.prejuizo_estimado_30d, 28);
+  // (12/11) Faturamento = valor real dos pedidos pagos (R$ 100 por venda no falso), não vendas × preço atual.
+  assert.equal(rel.resumo.faturamento_30d, 700);
+  for (const a of rel.anuncios) assert.equal(a.faturamento30, a.vendas30 * 100, `${a.item_id}: valor dos pedidos`);
+  const { faturarVendidos } = await import("../../src/services/paizinhoAuditoria/coleta.js");
+  const agoraF = "2026-11-11T20:00:00.000Z";
+  const ped = (st, dias, qtd, preco, id = "MLB9") => ({ status: st, date_created: new Date(Date.parse(agoraF) - dias * 86400000).toISOString(), order_items: [{ item: { id }, quantity: qtd, unit_price: preco }] });
+  assert.deepEqual(faturarVendidos([ped("paid", 3, 5, 24.5), ped("paid", 10, 2, 24.5), ped("cancelled", 2, 1, 24.5), ped("paid", 40, 1, 39.9)], agoraF, 30), { MLB9: 171.5 }, "só pagos, só 30 dias, preço da venda");
   // Prioridades: maior impacto financeiro (calculado ou potencial) primeiro.
   const imp = (a) => Math.max(Math.abs(a.impacto_rs || 0), a.impacto_potencial_30d ?? a.impacto_potencial_por_envio ?? 0);
   for (let i = 1; i < rel.prioridades.length; i++) assert.ok(imp(rel.prioridades[i - 1]) >= imp(rel.prioridades[i]));

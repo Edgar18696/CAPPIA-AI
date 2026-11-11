@@ -15,7 +15,7 @@
 import { num, txt, centavos, reais, pct, normalizar, codigoLimpo, atributo, atributoNumero, skuDoItem, diasAtras } from "./util.js";
 import { normalizarMedida, medidaCompleta, pesoCubicoG, pesoConsideradoG, divergentes, validarLimites, formatarDimensoes, formatarPeso } from "../logistica/logisticaMercadoLivre.js";
 import { lerRespostaCotacao } from "../fretePrecificacao.js";
-import { contarVendidos } from "./coleta.js";
+import { contarVendidos, faturarVendidos } from "./coleta.js";
 
 export const AREAS = Object.freeze({
   VENDAS: "vendas",
@@ -132,6 +132,7 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
   const vendasLidas = dados.leituras?.vendas !== false;
   const vendas30 = vendasLidas ? contexto.vendidos30[id] || 0 : null; // null = não lido (nunca zero)
   const vendas60 = vendasLidas ? contexto.vendidos60[id] || 0 : null;
+  const faturamento30 = vendasLidas ? contexto.faturado30?.[id] || 0 : null; // valor real dos pedidos pagos
   const fretesDasVendas = fretesReais(id, dados.pedidos, dados.envios);
   return {
     id,
@@ -153,6 +154,7 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     visitas30: visitas === undefined ? null : visitas,
     vendas30,
     vendas60,
+    faturamento30,
     conversao30: visitas > 0 && vendas30 !== null ? Math.round((vendas30 / visitas) * 10000) / 100 : null,
     tarifa,
     frete: {
@@ -603,7 +605,8 @@ export function analisarAnuncios(dados, config = {}) {
   const agora = dados.coletado_em;
   const vendidos30 = contarVendidos(dados.pedidos, agora, 30);
   const vendidos60 = contarVendidos(dados.pedidos, agora, 60);
-  const ctxBase = { agora, cfg, vendidos30, vendidos60, recotacoes: config.recotacoes || {} };
+  const faturado30 = faturarVendidos(dados.pedidos, agora, 30);
+  const ctxBase = { agora, cfg, vendidos30, vendidos60, faturado30, recotacoes: config.recotacoes || {} };
   const fichas = dados.itens.map((it) => fichaDoAnuncio(it, dados, cfg, ctxBase));
   // (12/11) Conversão só com anúncios que têm visitas E vendas lidas
   // (anúncio com visita não lida não entra nem no numerador nem no denominador).

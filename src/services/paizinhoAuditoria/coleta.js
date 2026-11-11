@@ -307,6 +307,25 @@ export async function coletarDadosConta({
 }
 
 /** Unidades vendidas (pedidos pagos) por anúncio nos últimos `dias`. */
+/**
+ * (12/11) Faturamento REAL por anúncio: soma de preço unitário × quantidade dos
+ * pedidos pagos no período (o preço atual do anúncio pode ser outro).
+ * Conferido contra a API: MLB3782488757 vendeu 25 un. a R$ 24,50 = R$ 612,50.
+ */
+export function faturarVendidos(pedidos, agora, dias) {
+  const desde = new Date(diasAtras(agora, dias)).getTime();
+  const out = {};
+  for (const p of pedidos || []) {
+    if (txt(p?.status) !== "paid") continue;
+    if (new Date(p?.date_created).getTime() < desde) continue;
+    for (const oi of p?.order_items || []) {
+      const id = oi?.item?.id;
+      if (id) out[id] = Math.round(((out[id] || 0) + num(oi.unit_price) * num(oi.quantity || 1)) * 100) / 100;
+    }
+  }
+  return out;
+}
+
 export function contarVendidos(pedidos, agora, dias) {
   const desde = new Date(diasAtras(agora, dias)).getTime();
   const out = {};
