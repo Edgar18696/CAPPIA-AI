@@ -138,7 +138,7 @@ function Relatorio({ rel }) {
         <Kpi rotulo="Conversão" valor={r.conversao_30d == null ? "não lido" : `${String(r.conversao_30d).replace(".", ",")}%`} />
         <Kpi rotulo="Faturamento (30 dias)" valor={r.faturamento_30d == null ? "não lido" : reais(r.faturamento_30d)} />
         <Kpi rotulo="Urgentes / Importantes" valor={`${r.problemas.alta} / ${r.problemas.media}`} cor={r.problemas.alta ? COR.alta : undefined} />
-        <Kpi rotulo="Prejuízo calculado (custo real, 30 dias)" valor={r.prejuizo_estimado_30d == null ? "não lido" : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
+        <Kpi rotulo="Prejuízo calculado (custo real, 30 dias)" valor={r.prejuizo_estimado_30d == null ? (r.anuncios_com_custo === 0 ? "sem custo cadastrado" : "não lido") : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
         {r.fretes_medidas && <Kpi rotulo="Frete: impacto potencial (a confirmar)" valor={r.fretes_medidas.impacto_potencial_30d != null ? `${reais(r.fretes_medidas.impacto_potencial_30d)} / 30 dias` : `${reais(r.fretes_medidas.impacto_potencial_por_envio)} por envio`} />}
         <Kpi rotulo="Medidas ausentes" valor={numero(r.medidas_pendentes)} />
         <Kpi rotulo="Pontuação média" valor={`${r.pontuacao_media}/100`} />

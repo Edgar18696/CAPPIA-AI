@@ -603,8 +603,11 @@ export function analisarAnuncios(dados, config = {}) {
   const vendidos60 = contarVendidos(dados.pedidos, agora, 60);
   const ctxBase = { agora, cfg, vendidos30, vendidos60, recotacoes: config.recotacoes || {} };
   const fichas = dados.itens.map((it) => fichaDoAnuncio(it, dados, cfg, ctxBase));
-  const visitasTot = fichas.reduce((s, f) => s + (f.visitas30 || 0), 0);
-  const vendasTot = fichas.reduce((s, f) => s + (f.vendas30 || 0), 0);
+  // (12/11) Conversão só com anúncios que têm visitas E vendas lidas
+  // (anúncio com visita não lida não entra nem no numerador nem no denominador).
+  const ambos = fichas.filter((f) => f.visitas30 !== null && f.vendas30 !== null);
+  const visitasTot = ambos.reduce((s, f) => s + f.visitas30, 0);
+  const vendasTot = ambos.reduce((s, f) => s + f.vendas30, 0);
   const leituraCompleta = dados.leituras?.vendas !== false && dados.leituras?.visitas !== false;
   const conversaoConta = !leituraCompleta ? null : visitasTot > 0 ? Math.round((vendasTot / visitasTot) * 10000) / 100 : 0;
   const ctx = { ...ctxBase, conversaoConta, perfilBling: perfilBling(dados, cfg) };

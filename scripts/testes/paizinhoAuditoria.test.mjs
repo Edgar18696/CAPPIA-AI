@@ -329,6 +329,29 @@ test("teste local: vendas e visitas pela função nova; sem ela publicada, o mot
   assert.notEqual(rel.resumo.conversao_30d, null);
   assert.ok(!rel.limitacoes.some((l) => /NÃO lidas/.test(l)));
 
+  // (12/11) Visitas parciais (ML limitou): aviso claro, e a conversão só usa anúncios com visitas lidas.
+  const LIMITE = { ok: false, status: 429, erro: "Mercado Livre limitou as consultas." };
+  // O lote falha; um por um, só o MLB1 continua limitado (os demais respondem).
+  const comercialParcial = async (c) => {
+    if (c.startsWith("/items/visits?")) return LIMITE;
+    const um = c.match(/^\/items\/(MLB\d+)\/visits\?/);
+    if (um) return um[1] === "MLB1" ? LIMITE : { ok: true, dados: { item_id: um[1], total_visits: 10 } };
+    return ml.consultar(c);
+  };
+  const rp = await executarAuditoria({ conta: CONTA, consultar: roteadorConsultas({ principal, comercial: comercialParcial }), consultarBling: blingFalso, agora: AGORA });
+  const total = rp.resumo.anuncios_analisados;
+  assert.ok(rp.limitacoes.some((l) => l === `Visitas lidas em ${total - 1} de ${total} anúncios (Mercado Livre limitou as consultas.): esses 1 ficam fora da conversão e das conclusões de visitas.`), rp.limitacoes.join("\n"));
+  const fichasLidas = rp.anuncios.filter((a) => a.visitas30 !== null);
+  const vis = fichasLidas.reduce((s, a) => s + a.visitas30, 0);
+  const ven = fichasLidas.reduce((s, a) => s + a.vendas30, 0);
+  assert.equal(rp.resumo.conversao_30d, Math.round((ven / vis) * 10000) / 100, "conversão sem o anúncio de visita não lida");
+
+  // (12/11) Vendas lidas, mas nenhum custo no Bling → prejuízo "sem custo", nunca R$ 0,00.
+  const semCusto = async () => ({ ok: true, produto: { peso_bruto: 0.3, largura: 30, altura: 30, profundidade: 30 } });
+  const rc = await executarAuditoria({ conta: CONTA, consultar: roteadorConsultas({ principal, comercial }), consultarBling: semCusto, agora: AGORA });
+  assert.equal(rc.resumo.anuncios_com_custo, 0);
+  assert.equal(rc.resumo.prejuizo_estimado_30d, null);
+
   // Função ainda não publicada → "não lido" com o motivo certo, e poucas chamadas
   const { ERRO_FUNCAO_NAO_PUBLICADA, consultorComercial } = await import("../../src/services/paizinhoAuditoria/leituraComercial.js");
   let tentativas = 0;

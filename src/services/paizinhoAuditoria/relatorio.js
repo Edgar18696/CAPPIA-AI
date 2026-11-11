@@ -157,6 +157,10 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     if (/fora da lista permitida|não permitid/i.test(e)) return "o servidor não permite esta consulta";
     return e || "consulta indisponível";
   };
+  const semVisita = fichas.filter((f) => f.visitas30 === null).length;
+  if (visitasLidas && semVisita > 0) {
+    limitacoes.push(`Visitas lidas em ${fichas.length - semVisita} de ${fichas.length} anúncios (${motivoNaoLido("visitas")}): esses ${semVisita} ficam fora da conversão e das conclusões de visitas.`);
+  }
   if (!visitasLidas) limitacoes.push(`Visitas NÃO lidas (${motivoNaoLido("visitas")}): conversão e anúncios sem visitas não avaliados.`);
   if (!vendasLidas) limitacoes.push(`Vendas NÃO lidas (${motivoNaoLido("vendas")}): produtos parados, reposição, frete cobrado nas vendas e prejuízo por vendas não avaliados.`);
   limitacoes.push("Prazo de entrega não avaliado (depende do CEP do comprador).");
@@ -180,7 +184,9 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
       problemas: contagem,
       oportunidades: oportunidades.length,
       // Prejuízo CALCULADO com custo real (margem). Frete divergente não entra aqui.
-      prejuizo_estimado_30d: vendasLidas ? prejuizo : null,
+      // (12/11) Sem nenhum custo cadastrado, não existe prejuízo calculado (null, nunca R$ 0,00).
+      prejuizo_estimado_30d: vendasLidas && fichas.some((f) => f.custo) ? prejuizo : null,
+      anuncios_com_custo: fichas.filter((f) => f.custo).length,
       medidas_pendentes: contarClasse("medidas_ausentes"),
       fretes_medidas: {
         anuncios: analise.linhasFrete.length,

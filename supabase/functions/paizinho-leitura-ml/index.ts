@@ -72,7 +72,10 @@ Deno.serve(async (req) => {
   const get = getML(c.access_token);
   if (conf.tipo === "visitas") {
     const ids = anunciosDaLeitura(caminho);
-    const respostas = await Promise.all(caminhosDonoDosAnuncios(ids).map((p) => get(p)));
+    // (12/11) 10 por vez: 50 de uma vez fez o ML limitar as consultas (429).
+    const caminhos = caminhosDonoDosAnuncios(ids);
+    const respostas = [];
+    for (let i = 0; i < caminhos.length; i += 10) respostas.push(...await Promise.all(caminhos.slice(i, i + 10).map((p) => get(p))));
     const falhou = respostas.find((r) => !r.ok);
     if (falhou) return json({ ok: false, status: falhou.status, erro: `Não foi possível conferir o dono dos anúncios: ${falhou.erro}` });
     if (!anunciosSaoDaConta(ids, respostas.map((r) => r.dados), conta)) return json({ ok: false, status: 403, erro: "Visitas só de anúncios da conta informada." });
@@ -85,9 +88,9 @@ Deno.serve(async (req) => {
 /** GET na API do Mercado Livre (somente leitura), nova tentativa em 429/5xx. */
 function getML(token: string) {
   return async (caminho: string) => {
-    for (let tentativa = 0; tentativa < 3; tentativa++) {
+    for (let tentativa = 0; tentativa < 4; tentativa++) {
       const r = await fetch(`${ML}${caminho}`, { method: "GET", headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-      if (r.status === 429 || r.status >= 500) { await new Promise((ok) => setTimeout(ok, 800 * (tentativa + 1))); continue; }
+      if (r.status === 429 || r.status >= 500) { await new Promise((ok) => setTimeout(ok, 1000 * 2 ** tentativa)); continue; }
       const dados = await r.json().catch(() => null);
       return r.ok ? { ok: true, status: r.status, dados } : { ok: false, status: r.status, erro: dados?.message || dados?.error || `HTTP ${r.status}` };
     }
