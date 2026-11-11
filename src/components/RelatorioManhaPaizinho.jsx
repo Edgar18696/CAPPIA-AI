@@ -92,12 +92,13 @@ export default function RelatorioManhaPaizinho() {
 
 // (12/11) Leitura parcial fica evidente no topo: o relatório não é tratado como completo.
 function AvisoLeituraIncompleta({ info }) {
-  const { bling, recotacao, sessao_expirada: sessao } = info;
+  const { bling, recotacao, custo, sessao_expirada: sessao } = info;
   return (
     <div style={S.erro} role="alert" data-paizinho-leitura-incompleta>
       <strong>⚠️ Leitura incompleta — não valide este relatório como final.</strong>
       {bling ? <div>Bling lido em {bling.lidos} de {bling.total} SKUs.</div> : null}
       {recotacao ? <div>Frete recotado em {recotacao.feitas} de {recotacao.total} anúncios.</div> : null}
+      {custo ? <div>Preço de custo lido em {custo.lidos} de {custo.total} SKUs.</div> : null}
       {sessao ? <div>A sessão do PAIIA expirou durante a leitura. Entre de novo e rode outra vez: o que já foi lido no Bling fica guardado neste computador por 24 h.</div> : null}
     </div>
   );
@@ -138,7 +139,8 @@ function Relatorio({ rel }) {
         <Kpi rotulo="Conversão" valor={r.conversao_30d == null ? "não lido" : `${String(r.conversao_30d).replace(".", ",")}%`} />
         <Kpi rotulo="Faturamento (30 dias)" valor={r.faturamento_30d == null ? "não lido" : reais(r.faturamento_30d)} />
         <Kpi rotulo="Urgentes / Importantes" valor={`${r.problemas.alta} / ${r.problemas.media}`} cor={r.problemas.alta ? COR.alta : undefined} />
-        <Kpi rotulo="Prejuízo calculado (custo real, 30 dias)" valor={r.prejuizo_estimado_30d == null ? (r.anuncios_com_custo === 0 ? "sem custo cadastrado" : "não lido") : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
+        <Kpi rotulo={`Prejuízo calculado (custo real, 30 dias)${r.anuncios_com_custo ? ` · custo em ${numero(r.anuncios_com_custo)} de ${numero(r.anuncios_analisados)}` : ""}`} valor={r.prejuizo_estimado_30d == null ? (r.anuncios_com_custo === 0 ? "sem custo cadastrado" : "não lido") : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
+        {r.prejuizo_a_confirmar_30d ? <Kpi rotulo={`Possível prejuízo (custo a confirmar, ${numero(r.anuncios_custo_a_confirmar)} anúncios)`} valor={reais(r.prejuizo_a_confirmar_30d)} /> : null}
         {r.fretes_medidas && <Kpi rotulo="Frete: impacto potencial (a confirmar)" valor={r.fretes_medidas.impacto_potencial_30d != null ? `${reais(r.fretes_medidas.impacto_potencial_30d)} / 30 dias` : `${reais(r.fretes_medidas.impacto_potencial_por_envio)} por envio`} />}
         <Kpi rotulo="Medidas ausentes" valor={numero(r.medidas_pendentes)} />
         <Kpi rotulo="Pontuação média" valor={`${r.pontuacao_media}/100`} />

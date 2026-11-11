@@ -55,6 +55,45 @@ test("margem com custo do Bling: prejuízo calculado e impacto pelas vendas de 3
   assert.match(b.problema, /PREJUÍZO de R\$ 20,00 por venda: .*imposto R\$ 6,00/);
 });
 
+test("custo pelo custo_por_sku (só leitura): vazio/0 = sem custo; fornecedor padrão; >20% de diferença = a confirmar", async () => {
+  const { escolherCusto } = await import("../../src/services/paizinhoAuditoria/analise.js");
+  const resp = (fornecedores, fp = 0) => ({ ok: true, encontrado: true, custo: { fornecedor_precoCusto: fp, fornecedores } });
+  // Casos reais de 12/11 (SKU 036919081c: padrão 13,50; outros 9,00 e 11,83 → 50% de diferença)
+  const cebolinha = escolherCusto(resp([{ padrao: true, precoCusto: 13.5 }, { padrao: false, precoCusto: 9 }, { padrao: false, precoCusto: 11.83 }], 13.5));
+  assert.equal(cebolinha.custo, 13.5);
+  assert.equal(cebolinha.a_confirmar, true);
+  assert.deepEqual(cebolinha.faixa, [9, 13.5]);
+  // SKU 51846314: 27,98 padrão e 29,49 (5%) → confiável
+  const resistencia = escolherCusto(resp([{ padrao: true, precoCusto: 27.98 }, { padrao: false, precoCusto: 29.49 }], 27.98));
+  assert.deepEqual([resistencia.custo, resistencia.a_confirmar], [27.98, false]);
+  // SKU 7750350109: 0 e sem fornecedores → SEM custo (nunca zero)
+  const vazio = escolherCusto(resp([], 0));
+  assert.equal(vazio.custo, null);
+  assert.match(vazio.motivo, /vazio/);
+  // Custo só em fornecedor não padrão → sem custo, a confirmar
+  const naoPadrao = escolherCusto(resp([{ padrao: false, precoCusto: 20 }], 0));
+  assert.deepEqual([naoPadrao.custo, naoPadrao.a_confirmar], [null, true]);
+  assert.equal(escolherCusto({ ok: true, encontrado: false }).custo, null);
+  assert.equal(escolherCusto({ ok: true, encontrado: true, ambiguo: true }).custo, null);
+
+  // Na auditoria: MLB1 com custo 80 confirmado → mesmo prejuízo de antes (R$ 28)
+  const custoDe = (mapa) => async (sku) => (sku in mapa ? { ok: true, encontrado: true, custo: { fornecedor_precoCusto: 0, fornecedores: mapa[sku] } } : { ok: true, encontrado: true, custo: { fornecedor_precoCusto: 0, fornecedores: [] } });
+  const semCustoNoProduto = async (sku) => { const r = await blingFalso(sku); return r.produto ? { ...r, produto: { ...r.produto, precoCusto: undefined } } : r; };
+  const { rel: r1 } = await rodar({ consultarBling: semCustoNoProduto, consultarCusto: custoDe({ "SKU-MLB1": [{ padrao: true, precoCusto: 80 }] }) });
+  assert.equal(r1.resumo.prejuizo_estimado_30d, 28);
+  assert.equal(r1.resumo.anuncios_com_custo, 1);
+  assert.ok(r1.limitacoes.some((l) => /Preço de custo no Bling em 1 de 6 anúncios/.test(l)));
+  assert.ok(achadosDe(r1, "MLB4").some((a) => a.area === "margem" && /Sem custo para a margem: preço de custo vazio no Bling/.test(a.problema)), "vazio nunca vira zero");
+  // Mesmo custo, mas fornecedores divergentes → "possível prejuízo", fora do prejuízo confirmado
+  const { rel: r2 } = await rodar({ consultarBling: semCustoNoProduto, consultarCusto: custoDe({ "SKU-MLB1": [{ padrao: true, precoCusto: 80 }, { padrao: false, precoCusto: 50 }] }) });
+  assert.equal(r2.resumo.prejuizo_estimado_30d, null, "custo a confirmar não entra no prejuízo confirmado");
+  assert.equal(r2.resumo.prejuizo_a_confirmar_30d, 28);
+  const a2 = achadosDe(r2, "MLB1").find((a) => a.area === "margem");
+  assert.equal(a2.severidade, "media");
+  assert.equal(a2.impacto_rs, null);
+  assert.match(a2.problema, /^Possível prejuízo .*custo a confirmar \(fornecedores: R\$ 50,00 a R\$ 80,00\)/);
+});
+
 test("margem: sem tarifa oficial ou sem custo NÃO calcula (nunca estima)", () => {
   const f = { custo: 50, preco: 100, tarifa: null, frete: { vendedor: 10 } };
   assert.equal(margemPorVenda(f, {}), null);

@@ -145,7 +145,13 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     : "Bling não consultado nesta execução: custos, margens e medidas do Bling não foram conferidos.");
   else if (bp) limitacoes.push(`Bling lido só em ${bp.lidos} de ${bp.total} SKUs (${motivoTexto(bp.motivo)}). Os demais aparecem como "Bling não consultado".`);
   if (rp) limitacoes.push(`Frete recotado com as medidas do Bling em ${rp.feitas} de ${rp.total} anúncios (${motivoTexto(rp.motivo)}).`);
-  const sessaoExpirada = bp?.motivo === "sessao" || rp?.motivo === "sessao";
+  // (12/11) Custo: cobertura sempre visível; custo ausente nunca vira zero.
+  const cp = dados.fontes?.custo;
+  const comCusto = fichas.filter((f) => f.custo).length;
+  const custoAConfirmar = fichas.filter((f) => f.custo && f.custo_a_confirmar).length;
+  if (cp && cp.motivo) limitacoes.push(`Preço de custo lido só em ${cp.lidos} de ${cp.total} SKUs (${motivoTexto(cp.motivo)}).`);
+  if (cp) limitacoes.push(`Preço de custo no Bling em ${comCusto} de ${fichas.length} anúncios${custoAConfirmar ? ` (${custoAConfirmar} com custo a confirmar)` : ""}: margem e prejuízo só onde há custo; os demais aparecem "sem custo".`);
+  const sessaoExpirada = bp?.motivo === "sessao" || rp?.motivo === "sessao" || cp?.motivo === "sessao";
   if (!dados.fontes?.concorrencia) limitacoes.push("Concorrência não pesquisada nesta execução.");
   else limitacoes.push(`Concorrência pesquisada só para os ${Object.keys(dados.concorrencia || {}).length} anúncios mais vendidos/visitados (controle de créditos).`);
   if (analise.cfg.impostoPercentual === null || analise.cfg.impostoPercentual === undefined) limitacoes.push("Imposto não informado: as margens aparecem 'antes dos impostos'.");
@@ -173,7 +179,7 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     data_referencia: dataBrasilia(geradoEm),
     gerado_em: geradoEm,
     periodo: dados.periodo,
-    leitura_incompleta: bp || rp ? { bling: bp || null, recotacao: rp || null, sessao_expirada: sessaoExpirada } : null,
+    leitura_incompleta: bp || rp || cp?.motivo ? { bling: bp || null, recotacao: rp || null, custo: cp?.motivo ? cp : null, sessao_expirada: sessaoExpirada } : null,
     resumo: {
       anuncios_ativos: dados.totais.anuncios_ativos,
       anuncios_analisados: dados.totais.anuncios_analisados,
@@ -186,8 +192,11 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
       oportunidades: oportunidades.length,
       // Prejuízo CALCULADO com custo real (margem). Frete divergente não entra aqui.
       // (12/11) Sem nenhum custo cadastrado, não existe prejuízo calculado (null, nunca R$ 0,00).
-      prejuizo_estimado_30d: vendasLidas && fichas.some((f) => f.custo) ? prejuizo : null,
-      anuncios_com_custo: fichas.filter((f) => f.custo).length,
+      prejuizo_estimado_30d: vendasLidas && fichas.some((f) => f.custo && !f.custo_a_confirmar) ? prejuizo : null,
+      anuncios_com_custo: comCusto,
+      anuncios_custo_a_confirmar: custoAConfirmar,
+      // Possível prejuízo com custo a confirmar: fica à parte, nunca somado ao confirmado.
+      prejuizo_a_confirmar_30d: vendasLidas ? centavos(todos.reduce((s, a) => s + (a.impacto_a_confirmar_30d && a.impacto_a_confirmar_30d < 0 ? -a.impacto_a_confirmar_30d : 0), 0)) || null : null,
       medidas_pendentes: contarClasse("medidas_ausentes"),
       fretes_medidas: {
         anuncios: analise.linhasFrete.length,
@@ -211,7 +220,7 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     fretes_por_sku: fretesPorSku,
     classificacoes_medidas: CLASSIFICACOES_MEDIDAS,
     renault,
-    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, faturamento30: f.faturamento30, link: f.link, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
+    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, faturamento30: f.faturamento30, custo: f.custo, custo_a_confirmar: f.custo_a_confirmar || false, custo_faixa: f.custo_faixa || null, custo_motivo: f.custo_motivo || null, link: f.link, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
     limitacoes,
     falhas: resumirFalhas(dados.falhas),
     regras: REGRAS_DO_RELATORIO,

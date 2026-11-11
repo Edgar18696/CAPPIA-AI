@@ -65,17 +65,33 @@ export function resumirProdutoBling(p) {
   return out;
 }
 
-function lerCacheBling(agora = Date.now()) {
+function lerCacheBling(agora = Date.now(), chave = CHAVE_CACHE_BLING) {
   try {
-    const c = JSON.parse(localStorage.getItem(CHAVE_CACHE_BLING) || "null");
+    const c = JSON.parse(localStorage.getItem(chave) || "null");
     if (!c || c.conta !== CONTA_PILOTO.id || typeof c.itens !== "object") return {};
     const validos = {};
     for (const [sku, v] of Object.entries(c.itens)) if (agora - Number(v?.lidoEm || 0) < VALIDADE_CACHE_BLING_MS) validos[sku] = v;
     return validos;
   } catch { return {}; }
 }
-function gravarCacheBling(itens) {
-  try { localStorage.setItem(CHAVE_CACHE_BLING, JSON.stringify({ conta: CONTA_PILOTO.id, itens })); } catch { /* sem espaço: segue sem cache */ }
+function gravarCacheBling(itens, chave = CHAVE_CACHE_BLING) {
+  try { localStorage.setItem(chave, JSON.stringify({ conta: CONTA_PILOTO.id, itens })); } catch { /* sem espaço: segue sem cache */ }
+}
+
+// (12/11) Preço de custo: ação SOMENTE LEITURA "custo_por_sku" da bling-integracao
+// (só GET no Bling; não grava nem no Bling nem no PAIIA). Também guardado 24 h.
+export const CHAVE_CACHE_CUSTO = "paiiaPaizinhoCustoCache";
+/** Guarda só o necessário da resposta de custo_por_sku. */
+export function resumirCusto(d) {
+  return {
+    ok: true,
+    encontrado: d?.encontrado !== false,
+    ambiguo: d?.ambiguo === true,
+    custo: d?.custo ? {
+      fornecedor_precoCusto: d.custo.fornecedor_precoCusto ?? null,
+      fornecedores: (Array.isArray(d.custo.fornecedores) ? d.custo.fornecedores : []).map((f) => ({ padrao: f?.padrao === true, precoCusto: f?.precoCusto ?? null })),
+    } : null,
+  };
 }
 
 /** Teste local com dados reais da LOJA ONLINE (somente leitura). */
@@ -102,6 +118,23 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
     }
     return r;
   };
+  const cacheCusto = lerCacheBling(Date.now(), CHAVE_CACHE_CUSTO);
+  let novosCusto = 0;
+  const consultarCusto = async (sku) => {
+    const guardado = cacheCusto[sku];
+    if (guardado) return { ...guardado.resposta, doCache: true };
+    const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "custo_por_sku", sku } });
+    if (error) {
+      let erro = error.message;
+      try { const corpo = await error.context?.json?.(); if (corpo?.erro || corpo?.error) erro = corpo.erro || corpo.error; } catch { /* mantém */ }
+      return { ok: false, erro, status: error.context?.status };
+    }
+    if (!data?.ok) return { ok: false, erro: data?.erro || "resposta inesperada", status: data?.status };
+    const resposta = resumirCusto(data);
+    cacheCusto[sku] = { resposta, lidoEm: Date.now() };
+    if (++novosCusto % 25 === 0) gravarCacheBling(cacheCusto, CHAVE_CACHE_CUSTO);
+    return resposta;
+  };
   const buscarConcorrentes = concorrencia > 0 ? async (item) => {
     const a = (id) => (item.attributes || []).find((x) => x.id === id)?.value_name || "";
     const marca = a("BRAND");
@@ -118,6 +151,7 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
       // o resto continua pela mercadolivre-publicacao. As duas só leem.
       consultar: roteadorConsultas({ principal: consultorML(CONTA_PILOTO.id), comercial: consultorComercial(CONTA_PILOTO.id) }),
       consultarBling,
+      consultarCusto,
       buscarConcorrentes,
       config: { impostoPercentual: impostoDoPerfil() },
       opcoesColeta: { limiteItens, limiteConcorrencia: concorrencia },
@@ -126,6 +160,7 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
     });
   } finally {
     if (novos) gravarCacheBling(cache);
+    if (novosCusto) gravarCacheBling(cacheCusto, CHAVE_CACHE_CUSTO);
   }
   guardarRelatorioTesteLocal(rel);
   return rel;

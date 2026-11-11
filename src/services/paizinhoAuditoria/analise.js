@@ -43,6 +43,7 @@ export const PADROES_ANALISE = Object.freeze({
   divergenciaFreteMinima: 2,  // R$ por envio para a divergência ML x Bling ser relevante
   blingCaixaMaiorVezes: 3,    // caixa do Bling 3× maior que a do anúncio...
   blingPesoRedondoG: 500,     // ...com peso múltiplo de 500 g = cadastro genérico
+  custoVariacaoMaxima: 0.2,   // fornecedores com custo >20% diferente = "custo a confirmar"
 });
 
 // Montadoras: peça destas marcas é comparada só com ORIGINAL (nunca mistura com importado).
@@ -101,6 +102,33 @@ export function medidasDoBling(produto) {
 export function custoDoBling(produto) {
   const c = num(produto?.precoCusto ?? produto?.preco_custo ?? produto?.custo);
   return c > 0 ? centavos(c) : null;
+}
+
+/**
+ * (12/11) Custo pela ação somente leitura "custo_por_sku" da bling-integracao.
+ * Regras aprovadas pelo Edgar:
+ *  - custo vazio ou 0 = SEM custo (nunca zero);
+ *  - usa o fornecedor PADRÃO do Bling; custo só em fornecedor não padrão = sem custo (a confirmar);
+ *  - fornecedores com custos que diferem mais de 20% = "custo a confirmar" (mostra a faixa).
+ * @returns {{ custo: number|null, a_confirmar: boolean, faixa: number[]|null, motivo: string }}
+ */
+export function escolherCusto(resp, cfg = PADROES_ANALISE) {
+  if (!resp) return { custo: null, a_confirmar: false, faixa: null, motivo: "custo não lido" };
+  if (resp.encontrado === false) return { custo: null, a_confirmar: false, faixa: null, motivo: "SKU não encontrado no Bling" };
+  if (resp.ambiguo) return { custo: null, a_confirmar: true, faixa: null, motivo: "mais de um produto no Bling com este SKU" };
+  const c = resp.custo || {};
+  const lista = (Array.isArray(c.fornecedores) ? c.fornecedores : []).map((f) => ({ padrao: f?.padrao === true, custo: num(f?.precoCusto) }));
+  const validos = lista.map((f) => f.custo).filter((v) => v > 0);
+  const padrao = lista.find((f) => f.padrao && f.custo > 0)?.custo || (num(c.fornecedor_precoCusto) > 0 ? num(c.fornecedor_precoCusto) : 0);
+  const faixa = validos.length ? [centavos(Math.min(...validos)), centavos(Math.max(...validos))] : null;
+  if (!(padrao > 0)) {
+    return validos.length
+      ? { custo: null, a_confirmar: true, faixa, motivo: "custo só em fornecedor que não é o padrão" }
+      : { custo: null, a_confirmar: false, faixa: null, motivo: "preço de custo vazio no Bling" };
+  }
+  const variacao = faixa && faixa[0] > 0 ? faixa[1] / faixa[0] - 1 : 0;
+  const aConfirmar = variacao > (cfg.custoVariacaoMaxima ?? PADROES_ANALISE.custoVariacaoMaxima);
+  return { custo: centavos(padrao), a_confirmar: aConfirmar, faixa: aConfirmar ? faixa : null, motivo: aConfirmar ? "fornecedores com custos diferentes" : "fornecedor padrão do Bling" };
 }
 
 const textoMedida = (m) => (m ? `${formatarDimensoes(m)} · ${formatarPeso(m.peso_g)}` : "não cadastradas");
@@ -182,7 +210,13 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     },
     bling_lido: produtoBling !== undefined,
     bling_encontrado: Boolean(produtoBling),
-    custo: custoDoBling(produtoBling),
+    // (12/11) Custo pela leitura de custo (custo_por_sku) quando houver; senão, o do produto.
+    ...(() => {
+      const lido = sku ? dados.custos?.[sku] : undefined;
+      if (lido === undefined) return { custo: custoDoBling(produtoBling), custo_a_confirmar: false, custo_faixa: null, custo_motivo: null, custo_lido: false };
+      const e = escolherCusto(lido, config);
+      return { custo: e.custo, custo_a_confirmar: e.a_confirmar, custo_faixa: e.faixa, custo_motivo: e.motivo, custo_lido: true };
+    })(),
     compat: dados.compat?.[id]?.quantidade ?? null,
     concorrencia: dados.concorrencia?.[id] || null,
     tabela_renault: config.precoTabelaRenault ? config.precoTabelaRenault({ codigo: codigoDoItem(item), sku, item }) : null,
@@ -283,7 +317,14 @@ function regrasMargem(f, ctx) {
   const out = [];
   if (f.renault && !f.custo) return out; // regra Renault
   if (!f.custo) {
-    if (f.bling_lido) {
+    if (f.custo_lido) {
+      // (12/11) Motivo exato, vindo da leitura de custo do Bling.
+      const faixa = f.custo_faixa ? ` (fornecedores: ${reais(f.custo_faixa[0])} a ${reais(f.custo_faixa[1])})` : "";
+      out.push(achado(f, AREAS.MARGEM, "baixa",
+        `Sem custo para a margem: ${f.custo_motivo}${faixa}. Margem não calculada.`,
+        f.custo_a_confirmar ? "Conferir qual fornecedor/custo vale e marcar o fornecedor padrão no Bling." : "Cadastrar o preço de custo no Bling para o Paizinho calcular a margem real.",
+        null, { sem_custo: true, custo_a_confirmar: f.custo_a_confirmar }));
+    } else if (f.bling_lido) {
       out.push(achado(f, AREAS.MARGEM, "baixa",
         f.bling_encontrado ? "Sem custo confiável no Bling: margem não calculada." : "SKU não encontrado no Bling: margem não calculada.",
         "Cadastrar o custo no Bling para o Paizinho calcular a margem real.", null, { sem_custo: true }));
@@ -292,15 +333,21 @@ function regrasMargem(f, ctx) {
   }
   const m = margemPorVenda(f, ctx.cfg);
   if (!m) return out;
-  const rotulo = m.com_imposto ? "" : " (antes dos impostos)";
+  // (12/11) Custo a confirmar: a margem aparece, mas com aviso e fora do prejuízo confirmado.
+  const rotulo = (m.com_imposto ? "" : " (antes dos impostos)")
+    + (f.custo_a_confirmar ? ` — custo a confirmar (fornecedores: ${reais(f.custo_faixa?.[0])} a ${reais(f.custo_faixa?.[1])})` : "");
   if (m.lucro < 0) {
-    out.push(achado(f, AREAS.MARGEM, "alta",
-      `PREJUÍZO de ${reais(-m.lucro)} por venda${rotulo}: preço ${reais(m.preco)} − tarifa ${reais(m.tarifa)} − frete ${reais(m.frete)}${m.imposto !== null ? ` − imposto ${reais(m.imposto)}` : ""} − custo ${reais(m.custo)}.`,
-      "Revisar preço ou frete deste anúncio.", f.vendas30 > 0 ? m.lucro * f.vendas30 : null, { margem: m }));
+    // Custo a confirmar: não entra no prejuízo confirmado (impacto_rs null) e não é "urgente".
+    const impacto30 = f.vendas30 > 0 ? m.lucro * f.vendas30 : null;
+    out.push(achado(f, AREAS.MARGEM, f.custo_a_confirmar ? "media" : "alta",
+      `${f.custo_a_confirmar ? "Possível prejuízo" : "PREJUÍZO"} de ${reais(-m.lucro)} por venda${rotulo}: preço ${reais(m.preco)} − tarifa ${reais(m.tarifa)} − frete ${reais(m.frete)}${m.imposto !== null ? ` − imposto ${reais(m.imposto)}` : ""} − custo ${reais(m.custo)}.`,
+      f.custo_a_confirmar ? "Confirmar o custo no Bling antes de mexer no preço." : "Revisar preço ou frete deste anúncio.",
+      f.custo_a_confirmar ? null : impacto30,
+      { margem: m, custo_a_confirmar: f.custo_a_confirmar, impacto_a_confirmar_30d: f.custo_a_confirmar ? impacto30 : null }));
   } else if (m.margem_pct < ctx.cfg.margemMinimaPct) {
     out.push(achado(f, AREAS.MARGEM, "media",
       `Margem de ${pct(m.margem_pct)}${rotulo} (lucro ${reais(m.lucro)} por venda), abaixo do mínimo de ${pct(ctx.cfg.margemMinimaPct, 0)}.`,
-      "Avaliar ajuste de preço ou de embalagem/frete.", null, { margem: m }));
+      "Avaliar ajuste de preço ou de embalagem/frete.", null, { margem: m, custo_a_confirmar: f.custo_a_confirmar }));
   }
   return out;
 }

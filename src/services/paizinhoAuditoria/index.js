@@ -35,6 +35,7 @@ export function caminhoRecotacao(conta, item, medida) {
  * @param {string} p.conta                 id ML da conta (obrigatório e liberado)
  * @param {Function} p.consultar           (caminho) → { ok, status, dados, erro } — GET
  * @param {Function} [p.consultarBling]    (sku) → { ok, encontrado, produto }
+ * @param {Function} [p.consultarCusto]    (sku) → resposta de custo_por_sku (somente leitura)
  * @param {Function} [p.buscarConcorrentes] (item) → { ok, faixaComparavel, palavrasChaveSugeridas }
  * @param {Function} [p.precoTabelaRenault] ({ codigo, sku, item }) → número | null
  * @param {object} [p.config]              { impostoPercentual, margemMinimaPct, ... }
@@ -44,6 +45,7 @@ export async function executarAuditoria({
   conta,
   consultar,
   consultarBling = null,
+  consultarCusto = null,
   buscarConcorrentes = null,
   precoTabelaRenault = null,
   config = {},
@@ -55,7 +57,7 @@ export async function executarAuditoria({
   const liberada = contaLiberada(conta);
   if (!liberada) throw new Error(`Conta ${txt(conta) || "(vazia)"} não liberada para a auditoria. Piloto: somente LOJA ONLINE.`);
   const get = somenteLeitura(consultar);
-  const dados = await coletarDadosConta({ conta: liberada.id, consultar: get, consultarBling, buscarConcorrentes, agora, opcoes: opcoesColeta, aoProgredir });
+  const dados = await coletarDadosConta({ conta: liberada.id, consultar: get, consultarBling, consultarCusto, buscarConcorrentes, agora, opcoes: opcoesColeta, aoProgredir });
 
   // Frete com as medidas do Bling, só onde as medidas divergem (impacto em R$).
   const recotacoes = {};

@@ -77,6 +77,7 @@ export async function coletarDadosConta({
   conta,
   consultar,
   consultarBling = null,
+  consultarCusto = null,
   buscarConcorrentes = null,
   agora = new Date().toISOString(),
   opcoes = {},
@@ -274,6 +275,31 @@ export async function coletarDadosConta({
     if (lidos < skus.length) leituraBling = { lidos, total: skus.length, motivo: motivoParada || "incompleta" };
   }
 
+  // 11b) (12/11) Custo da mercadoria: ação SOMENTE LEITURA "custo_por_sku"
+  //      (só GET no Bling, não grava nada). Só nos SKUs encontrados no Bling.
+  const custos = {};
+  let leituraCusto = null;
+  if (typeof consultarCusto === "function") {
+    const skusCusto = Object.keys(bling).filter((s) => bling[s]);
+    passo("Lendo o preço de custo no Bling");
+    let feitos = 0;
+    let falhasSeguidas = 0;
+    let motivoParada = "";
+    const ler = (sku) => consultarCusto(sku).catch((e) => ({ ok: false, erro: txt(e?.message || e) }));
+    await comLimite(skusCusto, o.paraleloBling, async (sku) => {
+      if (motivoParada) return;
+      if (++feitos % 25 === 0) passo(`Lendo o preço de custo no Bling (${feitos} de ${skusCusto.length})`);
+      let r = await ler(sku);
+      if (!r?.ok && !erroDeSessao(r)) { await new Promise((ok) => setTimeout(ok, o.esperaBlingMs ?? 1500)); r = await ler(sku); }
+      if (r?.ok) { custos[sku] = r; falhasSeguidas = 0; return; }
+      falha("custo no Bling", "custo_por_sku", r);
+      if (erroDeSessao(r)) motivoParada = "sessao";
+      else if (++falhasSeguidas >= 5) motivoParada = "fora_do_ar";
+    });
+    const lidosCusto = Object.keys(custos).length;
+    leituraCusto = { lidos: lidosCusto, total: skusCusto.length, motivo: lidosCusto < skusCusto.length ? motivoParada || "incompleta" : null };
+  }
+
   // 12) Concorrência: só os anúncios mais importantes (usa créditos)
   const concorrencia = {};
   if (typeof buscarConcorrentes === "function" && o.limiteConcorrencia > 0) {
@@ -296,7 +322,8 @@ export async function coletarDadosConta({
     periodo: { visitas_de: de, visitas_ate: ate, vendas_desde: desdeVendas },
     totais: { anuncios_ativos: total || idsAnalisados.length, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
-    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, concorrencia: typeof buscarConcorrentes === "function" },
+    ...(typeof consultarCusto === "function" ? { custos } : {}),
+    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, custo: leituraCusto, concorrencia: typeof buscarConcorrentes === "function" },
     // (11/11) O que NÃO foi lido nunca vira zero na análise.
     leituras: {
       visitas: itens.length === 0 || Object.keys(visitas).length > 0,
