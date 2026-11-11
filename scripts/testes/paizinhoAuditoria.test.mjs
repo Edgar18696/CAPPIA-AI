@@ -294,6 +294,18 @@ test("leitura comercial (paizinho-leitura-ml): só visitas, vendas e custo de en
   assert.equal(ok("/answers"), false);
   assert.equal(ok("/items/visits?ids=MLB1&date_from=2026-10-12&date_to=2026-11-11&x=../users"), false);
   assert.equal(ehLeituraComercial("/items/MLB1/description"), false);
+  // Visitas só de anúncios da própria conta: a função confere o vendedor antes.
+  const { anunciosDaLeitura, caminhosDonoDosAnuncios, anunciosSaoDaConta } = await import("../../src/services/paizinhoAuditoria/leituraComercial.js");
+  const ids = Array.from({ length: 45 }, (_, i) => `MLB${i + 1}`);
+  assert.deepEqual(anunciosDaLeitura(`/items/visits?ids=${ids.join(",")}&date_from=2026-10-12&date_to=2026-11-11`), ids);
+  assert.deepEqual(anunciosDaLeitura("/items/MLB9/visits?date_from=2026-10-12&date_to=2026-11-11"), ["MLB9"]);
+  assert.equal(caminhosDonoDosAnuncios(ids).length, 3, "20 por consulta");
+  assert.match(caminhosDonoDosAnuncios(ids)[0], /^\/items\?ids=MLB1,.*MLB20&attributes=id,seller_id$/);
+  const resp = (lista) => [lista.map(([id, seller]) => ({ code: 200, body: { id, seller_id: seller } }))];
+  assert.equal(anunciosSaoDaConta(["MLB1", "MLB2"], resp([["MLB1", Number(CONTA)], ["MLB2", Number(CONTA)]]), CONTA), true);
+  assert.equal(anunciosSaoDaConta(["MLB1", "MLB2"], resp([["MLB1", Number(CONTA)], ["MLB2", 999]]), CONTA), false, "um anúncio de outro vendedor bloqueia");
+  assert.equal(anunciosSaoDaConta(["MLB1", "MLB3"], resp([["MLB1", Number(CONTA)]]), CONTA), false, "anúncio não confirmado bloqueia");
+  assert.equal(anunciosSaoDaConta([], [], CONTA), false);
   // A função do servidor usa as mesmas regras e só faz GET
   const fonte = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-leitura-ml/index.ts"), "utf8");
   assert.match(fonte, /conferirLeituraComercial/);

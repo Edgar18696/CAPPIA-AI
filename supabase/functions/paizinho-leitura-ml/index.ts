@@ -9,6 +9,8 @@
 //     src/services/paizinhoAuditoria/leituraComercial.js;
 //   - só para o usuário logado (JWT) e só na conta dele que estiver
 //     liberada no piloto;
+//   - visitas só de anúncios da própria conta (confere o vendedor antes,
+//     com /items?ids=...&attributes=id,seller_id);
 //   - NÃO renova nem grava token: se o token da conta estiver vencido,
 //     responde pedindo para renová-lo pelo PAIIA (Contas Marketplace).
 //   - não grava nada no banco.
@@ -19,7 +21,12 @@
 // =============================================================
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js";
-import { conferirLeituraComercial } from "../../../src/services/paizinhoAuditoria/leituraComercial.js";
+import {
+  conferirLeituraComercial,
+  anunciosDaLeitura,
+  caminhosDonoDosAnuncios,
+  anunciosSaoDaConta,
+} from "../../../src/services/paizinhoAuditoria/leituraComercial.js";
 
 const ML = "https://api.mercadolibre.com";
 const cors = {
@@ -59,12 +66,34 @@ Deno.serve(async (req) => {
     return json({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido: abra Contas Marketplace no PAIIA para renovar e rode de novo." });
   }
 
-  // 4) GET no Mercado Livre (uma nova tentativa em 429/5xx)
-  for (let tentativa = 0; tentativa < 3; tentativa++) {
-    const r = await fetch(`${ML}${caminho}`, { method: "GET", headers: { Authorization: `Bearer ${c.access_token}`, Accept: "application/json" } });
-    if (r.status === 429 || r.status >= 500) { await new Promise((ok) => setTimeout(ok, 800 * (tentativa + 1))); continue; }
-    const dados = await r.json().catch(() => null);
-    return json(r.ok ? { ok: true, status: r.status, dados } : { ok: false, status: r.status, erro: dados?.message || dados?.error || `HTTP ${r.status}` });
+  // 4) Visitas: só de anúncios desta conta (confere o vendedor de cada um antes).
+  //    Pedidos já são da própria conta (seller conferido + token da conta);
+  //    custo de envio de outro vendedor o ML recusa.
+  const get = getML(c.access_token);
+  if (conf.tipo === "visitas") {
+    const ids = anunciosDaLeitura(caminho);
+    const donos = [];
+    for (const p of caminhosDonoDosAnuncios(ids)) {
+      const r = await get(p);
+      if (!r.ok) return json({ ok: false, status: r.status, erro: `Não foi possível conferir o dono dos anúncios: ${r.erro}` });
+      donos.push(r.dados);
+    }
+    if (!anunciosSaoDaConta(ids, donos, conta)) return json({ ok: false, status: 403, erro: "Visitas só de anúncios da conta informada." });
   }
-  return json({ ok: false, status: 429, erro: "Mercado Livre limitou as consultas." });
+
+  // 5) A leitura pedida
+  return json(await get(caminho));
 });
+
+/** GET na API do Mercado Livre (somente leitura), nova tentativa em 429/5xx. */
+function getML(token: string) {
+  return async (caminho: string) => {
+    for (let tentativa = 0; tentativa < 3; tentativa++) {
+      const r = await fetch(`${ML}${caminho}`, { method: "GET", headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      if (r.status === 429 || r.status >= 500) { await new Promise((ok) => setTimeout(ok, 800 * (tentativa + 1))); continue; }
+      const dados = await r.json().catch(() => null);
+      return r.ok ? { ok: true, status: r.status, dados } : { ok: false, status: r.status, erro: dados?.message || dados?.error || `HTTP ${r.status}` };
+    }
+    return { ok: false, status: 429, erro: "Mercado Livre limitou as consultas." };
+  };
+}

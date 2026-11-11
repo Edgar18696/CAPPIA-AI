@@ -46,6 +46,32 @@ export function conferirLeituraComercial(caminho, conta) {
   return { ok: true, tipo: p.tipo };
 }
 
+/** Anúncios citados numa leitura de visitas (para conferir o dono antes de ler). */
+export function anunciosDaLeitura(caminho) {
+  const c = txt(caminho);
+  const grupo = c.match(/^\/items\/visits\?ids=([^&]+)&/);
+  if (grupo) return grupo[1].split(",");
+  const um = c.match(/^\/items\/(MLB\d+)\/visits\?/);
+  return um ? [um[1]] : [];
+}
+
+/** Endereços para conferir o dono dos anúncios (20 por consulta, só id e vendedor). */
+export function caminhosDonoDosAnuncios(ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 20) out.push(`/items?ids=${ids.slice(i, i + 20).join(",")}&attributes=id,seller_id`);
+  return out;
+}
+
+/**
+ * Todos os anúncios pedidos são da conta? `respostas` = dados das consultas
+ * /items?ids (formato [{ code, body: { id, seller_id } }]).
+ */
+export function anunciosSaoDaConta(ids, respostas, conta) {
+  const dono = {};
+  for (const lista of respostas || []) for (const x of Array.isArray(lista) ? lista : []) if (Number(x?.code) === 200 && x?.body?.id) dono[x.body.id] = String(x.body.seller_id);
+  return ids.length > 0 && ids.every((id) => dono[id] === txt(conta).replace(/\D/g, ""));
+}
+
 export const FUNCAO_LEITURA_COMERCIAL = "paizinho-leitura-ml";
 export const ERRO_FUNCAO_NAO_PUBLICADA = `Leitura de vendas e visitas indisponível: a função ${FUNCAO_LEITURA_COMERCIAL} ainda não foi publicada no Supabase.`;
 
