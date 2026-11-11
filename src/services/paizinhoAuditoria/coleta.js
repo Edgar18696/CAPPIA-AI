@@ -58,7 +58,7 @@ export function tipoDeCaminho(c) {
   return txt(c).split("?")[0].replace(/\/MLB[A-Z]?\d+/gi, "/*").replace(/\/\d+/g, "/*");
 }
 export function caminhoRecusado(r) {
-  return /fora da lista permitida|não permitid|nao permitid/i.test(txt(r?.erro));
+  return /fora da lista permitida|não permitid|nao permitid|não foi publicada/i.test(txt(r?.erro));
 }
 /** (12/11) Login do PAIIA vencido/recusado: não adianta insistir; o usuário precisa entrar de novo. */
 export function erroDeSessao(r) {

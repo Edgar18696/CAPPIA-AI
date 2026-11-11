@@ -68,3 +68,9 @@ entrypoint = "./functions/calcular-custos-mercado-livre/index.ts"
 # Piloto (10/11/2026): chamada pelo agendamento das 03h com o segredo x-paizinho-chave.
 enabled = true
 verify_jwt = false
+
+[functions.paizinho-leitura-ml]
+# Piloto (12/11/2026): leitura de vendas, visitas e custo de envio da LOJA ONLINE
+# para o teste local da auditoria. O usuário é conferido dentro da função (JWT).
+enabled = true
+verify_jwt = false

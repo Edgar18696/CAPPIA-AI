@@ -10,6 +10,9 @@
 import { supabase } from "../../supabase";
 import { consultorML } from "../consultaMLLeitura";
 import { executarAuditoria, CONTAS_AUDITORIA } from "./index.js";
+import { roteadorConsultas, consultorComercial as leitorComercial } from "./leituraComercial.js";
+
+const consultorComercial = (conta) => leitorComercial(conta, (nome, opcoes) => supabase.functions.invoke(nome, opcoes));
 
 export const CHAVE_TESTE_LOCAL = "paiiaPaizinhoRelatorioTeste";
 export const CONTA_PILOTO = CONTAS_AUDITORIA[0];
@@ -111,7 +114,9 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
   try {
     rel = await executarAuditoria({
       conta: CONTA_PILOTO.id,
-      consultar: consultorML(CONTA_PILOTO.id),
+      // (12/11) Vendas, visitas e custo de envio pela função paizinho-leitura-ml;
+      // o resto continua pela mercadolivre-publicacao. As duas só leem.
+      consultar: roteadorConsultas({ principal: consultorML(CONTA_PILOTO.id), comercial: consultorComercial(CONTA_PILOTO.id) }),
       consultarBling,
       buscarConcorrentes,
       config: { impostoPercentual: impostoDoPerfil() },

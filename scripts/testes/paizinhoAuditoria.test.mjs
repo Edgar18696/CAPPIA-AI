@@ -278,6 +278,63 @@ test("sessão do PAIIA expira no meio (Bling e recotação): para, avisa leitura
   assert.equal(completo.leitura_incompleta, null);
 });
 
+test("leitura comercial (paizinho-leitura-ml): só visitas, vendas e custo de envio, só da conta do piloto", async () => {
+  const { conferirLeituraComercial, ehLeituraComercial } = await import("../../src/services/paizinhoAuditoria/leituraComercial.js");
+  const ok = (c, conta = CONTA) => conferirLeituraComercial(c, conta).ok;
+  assert.ok(ok("/items/visits?ids=MLB1,MLB2&date_from=2026-10-12&date_to=2026-11-11"));
+  assert.ok(ok("/items/MLB123/visits?date_from=2026-10-12&date_to=2026-11-11"));
+  assert.ok(ok(`/orders/search?seller=${CONTA}&order.date_created.from=2026-09-12T00%3A00%3A00.000-00%3A00&sort=date_desc&limit=50&offset=0`));
+  assert.ok(ok("/shipments/4455/costs"));
+  // Nunca: outra conta, outro vendedor, escrita disfarçada, outros endereços
+  assert.equal(ok("/shipments/4455/costs", "123"), false, "conta fora do piloto");
+  assert.equal(ok("/orders/search?seller=999&limit=50"), false, "pedidos de outro vendedor");
+  assert.equal(ok(`/orders/search?seller=${CONTA}&seller=999`), false, "dois vendedores");
+  assert.equal(ok("/items/MLB1"), false);
+  assert.equal(ok("/users/me"), false);
+  assert.equal(ok("/answers"), false);
+  assert.equal(ok("/items/visits?ids=MLB1&date_from=2026-10-12&date_to=2026-11-11&x=../users"), false);
+  assert.equal(ehLeituraComercial("/items/MLB1/description"), false);
+  // A função do servidor usa as mesmas regras e só faz GET
+  const fonte = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-leitura-ml/index.ts"), "utf8");
+  assert.match(fonte, /conferirLeituraComercial/);
+  assert.match(fonte, /method: "GET"/);
+  assert.ok(!/method: "(POST|PUT|DELETE|PATCH)"[^]*api\.mercadolibre|\.update\(|\.insert\(|\.delete\(|oauth\/token/.test(fonte), "não grava, não renova token, não escreve no ML");
+});
+
+test("teste local: vendas e visitas pela função nova; sem ela publicada, o motivo aparece e não insiste", async () => {
+  const { roteadorConsultas } = await import("../../src/services/paizinhoAuditoria/leituraComercial.js");
+  const ml = mlFalso();
+  const RECUSA = { ok: false, erro: "Consulta fora da lista permitida (somente leitura)." };
+  const principal = async (c) => (/\/visits|^\/orders\/search|^\/shipments\//.test(c) ? RECUSA : ml.consultar(c));
+  let comercialChamadas = 0;
+  const comercial = async (c) => { comercialChamadas++; return ml.consultar(c); };
+  const rel = await executarAuditoria({ conta: CONTA, consultar: roteadorConsultas({ principal, comercial }), consultarBling: blingFalso, agora: AGORA });
+  assert.ok(comercialChamadas > 0);
+  assert.notEqual(rel.resumo.visitas_30d, null, "visitas lidas");
+  assert.notEqual(rel.resumo.unidades_vendidas_30d, null, "vendas lidas");
+  assert.notEqual(rel.resumo.conversao_30d, null);
+  assert.ok(!rel.limitacoes.some((l) => /NÃO lidas/.test(l)));
+
+  // Função ainda não publicada → "não lido" com o motivo certo, e poucas chamadas
+  const { ERRO_FUNCAO_NAO_PUBLICADA, consultorComercial } = await import("../../src/services/paizinhoAuditoria/leituraComercial.js");
+  let tentativas = 0;
+  const naoPublicada = async () => { tentativas++; return { ok: false, status: 404, erro: ERRO_FUNCAO_NAO_PUBLICADA }; };
+  const r2 = await executarAuditoria({ conta: CONTA, consultar: roteadorConsultas({ principal, comercial: naoPublicada }), consultarBling: blingFalso, agora: AGORA });
+  assert.equal(r2.resumo.visitas_30d, null);
+  assert.equal(r2.resumo.unidades_vendidas_30d, null);
+  assert.ok(r2.limitacoes.some((l) => /Vendas NÃO lidas \(a função de leitura de vendas e visitas ainda não foi publicada\)/.test(l)));
+  assert.ok(tentativas <= 12, `não insiste (${tentativas} chamadas)`);
+  // Leitor do navegador: 404 = não publicada; falha de rede passageira NÃO vira "não publicada".
+  const l404 = consultorComercial(CONTA, async () => ({ data: null, error: { message: "x", context: { status: 404 } } }));
+  assert.equal((await l404("/shipments/1/costs")).erro, ERRO_FUNCAO_NAO_PUBLICADA);
+  const lRede = consultorComercial(CONTA, async () => ({ data: null, error: { message: "Failed to send a request to the Edge Function" } }));
+  assert.notEqual((await lRede("/shipments/1/costs")).erro, ERRO_FUNCAO_NAO_PUBLICADA);
+  let corpoEnviado = null;
+  const lOk = consultorComercial(CONTA, async (nome, op) => { corpoEnviado = { nome, ...op.body }; return { data: { ok: true, dados: { total_visits: 3 } }, error: null }; });
+  assert.equal((await lOk("/items/MLB1/visits?date_from=2026-10-12&date_to=2026-11-11")).ok, true);
+  assert.deepEqual(corpoEnviado, { nome: "paizinho-leitura-ml", conta: CONTA, caminho: "/items/MLB1/visits?date_from=2026-10-12&date_to=2026-11-11" });
+});
+
 test("servidor recusa perfil, lote, visitas e vendas: segue lendo um por um e NUNCA trata o não lido como zero", async () => {
   // Situação real de 11/11/2026 na LOJA ONLINE (lista permitida da mercadolivre-publicacao).
   const ml = mlFalso();

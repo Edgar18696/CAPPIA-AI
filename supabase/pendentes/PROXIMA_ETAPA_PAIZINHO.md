@@ -16,6 +16,38 @@ Ramo local: `paizinho/auditoria-piloto-loja-online`.
   devem funcionar lá. Isso só é confirmado na primeira execução em modo "simular".
 - A conta inteira levou mais de 20 minutos no navegador, e o Bling é o gargalo (cerca de 50 SKUs por minuto).
 
+## Vendas e visitas no teste local: função `paizinho-leitura-ml` (preparada em 12/11/2026)
+Situação: frete e medidas validados com a rodada completa (1.123 anúncios). Vendas, visitas, conversão
+e faturamento seguem "não lido" porque a `mercadolivre-publicacao` recusa essas consultas.
+
+O que foi preparado (só no ramo local, nada publicado):
+- `supabase/functions/paizinho-leitura-ml/index.ts`: função nova, **somente leitura**.
+  - Faz só GET no Mercado Livre e só nestes endereços: visitas (em grupo e por anúncio), pedidos da
+    própria conta (`/orders/search?seller=1729335019...`) e custo dos envios (`/shipments/{id}/costs`).
+    As regras estão em `src/services/paizinhoAuditoria/leituraComercial.js`, cobertas por testes.
+  - Só responde ao usuário logado e só para a conta dele liberada no piloto (LOJA ONLINE).
+  - Não renova nem grava token, não grava nada no banco. Se o token estiver vencido, pede para renovar
+    pelo PAIIA.
+  - Não precisa de tabela, segredo novo nem agendamento.
+- No teste local, essas leituras passam a ir para a função nova; o resto continua igual. Enquanto ela
+  não estiver publicada, o relatório diz "a função de leitura de vendas e visitas ainda não foi
+  publicada" (conferido: hoje o endereço responde 404).
+
+Passos que dependem da autorização (o Edgar executa ou autoriza):
+1. Publicar só esta função, sem mexer nas outras:
+   ```
+   npx supabase login
+   npx supabase functions deploy paizinho-leitura-ml --project-ref arqzpqkkpwikyecdbopf --use-api
+   ```
+   (`--use-api` evita precisar do Docker no Windows.)
+2. Rodar de novo o teste local com "todos" (o Bling vem da memória do navegador por 24 h; cerca de 15 min).
+   Ninguém deve clicar em "Sair" no PAIIA durante a rodada.
+3. Conferir 3 a 5 anúncios contra o painel do Mercado Livre (vendas e visitas de 30 dias).
+4. Para desfazer: `npx supabase functions delete paizinho-leitura-ml --project-ref arqzpqkkpwikyecdbopf`.
+
+Observação: o faturamento de 30 dias é calculado como vendas × preço atual (aproximado). Depois da
+primeira leitura real, avaliar usar o valor dos pedidos.
+
 ## Mudança necessária antes de ativar as 03h: rodar em partes
 Uma função do Supabase tem limite de tempo por execução (poucos minutos). A conta inteira não cabe em uma
 execução só. Proposta:

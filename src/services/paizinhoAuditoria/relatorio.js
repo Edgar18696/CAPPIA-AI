@@ -150,8 +150,15 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   if (analise.cfg.impostoPercentual === null || analise.cfg.impostoPercentual === undefined) limitacoes.push("Imposto não informado: as margens aparecem 'antes dos impostos'.");
   if (dados.totais.anuncios_ativos > dados.totais.anuncios_analisados) limitacoes.push(`Analisados ${dados.totais.anuncios_analisados} de ${dados.totais.anuncios_ativos} anúncios ativos (limite desta execução).`);
   if (!fichas.some((f) => f.tabela_renault)) limitacoes.push("Tabela Renault ainda não carregada: peças Renault comparadas só com a concorrência.");
-  if (!visitasLidas) limitacoes.push("Visitas NÃO lidas (o servidor não permite esta consulta): conversão e anúncios sem visitas não avaliados.");
-  if (!vendasLidas) limitacoes.push("Vendas NÃO lidas (o servidor não permite esta consulta): produtos parados, reposição, frete cobrado nas vendas e prejuízo por vendas não avaliados.");
+  // (12/11) Mostra o motivo real (servidor recusou, função não publicada, sessão...).
+  const motivoNaoLido = (etapa) => {
+    const e = txt((dados.falhas || []).find((f) => f.etapa === etapa)?.erro);
+    if (/não foi publicada/i.test(e)) return "a função de leitura de vendas e visitas ainda não foi publicada";
+    if (/fora da lista permitida|não permitid/i.test(e)) return "o servidor não permite esta consulta";
+    return e || "consulta indisponível";
+  };
+  if (!visitasLidas) limitacoes.push(`Visitas NÃO lidas (${motivoNaoLido("visitas")}): conversão e anúncios sem visitas não avaliados.`);
+  if (!vendasLidas) limitacoes.push(`Vendas NÃO lidas (${motivoNaoLido("vendas")}): produtos parados, reposição, frete cobrado nas vendas e prejuízo por vendas não avaliados.`);
   limitacoes.push("Prazo de entrega não avaliado (depende do CEP do comprador).");
 
   return {

@@ -12,11 +12,10 @@ import { montarRelatorio } from "./relatorio.js";
 import { lerRespostaCotacao } from "../fretePrecificacao.js";
 import { dimensoesParaApi } from "../logistica/logisticaMercadoLivre.js";
 import { comLimite, num, txt } from "./util.js";
+import { CONTAS_AUDITORIA } from "./contas.js";
 
-/** Contas liberadas para a auditoria. Piloto: só LOJA ONLINE. */
-export const CONTAS_AUDITORIA = Object.freeze([
-  Object.freeze({ id: "1729335019", nome: "LOJA ONLINE" }),
-]);
+/** Contas liberadas para a auditoria. Piloto: só LOJA ONLINE (lista em contas.js). */
+export { CONTAS_AUDITORIA };
 
 export function contaLiberada(conta) {
   const id = txt(conta).replace(/\D/g, "");
