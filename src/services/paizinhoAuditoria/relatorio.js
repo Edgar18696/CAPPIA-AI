@@ -38,9 +38,16 @@ export const REGRAS_DO_RELATORIO = Object.freeze([
 /** Impacto financeiro de um achado: prejuízo calculado ou impacto potencial (30 dias; sem vendas, por envio). */
 const impactoDoAchado = (a) => Math.max(Math.abs(num(a.impacto_rs)), num(a.impacto_potencial_30d ?? a.impacto_potencial_por_envio));
 
-/** Ordem de prioridade: maior impacto financeiro (calculado ou potencial) primeiro, depois severidade. */
+/**
+ * Ordem de prioridade: (12/11) primeiro o que é ALTA gravidade — custo real de
+ * hoje (frete consumindo o preço, prejuízo com custo real, cobrança acima) —,
+ * depois o maior impacto financeiro (calculado ou potencial), depois severidade.
+ * Uma estimativa que depende do Bling estar certo nunca passa na frente de um custo atual.
+ */
+const ehAlta = (x) => (x?.severidade === "alta" ? 1 : 0);
 export function ordenarAchados(lista) {
   return [...lista].sort((a, b) =>
+    ehAlta(b) - ehAlta(a) ||
     impactoDoAchado(b) - impactoDoAchado(a) ||
     (PESO_SEVERIDADE[b.severidade] || 0) - (PESO_SEVERIDADE[a.severidade] || 0) ||
     txt(a.titulo).localeCompare(txt(b.titulo)));
@@ -52,7 +59,7 @@ export function ordenarAchados(lista) {
  * envio; depois o frete estimado que o vendedor paga hoje.
  */
 function pesoImpacto(l) {
-  return [num(l.impacto_potencial_30d), num(l.impacto_potencial_por_envio), num(l.frete_gratis ? l.frete_vendedor : 0) * Math.max(1, num(l.vendas30))];
+  return [ehAlta(l), num(l.impacto_potencial_30d), num(l.impacto_potencial_por_envio), num(l.frete_gratis ? l.frete_vendedor : 0) * Math.max(1, num(l.vendas30))];
 }
 function compararImpacto(a, b) {
   const x = pesoImpacto(a), y = pesoImpacto(b);
@@ -78,6 +85,7 @@ export function agruparFretesPorSku(linhas) {
       ...g,
       classificacao: classes[0],
       classificacoes: classes,
+      severidade: g.anuncios.some((l) => l.severidade === "alta") ? "alta" : g.anuncios.some((l) => l.severidade === "media") ? "media" : "baixa",
       impacto_potencial_por_envio: porEnvio.length ? Math.max(...porEnvio) : null,
       impacto_potencial_30d: em30.length ? centavos(em30.reduce((s, v) => s + v, 0)) : null,
       frete_vendedor: Math.max(0, ...g.anuncios.map((l) => (l.frete_gratis ? num(l.frete_vendedor) : 0))),

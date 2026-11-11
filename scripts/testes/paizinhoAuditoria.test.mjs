@@ -143,6 +143,11 @@ test("frete e medidas: Bling padronizado (mesma caixa em 5+ SKUs ou peso improv�
   assert.match(motivoBlingSuspeito(padrao, ml, perfil), /se repetem em 5 SKUs/);
   assert.match(motivoBlingSuspeito({ ...ml, peso_g: 500000 }, ml, { contagem: {} }), /improvável/);
   assert.equal(motivoBlingSuspeito({ ...ml, peso_g: 700 }, ml, { contagem: {} }), null, "medida única e plausível é confiável");
+  // (12/11) Caso real: Bling 150 × 80 × 50 cm · 1 kg para mangueira de 18 × 31 × 77 cm · 776 g.
+  const mangueira = { comprimento_cm: 77, largura_cm: 31, altura_cm: 18, peso_g: 776 };
+  assert.match(motivoBlingSuspeito({ comprimento_cm: 150, largura_cm: 80, altura_cm: 50, peso_g: 1000 }, mangueira, { contagem: {} }), /caixa do Bling 13× maior .*peso redondo \(1 kg\).*genérico/);
+  assert.equal(motivoBlingSuspeito({ comprimento_cm: 150, largura_cm: 80, altura_cm: 50, peso_g: 1230 }, mangueira, { contagem: {} }), null, "caixa maior com peso exato não é descartada");
+  assert.equal(motivoBlingSuspeito({ comprimento_cm: 80, largura_cm: 31, altura_cm: 20, peso_g: 1000 }, mangueira, { contagem: {} }), null, "peso redondo com caixa parecida continua valendo");
   // Na auditoria: o anúncio com Bling padronizado continua, sem recotação nem impacto.
   const { rel, ml: mlF } = await rodar({ consultarBling: async (sku) => (sku === "SKU-MLB5" ? { ok: true, produto: { peso_bruto: 0.3, largura: 30, altura: 30, profundidade: 30 } } : { ok: true, produto: { peso_bruto: 0.3, largura: 30, altura: 30, profundidade: 30 } }) });
   const l5 = rel.fretes_medidas.find((l) => l.item_id === "MLB5");
@@ -172,8 +177,25 @@ test("frete e medidas: agrupado por SKU, maior impacto potencial primeiro", asyn
     { ...base, item_id: "B2", sku: "T2", vendas30: 10, impacto_potencial_por_envio: 5, impacto_potencial_30d: 50 },
   ]);
   assert.deepEqual(g2.map((g) => g.sku), ["T2", "T1"]);
+  // (12/11) Custo real de hoje (alta) vem antes de qualquer estimativa que depende do Bling.
+  const g3 = agruparFretesPorSku([
+    { ...base, item_id: "C1", sku: "U1", severidade: "media", impacto_potencial_por_envio: 128 },
+    { ...base, item_id: "C2", sku: "U2", severidade: "alta", impacto_potencial_por_envio: null, frete_vendedor: 55.15 },
+  ]);
+  assert.deepEqual(g3.map((g) => g.sku), ["U2", "U1"]);
+  assert.equal(g3[0].severidade, "alta");
+  const { ordenarAchados } = await import("../../src/services/paizinhoAuditoria/relatorio.js");
+  const ord = ordenarAchados([
+    { titulo: "a", severidade: "media", impacto_potencial_por_envio: 128 },
+    { titulo: "b", severidade: "alta", impacto_rs: null },
+  ]);
+  assert.equal(ord[0].titulo, "b");
   const { rel } = await rodar();
   assert.equal(rel.fretes_por_sku.length, new Set(rel.fretes_medidas.map((l) => l.sku)).size);
+  // Sem título repetido ("Medidas ausentes: Medidas ausentes: ...").
+  const textos = rel.secoes.flatMap((s) => s.achados).map((a) => a.problema);
+  assert.ok(!textos.some((t) => /^(Medidas ausentes|Divergências? relevantes? entre Mercado Livre e Bling|Medidas possivelmente padronizadas no Bling)[^:]*: \1/.test(t)), "título não se repete");
+  assert.ok(!textos.some((t) => /^Medidas ausentes: Medidas ausentes/.test(t)));
 });
 
 test("frete pago pelo vendedor alto em relação ao preço", async () => {

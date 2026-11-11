@@ -41,6 +41,8 @@ export const PADROES_ANALISE = Object.freeze({
   // (11/11) Fretes e Medidas
   blingPadraoRepeticoes: 5,   // mesma caixa+peso em 5+ SKUs do Bling = valor padrão
   divergenciaFreteMinima: 2,  // R$ por envio para a divergência ML x Bling ser relevante
+  blingCaixaMaiorVezes: 3,    // caixa do Bling 3× maior que a do anúncio...
+  blingPesoRedondoG: 500,     // ...com peso múltiplo de 500 g = cadastro genérico
 });
 
 // Montadoras: peça destas marcas é comparada só com ORIGINAL (nunca mistura com importado).
@@ -423,6 +425,15 @@ export function motivoBlingSuspeito(bl, ml, perfil) {
   if (vezes >= (perfil?.minimo ?? PADROES_ANALISE.blingPadraoRepeticoes)) return `a mesma caixa e peso (${textoMedida(bl)}) se repetem em ${vezes} SKUs no Bling`;
   if (bl.peso_g >= 30000) return `peso de ${formatarPeso(bl.peso_g)} é improvável para a peça (possível erro de unidade)`;
   if (ml?.peso_g > 0 && (bl.peso_g / ml.peso_g >= 20 || ml.peso_g / bl.peso_g >= 20)) return `peso do Bling (${formatarPeso(bl.peso_g)}) é mais de 20× diferente do anúncio (${formatarPeso(ml.peso_g)})`;
+  // (12/11) Rodada completa: o topo do ranking era de caixas enormes com peso
+  // "redondo" no Bling (ex.: 150 × 80 × 50 cm · 1 kg para uma mangueira de 776 g).
+  // Isso é cadastro genérico, não medida real: não serve de referência.
+  const volume = (m) => num(m.comprimento_cm) * num(m.largura_cm) * num(m.altura_cm);
+  const vezesVolume = ml && volume(ml) > 0 ? volume(bl) / volume(ml) : 0;
+  const pesoRedondo = bl.peso_g > 0 && bl.peso_g % (PADROES_ANALISE.blingPesoRedondoG) === 0;
+  if (vezesVolume >= PADROES_ANALISE.blingCaixaMaiorVezes && pesoRedondo) {
+    return `caixa do Bling ${Math.floor(vezesVolume)}× maior que a do anúncio, com peso redondo (${formatarPeso(bl.peso_g)}): parece cadastro genérico`;
+  }
   return null;
 }
 
@@ -570,8 +581,12 @@ function regrasFrete(f, ctx) {
   if (!linha.classificacao) linha.classificacao = "alerta_ml";
   // UM alerta de frete por anúncio, com todos os pontos juntos.
   const sev = itens.reduce((m, i) => (PESO_SEVERIDADE[i.sev] > PESO_SEVERIDADE[m] ? i.sev : m), "baixa");
+  linha.severidade = sev;
+  // (12/11) Medidas ausentes / padronizado / divergência já começam com o próprio
+  // título; só os alertas do ML ganham o cabeçalho (antes saía "X: X: ...").
   const titulo = CLASSIFICACOES_MEDIDAS[linha.classificacao].titulo;
-  const texto = itens.length === 1 ? itens[0].texto : `${titulo}: ${itens.map((i) => i.texto).join(" | ")}`;
+  const juntos = itens.map((i) => i.texto).join(" | ");
+  const texto = itens.length > 1 && linha.classificacao === "alerta_ml" ? `${titulo}: ${juntos}` : juntos;
   const a = achado(f, AREAS.FRETE, sev, texto, linha.sugestao, null, {
     classificacao: linha.classificacao,
     impacto_potencial_por_envio: linha.impacto_potencial_por_envio,
