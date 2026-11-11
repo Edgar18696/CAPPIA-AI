@@ -38,6 +38,9 @@ export const PADROES_ANALISE = Object.freeze({
   freteCriticoPct: 40,
   cobrancaToleranciaPct: 15,
   diasEstoqueMinimo: 15,
+  // (11/11) Fretes e Medidas
+  blingPadraoRepeticoes: 5,   // mesma caixa+peso em 5+ SKUs do Bling = valor padrão
+  divergenciaFreteMinima: 2,  // R$ por envio para a divergência ML x Bling ser relevante
 });
 
 // Montadoras: peça destas marcas é comparada só com ORIGINAL (nunca mistura com importado).
@@ -160,6 +163,19 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     },
     medidas_ml: medidasDoAnuncio(item),
     medidas_bling: medidasDoBling(produtoBling),
+    // (11/11) Dados ORIGINAIS como vieram do ML e do Bling (nada é descartado).
+    dados_originais: {
+      ml: {
+        SELLER_PACKAGE_LENGTH: atributo(item, "SELLER_PACKAGE_LENGTH") || null,
+        SELLER_PACKAGE_WIDTH: atributo(item, "SELLER_PACKAGE_WIDTH") || null,
+        SELLER_PACKAGE_HEIGHT: atributo(item, "SELLER_PACKAGE_HEIGHT") || null,
+        SELLER_PACKAGE_WEIGHT: atributo(item, "SELLER_PACKAGE_WEIGHT") || null,
+        shipping_dimensions: txt(item?.shipping?.dimensions) || null,
+      },
+      bling: produtoBling
+        ? { peso_bruto: produtoBling.peso_bruto ?? produtoBling.pesoBruto ?? null, peso_liquido: produtoBling.peso_liquido ?? produtoBling.pesoLiquido ?? null, largura: produtoBling.largura ?? null, altura: produtoBling.altura ?? null, profundidade: produtoBling.profundidade ?? null }
+        : produtoBling === null ? "SKU não encontrado no Bling" : null,
+    },
     bling_lido: produtoBling !== undefined,
     bling_encontrado: Boolean(produtoBling),
     custo: custoDoBling(produtoBling),
@@ -373,88 +389,162 @@ function regrasQualidade(f) {
     "Corrigir os pontos fracos aumenta a chance de aparecer nas primeiras posições.")];
 }
 
+/* ------------------------------------------------------------ */
+/* Fretes e Medidas (11/11/2026) — três classificações:          */
+/*   1. medidas_ausentes       anúncio sem peso/medidas           */
+/*   2. bling_padronizado      Bling com valor padrão/improvável   */
+/*   3. divergencia_relevante  ML x Bling: conferência física      */
+/* Um único alerta de frete por anúncio. Diferença de frete é      */
+/* IMPACTO POTENCIAL (estimado), nunca prejuízo confirmado.        */
+/* ------------------------------------------------------------ */
+export const CLASSIFICACOES_MEDIDAS = Object.freeze({
+  medidas_ausentes: { ordem: 1, titulo: "Medidas ausentes", explicacao: "O anúncio não tem peso e medidas da embalagem: precisam ser conferidas." },
+  bling_padronizado: { ordem: 2, titulo: "Medidas possivelmente padronizadas no Bling", explicacao: "O Bling usa um valor padrão ou improvável: não usar como referência confiável até confirmar." },
+  divergencia_relevante: { ordem: 3, titulo: "Divergências relevantes entre Mercado Livre e Bling", explicacao: "As medidas do anúncio e do Bling diferem a ponto de mudar o frete ou o peso: precisam de conferência física." },
+  alerta_ml: { ordem: 4, titulo: "Outros alertas de frete (dados do Mercado Livre)", explicacao: "Sinais vindos só do Mercado Livre: peso cobrado, embalagem, frete alto, cobranças." },
+});
+
+const assinaturaMedida = (m) => `${[m.comprimento_cm, m.largura_cm, m.altura_cm].map(num).sort((x, y) => x - y).join("x")}|${num(m.peso_g)}`;
+
+/** Quantos SKUs do Bling usam cada combinação caixa+peso (repetida = valor padrão). */
+export function perfilBling(dados, cfg = PADROES_ANALISE) {
+  const contagem = {};
+  for (const produto of Object.values(dados.bling || {})) {
+    const m = medidasDoBling(produto);
+    if (m) contagem[assinaturaMedida(m)] = (contagem[assinaturaMedida(m)] || 0) + 1;
+  }
+  return { contagem, minimo: cfg.blingPadraoRepeticoes ?? PADROES_ANALISE.blingPadraoRepeticoes };
+}
+
+/** Motivo para NÃO confiar nas medidas do Bling (null = parecem reais). */
+export function motivoBlingSuspeito(bl, ml, perfil) {
+  if (!bl) return null;
+  const vezes = perfil?.contagem?.[assinaturaMedida(bl)] || 0;
+  if (vezes >= (perfil?.minimo ?? PADROES_ANALISE.blingPadraoRepeticoes)) return `a mesma caixa e peso (${textoMedida(bl)}) se repetem em ${vezes} SKUs no Bling`;
+  if (bl.peso_g >= 30000) return `peso de ${formatarPeso(bl.peso_g)} é improvável para a peça (possível erro de unidade)`;
+  if (ml?.peso_g > 0 && (bl.peso_g / ml.peso_g >= 20 || ml.peso_g / bl.peso_g >= 20)) return `peso do Bling (${formatarPeso(bl.peso_g)}) é mais de 20× diferente do anúncio (${formatarPeso(ml.peso_g)})`;
+  return null;
+}
+
+/** Diferença ML x Bling relevante: muda o frete em R$ 2+ por envio, ou peso/volume em 30%+ (sem recotação). */
+function divergenciaRelevante(ml, bl, difFrete, cfg) {
+  if (difFrete !== null && difFrete !== undefined) return Math.abs(difFrete) >= cfg.divergenciaFreteMinima;
+  const rel = (a, b) => (Math.max(a, b) > 0 ? Math.abs(a - b) / Math.max(a, b) : 0);
+  const vol = (m) => num(m.comprimento_cm) * num(m.largura_cm) * num(m.altura_cm);
+  return rel(num(ml.peso_g), num(bl.peso_g)) >= 0.3 || rel(vol(ml), vol(bl)) >= 0.3;
+}
+
 /**
  * Auditoria logística: frete pago, frete cobrado, peso e medidas.
  * Devolve achados + uma LINHA para a tabela "Fretes e Medidas".
  */
 function regrasFrete(f, ctx) {
-  const out = [];
+  const cfg = ctx.cfg;
   const ml = f.medidas_ml;
   const bl = f.medidas_bling;
   const oficial = f.frete.oficial;
+  const vendasLidas = f.vendas30 !== null;
+  const motivoBling = motivoBlingSuspeito(bl, ml, ctx.perfilBling);
   const linha = {
     item_id: f.id, sku: f.sku, titulo: f.titulo, link: f.link, preco: f.preco,
+    classificacao: null,
     medidas_anuncio: textoMedida(ml),
-    medidas_bling: f.bling_lido ? textoMedida(bl) : "Bling não consultado",
+    medidas_bling: f.bling_lido ? (f.bling_encontrado ? textoMedida(bl) : "SKU não encontrado no Bling") : "Bling não consultado",
+    bling_confiavel: bl ? !motivoBling : null,
+    bling_motivo: motivoBling,
     peso_cubico_g: ml ? pesoCubicoG(ml) : null,
     peso_cobrado_g: oficial?.peso_cobrado_g ?? null,
     frete_vendedor: f.frete.vendedor,
     frete_gratis: f.frete.gratis,
     frete_real_medio: null,
     frete_comprador_medio: null,
-    // (11/11) Frete oficial do ML recotado com as medidas do Bling e a diferença
-    // por envio (com sinal: + = o Bling daria frete MAIOR que o de hoje).
-    frete_com_bling: null,
-    diferenca_por_envio: null,
+    frete_com_bling: null,      // frete oficial recotado com as medidas do Bling
+    diferenca_por_envio: null,  // + = com o Bling o frete seria MAIOR que hoje
+    vendas30: f.vendas30,       // null = vendas não lidas
+    // Impacto POTENCIAL (estimado, a confirmar): nunca é prejuízo confirmado.
+    impacto_potencial_por_envio: null,
+    impacto_potencial_30d: null,
     divergencias: [],
-    impacto_rs: null,
     sugestao: "",
-    // Nada é dado como certo: toda linha fica pendente até a conferência física.
-    conferencia: "pendente",
+    conferencia: "pendente",    // nada é dado como certo até a conferência física
+    dados_originais: f.dados_originais, // como vieram do ML e do Bling
   };
-  const add = (sev, problema, sugestao, impacto = null) => {
-    linha.divergencias.push(problema);
+  const itens = [];
+  const add = (sev, texto, sugestao) => {
+    itens.push({ sev, texto });
+    linha.divergencias.push(texto);
     if (sugestao && !linha.sugestao.includes(sugestao)) linha.sugestao = [linha.sugestao, sugestao].filter(Boolean).join(" ");
-    if (impacto !== null && Number.isFinite(impacto)) linha.impacto_rs = centavos((linha.impacto_rs || 0) + impacto);
-    out.push(achado(f, AREAS.FRETE, sev, problema, sugestao, impacto));
+  };
+  const potencial = (porEnvio) => {
+    if (!(porEnvio > 0)) return;
+    linha.impacto_potencial_por_envio = centavos(Math.max(linha.impacto_potencial_por_envio || 0, porEnvio));
+    if (vendasLidas) linha.impacto_potencial_30d = centavos(linha.impacto_potencial_por_envio * f.vendas30);
   };
 
   if (!ml) {
+    // 1) Medidas ausentes
+    linha.classificacao = "medidas_ausentes";
     const hoje = oficial?.ok
       ? ` Sem medidas, o ML cobra hoje ${f.frete.gratis ? reais(oficial.custo_vendedor) : "o frete do comprador"} pelo peso estimado de ${formatarPeso(oficial.peso_cobrado_g)}.`
       : "";
-    add("media", `Medidas Pendentes de Conferência: o anúncio não tem peso e medidas da embalagem cadastrados.${hoje}`,
-      bl ? `Conferir a embalagem; o Bling informa ${textoMedida(bl)} (não confirmado).` : "Medir e pesar a peça embalada e cadastrar no anúncio.");
+    const refBling = bl
+      ? (motivoBling ? ` O Bling informa ${textoMedida(bl)}, mas parece padronizado (${motivoBling}): não usar como referência.` : ` O Bling informa ${textoMedida(bl)} (não confirmado).`)
+      : "";
+    add("media", `Medidas ausentes: o anúncio não tem peso e medidas da embalagem cadastrados.${hoje}${refBling}`,
+      "Medir e pesar a peça embalada e cadastrar no anúncio, após aprovação.");
   } else {
     const n = normalizarMedida(ml);
-    if (n.peso_g < 20) add("media", `Peso cadastrado de ${formatarPeso(n.peso_g)} parece baixo demais para uma peça embalada (possível erro g × kg).`, "Pesar a peça embalada e corrigir o peso, se necessário.");
+    if (bl && motivoBling) {
+      // 2) Bling possivelmente padronizado: o anúncio continua na auditoria,
+      //    mas o Bling não serve de referência (sem recotação, sem impacto).
+      linha.classificacao = "bling_padronizado";
+      add("baixa", `Medidas possivelmente padronizadas no Bling: ${motivoBling}. Anúncio ${textoMedida(ml)}; Bling ${textoMedida(bl)} — não usar como referência até confirmar.`,
+        "Conferir a embalagem e atualizar o Bling com a medida real, após aprovação.");
+    } else if (bl && divergentes(n, bl)) {
+      const rec = ctx.recotacoes?.[f.id];
+      let dif = null;
+      let txtFrete = "";
+      if (!f.frete.gratis) {
+        txtFrete = " Frete pago pelo comprador: a diferença muda o frete que ele vê, não o seu custo.";
+      } else if (rec?.ok && oficial?.ok) {
+        dif = centavos(rec.custo_vendedor - oficial.custo_vendedor);
+        linha.frete_com_bling = rec.custo_vendedor;
+        linha.diferenca_por_envio = dif;
+        const abs = Math.abs(dif);
+        txtFrete = ` Frete estimado hoje ${reais(oficial.custo_vendedor)}; com as medidas do Bling ${reais(rec.custo_vendedor)}.`
+          + (dif > 0 ? ` Se o Bling estiver certo, risco de o ML remedir e cobrar até ${reais(abs)} a mais por envio (estimado).`
+            : dif < 0 ? ` Se o Bling estiver certo, as medidas atuais podem custar até ${reais(abs)} a mais por envio (estimado).`
+              : " O frete estimado não muda.");
+      } else if (oficial?.ok) {
+        txtFrete = ` Frete estimado hoje ${reais(oficial.custo_vendedor)}; recotação com as medidas do Bling indisponível.`;
+      }
+      if (divergenciaRelevante(n, bl, dif, cfg)) {
+        // 3) Divergência relevante
+        linha.classificacao = "divergencia_relevante";
+        if (dif !== null) potencial(Math.abs(dif));
+        add("media", `Divergência relevante entre Mercado Livre e Bling — pendente de conferência física: anúncio ${textoMedida(ml)}, Bling ${textoMedida(bl)}.${txtFrete}`,
+          "Medir e pesar a peça embalada e corrigir o cadastro que estiver errado (anúncio ou Bling), após aprovação.");
+      } else {
+        // Diferença pequena: registrada nos dados, sem alerta.
+        f.divergencia_pequena = linha.divergencia_pequena = `Anúncio ${textoMedida(ml)}, Bling ${textoMedida(bl)}: diferença pequena, sem impacto relevante no frete.${txtFrete}`;
+      }
+    }
+    // Sinais vindos só do Mercado Livre (independem do Bling)
+    if (n.peso_g < 20) add("media", `Peso cadastrado de ${formatarPeso(n.peso_g)} parece baixo demais para uma peça embalada (possível erro g × kg).`, "Pesar a peça embalada e corrigir o peso, após aprovação.");
     const cub = pesoCubicoG(n);
     if (cub > 1000 && cub > 2 * n.peso_g) add("baixa", `Embalagem grande para o peso: o ML considera ${formatarPeso(cub)} pelo volume (peso real ${formatarPeso(n.peso_g)}).`, "Avaliar uma embalagem menor para reduzir o frete.");
     const lim = validarLimites(n, f.frete.modalidade);
     if (lim.dentro === false) add("alta", `Embalagem fora do limite de envio (${lim.excedidos.map((e) => e.texto).join("; ")}).`, "Conferir as medidas: fora do limite o envio pode ser recusado ou cobrado à parte.");
     if (oficial?.peso_cobrado_g && oficial.peso_cobrado_g > pesoConsideradoG(n) * 1.1 + 10) {
-      add("media", `O ML está cobrando o frete por ${formatarPeso(oficial.peso_cobrado_g)}, mais que o cadastrado (${formatarPeso(pesoConsideradoG(n))}).`, "Conferir se o ML remediu a embalagem (medidas do ML) e se as medidas cadastradas estão corretas.");
-    }
-    if (bl && divergentes(n, bl)) {
-      const rec = ctx.recotacoes?.[f.id];
-      let impacto = null;
-      let txtImpacto = "";
-      if (!f.frete.gratis) {
-        txtImpacto = " Frete pago pelo comprador: a diferença muda o frete que ele vê, não o seu custo.";
-      } else if (rec?.ok && oficial?.ok) {
-        const dif = centavos(rec.custo_vendedor - oficial.custo_vendedor);
-        linha.frete_com_bling = rec.custo_vendedor;
-        linha.diferenca_por_envio = dif;
-        const abs = Math.abs(dif);
-        // Possível impacto: um dos dois cadastros está errado; só a conferência física diz qual.
-        if (abs > 0 && f.vendas30 > 0) impacto = -abs * f.vendas30;
-        txtImpacto = ` Frete hoje ${reais(oficial.custo_vendedor)}; com as medidas do Bling ${reais(rec.custo_vendedor)}.`
-          + (dif > 0 ? ` Se o Bling estiver certo, o anúncio está com medidas menores que as reais: risco de o ML remedir e cobrar ${reais(abs)} a mais por envio.`
-            : dif < 0 ? ` Se o Bling estiver certo, você paga ${reais(abs)} a mais por envio com as medidas atuais do anúncio.`
-              : " O frete não muda (mesma faixa).");
-      } else if (oficial?.ok) {
-        txtImpacto = ` Frete hoje ${reais(oficial.custo_vendedor)}; recotação com as medidas do Bling indisponível.`;
-      }
-      add(impacto ? "alta" : "media", `Medidas divergentes — pendente de conferência física: anúncio ${textoMedida(ml)}, Bling ${textoMedida(bl)}.${txtImpacto}`,
-        "Medir e pesar a peça embalada e corrigir o cadastro que estiver errado (anúncio ou Bling), após aprovação.", impacto);
+      add("media", `O ML está cobrando o frete por ${formatarPeso(oficial.peso_cobrado_g)}, mais que o cadastrado (${formatarPeso(pesoConsideradoG(n))}).`, "Conferir se o ML remediu a embalagem e se as medidas cadastradas estão corretas.");
     }
   }
 
   if (f.frete.gratis && f.frete.vendedor !== null && f.preco > 0) {
     const p = (f.frete.vendedor / f.preco) * 100;
-    if (p >= ctx.cfg.freteAltoPct) {
-      add(p >= ctx.cfg.freteCriticoPct ? "alta" : "media", `O frete pago pelo vendedor (${reais(f.frete.vendedor)}) consome ${pct(p, 0)} do preço.`,
-        "Conferir peso/medidas e avaliar preço, kit ou outra modalidade.", f.vendas30 > 0 && p >= ctx.cfg.freteCriticoPct ? -f.frete.vendedor * f.vendas30 : null);
+    if (p >= cfg.freteAltoPct) {
+      add(p >= cfg.freteCriticoPct ? "alta" : "media", `O frete estimado pago pelo vendedor (${reais(f.frete.vendedor)}) consome ${pct(p, 0)} do preço.`,
+        "Conferir peso/medidas e avaliar preço, kit ou outra modalidade.");
     }
   }
 
@@ -464,16 +554,30 @@ function regrasFrete(f, ctx) {
     const medioC = centavos(reaisV.reduce((s, r) => s + r.comprador, 0) / reaisV.length);
     linha.frete_real_medio = medioV;
     linha.frete_comprador_medio = medioC;
-    if (oficial?.ok && f.frete.gratis && medioV > oficial.custo_vendedor * (1 + ctx.cfg.cobrancaToleranciaPct / 100) && medioV - oficial.custo_vendedor >= 2) {
+    if (oficial?.ok && f.frete.gratis && medioV > oficial.custo_vendedor * (1 + cfg.cobrancaToleranciaPct / 100) && medioV - oficial.custo_vendedor >= 2) {
       const dif = centavos(medioV - oficial.custo_vendedor);
-      add("alta", `Frete cobrado nas vendas (média ${reais(medioV)} em ${reaisV.length} envio(s)) acima do estimado para o anúncio (${reais(oficial.custo_vendedor)}).`,
-        "Conferir as cobranças de envio no ML e as medidas cadastradas; contestar se a cobrança estiver errada.", -dif * reaisV.length);
+      linha.cobrado_acima_estimado = { media_cobrada: medioV, estimado: oficial.custo_vendedor, envios: reaisV.length, diferenca_total: centavos(dif * reaisV.length) };
+      potencial(dif);
+      add("alta", `Frete cobrado nas vendas (média ${reais(medioV)} em ${reaisV.length} envio(s)) acima do estimado para o anúncio (${reais(oficial.custo_vendedor)}): ${reais(dif * reaisV.length)} a conferir.`,
+        "Conferir as cobranças de envio no ML e as medidas cadastradas; contestar se a cobrança estiver errada.");
     }
     if (!f.frete.gratis && f.preco > 0 && medioC / f.preco > 0.3) {
       add("media", `O comprador paga em média ${reais(medioC)} de frete (${pct((medioC / f.preco) * 100, 0)} do preço): pode afastar vendas.`, "Avaliar frete grátis, kit ou preço com frete incluso.");
     }
   }
-  return { achados: out, linha: linha.divergencias.length ? linha : null };
+
+  if (!itens.length) return { achados: [], linha: null };
+  if (!linha.classificacao) linha.classificacao = "alerta_ml";
+  // UM alerta de frete por anúncio, com todos os pontos juntos.
+  const sev = itens.reduce((m, i) => (PESO_SEVERIDADE[i.sev] > PESO_SEVERIDADE[m] ? i.sev : m), "baixa");
+  const titulo = CLASSIFICACOES_MEDIDAS[linha.classificacao].titulo;
+  const texto = itens.length === 1 ? itens[0].texto : `${titulo}: ${itens.map((i) => i.texto).join(" | ")}`;
+  const a = achado(f, AREAS.FRETE, sev, texto, linha.sugestao, null, {
+    classificacao: linha.classificacao,
+    impacto_potencial_por_envio: linha.impacto_potencial_por_envio,
+    impacto_potencial_30d: linha.impacto_potencial_30d,
+  });
+  return { achados: [a], linha };
 }
 
 /** Analisa todos os anúncios. */
@@ -488,7 +592,7 @@ export function analisarAnuncios(dados, config = {}) {
   const vendasTot = fichas.reduce((s, f) => s + (f.vendas30 || 0), 0);
   const leituraCompleta = dados.leituras?.vendas !== false && dados.leituras?.visitas !== false;
   const conversaoConta = !leituraCompleta ? null : visitasTot > 0 ? Math.round((vendasTot / visitasTot) * 10000) / 100 : 0;
-  const ctx = { ...ctxBase, conversaoConta };
+  const ctx = { ...ctxBase, conversaoConta, perfilBling: perfilBling(dados, cfg) };
   const linhasFrete = [];
   for (const f of fichas) {
     f.pontuacao = pontuacaoInterna(f, ctx);
@@ -510,13 +614,15 @@ export function analisarAnuncios(dados, config = {}) {
 }
 
 /** Anúncios com medidas do anúncio x Bling divergentes (para recotar com as do Bling). */
-export function precisamRecotar(dados) {
+export function precisamRecotar(dados, config = {}) {
   const out = [];
+  const perfil = perfilBling(dados, { ...PADROES_ANALISE, ...config });
   for (const it of dados.itens) {
     const sku = skuDoItem(it);
     const ml = medidasDoAnuncio(it);
     const bl = medidasDoBling(sku ? dados.bling?.[sku] : null);
-    if (ml && bl && divergentes(ml, bl) && it?.shipping?.free_shipping === true) out.push({ item: it, medida: bl });
+    // Bling padronizado/suspeito não serve de referência: não recota.
+    if (ml && bl && divergentes(ml, bl) && it?.shipping?.free_shipping === true && !motivoBlingSuspeito(bl, ml, perfil)) out.push({ item: it, medida: bl });
   }
   return out;
 }

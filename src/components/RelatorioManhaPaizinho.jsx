@@ -124,8 +124,9 @@ function Relatorio({ rel }) {
         <Kpi rotulo="Conversão" valor={r.conversao_30d == null ? "não lido" : `${String(r.conversao_30d).replace(".", ",")}%`} />
         <Kpi rotulo="Faturamento (30 dias)" valor={r.faturamento_30d == null ? "não lido" : reais(r.faturamento_30d)} />
         <Kpi rotulo="Urgentes / Importantes" valor={`${r.problemas.alta} / ${r.problemas.media}`} cor={r.problemas.alta ? COR.alta : undefined} />
-        <Kpi rotulo="Prejuízo estimado (30 dias)" valor={r.unidades_vendidas_30d == null ? "não lido" : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
-        <Kpi rotulo="Medidas pendentes" valor={numero(r.medidas_pendentes)} />
+        <Kpi rotulo="Prejuízo calculado (custo real, 30 dias)" valor={r.prejuizo_estimado_30d == null ? "não lido" : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
+        {r.fretes_medidas && <Kpi rotulo="Frete: impacto potencial (a confirmar)" valor={r.fretes_medidas.impacto_potencial_30d != null ? `${reais(r.fretes_medidas.impacto_potencial_30d)} / 30 dias` : `${reais(r.fretes_medidas.impacto_potencial_por_envio)} por envio`} />}
+        <Kpi rotulo="Medidas ausentes" valor={numero(r.medidas_pendentes)} />
         <Kpi rotulo="Pontuação média" valor={`${r.pontuacao_media}/100`} />
       </div>
 
@@ -137,43 +138,7 @@ function Relatorio({ rel }) {
         <ListaAchados lista={rel.oportunidades} />
       </>}
 
-      <h3 style={S.h3} data-paizinho-fretes-medidas>🚚 Fretes e Medidas — Problemas Encontrados ({rel.fretes_medidas.length})</h3>
-      {rel.fretes_medidas.length && celular ? (
-        <div style={S.achados}>{rel.fretes_medidas.map((l) => (
-          <article key={l.item_id} style={{ ...S.achado, borderLeftColor: l.impacto_rs < 0 ? COR.alta : COR.media }}>
-            <div style={S.linhaAchado}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a>{l.sku && <span style={S.ajuda}>SKU {l.sku}</span>}<span style={{ color: l.impacto_rs < 0 ? COR.alta : "#94a3b8", fontWeight: 800 }}>{l.impacto_rs === null ? "impacto não calculável" : reais(l.impacto_rs)}</span></div>
-            <div style={S.tituloAchado}>{l.titulo}</div>
-            <div style={S.ajuda}>⏳ Pendente de conferência física</div>
-            <div style={S.ajuda}>Anúncio (ML): {l.medidas_anuncio} · Bling: {l.medidas_bling}</div>
-            <div style={S.ajuda}>Peso cobrado pelo ML: {l.peso_cobrado_g ? `${numero(l.peso_cobrado_g)} g` : "—"}</div>
-            <div style={S.ajuda}>Frete hoje: {l.frete_gratis ? reais(l.frete_vendedor) : "comprador paga"}{l.frete_com_bling !== null && l.frete_com_bling !== undefined ? ` · com medidas do Bling: ${reais(l.frete_com_bling)} (${textoDiferenca(l.diferenca_por_envio)})` : ""} · real (média): {reais(l.frete_real_medio)}</div>
-            {l.divergencias.map((d, i) => <div key={i}>• {d}</div>)}
-            <div style={S.sugestao}>👉 {l.sugestao}</div>
-          </article>
-        ))}</div>
-      ) : rel.fretes_medidas.length ? (
-        <div style={S.tabelaCaixa}>
-          <table style={S.tabela}>
-            <thead><tr>{["SKU", "Anúncio", "Medidas no anúncio (ML)", "Medidas no Bling", "Peso cobrado pelo ML", "Frete hoje", "Frete c/ medidas do Bling", "Diferença por envio", "Frete real (média)", "Divergência", "Impacto (30 dias)", "Correção sugerida"].map((t) => <th key={t} style={S.th}>{t}</th>)}</tr></thead>
-            <tbody>{rel.fretes_medidas.map((l) => (
-              <tr key={l.item_id}>
-                <td style={S.td}>{l.sku || "—"}</td>
-                <td style={S.td}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a><br /><small style={S.ajuda}>{l.titulo}</small><br /><small style={S.ajuda}>⏳ pendente de conferência</small></td>
-                <td style={S.td}>{l.medidas_anuncio}</td>
-                <td style={S.td}>{l.medidas_bling}</td>
-                <td style={S.td}>{l.peso_cobrado_g ? `${numero(l.peso_cobrado_g)} g` : "—"}</td>
-                <td style={S.td}>{l.frete_gratis ? reais(l.frete_vendedor) : "comprador paga"}</td>
-                <td style={S.td}>{l.frete_com_bling === null || l.frete_com_bling === undefined ? "—" : reais(l.frete_com_bling)}</td>
-                <td style={S.td}>{textoDiferenca(l.diferenca_por_envio)}</td>
-                <td style={S.td}>{reais(l.frete_real_medio)}</td>
-                <td style={S.td}>{l.divergencias.map((d, i) => <div key={i}>• {d}</div>)}</td>
-                <td style={{ ...S.td, color: l.impacto_rs < 0 ? COR.alta : undefined }}>{l.impacto_rs === null ? "não calculável" : reais(l.impacto_rs)}</td>
-                <td style={S.td}>{l.sugestao}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      ) : <p style={S.ajuda}>Nenhum problema de frete ou medidas encontrado.</p>}
+      <FretesMedidas rel={rel} celular={celular} />
 
       {rel.renault.length > 0 && <>
         <h3 style={S.h3}>🔧 Peças Renault ({rel.renault.length})</h3>
@@ -225,6 +190,86 @@ function Kpi({ rotulo, valor, cor }) {
   return <div style={S.kpi}><small style={S.kpiRotulo}>{rotulo}</small><strong style={{ ...S.kpiValor, ...(cor ? { color: cor } : {}) }}>{valor}</strong></div>;
 }
 
+// Impacto POTENCIAL de frete: sempre "estimado / a confirmar", nunca prejuízo.
+const textoPotencial = (x) => (x.impacto_potencial_30d != null
+  ? `até ${reais(x.impacto_potencial_30d)} / 30 dias (potencial, a confirmar)`
+  : x.impacto_potencial_por_envio > 0 ? `até ${reais(x.impacto_potencial_por_envio)} por envio (potencial, a confirmar)` : "impacto não estimável");
+
+const CLASSES_FALLBACK = {
+  medidas_ausentes: { ordem: 1, titulo: "Medidas ausentes" },
+  bling_padronizado: { ordem: 2, titulo: "Medidas possivelmente padronizadas no Bling" },
+  divergencia_relevante: { ordem: 3, titulo: "Divergências relevantes entre Mercado Livre e Bling" },
+  alerta_ml: { ordem: 4, titulo: "Outros alertas de frete (dados do Mercado Livre)" },
+};
+const COR_CLASSE = { medidas_ausentes: "#f59e0b", bling_padronizado: "#a78bfa", divergencia_relevante: "#f97316", alerta_ml: "#38bdf8" };
+const POR_PAGINA = 30;
+
+/** Fretes e Medidas: três classificações, agrupado por SKU, maior impacto potencial primeiro. */
+function FretesMedidas({ rel }) {
+  const [filtro, setFiltro] = useState("todos");
+  const [qtd, setQtd] = useState(POR_PAGINA);
+  const grupos = rel.fretes_por_sku;
+  const classes = rel.classificacoes_medidas || CLASSES_FALLBACK;
+  const fm = rel.resumo.fretes_medidas;
+  if (!grupos) {
+    return <>
+      <h3 style={S.h3} data-paizinho-fretes-medidas>🚚 Fretes e Medidas — Problemas Encontrados</h3>
+      <p style={S.ajuda}>Relatório gerado na versão anterior: rode a análise de novo para ver as classificações por SKU.</p>
+    </>;
+  }
+  const visiveis = filtro === "todos" ? grupos : grupos.filter((g) => g.classificacoes.includes(filtro));
+  const escolher = (c) => { setFiltro(c); setQtd(POR_PAGINA); };
+  return (
+    <>
+      <h3 style={S.h3} data-paizinho-fretes-medidas>🚚 Fretes e Medidas — Problemas Encontrados ({numero(grupos.length)} SKUs · {numero(rel.fretes_medidas.length)} anúncios)</h3>
+      <p style={S.ajuda}>Tudo aqui está <b>pendente de conferência física</b>. Diferenças de frete são <b>impacto potencial estimado</b>, não prejuízo confirmado. Nada é alterado no anúncio, no Bling ou no estoque.</p>
+      <div style={{ ...S.linha, marginTop: 8 }}>
+        <button type="button" style={filtro === "todos" ? S.chipAtivo : S.chip} onClick={() => escolher("todos")}>Todos ({numero(grupos.length)} SKUs)</button>
+        {Object.entries(classes).sort((a, b) => a[1].ordem - b[1].ordem).map(([c, info]) => (
+          <button key={c} type="button" style={filtro === c ? S.chipAtivo : S.chip} onClick={() => escolher(c)}>
+            <span style={{ color: COR_CLASSE[c] }}>●</span> {info.ordem <= 3 ? `${info.ordem}. ` : ""}{info.titulo} ({numero(fm?.[c] ?? 0)})
+          </button>
+        ))}
+      </div>
+      {filtro !== "todos" && classes[filtro]?.explicacao && <p style={S.ajuda}>{classes[filtro].explicacao}</p>}
+      {fm?.divergencia_pequena > 0 && <p style={S.ajuda}>Além disso, {numero(fm.divergencia_pequena)} anúncio(s) têm diferença pequena entre ML e Bling, sem impacto relevante no frete (registrado nos dados, sem alerta).</p>}
+      <div style={{ ...S.achados, marginTop: 10 }}>
+        {visiveis.slice(0, qtd).map((g) => (
+          <article key={g.sku || g.anuncios[0].item_id} style={{ ...S.achado, borderLeftColor: COR_CLASSE[g.classificacao] || "#64748b" }}>
+            <div style={S.linhaAchado}>
+              <b>SKU {g.sku || "sem SKU"}</b>
+              {g.classificacoes.map((c) => <span key={c} style={{ ...S.selo, color: COR_CLASSE[c] }}>{classes[c]?.titulo || c}</span>)}
+              <span style={S.potencial}>{textoPotencial(g)}</span>
+            </div>
+            <div style={S.tituloAchado}>{g.titulo}{g.anuncios.length > 1 ? ` · ${g.anuncios.length} anúncios` : ""}</div>
+            {g.anuncios.map((l) => (
+              <div key={l.item_id} style={S.anuncioFrete}>
+                <div style={S.linhaAchado}>
+                  <a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a>
+                  <span style={S.ajuda}>{reais(l.preco)} · vendas 30 dias: {l.vendas30 == null ? "não lido" : numero(l.vendas30)}</span>
+                  <span style={S.ajuda}>⏳ pendente de conferência</span>
+                </div>
+                <div style={S.gradeFrete}>
+                  <span>📦 Anúncio (ML): <b>{l.medidas_anuncio}</b></span>
+                  <span>🗂️ Bling: <b>{l.medidas_bling}</b>{l.bling_confiavel === false ? <span style={{ color: COR_CLASSE.bling_padronizado }}> · não confiável</span> : ""}</span>
+                  <span>⚖️ Peso cobrado pelo ML: <b>{l.peso_cobrado_g ? `${numero(l.peso_cobrado_g)} g` : "—"}</b></span>
+                  <span>🚚 Frete estimado hoje: <b>{l.frete_gratis ? reais(l.frete_vendedor) : "comprador paga"}</b></span>
+                  {l.frete_com_bling != null && <span>↔️ Com medidas do Bling: <b>{reais(l.frete_com_bling)}</b> ({textoDiferenca(l.diferenca_por_envio)} por envio)</span>}
+                  {l.frete_real_medio != null && <span>🧾 Cobrado nas vendas (média): <b>{reais(l.frete_real_medio)}</b></span>}
+                </div>
+                {l.divergencias.map((d, i) => <div key={i}>• {d}</div>)}
+                <div style={S.sugestao}>👉 {l.sugestao}</div>
+              </div>
+            ))}
+          </article>
+        ))}
+      </div>
+      {visiveis.length > qtd && <button type="button" style={{ ...S.chip, marginTop: 10 }} onClick={() => setQtd((n) => n + POR_PAGINA)}>Mostrar mais ({numero(visiveis.length - qtd)} SKUs restantes)</button>}
+      {!visiveis.length && <p style={S.ajuda}>Nenhum SKU nesta classificação.</p>}
+    </>
+  );
+}
+
 function ListaAchados({ lista }) {
   return (
     <div style={S.achados}>
@@ -235,6 +280,7 @@ function ListaAchados({ lista }) {
             <a href={a.link} target="_blank" rel="noreferrer" style={S.link}>{a.item_id}</a>
             {a.sku && <span style={S.ajuda}>SKU {a.sku}</span>}
             {a.impacto_rs !== null && a.impacto_rs !== undefined && <span style={{ color: a.impacto_rs < 0 ? COR.alta : "#86efac", fontWeight: 800 }}>{reais(a.impacto_rs)} / 30 dias</span>}
+            {a.impacto_potencial_por_envio > 0 && <span style={S.potencial}>{textoPotencial(a)}</span>}
           </div>
           <div style={S.tituloAchado}>{a.titulo}</div>
           <div>{a.problema}</div>
@@ -271,6 +317,9 @@ const S = {
   tituloAchado: { color: "#cbd5e1", fontWeight: 700 },
   sugestao: { color: "#a5f3fc", marginTop: 3 },
   link: { color: "#67e8f9" },
+  potencial: { color: "#fbbf24", fontWeight: 800, fontSize: 13 },
+  anuncioFrete: { marginTop: 8, paddingTop: 8, borderTop: "1px dashed #1e293b" },
+  gradeFrete: { display: "flex", flexWrap: "wrap", gap: "4px 16px", color: "#cbd5e1", fontSize: 13, margin: "4px 0" },
   tabelaCaixa: { overflowX: "auto", maxWidth: "100%", border: "1px solid #1e293b", borderRadius: 10 },
   tabela: { borderCollapse: "collapse", width: "100%", minWidth: 900, fontSize: 13 },
   th: { textAlign: "left", padding: "8px 10px", background: "#0f172a", color: "#94a3b8", borderBottom: "1px solid #1e293b", whiteSpace: "nowrap" },

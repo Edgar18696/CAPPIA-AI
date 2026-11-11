@@ -4,10 +4,11 @@
 // resumo, prioridades, seções por assunto, "Fretes e Medidas — Problemas
 // Encontrados", peças Renault e o que não pôde ser conferido.
 // =============================================================
-import { centavos, dataBrasilia, txt } from "./util.js";
-import { AREAS, PESO_SEVERIDADE } from "./analise.js";
+import { centavos, dataBrasilia, num, txt } from "./util.js";
+import { AREAS, PESO_SEVERIDADE, CLASSIFICACOES_MEDIDAS } from "./analise.js";
 
-export const VERSAO_RELATORIO = 1;
+// 2: Fretes e Medidas em três classificações, agrupados por SKU, com impacto potencial.
+export const VERSAO_RELATORIO = 2;
 
 export const SECOES = Object.freeze([
   { chave: AREAS.MARGEM, titulo: "Margem e rentabilidade" },
@@ -27,16 +28,63 @@ export const REGRAS_DO_RELATORIO = Object.freeze([
   "Uma conta por relatório; anúncios de outras contas são descartados.",
   "Sem custo confiável no Bling, a margem não é calculada (nunca é estimada).",
   "Peças Renault de lote antigo sem custo: comparação com a tabela Renault e a concorrência, sem lucro calculado.",
-  "Sem peso ou medidas confirmados: 'Medidas Pendentes de Conferência' (nenhum valor é inventado).",
+  "Sem peso ou medidas no anúncio: 'Medidas ausentes' (nenhum valor é inventado).",
+  "Medidas do Bling repetidas em muitos SKUs ou improváveis: 'possivelmente padronizadas', não usadas como referência até confirmar.",
+  "Diferença de frete é IMPACTO POTENCIAL estimado, nunca prejuízo confirmado; toda divergência fica pendente de conferência física.",
+  "Os dados originais do Mercado Livre e do Bling ficam guardados no relatório, sem alteração.",
   "A pontuação de qualidade é interna do PAIIA, não a nota oficial do Mercado Livre.",
 ]);
 
-/** Ordem de prioridade: severidade, depois maior impacto financeiro (prejuízo primeiro). */
+/** Impacto financeiro de um achado: prejuízo calculado ou impacto potencial (30 dias; sem vendas, por envio). */
+const impactoDoAchado = (a) => Math.max(Math.abs(num(a.impacto_rs)), num(a.impacto_potencial_30d ?? a.impacto_potencial_por_envio));
+
+/** Ordem de prioridade: maior impacto financeiro (calculado ou potencial) primeiro, depois severidade. */
 export function ordenarAchados(lista) {
   return [...lista].sort((a, b) =>
+    impactoDoAchado(b) - impactoDoAchado(a) ||
     (PESO_SEVERIDADE[b.severidade] || 0) - (PESO_SEVERIDADE[a.severidade] || 0) ||
-    Math.abs(b.impacto_rs || 0) - Math.abs(a.impacto_rs || 0) ||
     txt(a.titulo).localeCompare(txt(b.titulo)));
+}
+
+/**
+ * Chave de ordenação do impacto POTENCIAL de frete (estimado): com vendas
+ * lidas usa o valor de 30 dias (diferença × vendas); sem vendas, o valor por
+ * envio; depois o frete estimado que o vendedor paga hoje.
+ */
+function pesoImpacto(l) {
+  return [num(l.impacto_potencial_30d), num(l.impacto_potencial_por_envio), num(l.frete_gratis ? l.frete_vendedor : 0) * Math.max(1, num(l.vendas30))];
+}
+function compararImpacto(a, b) {
+  const x = pesoImpacto(a), y = pesoImpacto(b);
+  for (let i = 0; i < x.length; i++) if (y[i] !== x[i]) return y[i] - x[i];
+  return 0;
+}
+
+/** Fretes e Medidas agrupados por SKU (um grupo por SKU, todos os anúncios dentro). */
+export function agruparFretesPorSku(linhas) {
+  const grupos = new Map();
+  for (const l of linhas) {
+    const chave = txt(l.sku) || `sem-sku:${l.item_id}`;
+    if (!grupos.has(chave)) grupos.set(chave, { sku: txt(l.sku) || null, titulo: l.titulo, anuncios: [] });
+    grupos.get(chave).anuncios.push(l);
+  }
+  const ordemClasse = (c) => CLASSIFICACOES_MEDIDAS[c]?.ordem ?? 9;
+  return [...grupos.values()].map((g) => {
+    g.anuncios.sort(compararImpacto);
+    const classes = [...new Set(g.anuncios.map((l) => l.classificacao))].sort((a, b) => ordemClasse(a) - ordemClasse(b));
+    const porEnvio = g.anuncios.map((l) => l.impacto_potencial_por_envio).filter((v) => v !== null && v !== undefined);
+    const em30 = g.anuncios.map((l) => l.impacto_potencial_30d).filter((v) => v !== null && v !== undefined);
+    return {
+      ...g,
+      classificacao: classes[0],
+      classificacoes: classes,
+      impacto_potencial_por_envio: porEnvio.length ? Math.max(...porEnvio) : null,
+      impacto_potencial_30d: em30.length ? centavos(em30.reduce((s, v) => s + v, 0)) : null,
+      frete_vendedor: Math.max(0, ...g.anuncios.map((l) => (l.frete_gratis ? num(l.frete_vendedor) : 0))),
+      vendas30: g.anuncios.some((l) => l.vendas30 === null) ? null : g.anuncios.reduce((s, l) => s + num(l.vendas30), 0),
+      conferencia: "pendente",
+    };
+  }).sort(compararImpacto);
 }
 
 function resumirFalhas(falhas) {
@@ -67,6 +115,8 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   const unidades30 = vendasLidas ? fichas.reduce((s, f) => s + (f.vendas30 || 0), 0) : null;
   const faturamento30 = vendasLidas ? centavos(fichas.reduce((s, f) => s + (f.vendas30 || 0) * f.preco, 0)) : null;
   const prejuizo = centavos(todos.reduce((s, a) => s + (a.impacto_rs && a.impacto_rs < 0 ? -a.impacto_rs : 0), 0));
+  const fretesPorSku = agruparFretesPorSku(analise.linhasFrete);
+  const contarClasse = (c) => analise.linhasFrete.filter((l) => l.classificacao === c).length;
   const contagem = { alta: 0, media: 0, baixa: 0 };
   for (const a of problemas) contagem[a.severidade] = (contagem[a.severidade] || 0) + 1;
 
@@ -104,17 +154,32 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
       conversao_30d: analise.conversaoConta,
       problemas: contagem,
       oportunidades: oportunidades.length,
-      prejuizo_estimado_30d: prejuizo,
-      medidas_pendentes: todos.filter((a) => a.area === AREAS.FRETE && a.problema.startsWith("Medidas Pendentes")).length,
+      // Prejuízo CALCULADO com custo real (margem). Frete divergente não entra aqui.
+      prejuizo_estimado_30d: vendasLidas ? prejuizo : null,
+      medidas_pendentes: contarClasse("medidas_ausentes"),
+      fretes_medidas: {
+        anuncios: analise.linhasFrete.length,
+        skus: fretesPorSku.length,
+        medidas_ausentes: contarClasse("medidas_ausentes"),
+        bling_padronizado: contarClasse("bling_padronizado"),
+        divergencia_relevante: contarClasse("divergencia_relevante"),
+        alerta_ml: contarClasse("alerta_ml"),
+        divergencia_pequena: analise.fichas.filter((f) => f.divergencia_pequena).length,
+        impacto_potencial_por_envio: centavos(analise.linhasFrete.reduce((s, l) => s + num(l.impacto_potencial_por_envio), 0)),
+        impacto_potencial_30d: vendasLidas ? centavos(analise.linhasFrete.reduce((s, l) => s + num(l.impacto_potencial_30d), 0)) : null,
+      },
       sem_custo: fichas.filter((f) => !f.custo).length,
       pontuacao_media: fichas.length ? Math.round(fichas.reduce((s, f) => s + f.pontuacao.total, 0) / fichas.length) : 0,
     },
     prioridades: ordenarAchados(problemas).slice(0, 15),
     oportunidades: ordenarAchados(oportunidades).slice(0, 15),
     secoes,
-    fretes_medidas: ordenarAchados(analise.linhasFrete.map((l) => ({ ...l, severidade: undefined }))).sort((a, b) => (a.impacto_rs ?? 0) - (b.impacto_rs ?? 0) || b.divergencias.length - a.divergencias.length),
+    // Uma linha por anúncio (dados completos, inclusive os originais) e a visão agrupada por SKU.
+    fretes_medidas: [...analise.linhasFrete].sort(compararImpacto),
+    fretes_por_sku: fretesPorSku,
+    classificacoes_medidas: CLASSIFICACOES_MEDIDAS,
     renault,
-    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length })),
+    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
     limitacoes,
     falhas: resumirFalhas(dados.falhas),
     regras: REGRAS_DO_RELATORIO,

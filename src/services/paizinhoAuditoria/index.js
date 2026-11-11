@@ -61,7 +61,7 @@ export async function executarAuditoria({
   // Frete com as medidas do Bling, só onde as medidas divergem (impacto em R$).
   const recotacoes = {};
   // (11/11) Todas as divergências da conta (antes: só 60). Uma cotação por anúncio.
-  const alvo = precisamRecotar(dados).slice(0, Number(opcoesColeta.limiteRecotacoes) || 2000);
+  const alvo = precisamRecotar(dados, config).slice(0, Number(opcoesColeta.limiteRecotacoes) || 2000);
   if (alvo.length) {
     try { aoProgredir("Cotando o frete com as medidas do Bling"); } catch { /* ignora */ }
     await comLimite(alvo, 4, async ({ item, medida }) => {

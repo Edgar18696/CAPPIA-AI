@@ -82,44 +82,98 @@ test("Renault sem custo: compara com tabela e concorrência, recomenda MANTER e 
   assert.equal(achadosDe(r3, "MLB2").find((x) => x.area === "renault").recomendacao, "dados insuficientes");
 });
 
-test("frete e medidas: sem medidas → Medidas Pendentes de Conferência (sem inventar valores)", async () => {
+test("frete e medidas: sem medidas → classificação 'Medidas ausentes' (sem inventar valores)", async () => {
   assert.equal(medidasDoAnuncio(ITENS.MLB3), null);
   const { rel } = await rodar();
-  const a = achadosDe(rel, "MLB3").find((x) => x.area === "frete");
-  assert.match(a.problema, /^Medidas Pendentes de Conferência/);
+  const a = achadosDe(rel, "MLB3").filter((x) => x.area === "frete");
+  assert.equal(a.length, 1, "um único alerta de frete por anúncio");
+  assert.match(a[0].problema, /^Medidas ausentes/);
+  assert.equal(a[0].classificacao, "medidas_ausentes");
   const linha = rel.fretes_medidas.find((l) => l.item_id === "MLB3");
   assert.equal(linha.medidas_anuncio, "não cadastradas");
   assert.equal(linha.sku, "SKU-MLB3");
+  assert.equal(linha.classificacao, "medidas_ausentes");
+  assert.equal(linha.conferencia, "pendente");
   assert.equal(rel.resumo.medidas_pendentes, 1);
+  assert.equal(rel.resumo.fretes_medidas.medidas_ausentes, 1);
 });
 
-test("frete e medidas: divergência anúncio x Bling recota com as medidas do Bling e mostra a diferença", async () => {
+test("frete e medidas: divergência relevante ML x Bling recota e mostra impacto POTENCIAL (nunca prejuízo)", async () => {
   const { rel, ml } = await rodar();
   assert.ok(ml.caminhos.some((c) => c.caminho.includes("dimensions=30x30x30%2C300")), "recotação com as medidas do Bling");
-  const a = achadosDe(rel, "MLB5").find((x) => x.area === "frete" && /Medidas divergentes/.test(x.problema));
-  assert.match(a.problema, /pendente de conferência física/);
-  assert.match(a.problema, /Frete hoje R\$ 20,00; com as medidas do Bling R\$ 32,00/);
-  assert.match(a.problema, /risco de o ML remedir e cobrar R\$ 12,00 a mais por envio/);
+  const a = achadosDe(rel, "MLB5").find((x) => x.area === "frete");
+  assert.equal(a.classificacao, "divergencia_relevante");
+  assert.match(a.problema, /Divergência relevante entre Mercado Livre e Bling — pendente de conferência física/);
+  assert.match(a.problema, /Frete estimado hoje R\$ 20,00; com as medidas do Bling R\$ 32,00/);
+  assert.match(a.problema, /cobrar até R\$ 12,00 a mais por envio \(estimado\)/);
   assert.match(a.sugestao, /corrigir o cadastro que estiver errado .*após aprovação/);
+  assert.equal(a.impacto_rs, null, "diferença estimada nunca é prejuízo confirmado");
   const linha = rel.fretes_medidas.find((l) => l.item_id === "MLB5");
   assert.equal(linha.frete_com_bling, 32);
   assert.equal(linha.diferenca_por_envio, 12);
   assert.equal(linha.conferencia, "pendente");
-  // Com vendas lidas, o possível impacto = diferença × vendas de 30 dias (nunca inventado sem vendas).
   const vendas = rel.anuncios.find((x) => x.item_id === "MLB5").vendas30;
-  assert.equal(linha.impacto_rs, vendas > 0 ? -12 * vendas : null);
+  assert.equal(linha.impacto_potencial_por_envio, 12);
+  assert.equal(linha.impacto_potencial_30d, 12 * vendas);
+  // Dados originais preservados
+  assert.deepEqual(linha.dados_originais.bling, { peso_bruto: 0.3, peso_liquido: null, largura: 30, altura: 30, profundidade: 30 });
 });
 
-test("frete e medidas: cobrança nas vendas acima do estimado → alta com impacto", async () => {
+test("frete e medidas: cobrança nas vendas acima do estimado → alta, valor 'a conferir' (não é prejuízo confirmado)", async () => {
   const { rel } = await rodar();
   const a = achadosDe(rel, "MLB6").find((x) => x.area === "frete" && /acima do estimado/.test(x.problema));
   assert.equal(a.severidade, "alta");
-  assert.equal(a.impacto_rs, -30); // (35 − 20) × 2 envios
+  assert.equal(a.impacto_rs, null);
+  assert.match(a.problema, /R\$ 30,00 a conferir/); // (35 − 20) × 2 envios
   const linha = rel.fretes_medidas.find((l) => l.item_id === "MLB6");
   assert.equal(linha.frete_real_medio, 35);
   assert.equal(linha.frete_vendedor, 20);
-  assert.equal(linha.impacto_rs, -30);
+  assert.equal(linha.impacto_potencial_por_envio, 15);
+  assert.deepEqual(linha.cobrado_acima_estimado, { media_cobrada: 35, estimado: 20, envios: 2, diferenca_total: 30 });
   assert.equal(rel.secoes.find((s) => s.chave === "frete").titulo, "Fretes e Medidas — Problemas Encontrados");
+});
+
+test("frete e medidas: Bling padronizado (mesma caixa em 5+ SKUs ou peso improvável) não é referência, mas o anúncio continua", async () => {
+  const { analisarAnuncios, motivoBlingSuspeito, perfilBling } = await import("../../src/services/paizinhoAuditoria/analise.js");
+  const ml = { comprimento_cm: 24, largura_cm: 18, altura_cm: 7, peso_g: 647 };
+  const padrao = { comprimento_cm: 20, largura_cm: 20, altura_cm: 15, peso_g: 500 };
+  const bling = {};
+  for (let i = 0; i < 5; i++) bling[`P${i}`] = { peso_bruto: 0.5, largura: 20, altura: 15, profundidade: 20 };
+  const perfil = perfilBling({ bling });
+  assert.match(motivoBlingSuspeito(padrao, ml, perfil), /se repetem em 5 SKUs/);
+  assert.match(motivoBlingSuspeito({ ...ml, peso_g: 500000 }, ml, { contagem: {} }), /improvável/);
+  assert.equal(motivoBlingSuspeito({ ...ml, peso_g: 700 }, ml, { contagem: {} }), null, "medida única e plausível é confiável");
+  // Na auditoria: o anúncio com Bling padronizado continua, sem recotação nem impacto.
+  const { rel, ml: mlF } = await rodar({ consultarBling: async (sku) => (sku === "SKU-MLB5" ? { ok: true, produto: { peso_bruto: 0.3, largura: 30, altura: 30, profundidade: 30 } } : { ok: true, produto: { peso_bruto: 0.3, largura: 30, altura: 30, profundidade: 30 } }) });
+  const l5 = rel.fretes_medidas.find((l) => l.item_id === "MLB5");
+  assert.equal(l5.classificacao, "bling_padronizado");
+  assert.equal(l5.bling_confiavel, false);
+  assert.equal(l5.impacto_potencial_por_envio, null);
+  assert.ok(!mlF.caminhos.some((c) => c.caminho.includes("dimensions=30x30x30")), "não recota com medida padronizada");
+  assert.ok(rel.resumo.fretes_medidas.bling_padronizado >= 1);
+  void analisarAnuncios;
+});
+
+test("frete e medidas: agrupado por SKU, maior impacto potencial primeiro", async () => {
+  const { agruparFretesPorSku } = await import("../../src/services/paizinhoAuditoria/relatorio.js");
+  const base = { titulo: "x", frete_gratis: true, frete_vendedor: 10, vendas30: null, impacto_potencial_30d: null };
+  const grupos = agruparFretesPorSku([
+    { ...base, item_id: "A1", sku: "S1", classificacao: "alerta_ml", impacto_potencial_por_envio: null },
+    { ...base, item_id: "A2", sku: "S2", classificacao: "divergencia_relevante", impacto_potencial_por_envio: 30 },
+    { ...base, item_id: "A3", sku: "S1", classificacao: "medidas_ausentes", impacto_potencial_por_envio: 5 },
+  ]);
+  assert.deepEqual(grupos.map((g) => g.sku), ["S2", "S1"]);
+  assert.equal(grupos[1].anuncios.length, 2, "dois anúncios do mesmo SKU em um grupo só");
+  assert.equal(grupos[1].classificacao, "medidas_ausentes");
+  assert.deepEqual(grupos[1].classificacoes, ["medidas_ausentes", "alerta_ml"]);
+  // Com vendas lidas, o volume de vendas pesa na ordem.
+  const g2 = agruparFretesPorSku([
+    { ...base, item_id: "B1", sku: "T1", vendas30: 1, impacto_potencial_por_envio: 20, impacto_potencial_30d: 20 },
+    { ...base, item_id: "B2", sku: "T2", vendas30: 10, impacto_potencial_por_envio: 5, impacto_potencial_30d: 50 },
+  ]);
+  assert.deepEqual(g2.map((g) => g.sku), ["T2", "T1"]);
+  const { rel } = await rodar();
+  assert.equal(rel.fretes_por_sku.length, new Set(rel.fretes_medidas.map((l) => l.sku)).size);
 });
 
 test("frete pago pelo vendedor alto em relação ao preço", async () => {
@@ -148,9 +202,11 @@ test("relatório: resumo, prioridades ordenadas, limitações honestas e regras"
   assert.equal(rel.resumo.anuncios_analisados, 6);
   assert.equal(rel.resumo.unidades_vendidas_30d, 7);
   assert.equal(rel.resumo.visitas_30d, 415);
-  assert.ok(rel.resumo.prejuizo_estimado_30d >= 58);
-  const pesos = { alta: 3, media: 2, baixa: 1 };
-  for (let i = 1; i < rel.prioridades.length; i++) assert.ok(pesos[rel.prioridades[i - 1].severidade] >= pesos[rel.prioridades[i].severidade]);
+  // Prejuízo = só o calculado com custo real (margem do MLB1: R$ 14 × 2). Frete estimado não entra.
+  assert.equal(rel.resumo.prejuizo_estimado_30d, 28);
+  // Prioridades: maior impacto financeiro (calculado ou potencial) primeiro.
+  const imp = (a) => Math.max(Math.abs(a.impacto_rs || 0), a.impacto_potencial_30d ?? a.impacto_potencial_por_envio ?? 0);
+  for (let i = 1; i < rel.prioridades.length; i++) assert.ok(imp(rel.prioridades[i - 1]) >= imp(rel.prioridades[i]));
   assert.ok(rel.limitacoes.some((l) => /Concorrência não pesquisada/.test(l)));
   assert.ok(rel.limitacoes.some((l) => /antes dos impostos/.test(l)));
   assert.ok(rel.regras.some((r) => /Somente leitura/.test(r)));
