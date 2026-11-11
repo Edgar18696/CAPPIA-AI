@@ -30,16 +30,35 @@ export const PADROES_COLETA = Object.freeze({
 
 /** Envolve `consultar` garantindo: só caminho (GET), nunca método/corpo. */
 export function somenteLeitura(consultar) {
+  // (11/11) O servidor só aceita alguns endereços de leitura ("lista
+  // permitida"). Recusado um tipo de endereço, não insiste nele de novo.
+  const recusados = new Map();
   return async (caminho) => {
     const c = txt(caminho);
     if (!c.startsWith("/")) return { ok: false, erro: "Caminho inválido." };
+    const tipo = tipoDeCaminho(c);
+    if (recusados.has(tipo)) return recusados.get(tipo);
     try {
       const r = await consultar(c);
-      return r && typeof r === "object" ? r : { ok: false, erro: "Resposta vazia." };
+      const res = r && typeof r === "object" ? r : { ok: false, erro: "Resposta vazia." };
+      if (!res.ok && caminhoRecusado(res)) {
+        const marcado = { ...res, recusado: true };
+        recusados.set(tipo, marcado);
+        return marcado;
+      }
+      return res;
     } catch (e) {
       return { ok: false, erro: txt(e?.message || e) };
     }
   };
+}
+
+/** "/items/MLB123/description?x" → "/items/*\/description" (tipo de endereço). */
+export function tipoDeCaminho(c) {
+  return txt(c).split("?")[0].replace(/\/MLB[A-Z]?\d+/gi, "/*").replace(/\/\d+/g, "/*");
+}
+export function caminhoRecusado(r) {
+  return /fora da lista permitida|não permitid|nao permitid/i.test(txt(r?.erro));
 }
 
 const dia = (iso) => txt(iso).slice(0, 10);
@@ -70,10 +89,16 @@ export async function coletarDadosConta({
   // 1) Conta conferida
   passo("Conferindo a conta");
   const usuario = await get(`/users/${contaId}`);
-  if (!usuario?.ok || String(usuario?.dados?.id) !== contaId) {
-    throw new Error(`Não foi possível confirmar a conta ${contaId} no Mercado Livre (${txt(usuario?.erro) || "resposta inesperada"}).`);
+  if (usuario?.ok && String(usuario?.dados?.id) !== contaId) {
+    throw new Error(`O Mercado Livre respondeu com outra conta (${txt(usuario?.dados?.id)}) no lugar de ${contaId}: auditoria interrompida.`);
   }
-  const contaInfo = { id: contaId, apelido: txt(usuario.dados.nickname), site: txt(usuario.dados.site_id) || "MLB" };
+  if (!usuario?.ok) {
+    // Sem a leitura do perfil a separação de contas continua garantida:
+    // cada anúncio é conferido pelo seller_id logo abaixo.
+    falha("perfil da conta", `/users/${contaId}`, usuario);
+    if (!usuario?.recusado) throw new Error(`Não foi possível confirmar a conta ${contaId} no Mercado Livre (${txt(usuario?.erro) || "resposta inesperada"}).`);
+  }
+  const contaInfo = { id: contaId, apelido: txt(usuario?.dados?.nickname), site: txt(usuario?.dados?.site_id) || "MLB" };
 
   // 2) Anúncios ativos
   passo("Lendo os anúncios ativos");
@@ -106,14 +131,23 @@ export async function coletarDadosConta({
   passo(`Lendo ${idsAnalisados.length} anúncios`);
   const itens = [];
   let descartadosOutraConta = 0;
-  const lotes = await comLimite(pedacos(idsAnalisados, 20), o.paralelo, (lote) => get(`/items?ids=${lote.join(",")}`));
-  for (const r of lotes) {
+  const aceitar = (b) => {
+    if (!b?.id) return;
+    if (String(b.seller_id) !== contaId) { descartadosOutraConta++; return; } // NUNCA mistura contas
+    itens.push(b);
+  };
+  const lotes = await comLimite(pedacos(idsAnalisados, 20), o.paralelo, async (lote) => ({ lote, r: await get(`/items?ids=${lote.join(",")}`) }));
+  const umPorUm = [];
+  for (const { lote, r } of lotes) {
+    if (r?.recusado) { umPorUm.push(...lote); continue; } // leitura em lote não permitida → um por vez
     if (!r?.ok || !Array.isArray(r.dados)) { falha("detalhes dos anúncios", "/items", r); continue; }
-    for (const x of r.dados) {
-      const b = x?.body;
-      if (Number(x?.code) !== 200 || !b?.id) continue;
-      if (String(b.seller_id) !== contaId) { descartadosOutraConta++; continue; } // NUNCA mistura contas
-      itens.push(b);
+    for (const x of r.dados) if (Number(x?.code) === 200) aceitar(x?.body);
+  }
+  if (umPorUm.length) {
+    const resp = await comLimite(umPorUm, o.paralelo, (id) => get(`/items/${id}`));
+    for (const r of resp) {
+      if (r?.ok) aceitar(r.dados);
+      else falha("detalhes do anúncio", "/items/{id}", r);
     }
   }
 
@@ -212,9 +246,14 @@ export async function coletarDadosConta({
     passo("Lendo custos e medidas no Bling");
     const skus = [...new Set(itens.map(skuDoItem).filter(Boolean))];
     let falhasSeguidas = 0;
+    let feitos = 0;
+    const lerBling = (sku) => consultarBling(sku).catch((e) => ({ ok: false, erro: txt(e?.message || e) }));
     await comLimite(skus, o.paraleloBling, async (sku) => {
       if (falhasSeguidas >= 5) return; // Bling fora do ar: não insiste
-      const r = await consultarBling(sku).catch((e) => ({ ok: false, erro: txt(e?.message || e) }));
+      if (++feitos % 25 === 0) passo(`Lendo custos e medidas no Bling (${feitos} de ${skus.length})`);
+      let r = await lerBling(sku);
+      // (11/11) Conta inteira: o Bling limita consultas por segundo → espera e tenta 1 vez.
+      if (!r?.ok && r?.encontrado !== false) { await new Promise((ok) => setTimeout(ok, o.esperaBlingMs ?? 1500)); r = await lerBling(sku); }
       if (r?.ok && r.produto) { bling[sku] = r.produto; falhasSeguidas = 0; }
       else if (r?.encontrado === false || (r?.ok && !r.produto)) { bling[sku] = null; falhasSeguidas = 0; }
       else { falhasSeguidas++; falha("Bling", "buscar_produto", r); }
@@ -245,6 +284,11 @@ export async function coletarDadosConta({
     totais: { anuncios_ativos: total || idsAnalisados.length, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
     fontes: { bling: blingDisponivel, concorrencia: typeof buscarConcorrentes === "function" },
+    // (11/11) O que NÃO foi lido nunca vira zero na análise.
+    leituras: {
+      visitas: itens.length === 0 || Object.keys(visitas).length > 0,
+      vendas: !falhas.some((f) => f.etapa === "vendas"),
+    },
     falhas,
   };
 }

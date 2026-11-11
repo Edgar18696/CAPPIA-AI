@@ -96,9 +96,18 @@ test("frete e medidas: sem medidas → Medidas Pendentes de Conferência (sem in
 test("frete e medidas: divergência anúncio x Bling recota com as medidas do Bling e mostra a diferença", async () => {
   const { rel, ml } = await rodar();
   assert.ok(ml.caminhos.some((c) => c.caminho.includes("dimensions=30x30x30%2C300")), "recotação com as medidas do Bling");
-  const a = achadosDe(rel, "MLB5").find((x) => x.area === "frete" && /diferentes do Bling/.test(x.problema));
-  assert.match(a.problema, /Com as medidas do Bling o frete seria R\$ 32,00 \(hoje R\$ 20,00\)/);
-  assert.match(a.sugestao, /corrigir o cadastro que estiver errado/);
+  const a = achadosDe(rel, "MLB5").find((x) => x.area === "frete" && /Medidas divergentes/.test(x.problema));
+  assert.match(a.problema, /pendente de conferência física/);
+  assert.match(a.problema, /Frete hoje R\$ 20,00; com as medidas do Bling R\$ 32,00/);
+  assert.match(a.problema, /risco de o ML remedir e cobrar R\$ 12,00 a mais por envio/);
+  assert.match(a.sugestao, /corrigir o cadastro que estiver errado .*após aprovação/);
+  const linha = rel.fretes_medidas.find((l) => l.item_id === "MLB5");
+  assert.equal(linha.frete_com_bling, 32);
+  assert.equal(linha.diferenca_por_envio, 12);
+  assert.equal(linha.conferencia, "pendente");
+  // Com vendas lidas, o possível impacto = diferença × vendas de 30 dias (nunca inventado sem vendas).
+  const vendas = rel.anuncios.find((x) => x.item_id === "MLB5").vendas30;
+  assert.equal(linha.impacto_rs, vendas > 0 ? -12 * vendas : null);
 });
 
 test("frete e medidas: cobrança nas vendas acima do estimado → alta com impacto", async () => {
@@ -155,6 +164,37 @@ test("falha de leitura não derruba a auditoria: fica registrada", async () => {
   assert.ok(rel.falhas.some((f) => f.etapa === "tarifa de venda"));
   assert.ok(!achadosDe(rel, "MLB1").some((x) => x.area === "margem" && /PREJUÍZO/.test(x.problema)), "sem tarifa oficial não calcula margem");
   assert.ok(rel.limitacoes.some((l) => /Bling não consultado/.test(l)));
+});
+
+test("servidor recusa perfil, lote, visitas e vendas: segue lendo um por um e NUNCA trata o não lido como zero", async () => {
+  // Situação real de 11/11/2026 na LOJA ONLINE (lista permitida da mercadolivre-publicacao).
+  const ml = mlFalso();
+  const RECUSA = { ok: false, erro: "Consulta fora da lista permitida (somente leitura)." };
+  const recusar = /^\/users\/\d+$|^\/items\?ids=|\/visits|^\/orders\/search/;
+  let chamadasRecusadas = 0;
+  const consultar = async (c) => {
+    if (recusar.test(c.split("&")[0])) { chamadasRecusadas++; return RECUSA; }
+    if (/^\/items\/MLB\d+$/.test(c)) {
+      const it = Object.values(ITENS).find((x) => `/items/${x.id}` === c);
+      return it ? { ok: true, dados: it } : { ok: false, status: 404, erro: "não encontrado" };
+    }
+    return ml.consultar(c);
+  };
+  const rel = await executarAuditoria({ conta: CONTA, consultar, consultarBling: blingFalso, agora: AGORA });
+  assert.equal(rel.resumo.anuncios_analisados, 6, "detalhes lidos um por um");
+  assert.equal(rel.resumo.descartados_outra_conta, 1, "seller_id continua separando as contas");
+  assert.equal(rel.resumo.visitas_30d, null);
+  assert.equal(rel.resumo.unidades_vendidas_30d, null);
+  assert.equal(rel.resumo.conversao_30d, null);
+  const todos = rel.secoes.flatMap((s) => s.achados);
+  assert.ok(!todos.some((a) => /Produto parado|nenhuma venda|visita\(s\) em 30 dias/.test(a.problema)), "sem conclusões sobre o que não foi lido");
+  assert.ok(rel.limitacoes.some((l) => /Vendas NÃO lidas/.test(l)));
+  assert.ok(rel.limitacoes.some((l) => /Visitas NÃO lidas/.test(l)));
+  // Só as consultas já em paralelo quando chega a 1ª recusa (limite = paralelismo, não nº de anúncios).
+  assert.ok(chamadasRecusadas <= 12, `endereço recusado não é repetido (${chamadasRecusadas} chamadas)`);
+  // Outra conta respondendo no perfil continua interrompendo
+  const outra = async (c) => (/^\/users\/\d+$/.test(c) ? { ok: true, dados: { id: 999 } } : consultar(c));
+  await assert.rejects(() => executarAuditoria({ conta: CONTA, consultar: outra, agora: AGORA }), /outra conta/);
 });
 
 test("Central: as 14 funções existentes continuam iguais", () => {

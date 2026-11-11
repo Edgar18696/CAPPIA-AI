@@ -9,6 +9,8 @@ import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTA_PILO
 const LOCAL = import.meta.env.DEV === true;
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const numero = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR"));
+// + = com as medidas do Bling o frete seria maior; − = menor.
+const textoDiferenca = (d) => (d === null || d === undefined ? "—" : d === 0 ? "sem diferença" : `${d > 0 ? "+" : "−"}${reais(Math.abs(d))}`);
 const hora = (iso) => { try { return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); } catch { return "—"; } };
 const COR = { alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
 const ROTULO = { alta: "Urgente", media: "Importante", baixa: "Acompanhar" };
@@ -67,6 +69,7 @@ export default function RelatorioManhaPaizinho() {
             <label style={S.rotulo}>Anúncios
               <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
                 {[20, 50, 100, 300, 500].map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value={5000}>todos</option>
               </select>
             </label>
             <label style={S.rotulo}>Concorrência (usa créditos SerpAPI)
@@ -116,12 +119,12 @@ function Relatorio({ rel }) {
     <div>
       <div style={S.kpis}>
         <Kpi rotulo="Anúncios analisados" valor={`${numero(r.anuncios_analisados)} de ${numero(r.anuncios_ativos)}`} />
-        <Kpi rotulo="Visitas (30 dias)" valor={numero(r.visitas_30d)} />
-        <Kpi rotulo="Vendas (30 dias)" valor={`${numero(r.unidades_vendidas_30d)} un.`} />
-        <Kpi rotulo="Conversão" valor={`${String(r.conversao_30d).replace(".", ",")}%`} />
-        <Kpi rotulo="Faturamento (30 dias)" valor={reais(r.faturamento_30d)} />
+        <Kpi rotulo="Visitas (30 dias)" valor={r.visitas_30d == null ? "não lido" : numero(r.visitas_30d)} />
+        <Kpi rotulo="Vendas (30 dias)" valor={r.unidades_vendidas_30d == null ? "não lido" : `${numero(r.unidades_vendidas_30d)} un.`} />
+        <Kpi rotulo="Conversão" valor={r.conversao_30d == null ? "não lido" : `${String(r.conversao_30d).replace(".", ",")}%`} />
+        <Kpi rotulo="Faturamento (30 dias)" valor={r.faturamento_30d == null ? "não lido" : reais(r.faturamento_30d)} />
         <Kpi rotulo="Urgentes / Importantes" valor={`${r.problemas.alta} / ${r.problemas.media}`} cor={r.problemas.alta ? COR.alta : undefined} />
-        <Kpi rotulo="Prejuízo estimado (30 dias)" valor={reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
+        <Kpi rotulo="Prejuízo estimado (30 dias)" valor={r.unidades_vendidas_30d == null ? "não lido" : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
         <Kpi rotulo="Medidas pendentes" valor={numero(r.medidas_pendentes)} />
         <Kpi rotulo="Pontuação média" valor={`${r.pontuacao_media}/100`} />
       </div>
@@ -140,8 +143,10 @@ function Relatorio({ rel }) {
           <article key={l.item_id} style={{ ...S.achado, borderLeftColor: l.impacto_rs < 0 ? COR.alta : COR.media }}>
             <div style={S.linhaAchado}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a>{l.sku && <span style={S.ajuda}>SKU {l.sku}</span>}<span style={{ color: l.impacto_rs < 0 ? COR.alta : "#94a3b8", fontWeight: 800 }}>{l.impacto_rs === null ? "impacto não calculável" : reais(l.impacto_rs)}</span></div>
             <div style={S.tituloAchado}>{l.titulo}</div>
-            <div style={S.ajuda}>Medidas: {l.medidas_anuncio} · Bling: {l.medidas_bling}</div>
-            <div style={S.ajuda}>Frete vendedor: {l.frete_gratis ? reais(l.frete_vendedor) : "comprador paga"} · real (média): {reais(l.frete_real_medio)}</div>
+            <div style={S.ajuda}>⏳ Pendente de conferência física</div>
+            <div style={S.ajuda}>Anúncio (ML): {l.medidas_anuncio} · Bling: {l.medidas_bling}</div>
+            <div style={S.ajuda}>Peso cobrado pelo ML: {l.peso_cobrado_g ? `${numero(l.peso_cobrado_g)} g` : "—"}</div>
+            <div style={S.ajuda}>Frete hoje: {l.frete_gratis ? reais(l.frete_vendedor) : "comprador paga"}{l.frete_com_bling !== null && l.frete_com_bling !== undefined ? ` · com medidas do Bling: ${reais(l.frete_com_bling)} (${textoDiferenca(l.diferenca_por_envio)})` : ""} · real (média): {reais(l.frete_real_medio)}</div>
             {l.divergencias.map((d, i) => <div key={i}>• {d}</div>)}
             <div style={S.sugestao}>👉 {l.sugestao}</div>
           </article>
@@ -149,14 +154,17 @@ function Relatorio({ rel }) {
       ) : rel.fretes_medidas.length ? (
         <div style={S.tabelaCaixa}>
           <table style={S.tabela}>
-            <thead><tr>{["SKU", "Anúncio", "Medidas cadastradas", "Bling", "Frete vendedor", "Frete real (média)", "Divergência", "Impacto", "Correção sugerida"].map((t) => <th key={t} style={S.th}>{t}</th>)}</tr></thead>
+            <thead><tr>{["SKU", "Anúncio", "Medidas no anúncio (ML)", "Medidas no Bling", "Peso cobrado pelo ML", "Frete hoje", "Frete c/ medidas do Bling", "Diferença por envio", "Frete real (média)", "Divergência", "Impacto (30 dias)", "Correção sugerida"].map((t) => <th key={t} style={S.th}>{t}</th>)}</tr></thead>
             <tbody>{rel.fretes_medidas.map((l) => (
               <tr key={l.item_id}>
                 <td style={S.td}>{l.sku || "—"}</td>
-                <td style={S.td}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a><br /><small style={S.ajuda}>{l.titulo}</small></td>
+                <td style={S.td}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a><br /><small style={S.ajuda}>{l.titulo}</small><br /><small style={S.ajuda}>⏳ pendente de conferência</small></td>
                 <td style={S.td}>{l.medidas_anuncio}</td>
                 <td style={S.td}>{l.medidas_bling}</td>
+                <td style={S.td}>{l.peso_cobrado_g ? `${numero(l.peso_cobrado_g)} g` : "—"}</td>
                 <td style={S.td}>{l.frete_gratis ? reais(l.frete_vendedor) : "comprador paga"}</td>
+                <td style={S.td}>{l.frete_com_bling === null || l.frete_com_bling === undefined ? "—" : reais(l.frete_com_bling)}</td>
+                <td style={S.td}>{textoDiferenca(l.diferenca_por_envio)}</td>
                 <td style={S.td}>{reais(l.frete_real_medio)}</td>
                 <td style={S.td}>{l.divergencias.map((d, i) => <div key={i}>• {d}</div>)}</td>
                 <td style={{ ...S.td, color: l.impacto_rs < 0 ? COR.alta : undefined }}>{l.impacto_rs === null ? "não calculável" : reais(l.impacto_rs)}</td>

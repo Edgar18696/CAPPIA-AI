@@ -124,8 +124,9 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
   const cot = dados.fretes?.[id] ? lerRespostaCotacao({ ok: true, dados: dados.fretes[id] }) : null;
   const freteGratis = item?.shipping?.free_shipping === true;
   const visitas = dados.visitas?.[id];
-  const vendas30 = contexto.vendidos30[id] || 0;
-  const vendas60 = contexto.vendidos60[id] || 0;
+  const vendasLidas = dados.leituras?.vendas !== false;
+  const vendas30 = vendasLidas ? contexto.vendidos30[id] || 0 : null; // null = não lido (nunca zero)
+  const vendas60 = vendasLidas ? contexto.vendidos60[id] || 0 : null;
   const fretesDasVendas = fretesReais(id, dados.pedidos, dados.envios);
   return {
     id,
@@ -147,7 +148,7 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     visitas30: visitas === undefined ? null : visitas,
     vendas30,
     vendas60,
-    conversao30: visitas > 0 ? Math.round((vendas30 / visitas) * 10000) / 100 : null,
+    conversao30: visitas > 0 && vendas30 !== null ? Math.round((vendas30 / visitas) * 10000) / 100 : null,
     tarifa,
     frete: {
       gratis: freteGratis,
@@ -184,7 +185,7 @@ function achado(f, area, severidade, problema, sugestao, impacto_rs = null, extr
 
 function regrasVendas(f, ctx) {
   const out = [];
-  if (f.visitas30 === null) return out;
+  if (f.visitas30 === null || f.vendas30 === null) return out; // sem leitura → sem conclusão
   const idadeDias = f.criado_em ? (new Date(ctx.agora) - new Date(f.criado_em)) / 86400000 : 999;
   if (f.visitas30 >= 50 && f.vendas30 === 0) {
     out.push(achado(f, AREAS.VENDAS, f.visitas30 >= 150 ? "alta" : "media",
@@ -391,9 +392,15 @@ function regrasFrete(f, ctx) {
     frete_gratis: f.frete.gratis,
     frete_real_medio: null,
     frete_comprador_medio: null,
+    // (11/11) Frete oficial do ML recotado com as medidas do Bling e a diferença
+    // por envio (com sinal: + = o Bling daria frete MAIOR que o de hoje).
+    frete_com_bling: null,
+    diferenca_por_envio: null,
     divergencias: [],
     impacto_rs: null,
     sugestao: "",
+    // Nada é dado como certo: toda linha fica pendente até a conferência física.
+    conferencia: "pendente",
   };
   const add = (sev, problema, sugestao, impacto = null) => {
     linha.divergencias.push(problema);
@@ -403,7 +410,10 @@ function regrasFrete(f, ctx) {
   };
 
   if (!ml) {
-    add("media", "Medidas Pendentes de Conferência: o anúncio não tem peso e medidas da embalagem cadastrados.",
+    const hoje = oficial?.ok
+      ? ` Sem medidas, o ML cobra hoje ${f.frete.gratis ? reais(oficial.custo_vendedor) : "o frete do comprador"} pelo peso estimado de ${formatarPeso(oficial.peso_cobrado_g)}.`
+      : "";
+    add("media", `Medidas Pendentes de Conferência: o anúncio não tem peso e medidas da embalagem cadastrados.${hoje}`,
       bl ? `Conferir a embalagem; o Bling informa ${textoMedida(bl)} (não confirmado).` : "Medir e pesar a peça embalada e cadastrar no anúncio.");
   } else {
     const n = normalizarMedida(ml);
@@ -419,12 +429,24 @@ function regrasFrete(f, ctx) {
       const rec = ctx.recotacoes?.[f.id];
       let impacto = null;
       let txtImpacto = "";
-      if (rec?.ok && oficial?.ok && f.frete.gratis) {
-        const dif = centavos(oficial.custo_vendedor - rec.custo_vendedor);
-        if (dif > 0 && f.vendas30 > 0) impacto = -dif * f.vendas30;
-        txtImpacto = ` Com as medidas do Bling o frete seria ${reais(rec.custo_vendedor)} (hoje ${reais(oficial.custo_vendedor)}).`;
+      if (!f.frete.gratis) {
+        txtImpacto = " Frete pago pelo comprador: a diferença muda o frete que ele vê, não o seu custo.";
+      } else if (rec?.ok && oficial?.ok) {
+        const dif = centavos(rec.custo_vendedor - oficial.custo_vendedor);
+        linha.frete_com_bling = rec.custo_vendedor;
+        linha.diferenca_por_envio = dif;
+        const abs = Math.abs(dif);
+        // Possível impacto: um dos dois cadastros está errado; só a conferência física diz qual.
+        if (abs > 0 && f.vendas30 > 0) impacto = -abs * f.vendas30;
+        txtImpacto = ` Frete hoje ${reais(oficial.custo_vendedor)}; com as medidas do Bling ${reais(rec.custo_vendedor)}.`
+          + (dif > 0 ? ` Se o Bling estiver certo, o anúncio está com medidas menores que as reais: risco de o ML remedir e cobrar ${reais(abs)} a mais por envio.`
+            : dif < 0 ? ` Se o Bling estiver certo, você paga ${reais(abs)} a mais por envio com as medidas atuais do anúncio.`
+              : " O frete não muda (mesma faixa).");
+      } else if (oficial?.ok) {
+        txtImpacto = ` Frete hoje ${reais(oficial.custo_vendedor)}; recotação com as medidas do Bling indisponível.`;
       }
-      add(impacto ? "alta" : "media", `Medidas do anúncio (${textoMedida(ml)}) diferentes do Bling (${textoMedida(bl)}).${txtImpacto}`, "Medir a embalagem e corrigir o cadastro que estiver errado (anúncio ou Bling).", impacto);
+      add(impacto ? "alta" : "media", `Medidas divergentes — pendente de conferência física: anúncio ${textoMedida(ml)}, Bling ${textoMedida(bl)}.${txtImpacto}`,
+        "Medir e pesar a peça embalada e corrigir o cadastro que estiver errado (anúncio ou Bling), após aprovação.", impacto);
     }
   }
 
@@ -463,8 +485,10 @@ export function analisarAnuncios(dados, config = {}) {
   const ctxBase = { agora, cfg, vendidos30, vendidos60, recotacoes: config.recotacoes || {} };
   const fichas = dados.itens.map((it) => fichaDoAnuncio(it, dados, cfg, ctxBase));
   const visitasTot = fichas.reduce((s, f) => s + (f.visitas30 || 0), 0);
-  const vendasTot = fichas.reduce((s, f) => s + f.vendas30, 0);
-  const ctx = { ...ctxBase, conversaoConta: visitasTot > 0 ? Math.round((vendasTot / visitasTot) * 10000) / 100 : 0 };
+  const vendasTot = fichas.reduce((s, f) => s + (f.vendas30 || 0), 0);
+  const leituraCompleta = dados.leituras?.vendas !== false && dados.leituras?.visitas !== false;
+  const conversaoConta = !leituraCompleta ? null : visitasTot > 0 ? Math.round((vendasTot / visitasTot) * 10000) / 100 : 0;
+  const ctx = { ...ctxBase, conversaoConta };
   const linhasFrete = [];
   for (const f of fichas) {
     f.pontuacao = pontuacaoInterna(f, ctx);

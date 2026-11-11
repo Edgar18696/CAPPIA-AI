@@ -60,9 +60,12 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   const todos = fichas.flatMap((f) => f.achados);
   const problemas = todos.filter((a) => a.area !== AREAS.OPORTUNIDADE && !a.positivo);
   const oportunidades = todos.filter((a) => a.area === AREAS.OPORTUNIDADE);
-  const visitas30 = fichas.reduce((s, f) => s + (f.visitas30 || 0), 0);
-  const unidades30 = fichas.reduce((s, f) => s + f.vendas30, 0);
-  const faturamento30 = centavos(fichas.reduce((s, f) => s + f.vendas30 * f.preco, 0));
+  // (11/11) Não lido = null (a tela mostra "não lido"), nunca zero.
+  const visitasLidas = dados.leituras?.visitas !== false;
+  const vendasLidas = dados.leituras?.vendas !== false;
+  const visitas30 = visitasLidas ? fichas.reduce((s, f) => s + (f.visitas30 || 0), 0) : null;
+  const unidades30 = vendasLidas ? fichas.reduce((s, f) => s + (f.vendas30 || 0), 0) : null;
+  const faturamento30 = vendasLidas ? centavos(fichas.reduce((s, f) => s + (f.vendas30 || 0) * f.preco, 0)) : null;
   const prejuizo = centavos(todos.reduce((s, a) => s + (a.impacto_rs && a.impacto_rs < 0 ? -a.impacto_rs : 0), 0));
   const contagem = { alta: 0, media: 0, baixa: 0 };
   for (const a of problemas) contagem[a.severidade] = (contagem[a.severidade] || 0) + 1;
@@ -80,6 +83,8 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   if (analise.cfg.impostoPercentual === null || analise.cfg.impostoPercentual === undefined) limitacoes.push("Imposto não informado: as margens aparecem 'antes dos impostos'.");
   if (dados.totais.anuncios_ativos > dados.totais.anuncios_analisados) limitacoes.push(`Analisados ${dados.totais.anuncios_analisados} de ${dados.totais.anuncios_ativos} anúncios ativos (limite desta execução).`);
   if (!fichas.some((f) => f.tabela_renault)) limitacoes.push("Tabela Renault ainda não carregada: peças Renault comparadas só com a concorrência.");
+  if (!visitasLidas) limitacoes.push("Visitas NÃO lidas (o servidor não permite esta consulta): conversão e anúncios sem visitas não avaliados.");
+  if (!vendasLidas) limitacoes.push("Vendas NÃO lidas (o servidor não permite esta consulta): produtos parados, reposição, frete cobrado nas vendas e prejuízo por vendas não avaliados.");
   limitacoes.push("Prazo de entrega não avaliado (depende do CEP do comprador).");
 
   return {
