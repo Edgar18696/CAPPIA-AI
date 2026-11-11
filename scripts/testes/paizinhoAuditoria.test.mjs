@@ -131,6 +131,12 @@ test("frete e medidas: cobrança nas vendas acima do estimado → alta, valor 'a
   assert.equal(linha.impacto_potencial_por_envio, 15);
   assert.deepEqual(linha.cobrado_acima_estimado, { media_cobrada: 35, estimado: 20, envios: 2, diferenca_total: 30 });
   assert.equal(rel.secoes.find((s) => s.chave === "frete").titulo, "Fretes e Medidas — Problemas Encontrados");
+  // (12/11) Com Bling padronizado no mesmo anúncio, o texto começa pelo ponto mais grave (cobrança acima).
+  const { rel: r2 } = await rodar({ consultarBling: async () => ({ ok: true, produto: { peso_bruto: 0.3, largura: 30, altura: 30, profundidade: 30 } }) });
+  const a2 = achadosDe(r2, "MLB6").find((x) => x.area === "frete");
+  assert.equal(a2.severidade, "alta");
+  assert.match(a2.problema, /^Frete cobrado nas vendas/);
+  assert.match(a2.problema, /Medidas possivelmente padronizadas no Bling/);
 });
 
 test("frete e medidas: Bling padronizado (mesma caixa em 5+ SKUs ou peso improvável) não é referência, mas o anúncio continua", async () => {

@@ -585,7 +585,9 @@ function regrasFrete(f, ctx) {
   // (12/11) Medidas ausentes / padronizado / divergência já começam com o próprio
   // título; só os alertas do ML ganham o cabeçalho (antes saía "X: X: ...").
   const titulo = CLASSIFICACOES_MEDIDAS[linha.classificacao].titulo;
-  const juntos = itens.map((i) => i.texto).join(" | ");
+  // (12/11) O ponto mais grave primeiro: com vendas lidas, "frete cobrado acima"
+  // (alta) ficava escondido depois de "Bling padronizado" (baixa).
+  const juntos = [...itens].sort((a, b) => PESO_SEVERIDADE[b.sev] - PESO_SEVERIDADE[a.sev]).map((i) => i.texto).join(" | ");
   const texto = itens.length > 1 && linha.classificacao === "alerta_ml" ? `${titulo}: ${juntos}` : juntos;
   const a = achado(f, AREAS.FRETE, sev, texto, linha.sugestao, null, {
     classificacao: linha.classificacao,
