@@ -92,7 +92,7 @@ function resumirFalhas(falhas) {
   for (const f of falhas || []) {
     const k = f.etapa;
     porEtapa[k] = porEtapa[k] || { etapa: k, quantidade: 0, exemplo: f.erro };
-    porEtapa[k].quantidade++;
+    porEtapa[k].quantidade += Number(f.quantidade) > 0 ? Number(f.quantidade) : 1;
   }
   return Object.values(porEtapa);
 }
@@ -127,7 +127,16 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   });
 
   const limitacoes = [];
-  if (!dados.fontes?.bling) limitacoes.push("Bling não consultado nesta execução: custos, margens e medidas do Bling não foram conferidos.");
+  // (12/11) Leitura parcial nunca aparece como "não consultado" nem como completa.
+  const motivoTexto = (m) => (m === "sessao" ? "a sessão do PAIIA expirou: entre de novo e rode outra vez" : m === "fora_do_ar" ? "o Bling parou de responder" : "algumas consultas falharam");
+  const bp = dados.fontes?.bling_parcial;
+  const rp = dados.leituraRecotacao;
+  if (!dados.fontes?.bling) limitacoes.push(bp?.motivo === "sessao"
+    ? "Bling não lido: a sessão do PAIIA expirou. Entre de novo e rode outra vez."
+    : "Bling não consultado nesta execução: custos, margens e medidas do Bling não foram conferidos.");
+  else if (bp) limitacoes.push(`Bling lido só em ${bp.lidos} de ${bp.total} SKUs (${motivoTexto(bp.motivo)}). Os demais aparecem como "Bling não consultado".`);
+  if (rp) limitacoes.push(`Frete recotado com as medidas do Bling em ${rp.feitas} de ${rp.total} anúncios (${motivoTexto(rp.motivo)}).`);
+  const sessaoExpirada = bp?.motivo === "sessao" || rp?.motivo === "sessao";
   if (!dados.fontes?.concorrencia) limitacoes.push("Concorrência não pesquisada nesta execução.");
   else limitacoes.push(`Concorrência pesquisada só para os ${Object.keys(dados.concorrencia || {}).length} anúncios mais vendidos/visitados (controle de créditos).`);
   if (analise.cfg.impostoPercentual === null || analise.cfg.impostoPercentual === undefined) limitacoes.push("Imposto não informado: as margens aparecem 'antes dos impostos'.");
@@ -144,6 +153,7 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     data_referencia: dataBrasilia(geradoEm),
     gerado_em: geradoEm,
     periodo: dados.periodo,
+    leitura_incompleta: bp || rp ? { bling: bp || null, recotacao: rp || null, sessao_expirada: sessaoExpirada } : null,
     resumo: {
       anuncios_ativos: dados.totais.anuncios_ativos,
       anuncios_analisados: dados.totais.anuncios_analisados,

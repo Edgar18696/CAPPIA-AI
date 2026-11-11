@@ -222,6 +222,40 @@ test("falha de leitura não derruba a auditoria: fica registrada", async () => {
   assert.ok(rel.limitacoes.some((l) => /Bling não consultado/.test(l)));
 });
 
+test("sessão do PAIIA expira no meio (Bling e recotação): para, avisa leitura parcial e não chama de 'não consultado'", async () => {
+  // Situação real de 12/11/2026: o login caiu após ~460 SKUs e todas as recotações falharam em silêncio.
+  const SESSAO = { ok: false, status: 401, erro: "Usuário não autenticado. Entre novamente no PAIIA." };
+  let blingChamadas = 0;
+  const blingCaindo = async (sku) => (++blingChamadas <= 1 ? blingFalso(sku) : SESSAO);
+  const ml = mlFalso();
+  let recotacoes = 0;
+  const consultar = async (c) => {
+    if (c.includes("shipping_options/free") && c.includes("dimensions=30x30x30")) { recotacoes++; return SESSAO; }
+    return ml.consultar(c);
+  };
+  const rel = await executarAuditoria({ conta: CONTA, consultar, consultarBling: blingCaindo, agora: AGORA, opcoesColeta: { paraleloBling: 1 } });
+  const li = rel.leitura_incompleta;
+  assert.ok(li, "relatório marca leitura incompleta");
+  assert.equal(li.bling.motivo, "sessao");
+  assert.equal(li.bling.lidos, 1);
+  assert.ok(li.bling.total > 1);
+  assert.equal(blingChamadas, 2, "parou na 1ª recusa de sessão (sem nova tentativa nem insistência)");
+  assert.equal(li.sessao_expirada, true);
+  assert.ok(rel.limitacoes.some((l) => /Bling lido só em 1 de \d+ SKUs \(a sessão do PAIIA expirou/.test(l)));
+  assert.ok(!rel.limitacoes.some((l) => /Bling não consultado nesta execução/.test(l)), "leitura parcial não vira 'não consultado'");
+  assert.ok(rel.falhas.some((f) => f.etapa === "Bling" && /não autenticado/.test(f.exemplo)));
+
+  // Recotação: Bling inteiro, mas o login cai na hora de recotar.
+  const r2 = await executarAuditoria({ conta: CONTA, consultar, consultarBling: blingFalso, agora: AGORA });
+  assert.equal(r2.leitura_incompleta.recotacao.motivo, "sessao");
+  assert.equal(r2.leitura_incompleta.recotacao.feitas, 0);
+  assert.ok(r2.falhas.some((f) => f.etapa === "recotação do frete" && f.quantidade >= 1));
+  assert.ok(r2.limitacoes.some((l) => /Frete recotado com as medidas do Bling em 0 de \d+ anúncios/.test(l)));
+  // Leitura completa → sem aviso
+  const { rel: completo } = await rodar();
+  assert.equal(completo.leitura_incompleta, null);
+});
+
 test("servidor recusa perfil, lote, visitas e vendas: segue lendo um por um e NUNCA trata o não lido como zero", async () => {
   // Situação real de 11/11/2026 na LOJA ONLINE (lista permitida da mercadolivre-publicacao).
   const ml = mlFalso();

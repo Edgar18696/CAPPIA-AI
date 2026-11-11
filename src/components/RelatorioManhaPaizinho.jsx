@@ -84,8 +84,22 @@ export default function RelatorioManhaPaizinho() {
         </div>
       )}
 
+      {rel?.leitura_incompleta ? <AvisoLeituraIncompleta info={rel.leitura_incompleta} /> : null}
       {rel ? <Relatorio rel={rel} /> : null}
     </section>
+  );
+}
+
+// (12/11) Leitura parcial fica evidente no topo: o relatório não é tratado como completo.
+function AvisoLeituraIncompleta({ info }) {
+  const { bling, recotacao, sessao_expirada: sessao } = info;
+  return (
+    <div style={S.erro} role="alert" data-paizinho-leitura-incompleta>
+      <strong>⚠️ Leitura incompleta — não valide este relatório como final.</strong>
+      {bling ? <div>Bling lido em {bling.lidos} de {bling.total} SKUs.</div> : null}
+      {recotacao ? <div>Frete recotado em {recotacao.feitas} de {recotacao.total} anúncios.</div> : null}
+      {sessao ? <div>A sessão do PAIIA expirou durante a leitura. Entre de novo e rode outra vez: o que já foi lido no Bling fica guardado neste computador por 24 h.</div> : null}
+    </div>
   );
 }
 

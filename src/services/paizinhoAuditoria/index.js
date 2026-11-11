@@ -6,7 +6,7 @@
 // medidas do Bling (só onde há divergência) → análise → relatório.
 // Mesmo código no teste local (navegador) e no servidor às 03h.
 // =============================================================
-import { coletarDadosConta, somenteLeitura } from "./coleta.js";
+import { coletarDadosConta, somenteLeitura, erroDeSessao } from "./coleta.js";
 import { analisarAnuncios, precisamRecotar } from "./analise.js";
 import { montarRelatorio } from "./relatorio.js";
 import { lerRespostaCotacao } from "../fretePrecificacao.js";
@@ -64,11 +64,24 @@ export async function executarAuditoria({
   const alvo = precisamRecotar(dados, config).slice(0, Number(opcoesColeta.limiteRecotacoes) || 2000);
   if (alvo.length) {
     try { aoProgredir("Cotando o frete com as medidas do Bling"); } catch { /* ignora */ }
+    // (12/11) Falhas da recotação agora aparecem no relatório (antes sumiam em silêncio).
+    let sessaoExpirada = false;
+    let falhou = 0;
+    let exemplo = "";
     await comLimite(alvo, 4, async ({ item, medida }) => {
+      if (sessaoExpirada) return;
       const r = await get(caminhoRecotacao(liberada.id, item, medida));
       const c = lerRespostaCotacao(r);
-      if (c.ok) recotacoes[item.id] = c;
+      if (c.ok) { recotacoes[item.id] = c; return; }
+      falhou++;
+      exemplo ||= txt(r?.erro) || txt(c?.erro) || `HTTP ${r?.status || "?"}`;
+      if (erroDeSessao(r)) sessaoExpirada = true;
     });
+    const feitas = Object.keys(recotacoes).length;
+    if (feitas < alvo.length) {
+      dados.leituraRecotacao = { feitas, total: alvo.length, motivo: sessaoExpirada ? "sessao" : "falhas" };
+      if (falhou) dados.falhas.push({ etapa: "recotação do frete", caminho: "/users/*/shipping_options/free", erro: exemplo, quantidade: falhou });
+    }
   }
 
   const analise = analisarAnuncios(dados, { ...config, recotacoes, precoTabelaRenault });

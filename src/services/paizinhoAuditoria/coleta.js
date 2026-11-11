@@ -60,6 +60,10 @@ export function tipoDeCaminho(c) {
 export function caminhoRecusado(r) {
   return /fora da lista permitida|não permitid|nao permitid/i.test(txt(r?.erro));
 }
+/** (12/11) Login do PAIIA vencido/recusado: não adianta insistir; o usuário precisa entrar de novo. */
+export function erroDeSessao(r) {
+  return Number(r?.status) === 401 || /não autenticad|nao autenticad|entre novamente|jwt|unauthori[sz]ed|invalid.*token/i.test(txt(r?.erro));
+}
 
 const dia = (iso) => txt(iso).slice(0, 10);
 /** Data no formato que a busca de pedidos do ML aceita (2026-11-10T06:00:00.000-00:00). */
@@ -242,23 +246,32 @@ export async function coletarDadosConta({
   // 11) Bling: custo, peso e medidas pelo SKU (somente leitura)
   const bling = {};
   let blingDisponivel = typeof consultarBling === "function";
+  let leituraBling = null; // { lidos, total, motivo } quando a leitura do Bling ficou parcial
   if (blingDisponivel) {
     passo("Lendo custos e medidas no Bling");
     const skus = [...new Set(itens.map(skuDoItem).filter(Boolean))];
     let falhasSeguidas = 0;
     let feitos = 0;
+    let motivoParada = "";
     const lerBling = (sku) => consultarBling(sku).catch((e) => ({ ok: false, erro: txt(e?.message || e) }));
     await comLimite(skus, o.paraleloBling, async (sku) => {
-      if (falhasSeguidas >= 5) return; // Bling fora do ar: não insiste
+      if (motivoParada) return;
       if (++feitos % 25 === 0) passo(`Lendo custos e medidas no Bling (${feitos} de ${skus.length})`);
       let r = await lerBling(sku);
       // (11/11) Conta inteira: o Bling limita consultas por segundo → espera e tenta 1 vez.
-      if (!r?.ok && r?.encontrado !== false) { await new Promise((ok) => setTimeout(ok, o.esperaBlingMs ?? 1500)); r = await lerBling(sku); }
+      if (!r?.ok && r?.encontrado !== false && !erroDeSessao(r)) { await new Promise((ok) => setTimeout(ok, o.esperaBlingMs ?? 1500)); r = await lerBling(sku); }
       if (r?.ok && r.produto) { bling[sku] = r.produto; falhasSeguidas = 0; }
       else if (r?.encontrado === false || (r?.ok && !r.produto)) { bling[sku] = null; falhasSeguidas = 0; }
-      else { falhasSeguidas++; falha("Bling", "buscar_produto", r); }
+      else {
+        falha("Bling", "buscar_produto", r);
+        // (12/11) Sessão do PAIIA expirada: para na hora e avisa (antes parecia "Bling fora do ar").
+        if (erroDeSessao(r)) motivoParada = "sessao";
+        else if (++falhasSeguidas >= 5) motivoParada = "fora_do_ar";
+      }
     });
-    if (falhasSeguidas >= 5) blingDisponivel = false;
+    const lidos = skus.filter((s) => s in bling).length;
+    if (lidos === 0 && motivoParada) blingDisponivel = false;
+    if (lidos < skus.length) leituraBling = { lidos, total: skus.length, motivo: motivoParada || "incompleta" };
   }
 
   // 12) Concorrência: só os anúncios mais importantes (usa créditos)
@@ -283,7 +296,7 @@ export async function coletarDadosConta({
     periodo: { visitas_de: de, visitas_ate: ate, vendas_desde: desdeVendas },
     totais: { anuncios_ativos: total || idsAnalisados.length, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
-    fontes: { bling: blingDisponivel, concorrencia: typeof buscarConcorrentes === "function" },
+    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, concorrencia: typeof buscarConcorrentes === "function" },
     // (11/11) O que NÃO foi lido nunca vira zero na análise.
     leituras: {
       visitas: itens.length === 0 || Object.keys(visitas).length > 0,

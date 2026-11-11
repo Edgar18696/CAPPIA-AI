@@ -48,12 +48,56 @@ function impostoDoPerfil() {
   } catch { return null; }
 }
 
+// (12/11) Leituras do Bling guardadas neste navegador por 24 h: se a sessão
+// expirar no meio, a próxima rodada continua de onde parou (~30 SKUs/min).
+// Guarda só os campos que a auditoria usa. Nada é gravado no Bling.
+export const CHAVE_CACHE_BLING = "paiiaPaizinhoBlingCache";
+const VALIDADE_CACHE_BLING_MS = 24 * 60 * 60 * 1000;
+const CAMPOS_BLING = ["codigo", "nome", "peso_bruto", "peso_liquido", "pesoBruto", "pesoLiquido", "largura", "altura", "profundidade", "precoCusto", "preco_custo", "custo"];
+
+export function resumirProdutoBling(p) {
+  if (!p || typeof p !== "object") return null;
+  const out = {};
+  for (const c of CAMPOS_BLING) if (p[c] !== undefined) out[c] = p[c];
+  return out;
+}
+
+function lerCacheBling(agora = Date.now()) {
+  try {
+    const c = JSON.parse(localStorage.getItem(CHAVE_CACHE_BLING) || "null");
+    if (!c || c.conta !== CONTA_PILOTO.id || typeof c.itens !== "object") return {};
+    const validos = {};
+    for (const [sku, v] of Object.entries(c.itens)) if (agora - Number(v?.lidoEm || 0) < VALIDADE_CACHE_BLING_MS) validos[sku] = v;
+    return validos;
+  } catch { return {}; }
+}
+function gravarCacheBling(itens) {
+  try { localStorage.setItem(CHAVE_CACHE_BLING, JSON.stringify({ conta: CONTA_PILOTO.id, itens })); } catch { /* sem espaço: segue sem cache */ }
+}
+
 /** Teste local com dados reais da LOJA ONLINE (somente leitura). */
 export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoProgredir } = {}) {
-  const consultarBling = async (sku) => {
+  const cache = lerCacheBling();
+  let novos = 0;
+  const consultarBlingServidor = async (sku) => {
     const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "buscar_produto", codigo: sku } });
-    if (error) return { ok: false, erro: error.message };
+    if (error) {
+      // O corpo da resposta de erro traz o motivo real (ex.: "Usuário não autenticado").
+      let erro = error.message;
+      try { const corpo = await error.context?.json?.(); if (corpo?.erro || corpo?.error) erro = corpo.erro || corpo.error; } catch { /* mantém a mensagem */ }
+      return { ok: false, erro, status: error.context?.status };
+    }
     return data?.ok ? { ok: true, produto: data.produto || null, encontrado: data.encontrado } : { ok: false, encontrado: data?.encontrado, erro: data?.erro };
+  };
+  const consultarBling = async (sku) => {
+    const guardado = cache[sku];
+    if (guardado) return { ok: true, produto: guardado.produto, encontrado: guardado.encontrado, doCache: true };
+    const r = await consultarBlingServidor(sku);
+    if (r.ok || r.encontrado === false) {
+      cache[sku] = { produto: resumirProdutoBling(r.produto), encontrado: r.encontrado !== false && !!r.produto, lidoEm: Date.now() };
+      if (++novos % 25 === 0) gravarCacheBling(cache);
+    }
+    return r;
   };
   const buscarConcorrentes = concorrencia > 0 ? async (item) => {
     const a = (id) => (item.attributes || []).find((x) => x.id === id)?.value_name || "";
@@ -63,16 +107,21 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
     if (error || !data?.sucesso) return { ok: false, erro: error?.message || data?.error || "sem resultado" };
     return { ok: true, faixaComparavel: data.faixaComparavel, palavrasChaveSugeridas: data.palavrasChaveSugeridas };
   } : null;
-  const rel = await executarAuditoria({
-    conta: CONTA_PILOTO.id,
-    consultar: consultorML(CONTA_PILOTO.id),
-    consultarBling,
-    buscarConcorrentes,
-    config: { impostoPercentual: impostoDoPerfil() },
-    opcoesColeta: { limiteItens, limiteConcorrencia: concorrencia },
-    origem: "teste_local",
-    aoProgredir,
-  });
+  let rel;
+  try {
+    rel = await executarAuditoria({
+      conta: CONTA_PILOTO.id,
+      consultar: consultorML(CONTA_PILOTO.id),
+      consultarBling,
+      buscarConcorrentes,
+      config: { impostoPercentual: impostoDoPerfil() },
+      opcoesColeta: { limiteItens, limiteConcorrencia: concorrencia },
+      origem: "teste_local",
+      aoProgredir,
+    });
+  } finally {
+    if (novos) gravarCacheBling(cache);
+  }
   guardarRelatorioTesteLocal(rel);
   return rel;
 }
