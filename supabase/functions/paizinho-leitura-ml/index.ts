@@ -10,7 +10,7 @@
 //   - só para o usuário logado (JWT) e só na conta dele que estiver
 //     liberada no piloto;
 //   - visitas só de anúncios da própria conta (confere o vendedor antes,
-//     com /items?ids=...&attributes=id,seller_id);
+//     com /items/{id}?attributes=id,seller_id);
 //   - NÃO renova nem grava token: se o token da conta estiver vencido,
 //     responde pedindo para renová-lo pelo PAIIA (Contas Marketplace).
 //   - não grava nada no banco.
@@ -72,13 +72,10 @@ Deno.serve(async (req) => {
   const get = getML(c.access_token);
   if (conf.tipo === "visitas") {
     const ids = anunciosDaLeitura(caminho);
-    const donos = [];
-    for (const p of caminhosDonoDosAnuncios(ids)) {
-      const r = await get(p);
-      if (!r.ok) return json({ ok: false, status: r.status, erro: `Não foi possível conferir o dono dos anúncios: ${r.erro}` });
-      donos.push(r.dados);
-    }
-    if (!anunciosSaoDaConta(ids, donos, conta)) return json({ ok: false, status: 403, erro: "Visitas só de anúncios da conta informada." });
+    const respostas = await Promise.all(caminhosDonoDosAnuncios(ids).map((p) => get(p)));
+    const falhou = respostas.find((r) => !r.ok);
+    if (falhou) return json({ ok: false, status: falhou.status, erro: `Não foi possível conferir o dono dos anúncios: ${falhou.erro}` });
+    if (!anunciosSaoDaConta(ids, respostas.map((r) => r.dados), conta)) return json({ ok: false, status: 403, erro: "Visitas só de anúncios da conta informada." });
   }
 
   // 5) A leitura pedida

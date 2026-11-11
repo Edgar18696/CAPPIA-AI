@@ -299,9 +299,11 @@ test("leitura comercial (paizinho-leitura-ml): só visitas, vendas e custo de en
   const ids = Array.from({ length: 45 }, (_, i) => `MLB${i + 1}`);
   assert.deepEqual(anunciosDaLeitura(`/items/visits?ids=${ids.join(",")}&date_from=2026-10-12&date_to=2026-11-11`), ids);
   assert.deepEqual(anunciosDaLeitura("/items/MLB9/visits?date_from=2026-10-12&date_to=2026-11-11"), ["MLB9"]);
-  assert.equal(caminhosDonoDosAnuncios(ids).length, 3, "20 por consulta");
-  assert.match(caminhosDonoDosAnuncios(ids)[0], /^\/items\?ids=MLB1,.*MLB20&attributes=id,seller_id$/);
-  const resp = (lista) => [lista.map(([id, seller]) => ({ code: 200, body: { id, seller_id: seller } }))];
+  // (12/11) Um por anúncio: o ML descontinuou a leitura em grupo /items?ids=.
+  assert.equal(caminhosDonoDosAnuncios(ids).length, 45);
+  assert.equal(caminhosDonoDosAnuncios(ids)[0], "/items/MLB1?attributes=id,seller_id");
+  assert.ok(!caminhosDonoDosAnuncios(ids).some((c) => c.startsWith("/items?ids=")));
+  const resp = (lista) => lista.map(([id, seller]) => ({ id, seller_id: seller }));
   assert.equal(anunciosSaoDaConta(["MLB1", "MLB2"], resp([["MLB1", Number(CONTA)], ["MLB2", Number(CONTA)]]), CONTA), true);
   assert.equal(anunciosSaoDaConta(["MLB1", "MLB2"], resp([["MLB1", Number(CONTA)], ["MLB2", 999]]), CONTA), false, "um anúncio de outro vendedor bloqueia");
   assert.equal(anunciosSaoDaConta(["MLB1", "MLB3"], resp([["MLB1", Number(CONTA)]]), CONTA), false, "anúncio não confirmado bloqueia");

@@ -55,20 +55,22 @@ export function anunciosDaLeitura(caminho) {
   return um ? [um[1]] : [];
 }
 
-/** Endereços para conferir o dono dos anúncios (20 por consulta, só id e vendedor). */
+/**
+ * Endereços para conferir o dono dos anúncios: um por anúncio, só id e vendedor.
+ * (12/11) A leitura em grupo /items?ids= foi descontinuada pelo ML
+ * ("Resource deprecated - client no longer allowed").
+ */
 export function caminhosDonoDosAnuncios(ids) {
-  const out = [];
-  for (let i = 0; i < ids.length; i += 20) out.push(`/items?ids=${ids.slice(i, i + 20).join(",")}&attributes=id,seller_id`);
-  return out;
+  return ids.map((id) => `/items/${id}?attributes=id,seller_id`);
 }
 
 /**
  * Todos os anúncios pedidos são da conta? `respostas` = dados das consultas
- * /items?ids (formato [{ code, body: { id, seller_id } }]).
+ * /items/{id}?attributes=id,seller_id (formato { id, seller_id }).
  */
 export function anunciosSaoDaConta(ids, respostas, conta) {
   const dono = {};
-  for (const lista of respostas || []) for (const x of Array.isArray(lista) ? lista : []) if (Number(x?.code) === 200 && x?.body?.id) dono[x.body.id] = String(x.body.seller_id);
+  for (const x of respostas || []) if (x?.id) dono[x.id] = String(x.seller_id);
   return ids.length > 0 && ids.every((id) => dono[id] === txt(conta).replace(/\D/g, ""));
 }
 
