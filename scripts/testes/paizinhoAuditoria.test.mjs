@@ -505,3 +505,21 @@ test("kit e par: produto simples no Bling → custo a confirmar; kit composto no
   assert.deepEqual(conferirCustoDoKit(ok, { formato: null }, "Kit 4 Bicos"), ok, "formato desconhecido: não muda");
   assert.deepEqual(conferirCustoDoKit({ ...ok, custo: 27.9 }, { formato: "S" }, "Interruptor Cebolinha Óleo Fiat"), { ...ok, custo: 27.9 });
 });
+
+test("Central simplificada (12/11): 3 cartões repetidos vão para o Ranqueamento, definições guardadas; janela de Regras só consulta", async () => {
+  const src = fs.readFileSync(path.join(RAIZ, "src/components/CentralPaizinho.jsx"), "utf8");
+  assert.match(src, /CARTOES_NO_RANQUEAMENTO = \["prioridades", "nao-vende", "auditar"\]/);
+  assert.match(src, /id="ranqueamento-paizinho"/);
+  assert.match(src, /<RegrasMLAnuncios /);
+  const { REGRAS, LACUNAS, ETAPAS } = await import("../../src/services/regrasML/catalogoRegras.js");
+  assert.equal(REGRAS.length, 12);
+  for (const r of REGRAS) {
+    assert.ok(r.fontes.length > 0, `${r.id} sem fonte`);
+    for (const [, url] of r.fontes) assert.match(url, /^https:\/\/(www\.mercadolivre\.com\.br|vendedores\.mercadolivre\.com\.br|developers\.mercadolivre\.com\.br)\//, `${r.id}: só fonte oficial`);
+  }
+  assert.ok(LACUNAS.length >= 4);
+  assert.ok(ETAPAS.filter((e) => e.situacao !== "pronto").every((e) => /autoriza|aguardando/.test(e.situacao)), "nada além do catálogo começa sem autorização");
+  // A janela não lê nem altera nada: sem supabase, fetch ou invoke.
+  const janela = fs.readFileSync(path.join(RAIZ, "src/components/RegrasMLAnuncios.jsx"), "utf8");
+  assert.doesNotMatch(janela, /supabase|fetch\(|invoke\(/);
+});

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../supabase";
 import RelatorioManhaPaizinho from "./RelatorioManhaPaizinho";
+import RegrasMLAnuncios from "./RegrasMLAnuncios";
 
 const TAREFAS = [
   {
@@ -241,7 +242,31 @@ Apresente resumo e comparação Antes × Depois por produto. Não altere o site 
   },
 ];
 
-const SUGESTOES = ["meus-custos", "prioridades", "nao-vende", "analisar-site", "concorrencia", "estoque", "financeiro"];
+// (12/11) Simplificação da Central: estes cartões repetiam o Ranqueamento dos
+// anúncios (prioridades, vendas do mês, anúncios a melhorar), que já faz o mesmo
+// com dados reais. Saem da tela, mas as definições ficam guardadas aqui
+// (inclusive o roteiro de análise) para uso futuro. Tarefas já salvas não são apagadas.
+const CARTOES_NO_RANQUEAMENTO = ["prioridades", "nao-vende", "auditar"];
+export const TAREFAS_ARQUIVADAS = TAREFAS.filter((t) => CARTOES_NO_RANQUEAMENTO.includes(t.id));
+
+const CARTAO_REGRAS = {
+  id: "regras-ml",
+  icone: "📜",
+  titulo: "Regras do Mercado Livre — Anúncios",
+  descricao: "Regras oficiais para o mesmo produto nas contas LOJA ONLINE, REVELAÇÃO e CIEBR: risco e recomendação. Somente consulta.",
+  janela: "regras",
+};
+
+export const TAREFAS_VISIVEIS = [
+  ...TAREFAS.filter((t) => !CARTOES_NO_RANQUEAMENTO.includes(t.id)).slice(0, 1),
+  CARTAO_REGRAS,
+  ...TAREFAS.filter((t) => !CARTOES_NO_RANQUEAMENTO.includes(t.id)).slice(1),
+];
+
+const SUGESTOES = ["ranqueamento", "meus-custos", "regras-ml", "analisar-site", "concorrencia", "estoque", "financeiro"];
+const ATALHO_RANQUEAMENTO = { id: "ranqueamento", titulo: "Ver ranqueamento dos anúncios" };
+
+const rolarPara = (id) => setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }), 30);
 
 function lerJson(chave) {
   try { return JSON.parse(localStorage.getItem(chave) || "null"); } catch { return null; }
@@ -261,8 +286,18 @@ export default function CentralPaizinho({ setScreen }) {
   const [salva, setSalva] = useState(false);
   const [executando, setExecutando] = useState(false);
   const [resultadoSite, setResultadoSite] = useState(null);
+  const [regrasAbertas, setRegrasAbertas] = useState(false);
+
+  function abrirRegras() {
+    setSelecionada(null);
+    setRegrasAbertas(true);
+    rolarPara("regras-ml-anuncios");
+  }
 
   function escolher(tarefa) {
+    if (tarefa?.id === "ranqueamento") { rolarPara("ranqueamento-paizinho"); return; }
+    if (tarefa?.janela === "regras") { abrirRegras(); return; }
+    setRegrasAbertas(false);
     if (tarefa?.direto && tarefa?.destino) {
       setScreen(tarefa.destino);
       return;
@@ -429,14 +464,17 @@ export default function CentralPaizinho({ setScreen }) {
 
   function interpretar() {
     const p = livre.toLowerCase();
-    const tarefa = TAREFAS.find((item) =>
+    if (/(regra|duplicad|mesmo produto)/.test(p)) { abrirRegras(); return; }
+    const tarefa = TAREFAS_VISIVEIS.find((item) =>
       (/(preço|preco|concorr)/.test(p) && item.id === "concorrencia") ||
       (/(finance|despesa|pagamento|compra)/.test(p) && item.id === "financeiro") ||
       (/(estoque|reposição|reposicao)/.test(p) && item.id === "estoque") ||
       (/(não vende|nao vende|venda)/.test(p) && item.id === "nao-vende") ||
       (/(compat|aplica|serve)/.test(p) && item.id === "compatibilidade")
-    ) || TAREFAS.find((item) => item.id === "comecar");
-    escolher(tarefa);
+    );
+    // Vendas, prioridades e anúncios a melhorar: é o Ranqueamento.
+    if (!tarefa && /(não vende|nao vende|venda|anúncio|anuncio|ranque|prioridad|perdendo dinheiro)/.test(p)) { rolarPara("ranqueamento-paizinho"); return; }
+    escolher(tarefa || TAREFAS.find((item) => item.id === "comecar"));
     setValores({ necessidade: livre });
   }
 
@@ -444,13 +482,19 @@ export default function CentralPaizinho({ setScreen }) {
     <main style={S.pagina}>
       <button type="button" onClick={() => setScreen("home")} style={S.voltar}>← Voltar</button>
       <header style={S.cabecalho}><div style={S.icone}>👨‍🔧</div><div><h1 style={S.titulo}>Olá! O que posso fazer por você hoje?</h1><p style={S.subtitulo}>Escolha um trabalho pronto. O Paizinho fará somente as perguntas necessárias.</p></div></header>
-      <RelatorioManhaPaizinho />
+      <section id="ranqueamento-paizinho" style={S.ranqueamento}>
+        <h2 style={S.ranqueamentoTitulo}>🏆 Ranqueamento dos anúncios</h2>
+        <p style={S.ranqueamentoSub}>Prioridades do dia, vendas e visitas, margem, frete e anúncios que precisam melhorar — tudo numa tela só.</p>
+        <RelatorioManhaPaizinho />
+      </section>
       {(contexto.codigo || contexto.produto) && <div style={S.contexto}><strong>Dados já encontrados:</strong> {[contexto.produto, contexto.codigo, contexto.oem].filter(Boolean).join(" • ")}. Não serão solicitados novamente.</div>}
 
-      <section style={S.atalhos}>{SUGESTOES.map((id) => { const t = TAREFAS.find((x) => x.id === id); return <button key={id} onClick={() => escolher(t)} style={S.sugestao}>{t.titulo}</button>; })}</section>
-      <section style={S.grade}>{TAREFAS.map((t, i) => <button type="button" key={t.id} onClick={() => escolher(t)} style={{...S.cartao, ...(selecionada?.id === t.id ? S.cartaoAtivo : {})}}><span style={S.numero}>{i + 1}</span><span style={S.cartaoIcone}>{t.icone}</span><strong>{t.titulo}</strong><small style={S.descricao}>{t.descricao}</small></button>)}</section>
+      <section style={S.atalhos}>{SUGESTOES.map((id) => { const t = id === "ranqueamento" ? ATALHO_RANQUEAMENTO : TAREFAS_VISIVEIS.find((x) => x.id === id); return <button key={id} onClick={() => escolher(t)} style={S.sugestao}>{t.titulo}</button>; })}</section>
+      <section style={S.grade}>{TAREFAS_VISIVEIS.map((t, i) => <button type="button" key={t.id} onClick={() => escolher(t)} style={{...S.cartao, ...(selecionada?.id === t.id || (t.janela === "regras" && regrasAbertas) ? S.cartaoAtivo : {})}}><span style={S.numero}>{i + 1}</span><span style={S.cartaoIcone}>{t.icone}</span><strong>{t.titulo}</strong><small style={S.descricao}>{t.descricao}</small></button>)}</section>
 
       <section style={S.livre}><label style={S.label}>Ou escreva com suas palavras<textarea value={livre} onChange={(e) => setLivre(e.target.value)} placeholder="Ex.: descubra onde estou perdendo dinheiro nos meus anúncios" rows={2} style={S.input}/></label><button type="button" onClick={interpretar} style={S.primario}>Preparar tarefa</button></section>
+
+      {regrasAbertas && <RegrasMLAnuncios aoFechar={() => setRegrasAbertas(false)} />}
 
       {selecionada && <section id="tarefa-paizinho" style={S.fluxo}>
         <h2 style={S.fluxoTitulo}>{selecionada.icone} {selecionada.titulo}</h2>
@@ -529,5 +573,6 @@ export default function CentralPaizinho({ setScreen }) {
 function Bloco({ titulo, texto }) { return <article style={S.bloco}><strong>{titulo}</strong><p>{texto}</p></article>; }
 
 const S = {
+  ranqueamento:{scrollMarginTop:18,marginTop:18}, ranqueamentoTitulo:{margin:"0 0 4px",color:"#67e8f9",fontSize:"clamp(19px,3vw,24px)"}, ranqueamentoSub:{margin:"0 0 10px",color:"#94a3b8"},
   pagina:{width:"min(1180px,calc(100% - 24px))",margin:"42px auto",color:"#e2e8f0"}, voltar:{border:"1px solid #334155",background:"#0f172a",color:"#cbd5e1",borderRadius:10,padding:"9px 14px",cursor:"pointer",marginBottom:16}, cabecalho:{display:"flex",gap:16,alignItems:"center",padding:24,borderRadius:20,border:"1px solid #155e75",background:"linear-gradient(135deg,#020617,#0c2547)"}, icone:{width:62,height:62,display:"grid",placeItems:"center",borderRadius:18,background:"rgba(103,232,249,.12)",fontSize:34,flexShrink:0}, titulo:{margin:0,color:"#67e8f9",fontSize:"clamp(22px,4vw,34px)"}, subtitulo:{margin:"7px 0 0",color:"#cbd5e1"}, contexto:{marginTop:14,padding:"12px 15px",border:"1px solid rgba(103,232,249,.3)",borderRadius:12,background:"rgba(8,145,178,.09)",color:"#bae6fd"}, atalhos:{display:"flex",gap:8,flexWrap:"wrap",marginTop:18}, sugestao:{border:"1px solid #155e75",background:"rgba(8,145,178,.1)",color:"#a5f3fc",borderRadius:999,padding:"8px 11px",cursor:"pointer",fontWeight:700}, grade:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,260px),1fr))",gap:13,marginTop:16}, cartao:{minHeight:145,position:"relative",display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8,padding:17,border:"1px solid #334155",borderRadius:15,background:"linear-gradient(145deg,#0f172a,#111c31)",color:"#e2e8f0",textAlign:"left",cursor:"pointer"}, cartaoAtivo:{border:"1px solid #67e8f9",boxShadow:"0 0 0 2px rgba(103,232,249,.12)"}, numero:{position:"absolute",right:11,top:9,color:"#64748b",fontSize:11}, cartaoIcone:{fontSize:25}, descricao:{color:"#94a3b8",lineHeight:1.4,fontWeight:500}, livre:{display:"flex",alignItems:"end",gap:12,flexWrap:"wrap",marginTop:22,padding:18,border:"1px solid #334155",borderRadius:16,background:"#0f172a"}, fluxo:{scrollMarginTop:18,marginTop:22,padding:"clamp(17px,3vw,28px)",border:"1px solid #155e75",borderRadius:18,background:"linear-gradient(145deg,#071326,#0f172a)"}, fluxoTitulo:{margin:"0 0 14px",color:"#67e8f9"}, ajuda:{color:"#cbd5e1"}, campos:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,230px),1fr))",gap:12,margin:"15px 0"}, label:{display:"flex",flexDirection:"column",gap:6,color:"#cbd5e1",fontSize:13,fontWeight:700,flex:"1 1 520px"}, input:{width:"100%",boxSizing:"border-box",border:"1px solid #475569",borderRadius:10,background:"#020617",color:"#f8fafc",padding:"11px 12px",font:"inherit",resize:"vertical"}, primario:{border:"1px solid #22d3ee",borderRadius:11,background:"linear-gradient(135deg,#0369a1,#0891b2)",color:"white",padding:"12px 17px",fontWeight:900,cursor:"pointer"}, secundario:{border:"1px solid #64748b",borderRadius:11,background:"#0f172a",color:"#e2e8f0",padding:"12px 17px",fontWeight:800,cursor:"pointer"}, opcoes:{display:"flex",gap:10,flexWrap:"wrap",margin:"13px 0"}, opcao:{border:"1px solid #475569",borderRadius:11,background:"#020617",color:"#e2e8f0",padding:"11px 18px",fontWeight:800,cursor:"pointer"}, opcaoAtiva:{borderColor:"#67e8f9",background:"rgba(8,145,178,.24)",color:"#cffafe"}, aviso:{padding:12,border:"1px solid #f59e0b",borderRadius:10,background:"rgba(245,158,11,.1)",color:"#fde68a"}, contratoTitulo:{color:"#f8fafc",marginTop:4}, contratoGrade:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,240px),1fr))",gap:12}, bloco:{padding:16,border:"1px solid #334155",borderRadius:13,background:"#020617",lineHeight:1.5}, categoria:{padding:12,borderRadius:10,background:"rgba(8,145,178,.12)",color:"#cffafe"}, dados:{padding:14,border:"1px dashed #475569",borderRadius:12,color:"#cbd5e1",lineHeight:1.6}, acoes:{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}, sucesso:{marginTop:18,padding:16,border:"1px solid #16a34a",borderRadius:12,background:"rgba(22,163,74,.1)",color:"#dcfce7"}
 };
