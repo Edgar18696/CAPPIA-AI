@@ -1,12 +1,14 @@
 // =============================================================
 // PAIIA — Central do Paizinho: RELATÓRIO DA MANHÃ (piloto LOJA ONLINE).
 // Só mostra: nenhuma ação aqui altera anúncio, preço, estoque ou medida.
-// O botão de teste com dados reais só existe no ambiente local (npm run dev).
+// (12/11) O botão de análise com dados reais (somente leitura) foi liberado
+// também no site, por autorização do Edgar: roda neste navegador e guarda o
+// resultado só nele. Antes existia apenas no ambiente local (npm run dev).
 // =============================================================
 import { useEffect, useState } from "react";
 import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTA_PILOTO } from "../services/paizinhoAuditoria/relatorioService";
 
-const LOCAL = import.meta.env.DEV === true;
+const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const numero = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR"));
 // + = com as medidas do Bling o frete seria maior; − = menor.
@@ -51,11 +53,11 @@ export default function RelatorioManhaPaizinho() {
       <div style={S.topo}>
         <div>
           <h2 style={S.titulo}>☀️ Relatório da manhã — {CONTA_PILOTO.nome}</h2>
-          <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "TESTE LOCAL (só neste computador)" : "rotina automática das 03h"}` : textoEstado(servidor)}</p>
+          <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR (fica só nele)" : "rotina automática das 03h"}` : textoEstado(servidor)}</p>
         </div>
         {LOCAL && doServidor && teste && (
           <div style={S.linha}>
-            <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Teste local</button>
+            <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Neste navegador</button>
             <button type="button" style={!verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(false)}>Servidor 03h</button>
           </div>
         )}
@@ -63,8 +65,8 @@ export default function RelatorioManhaPaizinho() {
 
       {LOCAL && (
         <div style={S.teste} data-paizinho-teste-local>
-          <strong>🧪 Teste com dados reais (somente leitura)</strong>
-          <span style={S.ajuda}>Lê a conta {CONTA_PILOTO.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado. Só aparece no ambiente local.</span>
+          <strong>🔍 Análise com dados reais (somente leitura)</strong>
+          <span style={S.ajuda}>Lê a conta {CONTA_PILOTO.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. A conta inteira leva cerca de 1 hora; mantenha esta página aberta e não use "Sair" durante a leitura. O resultado fica guardado só neste navegador.</span>
           <div style={S.linha}>
             <label style={S.rotulo}>Anúncios
               <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
@@ -77,7 +79,7 @@ export default function RelatorioManhaPaizinho() {
                 {[0, 3, 5, 15].map((n) => <option key={n} value={n}>{n === 0 ? "não pesquisar" : `${n} anúncios`}</option>)}
               </select>
             </label>
-            <button type="button" onClick={rodar} disabled={Boolean(rodando)} style={S.botao} data-paizinho-rodar-teste>{rodando ? "⏳ Analisando…" : "Rodar análise de teste agora"}</button>
+            <button type="button" onClick={rodar} disabled={Boolean(rodando)} style={S.botao} data-paizinho-rodar-teste>{rodando ? "⏳ Analisando…" : "Rodar análise agora"}</button>
           </div>
           {rodando && <span style={S.ajuda}>⏳ {rodando}</span>}
           {erroTeste && <span style={S.erro}>❌ {erroTeste}</span>}

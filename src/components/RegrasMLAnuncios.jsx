@@ -1,14 +1,15 @@
 // =============================================================
 // PAIIA — Central do Paizinho: janela "Regras do Mercado Livre — Anúncios".
-// SOMENTE CONSULTA: mostra as regras oficiais (fonte e data), o risco e as
-// recomendações. Não lê nem altera anúncios. A detecção nas 3 contas fica
-// "aguardando autorização" até o dono liberar a leitura.
+// SOMENTE LEITURA: mostra as regras oficiais (fonte e data), o cruzamento das
+// 3 contas, o risco e as recomendações. Nunca altera, pausa ou encerra anúncios.
 // =============================================================
 import { useMemo, useState } from "react";
 import { REGRAS, LACUNAS, NIVEIS_RISCO, RECOMENDACOES, SINAIS_MESMO_PRODUTO, ETAPAS, CONTAS_REGRAS, DATA_ACESSO } from "../services/regrasML/catalogoRegras";
 import { lerTresContas, montarCruzamento } from "../services/regrasML/leituraContas";
 
-const LOCAL = import.meta.env.DEV === true;
+// (12/11) Leitura das 3 contas (somente GET) liberada também no site, por
+// autorização do Edgar. O resultado fica guardado só no navegador de quem leu.
+const LOCAL = true;
 const TIPO = { gold_pro: "Premium", gold_special: "Clássico", free: "Grátis" };
 const ENVIO = { fulfillment: "Full", xd_drop_off: "Agência", cross_docking: "Coleta", self_service: "Flex", drop_off: "Correios", me1: "ME1", custom: "Próprio", not_specified: "—" };
 const NIVEL = { alto: ["Precisa de atenção", "#f87171"], conferir: ["Conferir cadastro", "#fb923c"], medio: ["Médio", "#fbbf24"], baixo: ["Baixo", "#4ade80"], permitido: ["Permitido (R1)", "#4ade80"] };
@@ -44,9 +45,9 @@ function CruzamentoContas() {
   return (
     <section style={S.cruz}>
       <h3 style={{ ...S.h3, marginTop: 0 }}>Cruzamento das 3 contas (somente leitura)</h3>
-      {LOCAL && <div style={S.acoes}><button type="button" onClick={ler} disabled={!!lendo} style={S.botao}>{lendo ? `🔄 ${lendo}` : cruz ? "Ler as 3 contas de novo" : "Ler as 3 contas agora"}</button><small style={S.base}>Só consultas GET no Mercado Livre. Nada é alterado. Leva cerca de 12 minutos.</small></div>}
+      {LOCAL && <div style={S.acoes}><button type="button" onClick={ler} disabled={!!lendo} style={S.botao}>{lendo ? `🔄 ${lendo}` : cruz ? "Ler as 3 contas de novo" : "Ler as 3 contas agora"}</button><small style={S.base}>Só consultas de leitura no Mercado Livre: nada é alterado. Leva cerca de 12 minutos; mantenha a página aberta e não use "Sair" durante a leitura. O resultado fica guardado só neste navegador.</small></div>}
       {erro && <div style={S.aviso}>{erro}</div>}
-      {!cruz ? <p style={S.nota}>Ainda não há leitura neste computador.</p> : <>
+      {!cruz ? <p style={S.nota}>Ainda não há leitura neste navegador. Use o botão acima para ler as 3 contas.</p> : <>
         <p style={S.nota}>Leitura de {new Date(cruz.lido_em).toLocaleString("pt-BR")} · {Object.entries(cruz.anuncios_lidos).map(([n, q]) => `${n}: ${q}`).join(" · ")} anúncios ativos · aplicações lidas em {cruz.aplicacoes_lidas} anúncios repetidos{cruz.falhas.length ? ` · ${cruz.falhas.length} leituras com falha` : " · nenhuma falha"}.</p>
         <div style={S.acoes}>
           <button type="button" onClick={() => { setAba("entre_contas"); setMostrar(30); }} style={{ ...S.filtro, ...(aba === "entre_contas" ? S.filtroAtivo : {}) }}>1. Entre contas ({r.entre_contas.total} pares · {r.entre_contas.atencao} com atenção)</button>

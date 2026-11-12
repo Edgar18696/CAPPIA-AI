@@ -3,8 +3,9 @@
 // TESTE LOCAL com dados reais (somente leitura).
 //   - Produção: lê o último relatório gravado pela função das 03h
 //     (tabela paiia_paizinho_relatorios; sem a tabela → "não ativado").
-//   - Teste local (npm run dev): roda o mesmo motor no navegador usando as
-//     funções que o PAIIA já usa (ml_consulta GET e bling buscar_produto).
+//   - Análise no navegador (site e npm run dev; liberada no site em 12/11):
+//     roda o mesmo motor no navegador usando as funções que o PAIIA já usa
+//     (ml_consulta GET, paizinho-leitura-ml e bling-integracao).
 //     O resultado fica SÓ neste navegador (localStorage).
 // =============================================================
 import { supabase } from "../../supabase";
