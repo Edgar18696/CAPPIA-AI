@@ -12,8 +12,8 @@ export const REVISAR_A_CADA_DIAS = 90;
 
 export const CONTAS_REGRAS = Object.freeze([
   { nome: "LOJA ONLINE", ml: "1729335019", leitura: "piloto (somente leitura)" },
-  { nome: "REVELAÇÃO", ml: null, leitura: "aguardando autorização" },
-  { nome: "CIEBR", ml: null, leitura: "aguardando autorização" },
+  { nome: "REVELAÇÃO", ml: "2412238242", leitura: "somente leitura (12/11/2026)" },
+  { nome: "CIEBR", ml: "824312524", leitura: "somente leitura (12/11/2026)" },
 ]);
 
 /** tipo: "explicita" = escrito na fonte; "interpretacao" = conclusão a partir do texto. */
@@ -119,9 +119,9 @@ export const SINAIS_MESMO_PRODUTO = Object.freeze([
 
 export const ETAPAS = Object.freeze([
   { etapa: "Catálogo de regras oficiais com fonte e data", situacao: "pronto" },
-  { etapa: "Ler os anúncios ativos das 3 contas (somente leitura)", situacao: "aguardando autorização" },
-  { etapa: "Detectar o mesmo produto entre contas e classificar o risco", situacao: "aguardando a leitura das 3 contas" },
-  { etapa: "Ler vendas e visitas das 3 contas para sugerir qual manter", situacao: "aguardando autorização" },
+  { etapa: "Ler os anúncios ativos das 3 contas (somente leitura, autorizado em 12/11/2026)", situacao: "pronto" },
+  { etapa: "Detectar o mesmo produto entre contas e classificar o risco", situacao: "pronto" },
+  { etapa: "Visitas de 30 dias da REVELAÇÃO e da CIEBR (hoje só a LOJA ONLINE)", situacao: "aguardando autorização para publicar a leitura ampliada" },
   { etapa: "Comparar fotos (hash)", situacao: "aguardando autorização" },
   { etapa: "Consultar o suporte do ML sobre as lacunas", situacao: "aguardando autorização" },
   { etapa: "Qualquer ação nos anúncios", situacao: "nunca automática: só com sua autorização, item por item" },
