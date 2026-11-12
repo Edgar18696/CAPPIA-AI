@@ -103,7 +103,7 @@ export const NIVEIS_RISCO = Object.freeze([
 export const RECOMENDACOES = Object.freeze([
   { acao: "Manter", texto: "Risco baixo: já existe diferença de envio ou de pagamento.", base: "R1, R3" },
   { acao: "Melhorar", texto: "Sugestões sem executar: diferenciar o envio ou o tipo de anúncio de verdade, trocar fotos clonadas por fotos próprias, juntar compatibilidades no anúncio com mais exposição, ou transformar em variação/kit.", base: "R1, R3, R4, R5" },
-  { acao: "Encerrar (sugerir)", texto: "Risco alto sem diferença possível: sugerir manter o anúncio com mais vendas, visitas e exposição — o mesmo critério do ML.", base: "R2, R3" },
+  { acao: "Unificar (decisão sua)", texto: "Só para duplicidade confirmada na MESMA conta (mesmo código, quantidade, marca, aplicações, tipo e envio) quando não for possível diferenciar a condição de venda: juntar num anúncio só, com todas as aplicações. Qual manter é decisão sua, considerando histórico, reputação do anúncio e posição na busca — nunca só as vendas. Entre contas diferentes as regras não são claras: não sugerimos encerrar.", base: "R1, R2, R3" },
 ]);
 
 /** O que identifica o mesmo produto entre contas, do sinal mais forte ao mais fraco. */

@@ -240,8 +240,8 @@ export function cruzarContas({ contas, anuncios, visitas = {} }) {
       const partes = [];
       if (duplicadoNaConta) partes.push("há anúncio repetido dentro da mesma conta com o mesmo envio e o mesmo tipo");
       if (clonado) partes.push("trocar as fotos copiadas por fotos próprias em cada conta (R5)");
-      partes.push("diferenciar o envio ou o tipo de anúncio; se não for possível, avaliar encerrar os demais e manter o de melhor desempenho");
-      recomendacao = { acao: duplicadoNaConta ? "encerrar (sugerir)" : "melhorar", texto: partes.join("; ") + ".", regras: ["R1", "R2", "R3", ...(clonado ? ["R5"] : [])] };
+      partes.push(duplicadoNaConta ? "diferenciar o envio ou o tipo de anúncio ou unificar num anúncio só; qual manter é decisão sua (histórico, reputação e posição, não só vendas)" : "diferenciar o envio ou o tipo de anúncio entre as contas");
+      recomendacao = { acao: duplicadoNaConta ? "unificar (decisão sua)" : "melhorar", texto: partes.join("; ") + ".", regras: ["R1", "R2", "R3", ...(clonado ? ["R5"] : [])] };
     }
     return {
       contas: contasDoGrupo,
@@ -270,4 +270,111 @@ export function cruzarContas({ contas, anuncios, visitas = {} }) {
     por_risco: porNivel,
     grupos,
   };
+}
+
+// =============================================================
+// (12/11) CONFERÊNCIA DETALHADA de cada possível duplicidade, separada em
+// (1) entre contas e (2) dentro da mesma conta. Confere código da peça,
+// quantidade (unidade x kit), marca, aplicações (compatibilidades do ML),
+// tipo de anúncio e condições de venda, e mostra o histórico comercial.
+// Nunca sugere encerrar só porque outro anúncio vende mais.
+// =============================================================
+
+/** Aplicações: compara os veículos compatíveis (ids do catálogo do ML). */
+export function compararAplicacoes(x, y) {
+  if (!Array.isArray(x) || !Array.isArray(y)) return { situacao: "nao_lidas", texto: "aplicações não lidas" };
+  if (!x.length || !y.length) return { situacao: "sem_cadastro", texto: `aplicações cadastradas: ${x.length} x ${y.length}` };
+  const A = new Set(x), B = new Set(y);
+  const comuns = [...A].filter((v) => B.has(v)).length;
+  const menor = Math.min(A.size, B.size), maior = Math.max(A.size, B.size);
+  if (!comuns) return { situacao: "diferentes", texto: `nenhum veículo em comum (${A.size} x ${B.size})` };
+  if (comuns === A.size && comuns === B.size) return { situacao: "iguais", texto: `mesmos ${comuns} veículos` };
+  if (comuns >= 0.9 * menor) return { situacao: "contidas", texto: `${comuns} em comum; um anúncio tem ${maior - menor} veículo(s) a mais (${A.size} x ${B.size})` };
+  return { situacao: "parciais", texto: `${comuns} veículo(s) em comum de ${A.size} x ${B.size}` };
+}
+
+const pctDif = (a, b) => { const m = Math.min(a, b); return m > 0 ? Math.abs(a - b) / m : null; };
+
+/** Conferência item a item de um par de anúncios. */
+export function conferirPar(a, b, compat = {}) {
+  const comum = (x, y) => x.some((v) => y.includes(v));
+  const sku = a.skus.length && b.skus.length ? comum(a.skus, b.skus) : null;
+  const peca = a.pecas.length && b.pecas.length ? comum(a.pecas, b.pecas) : null;
+  const marca = a.marca && b.marca ? a.marca === b.marca : null;
+  const quantidade = a.unidades === b.unidades;
+  const aplic = compararAplicacoes(compat[a.id], compat[b.id]);
+  const tipo = a.tipo === b.tipo;
+  const envio = a.envio === b.envio;
+  const frete = a.frete_gratis === b.frete_gratis;
+  const dif = pctDif(a.preco, b.preco);
+  const clonado = comum(a.fotos, b.fotos);
+  // Identidade: mesmo código (SKU ou peça), mesma quantidade, mesma marca e
+  // aplicações que não se contradizem.
+  const codigoOk = sku === true || peca === true;
+  const identidade = codigoOk && quantidade && marca !== false && aplic.situacao !== "diferentes";
+  const mesmasCondicoes = tipo && envio && frete;
+  return {
+    sku, peca, marca, quantidade, aplicacoes: aplic, tipo, envio, frete_gratis: frete,
+    diferenca_preco: dif === null ? null : Math.round(dif * 1000) / 10, clonado,
+    identidade_confirmada: identidade, aplicacoes_divergentes: aplic.situacao === "diferentes" || aplic.situacao === "parciais",
+    mesmas_condicoes: mesmasCondicoes,
+  };
+}
+
+const historico = (f) => ({ id: f.id, conta: f.conta_nome || f.conta, titulo: f.titulo, sku: f.skus.join(", "), marca: f.marca_nome, unidades: f.unidades, tipo: f.tipo, envio: f.envio, frete_gratis: f.frete_gratis, preco: f.preco, vendidos_total: f.vendidos_total, visitas30: f.visitas30, criado_em: f.criado_em, estoque: f.estoque, link: f.link });
+
+/**
+ * Classifica um par já conferido. Devolve { atencao, nivel, motivo, recomendacao, regras }.
+ * Mesma conta: R1 é explícita — só é proibido com as MESMAS condições de venda.
+ * Entre contas: as regras oficiais não dizem se a duplicidade vale entre contas
+ * (lacuna): o máximo é "melhorar/diferenciar", nunca "encerrar".
+ */
+export function classificarPar(c, mesmaConta) {
+  if (!c.identidade_confirmada) {
+    return { atencao: c.aplicacoes_divergentes, nivel: "conferir", motivo: c.aplicacoes.situacao === "diferentes" ? "mesmo código, mas aplicações diferentes: pode ser produto diferente ou cadastro incompleto" : "identidade não confirmada (código, quantidade ou marca)", recomendacao: "Conferir o cadastro antes de qualquer decisão.", regras: [] };
+  }
+  if (mesmaConta) {
+    if (c.mesmas_condicoes) {
+      return { atencao: true, nivel: "alto", motivo: "mesmo produto, na mesma conta, com o mesmo tipo de anúncio e o mesmo envio", recomendacao: "Diferenciar a condição de venda (envio ou tipo) ou unificar num anúncio só, juntando as aplicações (R3). A escolha de qual manter é sua: considere histórico, reputação do anúncio e posição na busca, não só as vendas.", regras: ["R1", "R2", "R3"] };
+    }
+    return { atencao: false, nivel: "permitido", motivo: `condições de venda diferentes (${[!c.tipo && "tipo", !c.envio && "envio", !c.frete_gratis && "frete"].filter(Boolean).join(", ")})`, recomendacao: "Manter: a regra oficial permite repetir com outra forma de envio ou pagamento.", regras: ["R1"] };
+  }
+  if (c.clonado) {
+    return { atencao: true, nivel: "alto", motivo: "fotos idênticas entre contas (clonagem)", recomendacao: "Usar fotos próprias em cada conta.", regras: ["R5"] };
+  }
+  if (c.mesmas_condicoes && c.diferenca_preco !== null && c.diferenca_preco <= 5) {
+    return { atencao: true, nivel: "alto", motivo: "mesmo produto, mesmo tipo, mesmo envio e preço praticamente igual nas duas contas", recomendacao: "Diferenciar de verdade a condição de venda entre as contas (envio ou tipo). As regras não dizem se vale entre contas do mesmo dono: consultar o suporte do ML antes de encerrar qualquer anúncio.", regras: ["R1", "R4", "R7"] };
+  }
+  if (c.mesmas_condicoes) {
+    return { atencao: false, nivel: "medio", motivo: "mesmas condições; só o preço é diferente (regra ambígua)", recomendacao: "Acompanhar; se quiser reduzir o risco, diferenciar envio ou tipo.", regras: ["R4", "R7"] };
+  }
+  return { atencao: false, nivel: "baixo", motivo: "condições de venda diferentes entre as contas", recomendacao: "Manter.", regras: ["R1", "R3"] };
+}
+
+/** Separa (1) entre contas e (2) dentro da mesma conta, par a par, com a conferência. */
+export function separarDuplicidades({ contas, anuncios, visitas = {}, compat = {} }) {
+  const fichas = [];
+  for (const c of contas) for (const it of anuncios[c.id] || []) {
+    const f = fichaCruzamento(it, c);
+    if (visitas[f.id] !== undefined) f.visitas30 = visitas[f.id];
+    fichas.push(f);
+  }
+  const grupos = agruparMesmoProduto(fichas);
+  const entre = [], dentro = [];
+  for (const g of grupos) {
+    const membros = g.membros.map((i) => fichas[i]);
+    for (let x = 0; x < membros.length; x++) for (let y = x + 1; y < membros.length; y++) {
+      const a = membros[x], b = membros[y];
+      if (!sinaisEntre(a, b).length) continue;
+      const c = conferirPar(a, b, compat);
+      const mesma = a.conta === b.conta;
+      const cl = classificarPar(c, mesma);
+      (mesma ? dentro : entre).push({ a: historico(a), b: historico(b), sinais: sinaisEntre(a, b), conferencia: c, ...cl, situacao: "pendente de autorização" });
+    }
+  }
+  const ordem = { alto: 0, conferir: 1, medio: 2, baixo: 3, permitido: 4 };
+  const vendas = (p) => (p.a.vendidos_total || 0) + (p.b.vendidos_total || 0);
+  const ord = (l) => l.sort((p, q) => Number(q.atencao) - Number(p.atencao) || ordem[p.nivel] - ordem[q.nivel] || vendas(q) - vendas(p));
+  const resumo = (l) => { const r = { total: l.length, atencao: l.filter((p) => p.atencao).length }; for (const p of l) r[p.nivel] = (r[p.nivel] || 0) + 1; return r; };
+  return { entre_contas: ord(entre), mesma_conta: ord(dentro), resumo: { entre_contas: resumo(entre), mesma_conta: resumo(dentro) } };
 }

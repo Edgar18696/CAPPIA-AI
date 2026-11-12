@@ -11,14 +11,16 @@ import { lerTresContas, montarCruzamento } from "../services/regrasML/leituraCon
 const LOCAL = import.meta.env.DEV === true;
 const TIPO = { gold_pro: "Premium", gold_special: "Clássico", free: "Grátis" };
 const ENVIO = { fulfillment: "Full", xd_drop_off: "Agência", cross_docking: "Coleta", self_service: "Flex", drop_off: "Correios", me1: "ME1", custom: "Próprio", not_specified: "—" };
-const NIVEL = { alto: ["Alto", "#f87171"], medio: ["Médio", "#fbbf24"], baixo: ["Baixo", "#4ade80"] };
+const NIVEL = { alto: ["Precisa de atenção", "#f87171"], conferir: ["Conferir cadastro", "#fb923c"], medio: ["Médio", "#fbbf24"], baixo: ["Baixo", "#4ade80"], permitido: ["Permitido (R1)", "#4ade80"] };
 const real = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const simNao = (v) => (v === true ? "✅ igual" : v === false ? "❌ diferente" : "— sem dado");
 
 function CruzamentoContas() {
   const [versao, setVersao] = useState(0);
   const [lendo, setLendo] = useState("");
   const [erro, setErro] = useState("");
-  const [filtro, setFiltro] = useState("alto");
+  const [aba, setAba] = useState("mesma_conta");
+  const [filtro, setFiltro] = useState("atencao");
   const [busca, setBusca] = useState("");
   const [mostrar, setMostrar] = useState(30);
   const cruz = useMemo(() => montarCruzamento(), [versao]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -29,36 +31,36 @@ function CruzamentoContas() {
     setLendo("");
   }
 
-  const grupos = useMemo(() => {
+  const pares = useMemo(() => {
     if (!cruz) return [];
-    const b = busca.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    return cruz.grupos.filter((g) =>
-      (filtro === "todos" || (filtro === "na_conta" ? g.duplicado_na_conta : g.risco === filtro)) &&
-      (!b || g.anuncios.some((a) => a.id.includes(b) || a.skus.some((s) => s.includes(b)) || a.titulo.toUpperCase().includes(busca.trim().toUpperCase()))));
-  }, [cruz, filtro, busca]);
+    const b = busca.trim().toUpperCase();
+    const bc = b.replace(/[^A-Z0-9]/g, "");
+    return cruz.duplicidades[aba].filter((p) =>
+      (filtro === "todos" || (filtro === "atencao" ? p.atencao : p.nivel === filtro)) &&
+      (!b || [p.a, p.b].some((x) => x.id.includes(bc) || x.sku.replace(/[^A-Z0-9]/g, "").includes(bc) || x.titulo.toUpperCase().includes(b))));
+  }, [cruz, aba, filtro, busca]);
 
+  const r = cruz?.duplicidades.resumo;
   return (
     <section style={S.cruz}>
       <h3 style={{ ...S.h3, marginTop: 0 }}>Cruzamento das 3 contas (somente leitura)</h3>
-      {LOCAL && <div style={S.acoes}><button type="button" onClick={ler} disabled={!!lendo} style={S.botao}>{lendo ? `🔄 ${lendo}` : cruz ? "Ler as 3 contas de novo" : "Ler as 3 contas agora"}</button><small style={S.base}>Só consultas GET no Mercado Livre. Nada é alterado. Leva cerca de 7 minutos.</small></div>}
+      {LOCAL && <div style={S.acoes}><button type="button" onClick={ler} disabled={!!lendo} style={S.botao}>{lendo ? `🔄 ${lendo}` : cruz ? "Ler as 3 contas de novo" : "Ler as 3 contas agora"}</button><small style={S.base}>Só consultas GET no Mercado Livre. Nada é alterado. Leva cerca de 12 minutos.</small></div>}
       {erro && <div style={S.aviso}>{erro}</div>}
       {!cruz ? <p style={S.nota}>Ainda não há leitura neste computador.</p> : <>
-        <p style={S.nota}>Leitura de {new Date(cruz.lido_em).toLocaleString("pt-BR")} · {Object.entries(cruz.anuncios_lidos).map(([n, q]) => `${n}: ${q}`).join(" · ")} anúncios ativos{cruz.falhas.length ? ` · ${cruz.falhas.length} não lidos` : " · nenhuma falha"}.</p>
-        <div style={S.kpis}>
-          <Kpi rotulo="Produtos em mais de uma conta" valor={cruz.grupos_entre_contas} />
-          <Kpi rotulo="Risco alto" valor={cruz.por_risco.alto} cor="#f87171" />
-          <Kpi rotulo="Risco médio" valor={cruz.por_risco.medio} cor="#fbbf24" />
-          <Kpi rotulo="Risco baixo" valor={cruz.por_risco.baixo} cor="#4ade80" />
-          <Kpi rotulo="Repetidos na mesma conta (mesmo envio e tipo)" valor={cruz.grupos_duplicado_na_conta} cor="#f87171" />
-        </div>
-        <p style={S.nota}>Vendas = total vendido desde a criação do anúncio (dado do ML). Visitas de 30 dias só da LOJA ONLINE por enquanto: ler as outras contas depende de autorização para publicar a função de leitura ampliada. Toda recomendação é sugestão, pendente da sua autorização.</p>
+        <p style={S.nota}>Leitura de {new Date(cruz.lido_em).toLocaleString("pt-BR")} · {Object.entries(cruz.anuncios_lidos).map(([n, q]) => `${n}: ${q}`).join(" · ")} anúncios ativos · aplicações lidas em {cruz.aplicacoes_lidas} anúncios repetidos{cruz.falhas.length ? ` · ${cruz.falhas.length} leituras com falha` : " · nenhuma falha"}.</p>
         <div style={S.acoes}>
-          {[["alto", "Risco alto"], ["medio", "Risco médio"], ["baixo", "Risco baixo"], ["na_conta", "Repetido na mesma conta"], ["todos", "Todos"]].map(([k, t]) => <button key={k} type="button" onClick={() => { setFiltro(k); setMostrar(30); }} style={{ ...S.filtro, ...(filtro === k ? S.filtroAtivo : {}) }}>{t}</button>)}
+          <button type="button" onClick={() => { setAba("entre_contas"); setMostrar(30); }} style={{ ...S.filtro, ...(aba === "entre_contas" ? S.filtroAtivo : {}) }}>1. Entre contas ({r.entre_contas.total} pares · {r.entre_contas.atencao} com atenção)</button>
+          <button type="button" onClick={() => { setAba("mesma_conta"); setMostrar(30); }} style={{ ...S.filtro, ...(aba === "mesma_conta" ? S.filtroAtivo : {}) }}>2. Dentro da mesma conta ({r.mesma_conta.total} pares · {r.mesma_conta.atencao} com atenção)</button>
+        </div>
+        <div style={S.kpis}>{Object.entries(NIVEL).filter(([k]) => r[aba][k]).map(([k, [nome, cor]]) => <Kpi key={k} rotulo={nome} valor={r[aba][k]} cor={cor} />)}</div>
+        <p style={S.nota}>Cada par é conferido em: código da peça, SKU, quantidade (unidade x kit), marca, aplicações (veículos compatíveis no ML), tipo de anúncio e condições de venda. Vendas = total desde a criação do anúncio; visitas de 30 dias só da LOJA ONLINE. Nenhuma sugestão se baseia só em vendas, e toda ação depende da sua autorização.</p>
+        <div style={S.acoes}>
+          {[["atencao", "Precisam de atenção"], ["alto", "Duplicidade confirmada"], ["conferir", "Conferir cadastro"], ["todos", "Todos"]].map(([k, t]) => <button key={k} type="button" onClick={() => { setFiltro(k); setMostrar(30); }} style={{ ...S.filtro, ...(filtro === k ? S.filtroAtivo : {}) }}>{t}</button>)}
           <input value={busca} onChange={(e) => { setBusca(e.target.value); setMostrar(30); }} placeholder="Buscar SKU, MLB ou título" style={S.busca} />
         </div>
-        <p style={S.base}>{grupos.length} produto(s)</p>
-        {grupos.slice(0, mostrar).map((g, i) => <Grupo key={g.anuncios.map((a) => a.id).join("-")} g={g} n={i + 1} />)}
-        {grupos.length > mostrar && <button type="button" onClick={() => setMostrar(mostrar + 30)} style={S.filtro}>Mostrar mais ({grupos.length - mostrar} restantes)</button>}
+        <p style={S.base}>{pares.length} par(es)</p>
+        {pares.slice(0, mostrar).map((p, i) => <Par key={`${p.a.id}-${p.b.id}`} p={p} n={i + 1} />)}
+        {pares.length > mostrar && <button type="button" onClick={() => setMostrar(mostrar + 30)} style={S.filtro}>Mostrar mais ({pares.length - mostrar} restantes)</button>}
       </>}
     </section>
   );
@@ -68,24 +70,37 @@ function Kpi({ rotulo, valor, cor }) {
   return <div style={S.kpi}><strong style={{ fontSize: 22, color: cor || "#f8fafc" }}>{valor}</strong><small style={S.base}>{rotulo}</small></div>;
 }
 
-function Grupo({ g, n }) {
-  const [nome, cor] = NIVEL[g.risco];
+const nomeTipo = (t) => TIPO[t] || t;
+const nomeEnvio = (x) => `${ENVIO[x.envio] || x.envio}${x.frete_gratis ? ", grátis" : ""}`;
+
+function Par({ p, n }) {
+  const [nome, cor] = NIVEL[p.nivel];
+  const c = p.conferencia;
+  const linhas = [
+    ["SKU", simNao(c.sku)],
+    ["Código da peça", simNao(c.peca)],
+    ["Quantidade", c.quantidade ? `✅ igual (${p.a.unidades === 1 ? "unidade" : `${p.a.unidades}`})` : `❌ ${p.a.unidades} x ${p.b.unidades}`],
+    ["Marca", c.marca === null ? "— sem dado" : c.marca ? `✅ ${p.a.marca}` : `❌ ${p.a.marca} x ${p.b.marca}`],
+    ["Aplicações", `${["iguais", "contidas"].includes(c.aplicacoes.situacao) ? "✅" : c.aplicacoes.situacao === "diferentes" ? "❌" : "⚠️"} ${c.aplicacoes.texto}`],
+    ["Tipo de anúncio", c.tipo ? `igual (${nomeTipo(p.a.tipo)})` : `diferente (${nomeTipo(p.a.tipo)} x ${nomeTipo(p.b.tipo)})`],
+    ["Envio", c.envio && c.frete_gratis ? `igual (${nomeEnvio(p.a)})` : `diferente (${nomeEnvio(p.a)} x ${nomeEnvio(p.b)})`],
+    ["Preço", c.diferenca_preco === null ? "—" : `${real(p.a.preco)} x ${real(p.b.preco)} (${c.diferenca_preco}%)`],
+  ];
   return (
     <article style={{ ...S.grupo, borderColor: cor }}>
-      <div style={S.grupoTopo}><strong>{n}. {g.titulo}</strong><span style={{ ...S.selo, color: cor, borderColor: cor }}>Risco {nome}</span></div>
-      <small style={S.base}>Contas: {g.contas.join(", ")} · Mesmo produto por: {g.sinais.join(", ")} · Motivo do risco: {g.motivos_risco.join(", ")} ({g.regras_risco.join(", ")})</small>
-      <div style={S.tabelaCaixa}><table style={S.tabela}><thead><tr><th style={S.th}>Conta</th><th style={S.th}>Anúncio</th><th style={S.th}>SKU</th><th style={S.th}>Tipo</th><th style={S.th}>Envio</th><th style={S.th}>Preço</th><th style={S.th}>Vendas (total)</th><th style={S.th}>Visitas 30d</th></tr></thead>
-        <tbody>{g.anuncios.map((a) => <tr key={a.id} style={a.id === g.manter_sugerido ? S.manter : undefined}>
-          <td style={S.td}>{a.conta}</td>
-          <td style={S.td}><a href={a.link} target="_blank" rel="noopener noreferrer" style={S.link}>{a.id}</a>{a.id === g.manter_sugerido && <span style={S.base}> · melhor desempenho</span>}</td>
-          <td style={S.td}>{a.skus.join(", ") || "—"}</td>
-          <td style={S.td}>{TIPO[a.tipo] || a.tipo}</td>
-          <td style={S.td}>{ENVIO[a.envio] || a.envio}{a.frete_gratis ? " · grátis" : ""}</td>
-          <td style={S.td}>{real(a.preco)}</td>
-          <td style={S.td}>{a.vendidos_total ?? "—"}</td>
-          <td style={S.td}>{a.visitas30 ?? "—"}</td>
+      <div style={S.grupoTopo}><strong>{n}. {p.a.titulo}</strong><span style={{ ...S.selo, color: cor, borderColor: cor }}>{nome}</span></div>
+      <div style={S.tabelaCaixa}><table style={S.tabela}><thead><tr><th style={S.th}>Conta</th><th style={S.th}>Anúncio</th><th style={S.th}>SKU</th><th style={S.th}>Criado em</th><th style={S.th}>Vendas (total)</th><th style={S.th}>Visitas 30d</th><th style={S.th}>Estoque</th></tr></thead>
+        <tbody>{[p.a, p.b].map((x) => <tr key={x.id}>
+          <td style={S.td}>{x.conta}</td>
+          <td style={S.td}><a href={x.link} target="_blank" rel="noopener noreferrer" style={S.link}>{x.id}</a></td>
+          <td style={S.td}>{x.sku || "—"}</td>
+          <td style={S.td}>{x.criado_em ? new Date(x.criado_em + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+          <td style={S.td}>{x.vendidos_total ?? "—"}</td>
+          <td style={S.td}>{x.visitas30 ?? "—"}</td>
+          <td style={S.td}>{x.estoque}</td>
         </tr>)}</tbody></table></div>
-      <p style={S.texto}><strong>{g.recomendacao.acao[0].toUpperCase() + g.recomendacao.acao.slice(1)}:</strong> {g.recomendacao.texto} <span style={S.base}>({g.recomendacao.regras.join(", ")} · {g.recomendacao.situacao})</span></p>
+      <ul style={S.conferencia}>{linhas.map(([k, v]) => <li key={k}><span style={S.base}>{k}:</span> {v}</li>)}{c.clonado && <li>⚠️ fotos idênticas nos dois anúncios</li>}</ul>
+      <p style={S.texto}><strong>Motivo:</strong> {p.motivo}. <strong>Sugestão:</strong> {p.recomendacao} <span style={S.base}>({p.regras.join(", ") || "—"} · {p.situacao})</span></p>
     </article>
   );
 }
@@ -182,4 +197,5 @@ const S = {
   th: { textAlign: "left", padding: "5px 7px", color: "#94a3b8", borderBottom: "1px solid #334155", whiteSpace: "nowrap" },
   td: { padding: "5px 7px", borderBottom: "1px solid #1e293b", color: "#e2e8f0", whiteSpace: "nowrap" },
   manter: { background: "rgba(74,222,128,.08)" },
+  conferencia: { margin: 0, paddingLeft: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,260px),1fr))", gap: "2px 16px", color: "#cbd5e1", fontSize: 13 },
 };

@@ -43,7 +43,7 @@ test("fotos iguais = clonagem (R5) → alto mesmo com envio diferente; mesma con
   const mesma = cruzarContas({ contas: [LOJA], anuncios: { [LOJA.id]: [item("MLB1", LOJA.id, { sku: "X999", price: 100 }), item("MLB2", LOJA.id, { sku: "x-999", price: 150 })] } });
   assert.equal(mesma.grupos[0].risco, "alto");
   assert.equal(mesma.grupos[0].mesma_conta, true);
-  assert.equal(mesma.grupos[0].recomendacao.acao, "encerrar (sugerir)");
+  assert.equal(mesma.grupos[0].recomendacao.acao, "unificar (decisão sua)");
   // R1: na mesma conta com OUTRO envio (Full x coleta) é permitido → baixo, manter
   const full = cruzarContas({ contas: [CIE], anuncios: { [CIE.id]: [item("MLB1", CIE.id, { sku: "X999", envio: "fulfillment" }), item("MLB2", CIE.id, { sku: "X999" })] } });
   assert.equal(full.grupos[0].risco, "baixo");
@@ -87,4 +87,41 @@ test("SKUs diferentes = produtos diferentes, mesmo com código de peça ou catá
   assert.ok(sinaisEntre(sup, semSku).includes("código da peça e marca iguais"), "sem SKU num deles, o código da peça decide");
   assert.equal(unidadesAnunciadas("Borracha Porta Traseira Logan - 8200617217 2u"), 2);
   assert.equal(unidadesAnunciadas("Acendedor De Cigarro Universal Completo 12v"), 1);
+});
+
+test("conferência detalhada: separa entre contas x mesma conta; nunca 'encerrar' só por vendas", async () => {
+  const { separarDuplicidades, compararAplicacoes } = await import("../../src/services/regrasML/cruzamento.js");
+  const PN = (v) => [attr("BRAND", "Bosch"), attr("PART_NUMBER", v)];
+  const r = separarDuplicidades({
+    contas: [LOJA, CIE],
+    anuncios: {
+      [LOJA.id]: [item("MLB1", LOJA.id, { sku: "H106845", attrs: PN("H106845"), vendidos: 0 })],
+      [CIE.id]: [
+        item("MLB2", CIE.id, { sku: "H106845", attrs: PN("H106845"), vendidos: 362 }),
+        item("MLB3", CIE.id, { sku: "H106845", attrs: PN("H106845"), vendidos: 20 }),
+        item("MLB4", CIE.id, { sku: "H106845", attrs: PN("H106845"), envio: "fulfillment", vendidos: 5 }),
+      ],
+    },
+    compat: { MLB1: ["V1"], MLB2: ["V1", "V2"], MLB3: ["V1", "V2"], MLB4: ["V1", "V2"] },
+  });
+  assert.equal(r.resumo.entre_contas.total, 3);
+  assert.equal(r.resumo.mesma_conta.total, 3);
+  const dup = r.mesma_conta.find((p) => [p.a.id, p.b.id].sort().join() === "MLB2,MLB3");
+  assert.equal(dup.nivel, "alto");
+  assert.equal(dup.atencao, true);
+  assert.doesNotMatch(dup.recomendacao, /^Encerrar/);
+  const full = r.mesma_conta.find((p) => [p.a.id, p.b.id].includes("MLB4"));
+  assert.equal(full.nivel, "permitido", "envio diferente na mesma conta é permitido (R1)");
+  for (const p of r.entre_contas) assert.doesNotMatch(p.recomendacao, /encerrar o|^Encerrar/i);
+  assert.equal(compararAplicacoes(["V1"], ["V1", "V2"]).situacao, "contidas");
+  assert.equal(compararAplicacoes(["V1"], ["V9"]).situacao, "diferentes");
+  assert.equal(compararAplicacoes(null, ["V9"]).situacao, "nao_lidas");
+});
+
+test("mesmo código mas aplicações diferentes → 'conferir', não duplicidade", async () => {
+  const { conferirPar, classificarPar, fichaCruzamento: fc } = await import("../../src/services/regrasML/cruzamento.js");
+  const a = fc(item("MLB1", LOJA.id, { sku: "X1X1" }), LOJA), b = fc(item("MLB2", LOJA.id, { sku: "X1X1" }), LOJA);
+  const c = conferirPar(a, b, { MLB1: ["V1"], MLB2: ["V7"] });
+  assert.equal(c.identidade_confirmada, false);
+  assert.equal(classificarPar(c, true).nivel, "conferir");
 });

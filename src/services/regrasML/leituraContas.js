@@ -6,7 +6,7 @@
 // Autorizado pelo Edgar em 12/11/2026: "somente consultas de leitura".
 // =============================================================
 import { supabase } from "../../supabase";
-import { cruzarContas } from "./cruzamento.js";
+import { cruzarContas, separarDuplicidades } from "./cruzamento.js";
 
 export const CONTAS_CRUZAMENTO = Object.freeze([
   { id: "1729335019", nome: "LOJA ONLINE" },
@@ -80,7 +80,30 @@ export async function lerTresContas({ aoProgredir = () => {} } = {}) {
   }
   const leitura = { lido_em: new Date().toISOString(), contas: CONTAS_CRUZAMENTO, itens, falhas };
   try { localStorage.setItem(CHAVE_LEITURA, JSON.stringify(leitura)); } catch { /* sem espaço: fica só na tela */ }
+  // Aplicações (compatibilidades) só dos anúncios que aparecem repetidos.
+  const dono = {};
+  for (const [c, l] of Object.entries(itens)) for (const it of l) dono[it.id] = c;
+  const ids = [...new Set(cruzarContas({ contas: CONTAS_CRUZAMENTO, anuncios: itens }).grupos.flatMap((g) => g.anuncios.map((a) => a.id)))];
+  const compat = {};
+  const fila = [...ids];
+  let feitos = 0;
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (fila.length) {
+      const id = fila.shift();
+      const r = await lerML(dono[id], `/items/${id}/compatibilities`);
+      if (r.ok) compat[id] = (r.dados?.products || []).map((p) => p.catalog_product_id).filter(Boolean);
+      else if (Number(r.status) === 404) compat[id] = [];
+      else falhas.push({ id, etapa: "aplicações", erro: r.erro });
+      if (++feitos % 50 === 0) aoProgredir(`Aplicações: ${feitos} de ${ids.length} anúncios repetidos`);
+    }
+  }));
+  try { localStorage.setItem(CHAVE_COMPAT, JSON.stringify({ lido_em: new Date().toISOString(), compat })); } catch { /* sem espaço */ }
   return leitura;
+}
+
+export const CHAVE_COMPAT = "paiiaRegrasMLCompat";
+function lerCompatGuardada() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_COMPAT) || "null")?.compat || {}; } catch { return {}; }
 }
 
 export function lerLeituraGuardada() {
@@ -97,8 +120,16 @@ function visitasDoRanqueamento() {
   } catch { return {}; }
 }
 
-/** Cruzamento a partir da leitura guardada. */
+/** Cruzamento a partir da leitura guardada, separado em entre contas x mesma conta. */
 export function montarCruzamento(leitura = lerLeituraGuardada()) {
   if (!leitura?.itens) return null;
-  return { lido_em: leitura.lido_em, falhas: leitura.falhas || [], ...cruzarContas({ contas: leitura.contas, anuncios: leitura.itens, visitas: visitasDoRanqueamento() }) };
+  const base = { contas: leitura.contas, anuncios: leitura.itens, visitas: visitasDoRanqueamento() };
+  const compat = lerCompatGuardada();
+  return {
+    lido_em: leitura.lido_em,
+    falhas: leitura.falhas || [],
+    aplicacoes_lidas: Object.keys(compat).length,
+    ...cruzarContas(base),
+    duplicidades: separarDuplicidades({ ...base, compat }),
+  };
 }
