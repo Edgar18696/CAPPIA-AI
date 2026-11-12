@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { supabase } from "../supabase";
 import RelatorioManhaPaizinho from "./RelatorioManhaPaizinho";
 import RegrasMLAnuncios from "./RegrasMLAnuncios";
@@ -249,22 +249,41 @@ Apresente resumo e comparação Antes × Depois por produto. Não altere o site 
 const CARTOES_NO_RANQUEAMENTO = ["prioridades", "nao-vende", "auditar"];
 export const TAREFAS_ARQUIVADAS = TAREFAS.filter((t) => CARTOES_NO_RANQUEAMENTO.includes(t.id));
 
-const CARTAO_REGRAS = {
-  id: "regras-ml",
-  icone: "📜",
-  titulo: "Regras do Mercado Livre — Anúncios",
-  descricao: "Regras oficiais para o mesmo produto nas contas LOJA ONLINE, REVELAÇÃO e CIEBR: risco e recomendação. Somente consulta.",
-  janela: "regras",
-};
+// (12/11, 2ª simplificação) A página mostra SÓ as quatro funções principais.
+// Saem da página os cartões e atalhos abaixo; as definições continuam em
+// TAREFAS (nada é apagado) e as telas de destino continuam no PAIIA.
+// Fora da página: "analisar-site", "concorrencia", "compatibilidade", "melhorar-anuncio", "inativos", "estoque", "encalhados", "comecar".
 
-export const TAREFAS_VISIVEIS = [
-  ...TAREFAS.filter((t) => !CARTOES_NO_RANQUEAMENTO.includes(t.id)).slice(0, 1),
-  CARTAO_REGRAS,
-  ...TAREFAS.filter((t) => !CARTOES_NO_RANQUEAMENTO.includes(t.id)).slice(1),
+const FUNCOES_CENTRAL = [
+  {
+    id: "ranqueamento",
+    icone: "🏆",
+    titulo: "Ranqueamento dos Anúncios",
+    descricao: "Auditoria, visitas, vendas, conversão, desempenho e recomendações.",
+    painel: "ranqueamento",
+  },
+  {
+    id: "precos",
+    icone: "💰",
+    titulo: "Preços, Custos e Lucro",
+    descricao: "Cadastre e consulte custos; calcule margem, frete, impostos e lucro.",
+    destino: "centralPrecificacao", // mesma tela de "Cadastrar meus custos" e "Calcular preço, margem e lucro"
+  },
+  {
+    id: "vendas-despesas",
+    icone: "🧮",
+    titulo: "Vendas e Despesas",
+    descricao: "Revise vendas, compras e despesas, com erros, duplicidades e perdas.",
+    tarefa: "financeiro",
+  },
+  {
+    id: "regras-ml",
+    icone: "📜",
+    titulo: "Regras do Mercado Livre",
+    descricao: "Consulta e cruzamento das contas LOJA ONLINE, REVELAÇÃO e CIEBR. Somente leitura.",
+    painel: "regras",
+  },
 ];
-
-const SUGESTOES = ["ranqueamento", "meus-custos", "regras-ml", "analisar-site", "concorrencia", "estoque", "financeiro"];
-const ATALHO_RANQUEAMENTO = { id: "ranqueamento", titulo: "Ver ranqueamento dos anúncios" };
 
 const rolarPara = (id) => setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }), 30);
 
@@ -273,15 +292,13 @@ function lerJson(chave) {
 }
 
 export default function CentralPaizinho({ setScreen }) {
-  const contexto = useMemo(() => {
-    const anuncio = lerJson("novoAnuncioTemporario") || {};
-    return { codigo: anuncio.codigo || "", produto: anuncio.pecaEncontrada?.peca || anuncio.titulo || "", oem: anuncio.oem || "" };
-  }, []);
   const [selecionada, setSelecionada] = useState(null);
+  // Painel aberto abaixo dos cartões: "ranqueamento" (padrão), "regras" ou "tarefa".
+  // O Ranqueamento fica sempre montado (só escondido) para não perder uma análise em andamento.
+  const [painel, setPainel] = useState("ranqueamento");
   const [valores, setValores] = useState({});
   const [etapa, setEtapa] = useState("formulario");
   const [categoria, setCategoria] = useState("");
-  const [livre, setLivre] = useState("");
   const [aviso, setAviso] = useState("");
   const [salva, setSalva] = useState(false);
   const [executando, setExecutando] = useState(false);
@@ -291,17 +308,24 @@ export default function CentralPaizinho({ setScreen }) {
   function abrirRegras() {
     setSelecionada(null);
     setRegrasAbertas(true);
+    setPainel("regras");
     rolarPara("regras-ml-anuncios");
   }
 
+  function abrirFuncao(f) {
+    if (f.destino) { setScreen(f.destino); return; }
+    if (f.painel === "regras") { abrirRegras(); return; }
+    if (f.painel === "ranqueamento") { setSelecionada(null); setPainel("ranqueamento"); rolarPara("ranqueamento-paizinho"); return; }
+    if (f.tarefa) escolher(TAREFAS.find((t) => t.id === f.tarefa));
+  }
+
   function escolher(tarefa) {
-    if (tarefa?.id === "ranqueamento") { rolarPara("ranqueamento-paizinho"); return; }
-    if (tarefa?.janela === "regras") { abrirRegras(); return; }
-    setRegrasAbertas(false);
+    if (!tarefa) return;
     if (tarefa?.direto && tarefa?.destino) {
       setScreen(tarefa.destino);
       return;
     }
+    setPainel("tarefa");
     setSelecionada(tarefa); setValores(tarefa.valoresIniciais || {}); setCategoria(""); setEtapa("formulario"); setAviso(""); setSalva(false); setResultadoSite(null);
     setTimeout(() => document.getElementById("tarefa-paizinho")?.scrollIntoView({ behavior: "smooth" }), 30);
   }
@@ -462,41 +486,34 @@ export default function CentralPaizinho({ setScreen }) {
     setSalva(true);
   }
 
-  function interpretar() {
-    const p = livre.toLowerCase();
-    if (/(regra|duplicad|mesmo produto)/.test(p)) { abrirRegras(); return; }
-    const tarefa = TAREFAS_VISIVEIS.find((item) =>
-      (/(preço|preco|concorr)/.test(p) && item.id === "concorrencia") ||
-      (/(finance|despesa|pagamento|compra)/.test(p) && item.id === "financeiro") ||
-      (/(estoque|reposição|reposicao)/.test(p) && item.id === "estoque") ||
-      (/(não vende|nao vende|venda)/.test(p) && item.id === "nao-vende") ||
-      (/(compat|aplica|serve)/.test(p) && item.id === "compatibilidade")
-    );
-    // Vendas, prioridades e anúncios a melhorar: é o Ranqueamento.
-    if (!tarefa && /(não vende|nao vende|venda|anúncio|anuncio|ranque|prioridad|perdendo dinheiro)/.test(p)) { rolarPara("ranqueamento-paizinho"); return; }
-    escolher(tarefa || TAREFAS.find((item) => item.id === "comecar"));
-    setValores({ necessidade: livre });
-  }
+  const ativa = (f) => (f.painel && f.painel === painel) || (f.tarefa && painel === "tarefa" && selecionada?.id === f.tarefa);
 
   return (
     <main style={S.pagina}>
+      <style>{CSS_CENTRAL}</style>
       <button type="button" onClick={() => setScreen("home")} style={S.voltar}>← Voltar</button>
-      <header style={S.cabecalho}><div style={S.icone}>👨‍🔧</div><div><h1 style={S.titulo}>Olá! O que posso fazer por você hoje?</h1><p style={S.subtitulo}>Escolha um trabalho pronto. O Paizinho fará somente as perguntas necessárias.</p></div></header>
-      <section id="ranqueamento-paizinho" style={S.ranqueamento}>
+      <header style={S.cabecalho}><div style={S.icone}>👨‍🔧</div><div><h1 style={S.titulo}>Central do Paizinho</h1><p style={S.subtitulo}>Desempenho dos anúncios, lucro, finanças e regras do Mercado Livre em um só lugar.</p></div></header>
+
+      <nav className="central-funcoes" aria-label="Funções da Central do Paizinho" data-paiia-central-funcoes>
+        {FUNCOES_CENTRAL.map((f) => (
+          <button type="button" key={f.id} className={`central-cartao${ativa(f) ? " ativo" : ""}`} onClick={() => abrirFuncao(f)} aria-pressed={!!ativa(f)} data-paiia-central-funcao={f.id}>
+            <span className="central-cartao-icone" aria-hidden="true">{f.icone}</span>
+            <span className="central-cartao-texto"><strong>{f.titulo}</strong><small>{f.descricao}</small></span>
+            <span className="central-cartao-seta" aria-hidden="true">{f.destino ? "↗" : "→"}</span>
+          </button>
+        ))}
+      </nav>
+
+      <section id="ranqueamento-paizinho" style={{ ...S.ranqueamento, display: painel === "ranqueamento" ? "block" : "none" }}>
         <h2 style={S.ranqueamentoTitulo}>🏆 Ranqueamento dos anúncios</h2>
         <p style={S.ranqueamentoSub}>Prioridades do dia, vendas e visitas, margem, frete e anúncios que precisam melhorar — tudo numa tela só.</p>
         <RelatorioManhaPaizinho />
       </section>
-      {(contexto.codigo || contexto.produto) && <div style={S.contexto}><strong>Dados já encontrados:</strong> {[contexto.produto, contexto.codigo, contexto.oem].filter(Boolean).join(" • ")}. Não serão solicitados novamente.</div>}
 
-      <section style={S.atalhos}>{SUGESTOES.map((id) => { const t = id === "ranqueamento" ? ATALHO_RANQUEAMENTO : TAREFAS_VISIVEIS.find((x) => x.id === id); return <button key={id} onClick={() => escolher(t)} style={S.sugestao}>{t.titulo}</button>; })}</section>
-      <section style={S.grade}>{TAREFAS_VISIVEIS.map((t, i) => <button type="button" key={t.id} onClick={() => escolher(t)} style={{...S.cartao, ...(selecionada?.id === t.id || (t.janela === "regras" && regrasAbertas) ? S.cartaoAtivo : {})}}><span style={S.numero}>{i + 1}</span><span style={S.cartaoIcone}>{t.icone}</span><strong>{t.titulo}</strong><small style={S.descricao}>{t.descricao}</small></button>)}</section>
+      {/* Uma vez aberta, a janela de Regras fica montada (só escondida) para não perder a leitura das contas. */}
+      {regrasAbertas && <div style={{ display: painel === "regras" ? "block" : "none" }}><RegrasMLAnuncios aoFechar={() => { setRegrasAbertas(false); setPainel("ranqueamento"); }} /></div>}
 
-      <section style={S.livre}><label style={S.label}>Ou escreva com suas palavras<textarea value={livre} onChange={(e) => setLivre(e.target.value)} placeholder="Ex.: descubra onde estou perdendo dinheiro nos meus anúncios" rows={2} style={S.input}/></label><button type="button" onClick={interpretar} style={S.primario}>Preparar tarefa</button></section>
-
-      {regrasAbertas && <RegrasMLAnuncios aoFechar={() => setRegrasAbertas(false)} />}
-
-      {selecionada && <section id="tarefa-paizinho" style={S.fluxo}>
+      {painel === "tarefa" && selecionada && <section id="tarefa-paizinho" style={S.fluxo}>
         <h2 style={S.fluxoTitulo}>{selecionada.icone} {selecionada.titulo}</h2>
         {aviso && <div style={S.aviso}>{aviso}</div>}
         {etapa === "formulario" ? <>
@@ -569,6 +586,22 @@ export default function CentralPaizinho({ setScreen }) {
     </main>
   );
 }
+
+// Quatro cartões: 2 colunas no computador, 1 no celular.
+const CSS_CENTRAL = `
+.central-funcoes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}
+@media (max-width:760px){.central-funcoes{grid-template-columns:1fr;gap:10px}}
+.central-cartao{display:flex;align-items:center;gap:16px;min-height:112px;padding:18px 20px;border:1px solid #1e3a5f;border-radius:16px;background:linear-gradient(145deg,#0b1730,#0f1d36);color:#e2e8f0;text-align:left;cursor:pointer;font:inherit;transition:border-color .15s,transform .15s,box-shadow .15s}
+.central-cartao:hover{border-color:#38bdf8;transform:translateY(-1px)}
+.central-cartao:focus-visible{outline:2px solid #67e8f9;outline-offset:2px}
+.central-cartao.ativo{border-color:#67e8f9;box-shadow:0 0 0 3px rgba(103,232,249,.14);background:linear-gradient(145deg,#0c2547,#0f2a4a)}
+.central-cartao-icone{flex-shrink:0;width:54px;height:54px;display:grid;place-items:center;border-radius:14px;background:rgba(103,232,249,.1);font-size:28px}
+.central-cartao-texto{display:flex;flex-direction:column;gap:5px;flex:1;min-width:0}
+.central-cartao-texto strong{font-size:17px;color:#f8fafc}
+.central-cartao-texto small{font-size:13.5px;line-height:1.45;color:#94a3b8}
+.central-cartao-seta{flex-shrink:0;color:#67e8f9;font-size:20px;font-weight:800}
+@media (max-width:760px){.central-cartao{min-height:0;padding:14px 15px;gap:12px}.central-cartao-icone{width:44px;height:44px;font-size:23px}}
+`;
 
 function Bloco({ titulo, texto }) { return <article style={S.bloco}><strong>{titulo}</strong><p>{texto}</p></article>; }
 

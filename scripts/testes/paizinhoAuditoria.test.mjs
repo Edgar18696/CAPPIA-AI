@@ -456,7 +456,8 @@ test("servidor recusa perfil, lote, visitas e vendas: segue lendo um por um e NU
 });
 
 test("Central: as 14 funções existentes continuam iguais", () => {
-  const src = fs.readFileSync(path.join(RAIZ, "src/components/CentralPaizinho.jsx"), "utf8");
+  const completo = fs.readFileSync(path.join(RAIZ, "src/components/CentralPaizinho.jsx"), "utf8");
+  const src = completo.slice(completo.indexOf("const TAREFAS = ["), completo.indexOf("const CARTOES_NO_RANQUEAMENTO")); // só a lista de tarefas
   const ids = [...src.matchAll(/^\s{4}id: "([a-z-]+)"/gm)].map((m) => m[1]);
   assert.deepEqual(ids, ["meus-custos", "prioridades", "nao-vende", "analisar-site", "concorrencia", "auditar", "compatibilidade", "melhorar-anuncio", "inativos", "estoque", "encalhados", "preco", "financeiro", "comecar"]);
 });
@@ -522,4 +523,27 @@ test("Central simplificada (12/11): 3 cartões repetidos vão para o Ranqueament
   // A janela não lê nem altera nada: sem supabase, fetch ou invoke.
   const janela = fs.readFileSync(path.join(RAIZ, "src/components/RegrasMLAnuncios.jsx"), "utf8");
   assert.doesNotMatch(janela, /supabase|fetch\(|invoke\(/);
+});
+
+test("Central (12/11, 2ª): só 4 funções na página; cartões retirados continuam definidos; nada de telas apagadas", () => {
+  const src = fs.readFileSync(path.join(RAIZ, "src/components/CentralPaizinho.jsx"), "utf8");
+  const bloco = src.slice(src.indexOf("const FUNCOES_CENTRAL"), src.indexOf("const rolarPara"));
+  const ids = [...bloco.matchAll(/^\s{4}id: "([a-z-]+)"/gm)].map((m) => m[1]);
+  assert.deepEqual(ids, ["ranqueamento", "precos", "vendas-despesas", "regras-ml"]);
+  assert.match(bloco, /destino: "centralPrecificacao"/);
+  assert.match(bloco, /tarefa: "financeiro"/);
+  // Retirados só da página: continuam em TAREFAS.
+  for (const id of ["analisar-site", "concorrencia", "compatibilidade", "melhorar-anuncio", "inativos", "estoque", "encalhados", "comecar"]) {
+    assert.match(src, new RegExp(`id: "${id}"`), `${id} precisa continuar definido`);
+  }
+  // Sem os atalhos antigos nem o campo livre.
+  assert.doesNotMatch(src, /SUGESTOES|TAREFAS_VISIVEIS|Ou escreva com suas palavras/);
+  // Ranqueamento e Regras continuam na página; 2 colunas no computador, 1 no celular.
+  assert.match(src, /<RelatorioManhaPaizinho \/>/);
+  assert.match(src, /<RegrasMLAnuncios /);
+  assert.match(src, /grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(src, /@media \(max-width:760px\)\{\.central-funcoes\{grid-template-columns:1fr/);
+  // As telas de destino continuam no App.
+  const app = fs.readFileSync(path.join(RAIZ, "src/App.jsx"), "utf8");
+  for (const tela of ["centralPrecificacao", "centralPesquisa", "novoAnuncio"]) assert.match(app, new RegExp(`screen === "${tela}"`));
 });
