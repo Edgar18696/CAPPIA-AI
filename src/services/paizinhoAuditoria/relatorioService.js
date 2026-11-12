@@ -87,6 +87,8 @@ export function resumirCusto(d) {
     ok: true,
     encontrado: d?.encontrado !== false,
     ambiguo: d?.ambiguo === true,
+    // (12/11) "S" simples, "E" composição (kit) — para conferir anúncio de kit/par.
+    formato: d?.produto?.formato ?? null,
     custo: d?.custo ? {
       fornecedor_precoCusto: d.custo.fornecedor_precoCusto ?? null,
       fornecedores: (Array.isArray(d.custo.fornecedores) ? d.custo.fornecedores : []).map((f) => ({ padrao: f?.padrao === true, precoCusto: f?.precoCusto ?? null })),

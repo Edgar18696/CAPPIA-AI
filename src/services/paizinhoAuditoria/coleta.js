@@ -26,6 +26,9 @@ export const PADROES_COLETA = Object.freeze({
   limiteCompatibilidades: 500,
   paralelo: 6,
   paraleloBling: 2,
+  // (12/11) Visitas que o ML limitou: relidas uma por vez, com pausa, no fim da etapa.
+  limiteReleituraVisitas: 60,
+  pausaReleituraVisitasMs: 700,
 });
 
 /** Envolve `consultar` garantindo: só caminho (GET), nunca método/corpo. */
@@ -66,6 +69,7 @@ export function erroDeSessao(r) {
 }
 
 const dia = (iso) => txt(iso).slice(0, 10);
+const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Data no formato que a busca de pedidos do ML aceita (2026-11-10T06:00:00.000-00:00). */
 export const dataML = (iso) => new Date(iso).toISOString().replace("Z", "-00:00");
 
@@ -185,6 +189,25 @@ export async function coletarDadosConta({
       else falha("visitas", `/items/${id}/visits`, u);
     });
   });
+  // 5b) (12/11) Segunda passada: o ML limita o volume de consultas e alguns
+  // anúncios ficavam "não lido". Relê só esses, um por vez e com pausa.
+  // Lido agora → a falha anterior sai da lista; ainda falhando → continua lá.
+  const semVisita = itens.map((i) => i.id).filter((id) => !(id in visitas));
+  let releituraVisitas = null;
+  if (semVisita.length && semVisita.length <= o.limiteReleituraVisitas) {
+    passo(`Relendo as visitas de ${semVisita.length} anúncios`);
+    let relidas = 0;
+    for (const id of semVisita) {
+      if (o.pausaReleituraVisitasMs > 0) await esperar(o.pausaReleituraVisitasMs);
+      const u = await get(`/items/${id}/visits?date_from=${de}&date_to=${ate}`);
+      if (u?.ok) {
+        visitas[id] = num(u.dados?.total_visits);
+        relidas++;
+        for (let i = falhas.length - 1; i >= 0; i--) if (falhas[i].etapa === "visitas" && falhas[i].caminho === `/items/${id}/visits`) falhas.splice(i, 1);
+      } else if (u?.recusado || erroDeSessao(u)) break; // não adianta insistir
+    }
+    releituraVisitas = { tentadas: semVisita.length, relidas };
+  }
 
   // 6) Pedidos (vendas)
   passo("Lendo as vendas");
@@ -323,7 +346,7 @@ export async function coletarDadosConta({
     totais: { anuncios_ativos: total || idsAnalisados.length, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
     ...(typeof consultarCusto === "function" ? { custos } : {}),
-    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, custo: leituraCusto, concorrencia: typeof buscarConcorrentes === "function" },
+    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, custo: leituraCusto, releitura_visitas: releituraVisitas, concorrencia: typeof buscarConcorrentes === "function" },
     // (11/11) O que NÃO foi lido nunca vira zero na análise.
     leituras: {
       visitas: itens.length === 0 || Object.keys(visitas).length > 0,

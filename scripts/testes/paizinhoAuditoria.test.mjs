@@ -460,3 +460,48 @@ test("Central: as 14 funções existentes continuam iguais", () => {
   const ids = [...src.matchAll(/^\s{4}id: "([a-z-]+)"/gm)].map((m) => m[1]);
   assert.deepEqual(ids, ["meus-custos", "prioridades", "nao-vende", "analisar-site", "concorrencia", "auditar", "compatibilidade", "melhorar-anuncio", "inativos", "estoque", "encalhados", "preco", "financeiro", "comecar"]);
 });
+
+test("visitas limitadas pelo ML: segunda passada, uma por vez; lida some das falhas, não lida continua 'não lido'", async () => {
+  // Caso real de 12/11: 9 anúncios ficaram sem visitas na rodada e foram lidos depois, um por vez.
+  const ml = mlFalso();
+  const tentativas = {};
+  const consultar = async (c) => {
+    if (c.startsWith("/items/visits?")) return { ok: false, status: 429, erro: "too many requests" }; // grupo limitado
+    const VIS = { MLB1: 80, MLB2: 40, MLB4: 30, MLB6: 60 };
+    const um = c.match(/^\/items\/(MLB\d+)\/visits\?/);
+    if (um) {
+      const n = (tentativas[um[1]] = (tentativas[um[1]] || 0) + 1);
+      if (um[1] in VIS) return { ok: true, status: 200, dados: { item_id: um[1], total_visits: VIS[um[1]] } };
+      if (um[1] === "MLB3" && n >= 2) return { ok: true, status: 200, dados: { item_id: "MLB3", total_visits: 7 } };
+      return { ok: false, status: 429, erro: "too many requests" };
+    }
+    return ml.consultar(c);
+  };
+  const rel = await executarAuditoria({ conta: CONTA, consultar, agora: AGORA, opcoesColeta: { pausaReleituraVisitasMs: 0 } });
+  const an = (id) => rel.anuncios.find((a) => a.item_id === id);
+  assert.equal(an("MLB3").visitas30, 7, "relida na segunda passada");
+  assert.equal(an("MLB5").visitas30, null, "continua não lida (nunca vira zero)");
+  assert.equal(an("MLB1").visitas30, 80);
+  assert.equal(tentativas.MLB1, 1, "só relê quem faltou");
+  assert.equal(tentativas.MLB3, 2);
+  // Antes: 2 falhas (MLB3 e MLB5). Depois da segunda passada: só a do MLB5.
+  assert.equal((rel.falhas || []).find((f) => f.etapa === "visitas")?.quantidade, 1, "falha do MLB3 sai da lista");
+});
+
+test("kit e par: produto simples no Bling → custo a confirmar; kit composto no Bling continua valendo", async () => {
+  const { unidadesDoTitulo, conferirCustoDoKit } = await import("../../src/services/paizinhoAuditoria/analise.js");
+  assert.equal(unidadesDoTitulo("Kit 4 Bicos Injetores I30 1.8 16v Flex 353102e100"), 4);
+  assert.equal(unidadesDoTitulo("Par Válvula Solenoide Cabeçote Gm Tracker 1.8 - 55567050"), 2);
+  assert.equal(unidadesDoTitulo("Kit Embreagem Gol 1.0"), 1, "kit sem número é um produto só");
+  assert.equal(unidadesDoTitulo("Junta Válvula Termostatica Fiat Fire 1.0 - Para Uno"), 1, "'para' não é 'par'");
+  const ok = { custo: 272, a_confirmar: false, faixa: null, motivo: "fornecedor padrão do Bling" };
+  // Caso real 12/11: K4-35310-2e100 é composição ("E") no Bling: 4 × R$ 68 = R$ 272 → vale.
+  assert.deepEqual(conferirCustoDoKit(ok, { formato: "E" }, "Kit 4 Bicos Injetores I30"), ok);
+  const simples = conferirCustoDoKit({ ...ok, custo: 68 }, { formato: "S" }, "Kit 4 Bicos Injetores I30");
+  assert.equal(simples.a_confirmar, true);
+  assert.equal(simples.custo, 68);
+  assert.match(simples.motivo, /kit com 4/);
+  assert.match(conferirCustoDoKit({ ...ok, custo: 30 }, { formato: "S" }, "Par Buchas Embreagem Fiat").motivo, /^anúncio de par/);
+  assert.deepEqual(conferirCustoDoKit(ok, { formato: null }, "Kit 4 Bicos"), ok, "formato desconhecido: não muda");
+  assert.deepEqual(conferirCustoDoKit({ ...ok, custo: 27.9 }, { formato: "S" }, "Interruptor Cebolinha Óleo Fiat"), { ...ok, custo: 27.9 });
+});

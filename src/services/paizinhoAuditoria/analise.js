@@ -131,6 +131,30 @@ export function escolherCusto(resp, cfg = PADROES_ANALISE) {
   return { custo: centavos(padrao), a_confirmar: aConfirmar, faixa: aConfirmar ? faixa : null, motivo: aConfirmar ? "fornecedores com custos diferentes" : "fornecedor padrão do Bling" };
 }
 
+/**
+ * (12/11) Quantas unidades o título anuncia: "Kit 4 ..." → 4, "Par ..." → 2.
+ * Só número explícito no "Kit" (um "Kit de embreagem" é um produto só). 1 = unidade.
+ */
+export function unidadesDoTitulo(titulo) {
+  const t = normalizar(titulo);
+  const kit = t.match(/\bkit (?:com |c )?(\d{1,2})\b/);
+  if (kit && Number(kit[1]) > 1) return Number(kit[1]);
+  if (/\bpar\b/.test(t)) return 2;
+  return 1;
+}
+
+/**
+ * (12/11) Anúncio de kit/par com produto SIMPLES no Bling: o custo pode ser o
+ * de uma unidade só. Vai para "a confirmar" (fora do prejuízo confirmado).
+ * Produto composto ("E") ou formato desconhecido: mantém como está.
+ */
+export function conferirCustoDoKit(escolha, resp, titulo) {
+  const unidades = unidadesDoTitulo(titulo);
+  if (!(escolha?.custo > 0) || escolha.a_confirmar || unidades < 2 || txt(resp?.formato).toUpperCase() !== "S") return escolha;
+  const tipo = /\bkit\b/.test(normalizar(titulo)) ? `kit com ${unidades}` : "par";
+  return { ...escolha, a_confirmar: true, motivo: `anúncio de ${tipo} e produto simples no Bling: confirmar se o custo é do conjunto ou de uma unidade` };
+}
+
 const textoMedida = (m) => (m ? `${formatarDimensoes(m)} · ${formatarPeso(m.peso_g)}` : "não cadastradas");
 
 /** Frete real das vendas deste anúncio (custos dos envios lidos). */
@@ -214,7 +238,7 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     ...(() => {
       const lido = sku ? dados.custos?.[sku] : undefined;
       if (lido === undefined) return { custo: custoDoBling(produtoBling), custo_a_confirmar: false, custo_faixa: null, custo_motivo: null, custo_lido: false };
-      const e = escolherCusto(lido, config);
+      const e = conferirCustoDoKit(escolherCusto(lido, config), lido, item.title);
       return { custo: e.custo, custo_a_confirmar: e.a_confirmar, custo_faixa: e.faixa, custo_motivo: e.motivo, custo_lido: true };
     })(),
     compat: dados.compat?.[id]?.quantidade ?? null,
