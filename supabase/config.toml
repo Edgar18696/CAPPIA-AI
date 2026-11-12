@@ -63,3 +63,14 @@ entrypoint = "./functions/calcular-custos-mercado-livre/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/calcular-custos-mercado-livre/*.html" ]
+
+[functions.paizinho-auditoria]
+# Piloto (10/11/2026): chamada pelo agendamento das 03h com o segredo x-paizinho-chave.
+enabled = true
+verify_jwt = false
+
+[functions.paizinho-leitura-ml]
+# Piloto (12/11/2026): leitura de vendas, visitas e custo de envio da LOJA ONLINE
+# para o teste local da auditoria. O usuário é conferido dentro da função (JWT).
+enabled = true
+verify_jwt = false
