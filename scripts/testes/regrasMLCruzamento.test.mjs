@@ -125,3 +125,25 @@ test("mesmo código mas aplicações diferentes → 'conferir', não duplicidade
   assert.equal(c.identidade_confirmada, false);
   assert.equal(classificarPar(c, true).nivel, "conferir");
 });
+
+test("relatório entre contas: uma linha por produto; mesmo produto em contas diferentes NÃO é proibido por si só", async () => {
+  const { relatorioEntreContas } = await import("../../src/services/regrasML/cruzamento.js");
+  const r = relatorioEntreContas({
+    contas: [LOJA, REV, CIE],
+    anuncios: {
+      [LOJA.id]: [item("MLB1", LOJA.id, { sku: "P1P1", price: 100 }), item("MLB4", LOJA.id, { sku: "Q2Q2", tipo: "gold_pro" }), item("MLB6", LOJA.id, { sku: "R3R3", fotos: ["F9"], envio: "fulfillment" })],
+      [REV.id]: [item("MLB2", REV.id, { sku: "P1P1", price: 101 })],
+      [CIE.id]: [item("MLB3", CIE.id, { sku: "P1P1", price: 102 }), item("MLB5", CIE.id, { sku: "Q2Q2" }), item("MLB7", CIE.id, { sku: "R3R3", fotos: ["F9"] })],
+    },
+  });
+  assert.equal(r.resumo.produtos, 3, "a mesma peça em 3 contas conta uma vez");
+  const p1 = r.linhas.find((l) => l.sku === "P1P1");
+  assert.equal(p1.situacao, "atencao");
+  assert.equal(p1.pares, 3);
+  assert.match(p1.recomendacao, /Nenhuma regra oficial proíbe/);
+  assert.match(p1.recomendacao, /Não encerrar sem resposta oficial/);
+  assert.equal(r.linhas.find((l) => l.sku === "Q2Q2").situacao, "permitido", "tipo diferente entre contas = permitido (R1)");
+  const r3 = r.linhas.find((l) => l.sku === "R3R3");
+  assert.equal(r3.situacao, "atencao", "fotos copiadas entre contas (R5) mesmo com envio diferente");
+  assert.equal(r3.regras, "R5");
+});

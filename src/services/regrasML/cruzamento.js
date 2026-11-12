@@ -378,3 +378,104 @@ export function separarDuplicidades({ contas, anuncios, visitas = {}, compat = {
   const resumo = (l) => { const r = { total: l.length, atencao: l.filter((p) => p.atencao).length }; for (const p of l) r[p.nivel] = (r[p.nivel] || 0) + 1; return r; };
   return { entre_contas: ord(entre), mesma_conta: ord(dentro), resumo: { entre_contas: resumo(entre), mesma_conta: resumo(dentro) } };
 }
+
+// =============================================================
+// (12/11) RELATÓRIO ENTRE CONTAS, uma linha por PRODUTO (a mesma peça não é
+// contada várias vezes). Não presume que o mesmo produto em contas diferentes
+// seja proibido: as regras oficiais não tratam disso (lacuna). Separa:
+//   - "Precisa de atenção": fotos copiadas entre contas (R5) ou a mesma oferta
+//     idêntica (tipo, envio e preço) nas contas (R7/R12, zona cinzenta);
+//   - "Conferir cadastro": mesmo código, aplicações divergentes;
+//   - "Acompanhar": só o preço diferencia (R4 ambígua);
+//   - "Permitido": condições de venda diferentes entre as contas (R1).
+// =============================================================
+const SITUACOES_ENTRE = {
+  atencao: { ordem: 1, nome: "Precisa de atenção" },
+  conferir: { ordem: 2, nome: "Conferir cadastro" },
+  acompanhar: { ordem: 3, nome: "Acompanhar (só o preço difere)" },
+  permitido: { ordem: 4, nome: "Permitido (condições diferentes)" },
+};
+
+export function relatorioEntreContas({ contas, anuncios, visitas = {}, compat = {} }) {
+  const fichas = [];
+  for (const c of contas) for (const it of anuncios[c.id] || []) {
+    const f = fichaCruzamento(it, c);
+    if (visitas[f.id] !== undefined) f.visitas30 = visitas[f.id];
+    fichas.push(f);
+  }
+  const linhas = [];
+  for (const g of agruparMesmoProduto(fichas)) {
+    const membros = g.membros.map((i) => fichas[i]);
+    if (new Set(membros.map((m) => m.conta)).size < 2) continue; // só produtos em 2+ contas
+    const pares = [];
+    for (let x = 0; x < membros.length; x++) for (let y = x + 1; y < membros.length; y++) {
+      const a = membros[x], b = membros[y];
+      if (a.conta === b.conta || !sinaisEntre(a, b).length) continue;
+      const c = conferirPar(a, b, compat);
+      pares.push({ a, b, c, cl: classificarPar(c, false) });
+    }
+    if (!pares.length) continue;
+    const clonados = pares.filter((p) => p.c.clonado);
+    const identicos = pares.filter((p) => p.cl.nivel === "alto" && !p.c.clonado);
+    const conferir = pares.filter((p) => p.cl.nivel === "conferir");
+    const soPreco = pares.filter((p) => p.cl.nivel === "medio");
+    let situacao, motivo, recomendacao, regras;
+    if (clonados.length || identicos.length) {
+      situacao = "atencao";
+      const partes = [];
+      if (clonados.length) partes.push(`fotos idênticas entre contas (${[...new Set(clonados.flatMap((p) => [p.a.conta_nome, p.b.conta_nome]))].join(" e ")})`);
+      if (identicos.length) partes.push(`oferta idêntica — mesmo tipo, mesmo envio e preço até 5% de diferença (${[...new Set(identicos.flatMap((p) => [p.a.conta_nome, p.b.conta_nome]))].join(" e ")})`);
+      motivo = partes.join("; ");
+      const rec = [];
+      if (clonados.length) rec.push("Usar fotos próprias em cada conta: clonar publicações e imagens é moderado pelo ML (R5).");
+      if (identicos.length) rec.push("Nenhuma regra oficial proíbe o mesmo produto em contas diferentes. O risco é a mesma oferta disputar a mesma busca (R7) e, no catálogo, as contas competirem entre si (R12). Opções: manter e acompanhar; diferenciar a condição de venda entre as contas (tipo ou envio); ou consultar o suporte do ML. Não encerrar sem resposta oficial.");
+      recomendacao = rec.join(" ");
+      regras = [...(clonados.length ? ["R5"] : []), ...(identicos.length ? ["R7", "R12"] : [])].join(", ");
+    } else if (conferir.length) {
+      situacao = "conferir";
+      motivo = conferir[0].cl.motivo;
+      recomendacao = "Revisar o cadastro de aplicações (veículos compatíveis) nas contas: pode ser cadastro incompleto ou produto diferente.";
+      regras = "R3";
+    } else if (soPreco.length) {
+      situacao = "acompanhar";
+      motivo = "mesmo tipo e mesmo envio; só o preço é diferente";
+      recomendacao = "Manter e acompanhar. A regra sobre preço como diferença é ambígua (R4).";
+      regras = "R4";
+    } else {
+      situacao = "permitido";
+      motivo = "condições de venda diferentes entre as contas (tipo ou envio)";
+      recomendacao = "Manter.";
+      regras = "R1";
+    }
+    const catalogo = (() => {
+      const porCat = {};
+      for (const m of membros) if (m.catalogo) (porCat[m.catalogo] = porCat[m.catalogo] || new Set()).add(m.conta);
+      return Object.values(porCat).some((s) => s.size > 1);
+    })();
+    const precos = membros.map((m) => m.preco).filter((v) => v > 0);
+    const aplic = [...new Set(pares.map((p) => p.c.aplicacoes.situacao))];
+    const mesmaConta = membros.length > new Set(membros.map((m) => m.conta)).size;
+    linhas.push({
+      situacao, situacao_nome: SITUACOES_ENTRE[situacao].nome, ordem: SITUACOES_ENTRE[situacao].ordem,
+      motivo, recomendacao, regras,
+      titulo: melhorAnuncio(membros).titulo,
+      sku: [...new Set(membros.flatMap((m) => m.skus))].join(", "),
+      marca: [...new Set(membros.map((m) => m.marca_nome).filter(Boolean))].join(", "),
+      contas: [...new Set(membros.map((m) => m.conta_nome))],
+      anuncios: membros.map((m) => ({ ...historico(m), veiculos: Array.isArray(compat[m.id]) ? compat[m.id].length : null, fotos: m.fotos.length })),
+      vendas_total: membros.reduce((s, m) => s + (m.vendidos_total || 0), 0),
+      diferenca_preco_max: precos.length > 1 ? Math.round((Math.max(...precos) / Math.min(...precos) - 1) * 1000) / 10 : 0,
+      fotos_iguais_entre_contas: clonados.length > 0,
+      aplicacoes: aplic.join(", "),
+      disputa_catalogo: catalogo,
+      repetido_na_mesma_conta: mesmaConta,
+      pares: pares.length,
+      pares_atencao: clonados.length + identicos.length,
+    });
+  }
+  linhas.sort((p, q) => p.ordem - q.ordem || q.vendas_total - p.vendas_total);
+  const resumo = { produtos: linhas.length, pares: linhas.reduce((s, l) => s + l.pares, 0), pares_atencao: linhas.reduce((s, l) => s + l.pares_atencao, 0) };
+  for (const k of Object.keys(SITUACOES_ENTRE)) resumo[k] = linhas.filter((l) => l.situacao === k).length;
+  resumo.atencao_clonagem = linhas.filter((l) => l.situacao === "atencao" && l.fotos_iguais_entre_contas).length;
+  return { resumo, linhas };
+}
