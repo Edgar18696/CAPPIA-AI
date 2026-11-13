@@ -8,6 +8,11 @@ import { criarMiddlewarePhotoroom, contadorArquivo, registroArquivo } from "./sc
 // Express, ativo SOMENTE no "npm run dev" (localhost). O build de produção
 // não muda.
 export default defineConfig({
+  // (13/11) Teste pelo CELULAR (PAIIA_TESTE_CELULAR=1): sem a conexão de recarga
+  // automática do servidor de teste. Ao abrir a câmera o celular derruba essa
+  // conexão e, na volta, o Vite recarregava a página inteira (voltava à Home e a
+  // foto tirada se perdia). Não afeta o build do site.
+  ...(process.env.PAIIA_TESTE_CELULAR === "1" ? { server: { ws: false } } : {}),
   plugins: [
     {
       name: "paiia-banner-openai-local",

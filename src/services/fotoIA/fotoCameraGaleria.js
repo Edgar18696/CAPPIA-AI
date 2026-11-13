@@ -181,7 +181,9 @@ export function falhaTemporaria(e) {
  * Fila da câmera (no aparelho). armazenamento: { put, getAll, delete, atualizar }.
  * deps: { salvarOriginal(item), tratar(item) } — com o Supabase real fora dos testes.
  */
-export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(), aoMudar = () => {} }) {
+export const LIMITE_TRATAMENTO_MS = 4 * 60_000;
+
+export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(), aoMudar = () => {}, limiteTratamentoMs = LIMITE_TRATAMENTO_MS }) {
   let rodando = null;
   // (13/11) Prontas saem da fila do aparelho NA HORA (a Galeria continua com elas);
   // ficam só nesta lista em memória para o "Salvar no celular" e o resumo da tela.
@@ -237,7 +239,10 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     try {
       atual = await mudar(atual.id, { estado: "tratando", tratandoDesde: agora() });
       avisar({ tipo: "tratando", id: atual.id });
-      const t = await deps.tratar(atual);
+      // (13/11) Nunca fica "tratando" para sempre: passou do limite, volta para nova tentativa.
+      let relogio;
+      const limite = new Promise((_, falha) => { relogio = setTimeout(() => falha(Object.assign(new Error("O tratamento demorou demais; vai tentar de novo."), { temporario: true })), limiteTratamentoMs); });
+      const t = await Promise.race([deps.tratar(atual), limite]).finally(() => clearTimeout(relogio));
       prontas.unshift({ id: atual.id, linhaId: atual.linhaId, urlTratada: t.urlTratada, nome: atual.nome, baixaResolucao: Boolean(t.baixaResolucao), metodo: t.metodo || "", prontaEm: agora(), salvaNoAparelho: false });
       await armazenamento.delete(atual.id); // sai da fila; NADA é apagado da Galeria
       avisar({ tipo: "pronta", id: atual.id });

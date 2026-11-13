@@ -334,3 +334,29 @@ test("13/11) fila: marcarSalvas e prontas antigas (24 h) saem na faxina", async 
   fila.marcarSalvas([p.id]);
   assert.equal(fila.listarProntas()[0].salvaNoAparelho, true);
 });
+
+test("13/11) tratamento que não termina: depois do limite volta para nova tentativa (não fica 'tratando' para sempre)", async () => {
+  const sb = supabaseFalso();
+  const arm = armazenamentoMemoria();
+  let travar = true;
+  const { deps } = depsReais(sb);
+  const tratarReal = deps.tratar;
+  deps.tratar = (item) => (travar ? new Promise(() => {}) : tratarReal(item));
+  const fila = C.criarFilaCamera({ armazenamento: arm, deps, limiteTratamentoMs: 30 });
+  await fila.adicionar([blob()]);
+  await fila.rodar();
+  let [i] = await fila.listar();
+  assert.equal(i.estado, "salva", "voltou para a fila (não 'tratando')");
+  assert.match(i.erro, /demorou demais/);
+  assert.ok(i.proximaEm > 0, "nova tentativa automática agendada");
+  assert.equal(sb.linhas[0].imagem_original, sb.linhas[0].imagem_processada, "original preservada na Galeria");
+  travar = false;
+  await fila.tentarDeNovo(i.id);
+  assert.deepEqual(await fila.listar(), []);
+  assert.equal(fila.listarProntas().length, 1);
+});
+
+test("13/11) servidor de teste no celular: sem recarga automática quando PAIIA_TESTE_CELULAR=1", () => {
+  const cfg = ler("vite.config.js");
+  assert.match(cfg, /process\.env\.PAIIA_TESTE_CELULAR === "1" \? \{ server: \{ ws: false \} \} : \{\}/);
+});
