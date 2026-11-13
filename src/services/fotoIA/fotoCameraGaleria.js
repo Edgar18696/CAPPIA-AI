@@ -144,7 +144,7 @@ export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOri
     for (const fonte of original ? ["aparelho", "galeria"] : ["galeria"]) {
       try {
         const foto = fonte === "aparelho" ? original : (daGaleria ||= await baixar(urlOriginal));
-        const r = await recortarLocal(foto);
+        const r = await recortarLocal(foto, { caminho: caminho || caminhoDaUrl(urlOriginal), linhaId });
         if (r?.blob) { blobRecorte = r.blob; metodo = r.metodo || "local"; pixels = foto; break; }
         motivos.push(`${fonte}: recorte vazio`);
       } catch (e) {

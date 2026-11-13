@@ -78,11 +78,11 @@ test("navegador: chama só o intermediário (sem chave); fora do dev não tenta;
   const chamadas = [];
   const buscar = async (url, o) => { chamadas.push({ url, o }); return { ok: true, blob: async () => new Blob(["png"], { type: "image/png" }) }; };
   const foto = new Blob(["jpg"], { type: "image/jpeg" });
-  const r = await P.recortarPhotoroom(foto, { buscar, disponivel: true });
+  const r = await P.recortarPhotoroom(foto, { buscar, dev: true });
   assert.equal(r.metodo, "photoroom");
   assert.equal(chamadas[0].url, "/__paiia/photoroom-recorte");
   assert.ok(!JSON.stringify(chamadas[0].o.headers).match(/x-api-key|sandbox_/i), "navegador não manda chave");
-  await assert.rejects(P.recortarPhotoroom(foto, { buscar, disponivel: false }), /não disponível/);
+  await assert.rejects(P.recortarPhotoroom(foto, { buscar, dev: false }), /não disponível/);
 
   let falhas = 0;
   const recortar = P.recortarComReserva({
@@ -100,7 +100,8 @@ test("navegador: chama só o intermediário (sem chave); fora do dev não tenta;
 test("fonte: chave só em arquivo fora do projeto; nada de VITE_ nem chave no src", () => {
   const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
   const fila = ler("src/services/fotoIA/filaCameraApp.js");
-  assert.match(fila, /recortarComReserva\(\{ photoroom: \(f\) => recortarPhotoroom\(f\), gratis: \(f\) => recortarLocalmente\(f\) \}\)/);
+  assert.match(fila, /photoroom: \(f, ctx\) => recortarPhotoroom\(f, \{ caminho: ctx\?\.caminho/);
+  assert.match(fila, /gratis: \(f\) => recortarLocalmente\(f\)/);
   for (const p of ["src/services/fotoIA/recortePhotoroom.js", "src/services/fotoIA/filaCameraApp.js", "vite.config.js"]) {
     const t = ler(p);
     assert.doesNotMatch(t, /VITE_PHOTOROOM|sandbox_[A-Za-z0-9]{10,}|sk_pr_[A-Za-z0-9]{6,}/, p);
@@ -140,4 +141,58 @@ test("13/11 celular: cópia do aparelho ilegível → tenta com a original da Ga
     assert.match(e.message, /original da Galeria: Photoroom: HTTP 503/);
     return true;
   });
+});
+
+test("13/11 Básico: chave de produção só com PHOTOROOM_USAR_PRODUCAO=sim; teto de fotos pagas por execução", async () => {
+  const PROD = "sk_pr_" + "a".repeat(30);
+  assert.equal(D.escolherChave(`PHOTOROOM_SANDBOX_KEY=${CHAVE}\nPHOTOROOM_API_KEY=${PROD}\n`).modo, "sandbox", "sem permissão explícita: Sandbox");
+  const p = D.escolherChave(`PHOTOROOM_SANDBOX_KEY=${CHAVE}\nPHOTOROOM_API_KEY=${PROD}\nPHOTOROOM_USAR_PRODUCAO=sim\n`);
+  assert.deepEqual([p.modo, p.chave, p.limite], ["producao", PROD, 3]);
+  assert.equal(D.escolherChave(`PHOTOROOM_API_KEY=${PROD}\nPHOTOROOM_USAR_PRODUCAO=sim\nPHOTOROOM_LIMITE_LOCAL=1\n`).limite, 1);
+  assert.equal(D.escolherChave("PHOTOROOM_API_KEY=\nPHOTOROOM_USAR_PRODUCAO=sim\n").ok, false);
+  assert.equal(D.escolherChave(`PHOTOROOM_API_KEY=${CHAVE}\nPHOTOROOM_USAR_PRODUCAO=sim\n`).ok, false, "sandbox no lugar da produção");
+  const corpo = D.corpoBasico(Buffer.from("F")).corpo.toString();
+  assert.match(corpo, /name="image_file"/);
+  assert.match(corpo, /name="crop"\r\n\r\nfalse/, "não corta: a peça fica na posição da foto");
+
+  const modos = [];
+  let limpou = 0;
+  const mw = D.criarMiddlewarePhotoroom({
+    arquivoChave: arquivoChave(`PHOTOROOM_API_KEY=${PROD}\nPHOTOROOM_USAR_PRODUCAO=sim\nPHOTOROOM_LIMITE_LOCAL=1\n`),
+    chamar: async (k, img, tipo, modo) => { modos.push([k === PROD, modo]); return { status: 200, corpo: Buffer.from("PNG") }; },
+    limpar: async (x) => { limpou += 1; return x; },
+  });
+  const r1 = res(); await mw(req(Buffer.from("F")), r1, () => {}); await r1.pronto;
+  assert.equal(r1.statusCode, 200);
+  assert.equal(r1.cabecalhos["X-Paiia-Recorte"], "photoroom-basico");
+  assert.equal(limpou, 0, "produção não tem marca-d'água para limpar");
+  const r2 = res(); await mw(req(Buffer.from("F")), r2, () => {}); await r2.pronto;
+  assert.equal(r2.statusCode, 429, "segunda foto paga bloqueada pelo teto local");
+  assert.deepEqual(modos, [[true, "producao"]], "só 1 chamada paga");
+  // erro com a chave de produção no texto: escondido
+  const erro = D.criarMiddlewarePhotoroom({ arquivoChave: arquivoChave(`PHOTOROOM_API_KEY=${PROD}\nPHOTOROOM_USAR_PRODUCAO=sim\n`), chamar: async () => ({ status: 401, corpo: Buffer.from(`bad ${PROD}`) }) });
+  const r3 = res(); await erro(req(Buffer.from("F")), r3, () => {}); await r3.pronto;
+  assert.ok(!String(r3.corpo).includes(PROD));
+});
+
+test("13/11 site: Photoroom pela função do servidor com o caminho da ORIGINAL na Galeria; cota própria", async () => {
+  const pedidos = [];
+  const invocar = async (nome, o) => { pedidos.push([nome, o.body]); return { data: { sucesso: true, recorteUrl: "https://x/recorte.png" }, error: null }; };
+  const baixar = async () => new Blob(["png"], { type: "image/png" });
+  const r = await P.recortarPhotoroom(new Blob(["x"]), { dev: false, caminho: "u/originais/camera-1.jpg", invocar, baixar });
+  assert.equal(r.metodo, "photoroom");
+  assert.deepEqual(pedidos, [["foto-photoroom", { caminho: "u/originais/camera-1.jpg" }]], "só o caminho; nada de chave");
+  const naoPublicada = async () => ({ data: null, error: { message: "Function not found", context: { json: async () => ({ erro: "não encontrada" }) } } });
+  await assert.rejects(P.recortarPhotoroom(new Blob(["x"]), { dev: false, caminho: "c", invocar: naoPublicada, baixar }), /Photoroom: não encontrada/);
+  const cota = async () => ({ data: { sucesso: false, codigo: "LIMITE_MENSAL", erro: "Você atingiu o limite de 100 fotos profissionais deste mês." }, error: null });
+  await assert.rejects(P.recortarPhotoroom(new Blob(["x"]), { dev: false, caminho: "c", invocar: cota, baixar }), (e) => e.codigo === "LIMITE_MENSAL" && /fotos profissionais/.test(e.message));
+  // contexto (caminho) chega ao Photoroom pela cadeia de reserva
+  let ctxVisto = null;
+  await P.recortarComReserva({ photoroom: async (f, ctx) => { ctxVisto = ctx; return { blob: new Blob(["p"]), metodo: "photoroom" }; }, gratis: async () => assert.fail() })(new Blob(["x"]), { caminho: "u/originais/camera-9.jpg" });
+  assert.equal(ctxVisto.caminho, "u/originais/camera-9.jpg");
+  const fn = fs.readFileSync(new URL("../../supabase/functions/foto-photoroom/index.ts", import.meta.url), "utf8");
+  assert.match(fn, /FOTO_PHOTOROOM_LIMITE_MENSAL/);
+  assert.doesNotMatch(fn, /FOTO_IA_LIMITE_MENSAL|paiia_foto_ia_uso/, "não usa a cota do foto-ia");
+  assert.match(fn, /Deno\.env\.get\("PHOTOROOM_API_KEY"\)/);
+  assert.match(fn, /startsWith\(`\$\{usuarioId\}\/originais\/`\)/, "só fotos do próprio usuário");
 });

@@ -26,7 +26,10 @@ export function filaCamera(usuarioId) {
   const armazenamento = armazenamentoIndexedDB(globalThis.indexedDB, { banco: `paiia-foto-camera-${id}`, tabela: "fotos" }) || armazenamentoMemoria();
   // (13/11) Ordem: Photoroom (chave só no intermediário) → recorte GRÁTIS no aparelho
   // → "foto-ia" (Replicate) como última reserva.
-  const recortar = recortarComReserva({ photoroom: (f) => recortarPhotoroom(f), gratis: (f) => recortarLocalmente(f) });
+  const recortar = recortarComReserva({
+    photoroom: (f, ctx) => recortarPhotoroom(f, { caminho: ctx?.caminho, invocar: (nome, opcoes) => supabase.functions.invoke(nome, opcoes), baixar }),
+    gratis: (f) => recortarLocalmente(f),
+  });
   const tratar = ({ linhaId, url, urlOriginal, caminho, blob }) => tratarFotoDaGaleria({
     supabase, usuarioId: id, linhaId, urlOriginal: urlOriginal || url, caminho, original: blob || null, recortarFotoIA, recortarLocal: recortar, comporFotoFinal, baixar,
   });
