@@ -358,5 +358,5 @@ test("13/11) tratamento que não termina: depois do limite volta para nova tenta
 
 test("13/11) servidor de teste no celular: sem recarga automática quando PAIIA_TESTE_CELULAR=1", () => {
   const cfg = ler("vite.config.js");
-  assert.match(cfg, /process\.env\.PAIIA_TESTE_CELULAR === "1" \? \{ server: \{ ws: false \} \} : \{\}/);
+  assert.match(cfg, /globalThis\.process\?\.env\?\.PAIIA_TESTE_CELULAR === "1" \? \{ server: \{ ws: false \} \} : \{\}/);
 });
