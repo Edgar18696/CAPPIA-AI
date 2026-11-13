@@ -38,7 +38,7 @@ export function recortarComReserva({ photoroom, gratis, aoFalharPhotoroom = () =
       return { ...r, metodo: "local", avisoPhotoroom: String(falhaPhotoroom?.message || falhaPhotoroom) };
     } catch (e) {
       // (13/11) Os dois motivos juntos (antes só o da cota da reserva aparecia).
-      throw new Error(`${String(falhaPhotoroom?.message || falhaPhotoroom)} · Recorte grátis: ${String(e?.message || e)}`);
+      throw new Error(`${String(falhaPhotoroom?.message || falhaPhotoroom)} · Recorte grátis: ${String(e?.message || e)}`, { cause: e });
     }
   };
 }
