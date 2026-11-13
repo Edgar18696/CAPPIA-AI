@@ -136,7 +136,11 @@ export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOri
   let blobRecorte = null;
   let metodo = "local";
   if (typeof recortarLocal === "function") {
-    try { blobRecorte = (await recortarLocal(pixels))?.blob || null; } catch { blobRecorte = null; }
+    try {
+      const r = await recortarLocal(pixels);
+      blobRecorte = r?.blob || null;
+      metodo = r?.metodo || "local"; // (13/11) "photoroom" quando veio do Photoroom
+    } catch { blobRecorte = null; }
   }
   if (!blobRecorte) {
     metodo = "servidor";
