@@ -12,6 +12,7 @@
 // =============================================================
 import fs from "node:fs";
 import https from "node:https";
+import path from "node:path";
 
 export const ROTA_PHOTOROOM_LOCAL = "/__paiia/photoroom-recorte";
 export const ARQUIVO_CHAVE_PHOTOROOM = "C:\\PAIIA\\photoroom-teste.env";
@@ -110,29 +111,78 @@ function lerCorpo(req) {
   });
 }
 
-export function criarMiddlewarePhotoroom({ arquivoChave = ARQUIVO_CHAVE_PHOTOROOM, chamar = chamarPhotoroom, limpar = limparMarcaSandbox } = {}) {
-  let pagasNestaExecucao = 0; // (13/11) teto de fotos PAGAS por vez que o servidor local sobe
+/** Largura × altura de um PNG/JPEG pelo cabeçalho (sem decodificar). */
+export function dimensoes(buf) {
+  try {
+    if (buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47) return `${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}`;
+    if (buf[0] === 0xff && buf[1] === 0xd8) {
+      let p = 2;
+      while (p < buf.length - 9) {
+        if (buf[p] !== 0xff) return "?";
+        const m = buf[p + 1];
+        if (m >= 0xc0 && m <= 0xc3) return `${buf.readUInt16BE(p + 7)}x${buf.readUInt16BE(p + 5)}`;
+        p += 2 + buf.readUInt16BE(p + 2);
+      }
+    }
+  } catch { /* cabeçalho inesperado */ }
+  return "?";
+}
+
+/** Contador de fotos PAGAS em memória (testes). */
+export const contadorMemoria = () => { let n = 0; return { ler: () => n, somar: () => { n += 1; } }; };
+
+/**
+ * (13/11) Contador de fotos PAGAS guardado em arquivo, por dia: reiniciar o servidor
+ * local NÃO zera o limite (antes zerava e uma foto parada podia ser cobrada de novo).
+ */
+export function contadorArquivo(arquivo, hoje = () => new Date().toISOString().slice(0, 10)) {
+  const ler = () => { try { const d = JSON.parse(fs.readFileSync(arquivo, "utf8")); return d?.dia === hoje() ? Number(d.pagas) || 0 : 0; } catch { return 0; } };
+  return { ler, somar: () => { const n = ler() + 1; fs.mkdirSync(path.dirname(arquivo), { recursive: true }); fs.writeFileSync(arquivo, JSON.stringify({ dia: hoje(), pagas: n })); } };
+}
+
+/** (13/11) Registro de cada chamada (sem chave) + última entrada/saída para diagnóstico. */
+export function registroArquivo(pasta) {
+  return (linha, arquivos = {}) => {
+    try {
+      fs.mkdirSync(pasta, { recursive: true });
+      fs.appendFileSync(path.join(pasta, "photoroom-local.log"), `${new Date().toISOString()} ${JSON.stringify(linha)}\n`);
+      for (const [nome, buf] of Object.entries(arquivos)) if (buf?.length) fs.writeFileSync(path.join(pasta, nome), buf);
+    } catch { /* registro nunca derruba o recorte */ }
+  };
+}
+
+export function criarMiddlewarePhotoroom({ arquivoChave = ARQUIVO_CHAVE_PHOTOROOM, chamar = chamarPhotoroom, limpar = limparMarcaSandbox, contador = contadorMemoria(), registrar = () => {} } = {}) {
   return async (req, res, next) => {
     if (!String(req.url || "").startsWith(ROTA_PHOTOROOM_LOCAL)) return next();
-    const responder = (status, obj) => { res.statusCode = status; res.setHeader("Content-Type", "application/json; charset=utf-8"); res.end(JSON.stringify(obj)); };
+    const inicio = Date.now();
+    const linha = { origem: String(req.socket?.remoteAddress || "?") };
+    const responder = (status, obj) => {
+      registrar({ ...linha, resposta: status, erro: obj?.erro, ms: Date.now() - inicio });
+      res.statusCode = status; res.setHeader("Content-Type", "application/json; charset=utf-8"); res.end(JSON.stringify(obj));
+    };
     if (req.method !== "POST") return responder(405, { ok: false, erro: "Use POST." });
     let texto = "";
     try { texto = fs.readFileSync(arquivoChave, "utf8"); } catch { /* sem arquivo */ }
     const k = escolherChave(texto);
     if (!k.ok) return responder(503, { ok: false, erro: k.erro });
-    if (k.modo === "producao" && pagasNestaExecucao >= k.limite) {
-      return responder(429, { ok: false, erro: `Limite local de ${k.limite} foto(s) paga(s) atingido nesta execução (PHOTOROOM_LIMITE_LOCAL).` });
+    linha.modo = k.modo;
+    if (k.modo === "producao" && contador.ler() >= k.limite) {
+      return responder(429, { ok: false, erro: `Limite local de ${k.limite} foto(s) paga(s) por dia atingido (PHOTOROOM_LIMITE_LOCAL).` });
     }
     try {
       const imagem = await lerCorpo(req);
+      Object.assign(linha, { entrada_bytes: imagem.length, entrada_tipo: String(req.headers["content-type"] || ""), entrada_dim: dimensoes(imagem) });
       if (!imagem.length) return responder(400, { ok: false, erro: "Foto vazia." });
-      if (k.modo === "producao") pagasNestaExecucao += 1; // conta antes (pedido enviado = pode cobrar)
+      if (k.modo === "producao") contador.somar(); // conta antes (pedido enviado = pode cobrar)
       const r = await chamar(k.chave, imagem, String(req.headers["content-type"] || "image/jpeg"), k.modo);
+      Object.assign(linha, { photoroom_status: r.status, photoroom_ms: Date.now() - inicio });
       if (r.status !== 200) return responder(502, { ok: false, erro: `Photoroom ${r.status}: ${esconderChave(r.corpo.toString("utf8").slice(0, 200)).split(k.chave).join("***")}` });
       const png = k.modo === "sandbox" ? await limpar(r.corpo) : r.corpo;
       res.statusCode = 200;
       res.setHeader("Content-Type", "image/png");
       res.setHeader("X-Paiia-Recorte", k.modo === "producao" ? "photoroom-basico" : "photoroom-sandbox");
+      res.on?.("finish", () => registrar({ ...linha, resposta: 200, saida_bytes: png.length, saida_dim: dimensoes(png), entregue: true, ms: Date.now() - inicio }, { "ultima-entrada.jpg": imagem, "ultimo-recorte.png": png }));
+      res.on?.("close", () => { if (!res.writableFinished) registrar({ ...linha, resposta: 200, entregue: false, aviso: "celular desconectou antes de receber o recorte", ms: Date.now() - inicio }); });
       res.end(png);
     } catch (e) {
       responder(502, { ok: false, erro: esconderChave(e?.message || e).split(k.chave).join("***") });

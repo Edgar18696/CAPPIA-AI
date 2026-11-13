@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 
 import { criarMiddlewareBannerOpenAI } from "./scripts/dev/bannerOpenAIDev.mjs";
 import { paizinhoPesquisaLocal } from "./scripts/paizinho/vitePluginPesquisaLocal.mjs";
-import { criarMiddlewarePhotoroom } from "./scripts/dev/photoroomDev.mjs";
+import { criarMiddlewarePhotoroom, contadorArquivo, registroArquivo } from "./scripts/dev/photoroomDev.mjs";
 
 // Única configuração extra do projeto: servidor local da IA do Banner
 // Express, ativo SOMENTE no "npm run dev" (localhost). O build de produção
@@ -27,7 +27,12 @@ export default defineConfig({
       name: "paiia-photoroom-local",
       apply: "serve",
       configureServer(server) {
-        server.middlewares.use(criarMiddlewarePhotoroom());
+        // Contador de fotos pagas e registro (sem chave) ficam fora do projeto.
+        const pasta = "C:\\PAIIA\\testes-foto-ia\\photoroom-local";
+        server.middlewares.use(criarMiddlewarePhotoroom({
+          contador: contadorArquivo(`${pasta}\\uso-pago.json`),
+          registrar: registroArquivo(pasta),
+        }));
       },
     },
   ],

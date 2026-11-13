@@ -9,11 +9,14 @@
 // =============================================================
 export const ROTA_PHOTOROOM_LOCAL = "/__paiia/photoroom-recorte";
 export const FUNCAO_PHOTOROOM = "foto-photoroom";
+export const TEMPO_LIMITE_MS = 120_000;
 
 /** Recorta pelo Photoroom: devolve { blob, metodo } (PNG do mesmo tamanho, com transparência). */
 export async function recortarPhotoroom(foto, { caminho = "", dev = Boolean(import.meta.env?.DEV), buscar = globalThis.fetch, invocar = null, baixar = null } = {}) {
   if (dev) {
-    const r = await buscar(ROTA_PHOTOROOM_LOCAL, { method: "POST", headers: { "Content-Type": foto?.type || "image/jpeg" }, body: foto });
+    // (13/11) Tempo-limite: o celular não fica "tratando" para sempre esperando resposta.
+    const sinal = typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(TEMPO_LIMITE_MS) : undefined;
+    const r = await buscar(ROTA_PHOTOROOM_LOCAL, { method: "POST", headers: { "Content-Type": foto?.type || "image/jpeg" }, body: foto, signal: sinal });
     if (!r.ok) {
       let erro = `HTTP ${r.status}`;
       try { erro = (await r.json())?.erro || erro; } catch { /* sem JSON */ }

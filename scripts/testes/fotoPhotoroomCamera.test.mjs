@@ -196,3 +196,30 @@ test("13/11 site: Photoroom pela função do servidor com o caminho da ORIGINAL 
   assert.match(fn, /Deno\.env\.get\("PHOTOROOM_API_KEY"\)/);
   assert.match(fn, /startsWith\(`\$\{usuarioId\}\/originais\/`\)/, "só fotos do próprio usuário");
 });
+
+test("13/11 diagnóstico: contador de pagas em arquivo (reiniciar não zera), registro sem chave, entrega confirmada", async () => {
+  const pasta = fs.mkdtempSync(path.join(os.tmpdir(), "paiia-pr-diag-"));
+  const PROD = "sk_pr_" + "b".repeat(30);
+  const chaveArq = arquivoChave(`PHOTOROOM_API_KEY=${PROD}\nPHOTOROOM_USAR_PRODUCAO=sim\nPHOTOROOM_LIMITE_LOCAL=1\n`);
+  const contadorA = D.contadorArquivo(path.join(pasta, "uso.json"), () => "2026-11-13");
+  let chamadas = 0;
+  const png = Buffer.alloc(30); png.writeUInt32BE(0x89504e47, 0); png.writeUInt32BE(1920, 16); png.writeUInt32BE(2560, 20);
+  const novo = () => D.criarMiddlewarePhotoroom({ arquivoChave: chaveArq, contador: D.contadorArquivo(path.join(pasta, "uso.json"), () => "2026-11-13"), registrar: D.registroArquivo(pasta), chamar: async () => { chamadas += 1; return { status: 200, corpo: png }; } });
+  const r1 = res(); r1.on = (ev, fn) => { if (ev === "finish") r1.aoTerminar = fn; }; r1.writableFinished = true;
+  await novo()(req(Buffer.from("F")), r1, () => {}); await r1.pronto; r1.aoTerminar?.();
+  assert.equal(r1.statusCode, 200);
+  assert.equal(contadorA.ler(), 1);
+  // "reiniciou o servidor": novo middleware, mesmo arquivo → continua bloqueado
+  const r2 = res(); r2.on = () => {};
+  await novo()(req(Buffer.from("F")), r2, () => {}); await r2.pronto;
+  assert.equal(r2.statusCode, 429);
+  assert.equal(chamadas, 1, "nenhuma nova chamada paga");
+  // outro dia: libera de novo
+  assert.equal(D.contadorArquivo(path.join(pasta, "uso.json"), () => "2026-11-14").ler(), 0);
+  const log = fs.readFileSync(path.join(pasta, "photoroom-local.log"), "utf8");
+  assert.match(log, /"modo":"producao".*"photoroom_status":200.*"saida_dim":"1920x2560".*"entregue":true/);
+  assert.match(log, /"resposta":429/);
+  assert.ok(!log.includes(PROD), "log sem chave");
+  assert.ok(fs.existsSync(path.join(pasta, "ultimo-recorte.png")));
+  assert.equal(D.dimensoes(png), "1920x2560");
+});
