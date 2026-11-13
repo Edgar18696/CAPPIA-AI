@@ -26,12 +26,19 @@ export async function recortarPhotoroom(foto, { buscar = globalThis.fetch, dispo
  */
 export function recortarComReserva({ photoroom, gratis, aoFalharPhotoroom = () => {} }) {
   return async (foto) => {
+    let falhaPhotoroom;
     try {
       return await photoroom(foto);
     } catch (e) {
+      falhaPhotoroom = e;
       try { aoFalharPhotoroom(e); } catch { /* ignora */ }
+    }
+    try {
       const r = await gratis(foto);
-      return { ...r, metodo: "local" };
+      return { ...r, metodo: "local", avisoPhotoroom: String(falhaPhotoroom?.message || falhaPhotoroom) };
+    } catch (e) {
+      // (13/11) Os dois motivos juntos (antes só o da cota da reserva aparecia).
+      throw new Error(`${String(falhaPhotoroom?.message || falhaPhotoroom)} · Recorte grátis: ${String(e?.message || e)}`);
     }
   };
 }

@@ -107,3 +107,37 @@ test("fonte: chave só em arquivo fora do projeto; nada de VITE_ nem chave no sr
   }
   assert.match(ler("vite.config.js"), /name: "paiia-photoroom-local",\s*apply: "serve"/, "só no npm run dev");
 });
+
+test("13/11 celular: cópia do aparelho ilegível → tenta com a original da Galeria antes da cota; motivo de cada etapa aparece", async () => {
+  const C = await import("../../src/services/fotoIA/fotoCameraGaleria.js");
+  const enviados = [];
+  const sb = {
+    storage: { from: () => ({ upload: async (c) => { enviados.push(c); return { error: null }; }, getPublicUrl: (c) => ({ data: { publicUrl: `https://x/${c}` } }) }) },
+    from: () => { const q = { update: () => q, eq: () => q, select: async () => ({ data: [{ id: "row-1" }], error: null }) }; return q; },
+  };
+  const daGaleria = new Blob(["galeria"], { type: "image/jpeg" });
+  const doAparelho = new Blob(["aparelho"], { type: "image/jpeg" });
+  let fotoIA = 0;
+  const recortar = P.recortarComReserva({
+    photoroom: async (f) => { if (f === doAparelho) throw new Error("Photoroom: Load failed"); return { blob: new Blob(["png"]), metodo: "photoroom" }; },
+    gratis: async (f) => { if (f === doAparelho) throw new Error("não abriu a foto"); return { blob: new Blob(["l"]) }; },
+  });
+  let compostaCom = null;
+  const base = { supabase: sb, usuarioId: "u", linhaId: "row-1", urlOriginal: "https://x/orig.jpg", caminho: "u/originais/camera-1.jpg", original: doAparelho,
+    recortarFotoIA: async () => { fotoIA += 1; throw Object.assign(new Error("Você atingiu o limite de 50 Fotos IA deste mês"), { codigo: "LIMITE_MENSAL" }); },
+    comporFotoFinal: async ({ original }) => { compostaCom = original; return { blob: new Blob(["final"]) }; },
+    baixar: async (u) => (u === "https://x/orig.jpg" ? daGaleria : new Blob(["r"])) };
+  const t = await C.tratarFotoDaGaleria({ ...base, recortarLocal: recortar });
+  assert.equal(t.metodo, "photoroom", "Photoroom com a original da Galeria");
+  assert.equal(fotoIA, 0, "cota da reserva nem foi tocada");
+  assert.equal(compostaCom, daGaleria, "composição com a foto que funcionou");
+  // tudo falha: a mensagem separa a cota da reserva dos motivos do Photoroom e do grátis
+  const nada = P.recortarComReserva({ photoroom: async () => { throw new Error("Photoroom: HTTP 503"); }, gratis: async () => { throw new Error("modelo não carregou"); } });
+  await assert.rejects(C.tratarFotoDaGaleria({ ...base, recortarLocal: nada }), (e) => {
+    assert.equal(e.codigo, "LIMITE_MENSAL", "cota continua protegida");
+    assert.match(e.message, /^Reserva Foto IA: Você atingiu o limite/);
+    assert.match(e.message, /cópia do aparelho: Photoroom: HTTP 503 · Recorte grátis: modelo não carregou/);
+    assert.match(e.message, /original da Galeria: Photoroom: HTTP 503/);
+    return true;
+  });
+});

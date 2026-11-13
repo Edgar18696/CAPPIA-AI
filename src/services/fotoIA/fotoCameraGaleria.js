@@ -132,21 +132,38 @@ export async function salvarOriginalNaGaleria({ supabase, usuarioId, item, norma
  * primeiro. Se faltar ou falhar, usa o recorte do servidor ("foto-ia", Replicate) como reserva.
  */
 export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOriginal, caminho, original, recortarFotoIA, recortarLocal = null, comporFotoFinal, baixar }) {
-  const pixels = original || (await baixar(urlOriginal));
   let blobRecorte = null;
   let metodo = "local";
+  let pixels = null;
+  let daGaleria = null;
+  const motivos = [];
   if (typeof recortarLocal === "function") {
-    try {
-      const r = await recortarLocal(pixels);
-      blobRecorte = r?.blob || null;
-      metodo = r?.metodo || "local"; // (13/11) "photoroom" quando veio do Photoroom
-    } catch { blobRecorte = null; }
+    // (13/11) Caso real (celular): a cópia guardada no aparelho (IndexedDB) pode não
+    // ser reenviável/legível; aí tenta de novo com a ORIGINAL baixada da Galeria antes
+    // de cair na reserva "foto-ia" (que tem a cota mensal).
+    for (const fonte of original ? ["aparelho", "galeria"] : ["galeria"]) {
+      try {
+        const foto = fonte === "aparelho" ? original : (daGaleria ||= await baixar(urlOriginal));
+        const r = await recortarLocal(foto);
+        if (r?.blob) { blobRecorte = r.blob; metodo = r.metodo || "local"; pixels = foto; break; }
+        motivos.push(`${fonte}: recorte vazio`);
+      } catch (e) {
+        motivos.push(`${fonte === "aparelho" ? "cópia do aparelho" : "original da Galeria"}: ${txt(e?.message || e)}`);
+      }
+    }
   }
   if (!blobRecorte) {
     metodo = "servidor";
-    const recorte = await recortarFotoIA({ supabase, caminho: caminho || caminhoDaUrl(urlOriginal), chave: chaveTratamento(linhaId) });
-    blobRecorte = await baixar(recorte.recorteUrl);
+    try {
+      const recorte = await recortarFotoIA({ supabase, caminho: caminho || caminhoDaUrl(urlOriginal), chave: chaveTratamento(linhaId) });
+      blobRecorte = await baixar(recorte.recorteUrl);
+    } catch (e) {
+      // Diz QUAL etapa falhou: a cota é só da reserva "foto-ia", não do Photoroom.
+      if (motivos.length) e.message = `Reserva Foto IA: ${txt(e?.message || e)} · Antes falharam → ${motivos.join(" | ")}`;
+      throw e;
+    }
   }
+  if (!pixels) pixels = daGaleria || original || (await baixar(urlOriginal));
   const final = await comporFotoFinal({ original: pixels, recorte: blobRecorte, fundo: "branco" });
   const urlTratada = await enviar(supabase, caminhoTratadaCamera(usuarioId, linhaId), final.blob, "image/png");
   const ligou = await ligarTratadaNaLinha({ supabase, usuarioId, linhaId, urlOriginal, urlTratada });
@@ -198,7 +215,7 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     await mudar(item.id, {
       estado,
       tentativas,
-      erro: txt(e?.message || e).slice(0, 200),
+      erro: txt(e?.message || e).slice(0, 500), // (13/11) cabe o motivo de cada etapa
       proximaEm: auto ? agora() + espera : 0,
     });
   }
