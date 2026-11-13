@@ -126,15 +126,27 @@ export async function salvarOriginalNaGaleria({ supabase, usuarioId, item, norma
   return { caminho, url, linhaId: linha.id, blob, normalizada: true };
 }
 
-/** 2) Trata a foto (recorte + composição do Foto IA) e liga a tratada à mesma linha. */
-export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOriginal, caminho, original, recortarFotoIA, comporFotoFinal, baixar }) {
-  const recorte = await recortarFotoIA({ supabase, caminho: caminho || caminhoDaUrl(urlOriginal), chave: chaveTratamento(linhaId) });
-  const blobRecorte = await baixar(recorte.recorteUrl);
+/**
+ * 2) Trata a foto (recorte + composição do Foto IA) e liga a tratada à mesma linha.
+ * (13/11) recortarLocal(blob) → { blob }: recorte GRÁTIS no próprio aparelho, tentado
+ * primeiro. Se faltar ou falhar, usa o recorte do servidor ("foto-ia", Replicate) como reserva.
+ */
+export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOriginal, caminho, original, recortarFotoIA, recortarLocal = null, comporFotoFinal, baixar }) {
   const pixels = original || (await baixar(urlOriginal));
+  let blobRecorte = null;
+  let metodo = "local";
+  if (typeof recortarLocal === "function") {
+    try { blobRecorte = (await recortarLocal(pixels))?.blob || null; } catch { blobRecorte = null; }
+  }
+  if (!blobRecorte) {
+    metodo = "servidor";
+    const recorte = await recortarFotoIA({ supabase, caminho: caminho || caminhoDaUrl(urlOriginal), chave: chaveTratamento(linhaId) });
+    blobRecorte = await baixar(recorte.recorteUrl);
+  }
   const final = await comporFotoFinal({ original: pixels, recorte: blobRecorte, fundo: "branco" });
   const urlTratada = await enviar(supabase, caminhoTratadaCamera(usuarioId, linhaId), final.blob, "image/png");
   const ligou = await ligarTratadaNaLinha({ supabase, usuarioId, linhaId, urlOriginal, urlTratada });
-  return { urlTratada, ligou, baixaResolucao: Boolean(final.baixaResolucao) };
+  return { urlTratada, ligou, baixaResolucao: Boolean(final.baixaResolucao), metodo };
 }
 
 /** Erros que se resolvem sozinhos (rede, servidor). Limite do mês, login e foto inválida, não. */
@@ -150,6 +162,9 @@ export function falhaTemporaria(e) {
  */
 export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(), aoMudar = () => {} }) {
   let rodando = null;
+  // (13/11) Prontas saem da fila do aparelho NA HORA (a Galeria continua com elas);
+  // ficam só nesta lista em memória para o "Salvar no celular" e o resumo da tela.
+  const prontas = [];
   const avisar = (o) => { try { aoMudar(o); } catch { /* tela fechada */ } };
 
   async function adicionar(arquivos) {
@@ -202,7 +217,8 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
       atual = await mudar(atual.id, { estado: "tratando", tratandoDesde: agora() });
       avisar({ tipo: "tratando", id: atual.id });
       const t = await deps.tratar(atual);
-      await mudar(atual.id, { estado: "pronta", urlTratada: t.urlTratada, baixaResolucao: Boolean(t.baixaResolucao), erro: "", prontaEm: agora(), proximaEm: 0 });
+      prontas.unshift({ id: atual.id, linhaId: atual.linhaId, urlTratada: t.urlTratada, nome: atual.nome, baixaResolucao: Boolean(t.baixaResolucao), metodo: t.metodo || "", prontaEm: agora(), salvaNoAparelho: false });
+      await armazenamento.delete(atual.id); // sai da fila; NADA é apagado da Galeria
       avisar({ tipo: "pronta", id: atual.id });
     } catch (e) {
       await falhou(atual, e);
@@ -238,15 +254,22 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     return rodar();
   }
 
-  /** Cópia do aparelho some 24 h depois de pronta (original e tratada continuam na Galeria). */
+  /** (13/11) Prontas de versões anteriores (que ficavam 24 h) também saem da fila. Galeria intacta. */
   async function faxina() {
-    const limite = agora() - HORAS_MOSTRAR_PRONTAS * 3600_000;
     for (const item of await listar()) {
-      if (item.estado === "pronta" && (item.prontaEm || 0) < limite) await armazenamento.delete(item.id);
+      if (item.estado === "pronta") await armazenamento.delete(item.id);
     }
   }
 
-  return { adicionar, listar, rodar, tentarDeNovo, faxina };
+  /** Prontas desta sessão (mais recentes primeiro); marcarSalvas(ids) após "Salvar no celular". */
+  const listarProntas = () => prontas.map((p) => ({ ...p }));
+  function marcarSalvas(ids) {
+    const s = new Set(ids || []);
+    for (const p of prontas) if (s.has(p.id)) p.salvaNoAparelho = true;
+    avisar({ tipo: "salvas-no-aparelho", quantidade: s.size });
+  }
+
+  return { adicionar, listar, rodar, tentarDeNovo, faxina, listarProntas, marcarSalvas };
 }
 
 /**
@@ -286,14 +309,15 @@ export async function retomarDeOutrosAparelhos({ supabase, usuarioId, tratar, ja
 }
 
 /** Resumo curto para a tela (confirmação discreta). */
-export function resumoCamera(itens) {
+export function resumoCamera(itens, prontas = []) {
   const n = (e) => (itens || []).filter((i) => i.estado === e).length;
-  const salvas = (itens || []).filter((i) => i.linhaId).length;
+  const tratadas = (prontas?.length || 0) + n("pronta");
+  const salvas = (itens || []).filter((i) => i.linhaId && i.estado !== "pronta").length + tratadas;
   const andamento = n("salvando") + n("salva") + n("tratando");
-  if (!itens?.length) return "";
+  if (!itens?.length && !tratadas) return "";
   const partes = [`✅ ${salvas} foto(s) salva(s) na Galeria`];
   if (andamento) partes.push(`${andamento} em andamento`);
-  if (n("pronta")) partes.push(`${n("pronta")} tratada(s)`);
+  if (tratadas) partes.push(`${tratadas} tratada(s)`);
   if (n("falhou")) partes.push(`⚠ ${n("falhou")} com falha no tratamento`);
   return partes.join(" · ");
 }

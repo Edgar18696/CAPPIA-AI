@@ -4,6 +4,7 @@
 import { supabase } from "../../supabase";
 import { armazenamentoIndexedDB, armazenamentoMemoria } from "../../modules/paiiaVoz/servicos/fotosVozLocal.js";
 import { recortarFotoIA } from "./pipelineFotoIA.js";
+import { recortarLocalmente } from "./recorteLocalFotoIA.js";
 import { comporFotoFinal, normalizarArquivoParaEnvio } from "./composicaoFotoIA.js";
 import { criarFilaCamera, retomarDeOutrosAparelhos, salvarOriginalNaGaleria, tratarFotoDaGaleria } from "./fotoCameraGaleria.js";
 
@@ -11,7 +12,7 @@ export const EVENTO_CAMERA = "paiia-foto-camera";
 const filas = new Map();
 const jaRetomadas = new Set();
 
-async function baixar(url) {
+export async function baixar(url) {
   const r = await fetch(url);
   if (!r.ok) throw Object.assign(new Error(`não consegui baixar a imagem (HTTP ${r.status})`), { temporario: true });
   return r.blob();
@@ -22,8 +23,9 @@ export function filaCamera(usuarioId) {
   if (!id) return null;
   if (filas.has(id)) return filas.get(id);
   const armazenamento = armazenamentoIndexedDB(globalThis.indexedDB, { banco: `paiia-foto-camera-${id}`, tabela: "fotos" }) || armazenamentoMemoria();
+  // (13/11) Recorte GRÁTIS no aparelho primeiro; o "foto-ia" (Replicate) fica de reserva.
   const tratar = ({ linhaId, url, urlOriginal, caminho, blob }) => tratarFotoDaGaleria({
-    supabase, usuarioId: id, linhaId, urlOriginal: urlOriginal || url, caminho, original: blob || null, recortarFotoIA, comporFotoFinal, baixar,
+    supabase, usuarioId: id, linhaId, urlOriginal: urlOriginal || url, caminho, original: blob || null, recortarFotoIA, recortarLocal: recortarLocalmente, comporFotoFinal, baixar,
   });
   const fila = criarFilaCamera({
     armazenamento,

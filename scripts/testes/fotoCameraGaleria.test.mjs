@@ -106,12 +106,14 @@ test("1) Tirar Foto: original salva NA HORA na Galeria, tratamento automático l
   assert.match(l.imagem_processada, /\/processadas\/camera-row-1\.png$/);
   assert.equal(l.tipo, "foto");
   assert.equal(l.status, "processado");
-  const [final] = await fila.listar();
-  assert.equal(final.estado, "pronta");
+  // (13/11) Pronta sai da fila do aparelho NA HORA; fica só na lista da sessão.
+  assert.deepEqual(await fila.listar(), [], "miniatura saiu da fila");
+  const [final] = fila.listarProntas();
   assert.equal(final.linhaId, "row-1");
+  assert.match(final.urlTratada, /processadas\/camera-row-1\.png$/);
   assert.deepEqual(chamadas.chaves, ["camera-row-1"]);
   assert.ok(eventos.indexOf("salva") < eventos.indexOf("pronta"), "salva antes de tratar");
-  assert.match(C.resumoCamera(await fila.listar()), /1 foto\(s\) salva\(s\) na Galeria · 1 tratada/);
+  assert.match(C.resumoCamera(await fila.listar(), fila.listarProntas()), /1 foto\(s\) salva\(s\) na Galeria · 1 tratada/);
   // compatível com a Galeria do Voz / Criar Anúncio: aparece como TRATADA, com a original ligada
   const g = await listarFotosGaleria(sb, U);
   assert.equal(g.fotos.length, 1);
@@ -165,8 +167,8 @@ test("3) Falha no tratamento: original preservada, nova tentativa automática, d
   assert.equal(i.tentativas, C.MAX_TENTATIVAS_AUTO);
   falhar = false;
   await fila.tentarDeNovo(i.id);
-  [i] = await fila.listar();
-  assert.equal(i.estado, "pronta");
+  assert.deepEqual(await fila.listar(), [], "pronta saiu da fila");
+  assert.equal(fila.listarProntas().length, 1);
   assert.equal(sb.linhas.length, 1);
   // erro de regra (limite do mês): não repete sozinho
   const sb2 = supabaseFalso();
@@ -189,8 +191,8 @@ test("4) Fechou o navegador no meio: a fila do aparelho continua ao abrir de nov
   const { deps, chamadas } = depsReais(sb);
   const fila = C.criarFilaCamera({ armazenamento: arm, deps }); // "abriu o PAIIA de novo"
   await Promise.all([fila.rodar(), fila.rodar()]); // duas chamadas juntas = uma passada
-  const l = await fila.listar();
-  assert.deepEqual(l.map((x) => x.estado), ["pronta", "pronta"]);
+  assert.deepEqual(await fila.listar(), [], "as duas saíram da fila");
+  assert.equal(fila.listarProntas().length, 2);
   assert.equal(sb.linhas.length, 2);
   assert.equal(chamadas.recorte, 2, "cada foto tratada uma vez");
 });
@@ -269,4 +271,66 @@ test("7) Telas: Foto IA com Tirar Foto (câmera) e Escolher Foto; lotes de até 
   const pipe = ler("src/services/fotoIA/pipelineFotoIA.js");
   assert.match(pipe, /export async function recortarFotoIA/);
   assert.match(pipe, /upsert: false/);
+});
+
+test("13/11) recorte GRÁTIS no aparelho primeiro; Replicate só como reserva; nada apagado", async () => {
+  const sb = supabaseFalso();
+  const item = { id: "cl1", blob: blob(), nome: "a.jpg" };
+  const s = await C.salvarOriginalNaGaleria({ supabase: sb, usuarioId: U, item });
+  let servidor = 0;
+  let local = 0;
+  const base = { supabase: sb, usuarioId: U, linhaId: s.linhaId, urlOriginal: s.url, caminho: s.caminho, original: item.blob,
+    recortarFotoIA: async () => { servidor += 1; return { recorteUrl: "r" }; },
+    comporFotoFinal: async ({ recorte }) => ({ blob: new Blob(["p"]), usado: recorte }), baixar: async () => new Blob(["srv"]) };
+  const t1 = await C.tratarFotoDaGaleria({ ...base, recortarLocal: async (b) => { local += 1; assert.equal(b, item.blob, "recorta a própria foto"); return { blob: new Blob(["loc"]) }; } });
+  assert.equal(t1.metodo, "local");
+  assert.equal(servidor, 0, "sem crédito da Replicate");
+  // local falhou (ex.: peça não identificada) → reserva do servidor
+  const sb2 = supabaseFalso();
+  const s2 = await C.salvarOriginalNaGaleria({ supabase: sb2, usuarioId: U, item: { id: "cl2", blob: blob(), nome: "b.jpg" } });
+  const t2 = await C.tratarFotoDaGaleria({ ...base, supabase: sb2, linhaId: s2.linhaId, urlOriginal: s2.url, caminho: s2.caminho, recortarLocal: async () => { throw new Error("Não foi possível identificar a peça"); } });
+  assert.equal(t2.metodo, "servidor");
+  assert.equal(servidor, 1);
+  assert.equal(local, 1);
+  assert.equal(sb.log.deletes + sb.log.removes + sb2.log.deletes + sb2.log.removes, 0, "nada apagado da Galeria");
+});
+
+test("13/11) Salvar no celular: menu do aparelho com 1 toque; sem menu baixa; cancelar não marca", async () => {
+  const { salvarNoAparelho } = await import("../../src/services/fotoIA/salvarNoAparelho.js");
+  const prontas = [{ id: "a", linhaId: "row-1", urlTratada: "u1" }, { id: "b", linhaId: "row-2", urlTratada: "u2" }, { id: "c" }];
+  const deps = (navegador) => {
+    const baixados = [];
+    return { baixados, d: { baixar: async (u) => new Blob([u], { type: "image/png" }), navegador, criarArquivo: (b, nome) => ({ b, nome }), baixarArquivo: (b, nome) => baixados.push(nome) } };
+  };
+  let compartilhado = null;
+  const celular = { canShare: ({ files }) => files.length > 0, share: async (o) => { compartilhado = o; } };
+  const r1 = deps(celular);
+  const s1 = await salvarNoAparelho(prontas, r1.d);
+  assert.equal(s1.modo, "compartilhar");
+  assert.deepEqual(s1.ids, ["a", "b"], "só as que têm foto tratada");
+  assert.deepEqual(compartilhado.files.map((f) => f.nome), ["paiia-row-1-1200x1200.png", "paiia-row-2-1200x1200.png"]);
+  assert.equal(r1.baixados.length, 0);
+  const r2 = deps({});
+  const s2 = await salvarNoAparelho(prontas, r2.d);
+  assert.equal(s2.modo, "download");
+  assert.equal(r2.baixados.length, 2);
+  const r3 = deps({ canShare: () => true, share: async () => { throw Object.assign(new Error("x"), { name: "AbortError" }); } });
+  const s3 = await salvarNoAparelho(prontas, r3.d);
+  assert.equal(s3.modo, "cancelado");
+  assert.deepEqual(s3.ids, []);
+  assert.equal(r3.baixados.length, 0);
+});
+
+test("13/11) fila: marcarSalvas e prontas antigas (24 h) saem na faxina", async () => {
+  const arm = armazenamentoMemoria();
+  await arm.put({ id: "velha", estado: "pronta", criadaEm: 1, prontaEm: Date.now() });
+  const sb = supabaseFalso();
+  const { deps } = depsReais(sb);
+  const fila = C.criarFilaCamera({ armazenamento: arm, deps });
+  await fila.adicionar([blob()]);
+  await fila.rodar();
+  assert.deepEqual(await fila.listar(), []);
+  const [p] = fila.listarProntas();
+  fila.marcarSalvas([p.id]);
+  assert.equal(fila.listarProntas()[0].salvaNoAparelho, true);
 });

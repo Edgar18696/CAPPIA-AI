@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../supabase";
 import { usuarioDaGaleria } from "../../paiiaVoz/servicos/galeriaVoz";
-import { EVENTO_CAMERA, filaCamera } from "../../../services/fotoIA/filaCameraApp";
+import { EVENTO_CAMERA, filaCamera, baixar } from "../../../services/fotoIA/filaCameraApp";
+import { salvarNoAparelho, criarArquivoNavegador, baixarArquivoNavegador } from "../../../services/fotoIA/salvarNoAparelho";
 import { ROTULO_CAMERA, resumoCamera } from "../../../services/fotoIA/fotoCameraGaleria";
 
 const COR = { salvando: "#fde68a", salva: "#93c5fd", tratando: "#93c5fd", pronta: "#86efac", falhou: "#fca5a5" };
@@ -22,7 +23,9 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
   const cameraRef = useRef(null);
   const [usuario, setUsuario] = useState(usuarioId || "");
   const [itens, setItens] = useState([]);
+  const [prontas, setProntas] = useState([]);
   const [aviso, setAviso] = useState("");
+  const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -34,6 +37,7 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
     const fila = filaCamera(usuario);
     if (!fila) return;
     try { setItens(await fila.listar()); } catch { /* sem IndexedDB */ }
+    setProntas(fila.listarProntas?.() || []);
   }, [usuario]);
 
   useEffect(() => {
@@ -57,6 +61,22 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
     }
   }
 
+  // (13/11) Um toque: abre o menu do celular ("Salvar imagem"); sem menu, baixa os arquivos.
+  const naoSalvas = prontas.filter((p) => !p.salvaNoAparelho);
+  async function salvarCelular() {
+    const fila = filaCamera(usuario);
+    if (!fila || !naoSalvas.length) return;
+    setSalvando(true);
+    try {
+      const r = await salvarNoAparelho(naoSalvas, { baixar, criarArquivo: criarArquivoNavegador, baixarArquivo: baixarArquivoNavegador });
+      if (r.ids.length) fila.marcarSalvas(r.ids);
+      setAviso(r.modo === "cancelado" ? "" : r.modo === "compartilhar" ? "📲 Escolha \"Salvar imagem\" no menu do celular." : "📲 Fotos baixadas para este aparelho.");
+    } catch (erro) {
+      setAviso(`Não consegui preparar as fotos para o celular (${erro?.message || erro}). Elas continuam na Galeria PAIIA.`);
+    }
+    setSalvando(false);
+  }
+
   async function tentarDeNovo(id) {
     const fila = filaCamera(usuario);
     if (fila) fila.tentarDeNovo(id).catch(() => {});
@@ -72,15 +92,20 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
       </div>
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={aoFotografar} data-paiia-camera-input />
       <p style={{ margin: "10px 2px 0", color: "#94a3b8", fontSize: 13, lineHeight: 1.4 }}>
-        Tirar Foto: salva na Galeria PAIIA na hora e trata sozinho (fundo branco 1200×1200). Fica disponível no PAIIA Voz e no Criar Anúncio.
+        Tirar Foto: salva na Galeria PAIIA na hora e trata sozinho (fundo branco 1200×1200, recorte no próprio celular, sem custo). Fica disponível no PAIIA Voz e no Criar Anúncio. Dica: fotografe de perto, com a peça ocupando metade da tela.
       </p>
       {aviso && <div data-paiia-camera-aviso style={{ marginTop: 10, color: "#bfdbfe", fontSize: 14, fontWeight: 700 }}>{aviso}</div>}
-      {itens.length > 0 && (
+      {(itens.length > 0 || prontas.length > 0) && (
         <div style={{ marginTop: 12 }}>
           <div data-paiia-camera-resumo style={{ color: "#bbf7d0", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
-            {resumoCamera(itens)}
+            {resumoCamera(itens, prontas)}
             {abrirGaleria && <button type="button" onClick={abrirGaleria} style={{ marginLeft: 8, background: "none", border: "none", color: "#67e8f9", textDecoration: "underline", fontWeight: 700, cursor: "pointer", padding: 0 }}>Abrir Galeria</button>}
           </div>
+          {naoSalvas.length > 0 && (
+            <button type="button" data-paiia-salvar-celular disabled={salvando} onClick={salvarCelular} style={{ ...botao("#16a34a"), width: "100%", marginBottom: 8 }}>
+              {salvando ? "⏳ Preparando…" : `📲 Salvar no celular (${naoSalvas.length})`}
+            </button>
+          )}
           <div style={{ display: "grid", gap: 8 }}>
             {itens.slice(0, 12).map((item) => (
               <div key={item.id} data-paiia-camera-item={item.estado} style={{ display: "flex", gap: 10, alignItems: "center", background: "#020617", borderRadius: 12, padding: 8 }}>
