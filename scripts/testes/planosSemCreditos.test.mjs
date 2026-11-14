@@ -26,5 +26,6 @@ test("3) nenhuma outra menção visível a créditos (o cartão de crédito como
 test("4) preservados: Plano Profissional Ouro, R$ 149,90/mês, dados da conta e renovação", () => {
   assert.ok(tela.includes('nome: "Plano Profissional Ouro"') && tela.includes('preco: "R$ 149,90"') && tela.includes('periodo: "/mês"'));
   assert.ok(exibido.includes('titulo="Conta"') && exibido.includes('titulo="Renovação"'));
-  assert.ok(tela.includes('"Clip IA incluído na assinatura"'));
+  // (30/10, commit 86d5147) O Plano Ouro deixou de oferecer estes 3 benefícios, por decisão do usuário.
+  for (const b of ["50 Fotos IA profissionais incluídas por mês", "Banner Express IA", "Clip IA incluído na assinatura"]) assert.ok(!tela.includes(`"${b}"`), `${b} não volta`);
 });

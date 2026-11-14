@@ -14,7 +14,8 @@ import * as C from "../../src/modules/paiiaVoz/servicos/completarVoz.js";
 import { criarFichaVoz } from "../../src/modules/paiiaVoz/servicos/fichaVoz.js";
 import { ETAPAS } from "../../src/modules/paiiaVoz/servicos/rascunhoRapido.js";
 
-const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
+// (14/11) Fim de linha normalizado: no Windows o Git entrega os arquivos com CRLF.
+const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const LOJA = "1729335019";
 const API = "https://api.mercadolibre.com";
 

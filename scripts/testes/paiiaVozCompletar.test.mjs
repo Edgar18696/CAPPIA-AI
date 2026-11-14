@@ -13,7 +13,8 @@ import { definirTitulo, definirTextoDescricao, descricaoParaEnvio, mapearRapidoP
 import { dadosCompletosVoz } from "../../src/modules/paiiaVoz/servicos/fichaCompletaVoz.js";
 import * as C from "../../src/modules/paiiaVoz/servicos/completarVoz.js";
 
-const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
+// (14/11) Fim de linha normalizado: no Windows o Git entrega os arquivos com CRLF.
+const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const CONTAS = [{ id: "2412238242", nome: "REVELAÇÃO" }, { id: "1729335019", nome: "LOJA ONLINE" }, { id: "824312524", nome: "CIEBR" }];
 const OPC = { fotos: 4, contas: CONTAS, agora: 5 };
 const dizer = (f, t, o = {}) => C.responderCompletar(f, t, { ...OPC, ...o });
