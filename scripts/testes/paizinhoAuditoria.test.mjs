@@ -547,3 +547,17 @@ test("Central (12/11, 2ª): só 4 funções na página; cartões retirados conti
   const app = fs.readFileSync(path.join(RAIZ, "src/App.jsx"), "utf8");
   for (const tela of ["centralPrecificacao", "centralPesquisa", "novoAnuncio"]) assert.match(app, new RegExp(`screen === "${tela}"`));
 });
+
+test("Regras do ML (13/11): só regras oficiais; Cruzamento das 3 contas saiu da janela mas continua guardado", async () => {
+  const janela = fs.readFileSync(path.join(RAIZ, "src/components/RegrasMLAnuncios.jsx"), "utf8");
+  const tela = janela.slice(janela.indexOf("export default function RegrasMLAnuncios"));
+  assert.doesNotMatch(tela, /<CruzamentoContas|Ler as 3 contas|Cruzamento das 3 contas/, "nada do cruzamento na janela de Regras");
+  assert.match(tela, /Regras oficiais/);
+  // Funcionalidade preservada para o futuro "Comparativo das 3 Contas".
+  assert.match(janela, /export function CruzamentoContas\(\)/);
+  assert.match(janela, /lerTresContas\(\{ aoProgredir: setLendo \}\)/);
+  assert.match(janela, /montarCruzamento\(\)/);
+  const leitura = fs.readFileSync(path.join(RAIZ, "src/services/regrasML/leituraContas.js"), "utf8");
+  assert.match(leitura, /export (async )?function lerTresContas/);
+  assert.match(leitura, /export function montarCruzamento/);
+});

@@ -1,7 +1,11 @@
 // =============================================================
 // PAIIA — Central do Paizinho: janela "Regras do Mercado Livre — Anúncios".
-// SOMENTE LEITURA: mostra as regras oficiais (fonte e data), o cruzamento das
-// 3 contas, o risco e as recomendações. Nunca altera, pausa ou encerra anúncios.
+// SOMENTE LEITURA: mostra as regras oficiais (fonte e data), o risco e as
+// recomendações. Nunca altera, pausa ou encerra anúncios.
+// (13/11) O "Cruzamento das 3 contas" saiu desta janela (que fica só para regras
+// oficiais), mas o componente CruzamentoContas, a leitura (leituraContas.js) e os
+// resultados guardados no navegador continuam intactos, para a futura área
+// "Comparativo das 3 Contas".
 // =============================================================
 import { useMemo, useState } from "react";
 import { REGRAS, LACUNAS, NIVEIS_RISCO, RECOMENDACOES, SINAIS_MESMO_PRODUTO, ETAPAS, CONTAS_REGRAS, DATA_ACESSO } from "../services/regrasML/catalogoRegras";
@@ -16,7 +20,8 @@ const NIVEL = { alto: ["Precisa de atenção", "#f87171"], conferir: ["Conferir 
 const real = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const simNao = (v) => (v === true ? "✅ igual" : v === false ? "❌ diferente" : "— sem dado");
 
-function CruzamentoContas() {
+// (13/11) Guardado para a futura área "Comparativo das 3 Contas" (não aparece nas Regras).
+export function CruzamentoContas() {
   const [versao, setVersao] = useState(0);
   const [lendo, setLendo] = useState("");
   const [erro, setErro] = useState("");
@@ -118,8 +123,6 @@ export default function RegrasMLAnuncios({ aoFechar }) {
       </div>
 
       <div style={S.trava}>🔒 Somente leitura. Esta janela só faz consultas (GET) no Mercado Livre: nenhum anúncio é alterado, pausado ou encerrado. Qualquer ação depende da sua autorização, item por item.</div>
-
-      <CruzamentoContas />
 
       <h3 style={S.h3}>Situação</h3>
       <ul style={S.lista}>{ETAPAS.map((e) => <li key={e.etapa}><strong>{e.etapa}:</strong> <span style={e.situacao === "pronto" ? S.ok : S.pendente}>{e.situacao}</span></li>)}</ul>
