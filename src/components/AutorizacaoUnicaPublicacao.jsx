@@ -6,11 +6,11 @@
 // LOJA ONLINE segue com a autorização única (o mesmo piloto do PAIIA Voz: Bling, validação,
 // publicação travada no servidor, ativo, vínculo, Central); as outras contas seguem a Publicação
 // de sempre, conta por conta, com o seu toque em Publicar.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { nomeDaLoja, verificarDuplicidadeML } from "../services/duplicidadeML";
 import { novaAutorizacaoId } from "../services/pilotoPublicacao";
 import { consultorML, modalidadesDaConta, FRETE_SIMULADO_PERMITIDO } from "../services/consultaMLLeitura";
-import { conferirDuplicidadeBase, registrarContasPublicacao } from "../services/anuncioPublicacaoService";
+import { conferirDuplicidadeBase, obterAnuncio, registrarContasPublicacao } from "../services/anuncioPublicacaoService";
 import {
   CONTAS_PUBLICACAO_ML, CONTA_PUBLICACAO_AUTOMATICA, SITUACAO_CONTA, assinaturaVerificacao,
   montarPlanoContas, nomeContaPublicacao, resumoConfirmacao, verificarContasPublicacao,
@@ -32,6 +32,21 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
   const [marcado, setMarcado] = useState(false);
   const [gravando, setGravando] = useState(false);
   const [erro, setErro] = useState("");
+  // (Fila de contas) Ficha preparada para a PRÓXIMA conta: só pré-marca as contas que faltam.
+  // Nada é conferido nem confirmado sozinho: "Conferir" e "Confirmar" continuam sendo seus toques.
+  const [origemFila, setOrigemFila] = useState(null);
+  useEffect(() => {
+    let ativoEf = true;
+    if (!anuncioId) return undefined;
+    (async () => {
+      const r = await obterAnuncio(anuncioId);
+      const p = r?.ok ? r.anuncio?.dados_conferencia?.contas_publicacao : null;
+      if (!ativoEf || !p?.pendente || !Array.isArray(p.sugeridas) || !p.sugeridas.length) return;
+      setOrigemFila(p.origem || null);
+      setMarcadas((m) => (Object.keys(m).length ? m : Object.fromEntries(p.sugeridas.map((id) => [String(id), true]))));
+    })();
+    return () => { ativoEf = false; };
+  }, [anuncioId]);
   const conectadas = useMemo(() => new Set((contas || []).map((c) => String(c.ml_user_id || ""))), [contas]);
   // Publicação automática (piloto): por enquanto só LOJA ONLINE.
   const loja = (contas || []).find((c) => nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE");
@@ -102,6 +117,11 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
       <div style={{ fontSize: 13, color: "#bbf7d0", marginBottom: 8 }}>
         SKU <b>{sku || "—"}</b>{preco ? <> · preço <b>{preco}</b></> : ""}{quantidade ? <> · quantidade <b>{quantidade}</b></> : ""}. Marque uma, duas ou as três. Cada conta é conferida separadamente; um problema numa conta não trava as outras.
       </div>
+      {origemFila?.conta && (
+        <div data-paiia-origem-fila={origemFila.conta} style={{ fontSize: 13, color: "#bae6fd", marginBottom: 8 }}>
+          ➡ Continuação da fila: este anúncio já foi publicado em <b>{nomeContaPublicacao(origemFila.conta)}</b>{origemFila.mlb ? <> ({origemFila.mlb})</> : ""}. Marcamos as contas que faltam; confira e confirme.
+        </div>
+      )}
       <div style={{ display: "grid", gap: 6 }}>
         {CONTAS_PUBLICACAO_ML.map((c) => {
           const on = conectadas.has(c.id);

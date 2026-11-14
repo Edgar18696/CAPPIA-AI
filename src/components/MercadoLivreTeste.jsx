@@ -4,6 +4,7 @@ import PesoEmbalagemML from "./PesoEmbalagemML";
 import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
 import AutorizacaoUnicaPublicacao from "./AutorizacaoUnicaPublicacao";
 import { nomeContaPublicacao } from "../services/contasPublicacaoML";
+import FilaContasPublicacao from "./FilaContasPublicacao";
 import { nomeDaLoja } from "../services/duplicidadeML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
@@ -5043,7 +5044,8 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             {planoContas && (
               <div data-paiia-plano-contas={planoContas.confirmadas.join(",")} style={{ ...bloco, borderColor: "#22c55e", color: "#bbf7d0", fontSize: 14 }}>
                 ✅ Contas confirmadas: <b>{planoContas.confirmadas.map(nomeContaPublicacao).join(", ")}</b>. Esta ficha publica em <b>{nomeContaPublicacao(planoContas.conta_desta_ficha)}</b>.
-                {planoContas.fila.length > 0 && <> Depois: <b data-paiia-fila-contas>{planoContas.fila.map(nomeContaPublicacao).join(", ")}</b> (uma ficha por conta; cada uma com a sua conferência e o seu toque em Publicar).</>}
+                {planoContas.fila.length > 0 && <> Depois: <b data-paiia-fila-contas>{planoContas.fila.map(nomeContaPublicacao).join(", ")}</b> (uma ficha por conta; cada uma com a sua conferência e a sua confirmação).</>}
+                <FilaContasPublicacao anuncioId={anuncioIdPAIIA} plano={planoContas} publicada={false} />
               </div>
             )}
             <PilotoAutomaticoPublicacao

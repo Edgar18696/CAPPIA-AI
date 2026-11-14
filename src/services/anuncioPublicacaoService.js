@@ -5,6 +5,8 @@ import { CANAL, erroSelecao, montarRegistroCanais, normalizarSelecao, canaisSele
 import { lerRegistroDoSKU } from "./registroMLBService";
 import { registrosQueBloqueiam } from "./registroMLB";
 import { TEXTO_FICHA_EXCLUIDA } from "./exclusaoFicha";
+import { dadosParaProximaConta, nomeContaPublicacao, situacaoFila } from "./contasPublicacaoML.js";
+import { marcaDasFotos } from "./fotosDaFicha.js";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -710,7 +712,7 @@ export async function registrarContasPublicacao({ anuncioId, plano, codigo = "",
   const dados = a.dados_conferencia || {};
   const { error } = await supabase
     .from(T_ANUNCIOS)
-    .update({ dados_conferencia: { ...dados, contas_publicacao: plano }, updated_at: new Date().toISOString() })
+    .update({ dados_conferencia: { ...dados, contas_publicacao: dados.contas_publicacao?.origem ? { ...plano, origem: dados.contas_publicacao.origem } : plano }, updated_at: new Date().toISOString() })
     .eq("id", anuncioId)
     .eq("updated_at", a.updated_at);
   if (error) return falha(error);
@@ -722,6 +724,63 @@ export async function registrarContasPublicacao({ anuncioId, plano, codigo = "",
   const d = await salvarContaDestino({ anuncioId, codigo: codigo || a.codigo || "", titulo: titulo || a.titulo || "", contaId: conta, contaNome });
   if (!d.ok) return d;
   return { ok: true, registro: gravado };
+}
+
+/**
+ * (14/11/2026) FILA DE CONTAS: depois que esta ficha foi PUBLICADA, prepara a
+ * ficha da PRÓXIMA conta confirmada (cópia da ficha aprovada, sem MLB/Bling
+ * da publicação anterior). Não publica nada e não grava conta de destino: na
+ * ficha nova a conta passa pela conferência dela e pela sua confirmação.
+ * - Ficha ainda não publicada: recusa (a 1ª conta vem primeiro).
+ * - Já preparada antes (outro toque/aba): devolve a MESMA ficha, sem criar outra.
+ * Devolve { ok, anuncioId (ficha nova), conta, nova }.
+ */
+export async function prepararFichaProximaConta({ anuncioId }) {
+  if (!anuncioId) return { ok: false, erro: "Sem ficha para continuar a fila." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const a = atual.anuncio;
+  const plano = a.dados_conferencia?.contas_publicacao || null;
+  const contaFicha = String(a.publicacao?.ml_user_id || a.conta_destino_ml_user_id || "");
+  if (!publicacaoExiste(a.publicacao)) {
+    return { ok: false, naoPublicada: true, erro: `Primeiro termine a publicação desta ficha${contaFicha ? ` em ${nomeContaPublicacao(contaFicha)}` : ""}; depois a próxima conta é preparada.` };
+  }
+  const s = situacaoFila(plano);
+  if (s.vazia) return { ok: false, concluida: true, erro: "Não há outra conta na fila desta ficha." };
+  const conta = s.proxima;
+  // Já preparada (outro toque/aba/F5): reabre a MESMA ficha (cancelada/sumida = prepara de novo).
+  if (s.fichaPreparada) {
+    const existente = await obterAnuncio(s.fichaPreparada);
+    if (existente.ok && existente.anuncio.status_fluxo !== "cancelado") return { ok: true, anuncioId: existente.anuncio.id, conta, nova: false };
+  }
+  const criada = await salvarFichaAprovada({ anuncioId: "", codigo: a.codigo || "", titulo: a.titulo || "", dadosConferencia: {} });
+  if (!criada.ok) return criada;
+  const novoId = criada.anuncioId;
+  const dadosNovos = dadosParaProximaConta(a.dados_conferencia, {
+    novoId, origemId: a.id, origemConta: contaFicha, origemMlb: a.publicacao?.mlb_id || "",
+    sugeridas: s.fila, marcarFotos: marcaDasFotos,
+  });
+  const { error: erroNova } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dadosNovos, salvo_em: new Date().toISOString() }, updated_at: new Date().toISOString() })
+    .eq("id", novoId);
+  if (erroNova) { await cancelarFichaSemConta(novoId); return falha(erroNova); }
+  // Marca na ficha publicada que a conta seguinte já tem ficha (só a chave da fila).
+  const continuacoes = { ...s.continuacoes, [conta]: { ficha: novoId, criada_em: new Date().toISOString() } };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...a.dados_conferencia, contas_publicacao: { ...plano, continuacoes } } })
+    .eq("id", a.id)
+    .eq("updated_at", a.updated_at);
+  const relida = await obterAnuncio(a.id);
+  const gravada = relida.ok ? relida.anuncio.dados_conferencia?.contas_publicacao?.continuacoes?.[conta]?.ficha : "";
+  if (error || gravada !== novoId) {
+    // Outro toque/aba preparou ao mesmo tempo: a ficha criada aqui é cancelada e vale a outra.
+    await cancelarFichaSemConta(novoId);
+    if (gravada) return { ok: true, anuncioId: gravada, conta, nova: false };
+    return error ? falha(error) : { ok: false, erro: "A ficha mudou ao mesmo tempo: a próxima conta não foi preparada. Tente de novo." };
+  }
+  return { ok: true, anuncioId: novoId, conta, nova: true };
 }
 
 /** Vínculo com o produto criado no Bling (após a criação autorizada). */

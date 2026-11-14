@@ -17,7 +17,7 @@ register("./simulacao/ganchoSupabaseFalso.mjs", import.meta.url);
 
 const { banco, zerarBanco } = await import("./simulacao/supabaseFalso.mjs");
 const C = await import("../../src/services/contasPublicacaoML.js");
-const { salvarFichaAprovada, registrarContasPublicacao, registrarMLBPublicado, obterAnuncio, CHAVES_PRESERVADAS_FICHA } = await import("../../src/services/anuncioPublicacaoService.js");
+const { salvarFichaAprovada, registrarContasPublicacao, registrarMLBPublicado, obterAnuncio, CHAVES_PRESERVADAS_FICHA, prepararFichaProximaConta } = await import("../../src/services/anuncioPublicacaoService.js");
 
 const { registroPublicado } = await import("../../src/services/vinculoBlingPublicacao.js");
 
@@ -225,9 +225,173 @@ test("12) telas: seletor de conta saiu do frete do Novo Anúncio; Publicação c
   assert.ok(a.includes("verificarContasPublicacao({ selecao, dados, deps })"));
   assert.ok(a.includes("disabled={!marcado}") && a.includes("Autorizo publicar SOMENTE em:"), "confirmação final com as contas exatas");
   assert.ok(a.indexOf("onAutorizar?.(") > a.indexOf("async function confirmar()"), "piloto só depois da confirmação");
-  assert.ok(!/useEffect/.test(a), "nada dispara sozinho");
+  const efeito = a.slice(a.indexOf("useEffect(() => {"), a.indexOf("}, [anuncioId]);"));
+  assert.ok(efeito.includes("obterAnuncio(anuncioId)") && !/verificar\(|confirmar\(|onAutorizar|onManual|registrarContasPublicacao/.test(efeito), "abrir a ficha só pré-marca contas: nada é conferido ou confirmado sozinho");
   const m = ler("src/components/MercadoLivreTeste.jsx");
   assert.ok(m.includes("contasPermitidas={planoContas ? [planoContas.conta_desta_ficha] : null}"));
   const r = ler("src/components/RevisaoPublicacaoML.jsx");
   assert.ok(r.includes("if ((auto || estimativaDeOutraConta) && contaEscolhida)"), "frete oficial recotado na conta da ficha");
+});
+
+// ------------------------- cenários 1, 2 e 3 contas -------------------------
+async function cenario(selecao, ml = {}) {
+  const { deps } = mlFalso(ml);
+  const v = await C.verificarContasPublicacao({ selecao, dados: DADOS, deps });
+  return { v, resumo: C.resumoConfirmacao(v.resultados), plano: C.montarPlanoContas({ selecao, resultados: v.resultados }) };
+}
+
+test("13) UMA conta (cada uma sozinha): conferida, confirmada e sem fila", async () => {
+  for (const [id, nome] of [[LOJA, "LOJA ONLINE"], [REV, "REVELAÇÃO"], [CIE, "CIEBR"]]) {
+    const { v, resumo, plano } = await cenario([id]);
+    assert.deepEqual(v.contas, [id]);
+    assert.equal(resumo.texto, `Publicar SOMENTE em: ${nome}.`);
+    assert.equal(plano.conta_desta_ficha, id);
+    assert.deepEqual(plano.fila, []);
+  }
+});
+
+test("14) DUAS contas (todas as combinações): as duas conferidas, 1ª nesta ficha e 2ª na fila", async () => {
+  for (const par of [[LOJA, REV], [LOJA, CIE], [REV, CIE]]) {
+    const { v, resumo, plano } = await cenario([...par].reverse());
+    assert.deepEqual(v.contas, par, "ordem fixa, independente da ordem dos cliques");
+    assert.deepEqual(resumo.contas, par);
+    assert.equal(plano.conta_desta_ficha, par[0]);
+    assert.deepEqual(plano.fila, [par[1]]);
+  }
+  const { resumo, plano } = await cenario([LOJA, CIE], { falhaFrete: { [LOJA]: true } });
+  assert.equal(resumo.texto, "Publicar SOMENTE em: CIEBR. Fora desta publicação: LOJA ONLINE.", "impedimento na 1ª não trava a 2ª");
+  assert.equal(plano.conta_desta_ficha, CIE);
+});
+
+test("15) TRÊS contas: impedimento em qualquer uma deixa as outras duas disponíveis", async () => {
+  const todas = await cenario([LOJA, REV, CIE]);
+  assert.equal(todas.resumo.texto, "Publicar SOMENTE em: LOJA ONLINE, REVELAÇÃO, CIEBR.");
+  assert.deepEqual(todas.plano.fila, [REV, CIE]);
+  for (const impedida of [LOJA, REV, CIE]) {
+    const { v, resumo, plano } = await cenario([LOJA, REV, CIE], { itensSku: { [impedida]: [{ id: "MLB777", sku: "TESTE-CONTAS-001" }] } });
+    assert.equal(porConta(v, impedida).situacao, "impedida");
+    const outras = [LOJA, REV, CIE].filter((x) => x !== impedida);
+    assert.deepEqual(resumo.contas, outras);
+    assert.deepEqual([plano.conta_desta_ficha, ...plano.fila], outras);
+    assert.deepEqual(plano.impedidas.map((x) => x.conta), [impedida]);
+  }
+  const nenhuma = await cenario([LOJA, REV, CIE], { conectadas: [] });
+  assert.deepEqual(nenhuma.resumo.contas, []);
+  assert.equal(nenhuma.plano.conta_desta_ficha, "");
+});
+
+// ------------------------- fila de contas -------------------------
+test("16) ficha da próxima conta: mesma Conferência, fotos remarcadas para o ID novo, nada da publicação anterior", () => {
+  const dados = {
+    versao: 2, anuncio: { codigo: "X" }, novo_anuncio: { fotos: ["a.jpg"] }, canais_publicacao: { selecionados: ["mercado_livre"] },
+    integracao_bling: { mlb: "MLB1" }, mlbs_anteriores: [1], pos_publicacao: { x: 1 }, contas_publicacao: { fila: [REV] },
+    ficha: { campos: { anuncioIdPAIIA: "velho", contaDestinoML: LOJA, fotos: ["a.jpg"], fotosFichaId: "velho:1" }, anuncioConferido: { codigo: "X", fotos: ["a.jpg"], fotosFichaId: "velho:1" }, etapa: "publicacao" },
+  };
+  const d = C.dadosParaProximaConta(dados, { novoId: "novo", origemId: "velho", origemConta: LOJA, origemMlb: "MLB1", sugeridas: [CIE, REV], marcarFotos: (id) => `${id}:m` });
+  for (const k of C.CHAVES_DA_PUBLICACAO_ANTERIOR.filter((k) => k !== "contas_publicacao")) assert.equal(d[k], undefined, k);
+  assert.deepEqual(d.canais_publicacao, dados.canais_publicacao);
+  assert.equal(d.ficha.campos.anuncioIdPAIIA, "novo");
+  assert.equal(d.ficha.campos.contaDestinoML, "");
+  assert.equal(d.ficha.campos.fotosFichaId, "novo:m");
+  assert.equal(d.ficha.anuncioConferido.fotosFichaId, "novo:m");
+  assert.deepEqual(d.contas_publicacao, { versao: 1, pendente: true, sugeridas: [REV, CIE], origem: { ficha: "velho", conta: LOJA, mlb: "MLB1" }, criado_em: d.contas_publicacao.criado_em });
+  assert.equal(dados.ficha.campos.anuncioIdPAIIA, "velho", "a ficha publicada não é alterada");
+  assert.deepEqual(C.situacaoFila({ fila: [CIE, REV] }), { fila: [REV, CIE], continuacoes: {}, proxima: REV, fichaPreparada: "", vazia: false });
+  assert.equal(C.situacaoFila({ fila: [] }).vazia, true);
+});
+
+async function fichaPublicadaCom(contas, conta) {
+  const dadosConf = { versao: 2, anuncio: { codigo: "TESTE-CONTAS-001" }, ficha: { campos: { quantidadeEstoque: "3", fotos: ["https://x/f1.jpg"] }, anuncioConferido: { codigo: "TESTE-CONTAS-001", fotos: ["https://x/f1.jpg"] }, assinaturaAprovada: "[x]", etapa: "publicacao" } };
+  const ap = await salvarFichaAprovada({ anuncioId: "", codigo: "TESTE-CONTAS-001", titulo: "Peça teste", dadosConferencia: dadosConf });
+  const res = contas.map((c) => ({ conta: c, nome: C.nomeContaPublicacao(c), situacao: "liberada" }));
+  const plano = C.montarPlanoContas({ selecao: contas, resultados: res });
+  assert.equal(plano.conta_desta_ficha, conta);
+  const r = await registrarContasPublicacao({ anuncioId: ap.anuncioId, plano, codigo: "TESTE-CONTAS-001", titulo: "Peça teste", contaNome: C.nomeContaPublicacao(conta) });
+  assert.equal(r.ok, true, r.erro);
+  return ap.anuncioId;
+}
+async function publicar(id, conta, mlb) {
+  const reg = registroPublicado({ mlb, contaId: conta, skuOficial: "TESTE-CONTAS-001", produtoBlingId: "1", preco: 10 });
+  const r = await registrarMLBPublicado({ anuncioId: id, contaId: conta, mlb, sku: "TESTE-CONTAS-001", registro: reg });
+  assert.equal(r.ok, true, r.erro);
+}
+
+test("17) fila completa (base FALSA): LOJA ONLINE → REVELAÇÃO → CIEBR, uma ficha por conta, sem duplicar e sem publicar sozinho", async () => {
+  zerarBanco();
+  const a = await fichaPublicadaCom([LOJA, REV, CIE], LOJA);
+  const antes = await prepararFichaProximaConta({ anuncioId: a });
+  assert.equal(antes.ok, false);
+  assert.equal(antes.naoPublicada, true, "a próxima conta só depois de publicar a 1ª");
+  assert.equal(banco.tabelas.paiia_anuncios.length, 1);
+
+  await publicar(a, LOJA, "MLB100000001");
+  const b1 = await prepararFichaProximaConta({ anuncioId: a });
+  assert.equal(b1.ok, true, b1.erro);
+  assert.equal(b1.conta, REV);
+  assert.equal(b1.nova, true);
+  const b2 = await prepararFichaProximaConta({ anuncioId: a });
+  assert.equal(b2.anuncioId, b1.anuncioId, "toque repetido reabre a MESMA ficha");
+  assert.equal(b2.nova, false);
+  assert.equal(banco.tabelas.paiia_anuncios.length, 2);
+
+  const fb = (await obterAnuncio(b1.anuncioId)).anuncio;
+  assert.equal(fb.conta_destino_ml_user_id ?? null, null, "conta da ficha nova só com a confirmação");
+  assert.equal(fb.publicacao, null, "nada publicado");
+  assert.deepEqual(fb.dados_conferencia.contas_publicacao.sugeridas, [REV, CIE]);
+  assert.equal(fb.dados_conferencia.contas_publicacao.origem.mlb, "MLB100000001");
+  assert.equal(fb.dados_conferencia.ficha.campos.anuncioIdPAIIA, b1.anuncioId);
+  assert.ok(String(fb.dados_conferencia.ficha.campos.fotosFichaId).startsWith(`${b1.anuncioId}:`), "fotos continuam valendo na ficha nova");
+  assert.equal(fb.dados_conferencia.integracao_bling, undefined);
+  const fa = (await obterAnuncio(a)).anuncio;
+  assert.equal(fa.publicacao.mlb_id, "MLB100000001", "ficha publicada intacta");
+  assert.equal(fa.dados_conferencia.contas_publicacao.continuacoes[REV].ficha, b1.anuncioId);
+
+  // Na ficha de REVELAÇÃO: conferência dela + confirmação (REVELAÇÃO e CIEBR).
+  const planoB = C.montarPlanoContas({ selecao: [REV, CIE], resultados: [{ conta: REV, nome: "REVELAÇÃO", situacao: "liberada" }, { conta: CIE, nome: "CIEBR", situacao: "liberada" }] });
+  const rb = await registrarContasPublicacao({ anuncioId: b1.anuncioId, plano: planoB, codigo: "TESTE-CONTAS-001", titulo: "Peça teste", contaNome: "REVELAÇÃO" });
+  assert.equal(rb.ok, true, rb.erro);
+  const fb2 = (await obterAnuncio(b1.anuncioId)).anuncio;
+  assert.equal(fb2.conta_destino_ml_user_id, REV);
+  assert.equal(fb2.dados_conferencia.contas_publicacao.origem.ficha, a, "origem da fila preservada");
+  assert.equal((await prepararFichaProximaConta({ anuncioId: b1.anuncioId })).naoPublicada, true);
+  await publicar(b1.anuncioId, REV, "MLB200000002");
+  const c = await prepararFichaProximaConta({ anuncioId: b1.anuncioId });
+  assert.equal(c.ok, true, c.erro);
+  assert.equal(c.conta, CIE);
+  assert.deepEqual((await obterAnuncio(c.anuncioId)).anuncio.dados_conferencia.contas_publicacao.sugeridas, [CIE]);
+
+  const planoC = C.montarPlanoContas({ selecao: [CIE], resultados: [{ conta: CIE, nome: "CIEBR", situacao: "liberada" }] });
+  assert.equal((await registrarContasPublicacao({ anuncioId: c.anuncioId, plano: planoC, contaNome: "CIEBR" })).ok, true);
+  await publicar(c.anuncioId, CIE, "MLB300000003");
+  const fim = await prepararFichaProximaConta({ anuncioId: c.anuncioId });
+  assert.equal(fim.ok, false);
+  assert.equal(fim.concluida, true, "fila concluída");
+  const mlbs = banco.tabelas.paiia_anuncios_publicacoes.map((p) => [p.ml_user_id, p.mlb_id]).sort();
+  assert.deepEqual(mlbs, [[CIE, "MLB300000003"], [REV, "MLB200000002"], [LOJA, "MLB100000001"]].sort(), "um MLB por conta, cada um na sua ficha");
+});
+
+test("18) fila: ficha da próxima conta cancelada é preparada de novo; ficha com 1 conta não tem fila", async () => {
+  zerarBanco();
+  const a = await fichaPublicadaCom([LOJA, CIE], LOJA);
+  await publicar(a, LOJA, "MLB100000009");
+  const b = await prepararFichaProximaConta({ anuncioId: a });
+  banco.tabelas.paiia_anuncios.find((x) => x.id === b.anuncioId).status_fluxo = "cancelado";
+  const b2 = await prepararFichaProximaConta({ anuncioId: a });
+  assert.equal(b2.ok, true);
+  assert.notEqual(b2.anuncioId, b.anuncioId);
+  assert.equal(b2.conta, CIE);
+
+  zerarBanco();
+  const s = await fichaPublicadaCom([REV], REV);
+  await publicar(s, REV, "MLB100000010");
+  assert.equal((await prepararFichaProximaConta({ anuncioId: s })).concluida, true);
+});
+
+test("19) telas da fila: tela final e Publicação mostram a próxima conta; nada publica sozinho", () => {
+  const f = ler("src/components/FilaContasPublicacao.jsx");
+  assert.ok(f.includes("prepararFichaProximaConta({ anuncioId })") && f.includes("onClick={preparar}"));
+  assert.ok(!/useEffect|registrarMLBPublicado|onAutorizar/.test(f), "só prepara a ficha quando você toca");
+  assert.ok(ler("src/components/FichaPublicadaPAIIA.jsx").includes("<FilaContasPublicacao anuncioId={ficha?.id || \"\"} plano={ficha?.dados_conferencia?.contas_publicacao || null} />"));
+  assert.ok(ler("src/components/MercadoLivreTeste.jsx").includes("<FilaContasPublicacao anuncioId={anuncioIdPAIIA} plano={planoContas} publicada={false} />"));
+  assert.ok(ler("src/services/fichasCentral.js").includes('url.searchParams.delete("auto");'), "ficha da próxima conta nunca herda a autorização automática anterior");
 });

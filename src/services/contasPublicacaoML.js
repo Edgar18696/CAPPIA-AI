@@ -262,3 +262,55 @@ export function contaReferenciaFrete(contasConectadas = []) {
     || lista[0]
     || null;
 }
+
+// ------------------------------------------------------------------
+// FILA DE CONTAS (14/11/2026). Uma ficha publica em UMA conta do Mercado
+// Livre. Depois de publicada, a próxima conta confirmada ganha a SUA ficha:
+// cópia da ficha aprovada (mesmo anúncio, mesmas fotos), sem nada da
+// publicação anterior (MLB, vínculo Bling). Na ficha nova a conta passa de
+// novo pela conferência daquela conta e pela sua confirmação final.
+// ------------------------------------------------------------------
+
+/** Chaves da ficha que pertencem à PUBLICAÇÃO anterior: nunca vão para a ficha da próxima conta. */
+export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas"]);
+
+/**
+ * Situação da fila numa ficha publicada. A ficha só aponta a PRÓXIMA conta
+ * (fila[0]); as seguintes vão junto como sugestão e continuam a partir da
+ * ficha nova (que terá a sua própria fila depois da confirmação).
+ */
+export function situacaoFila(plano) {
+  const fila = normalizarContasSelecionadas(plano?.fila || []);
+  const continuacoes = plano?.continuacoes && typeof plano.continuacoes === "object" ? plano.continuacoes : {};
+  const proxima = fila[0] || "";
+  return { fila, continuacoes, proxima, fichaPreparada: proxima ? txt(continuacoes[proxima]?.ficha) : "", vazia: !proxima };
+}
+
+/**
+ * dados_conferencia da ficha da PRÓXIMA conta: a mesma Conferência aprovada,
+ * com a marca das fotos refeita para o ID novo (as fotos continuam valendo),
+ * sem as chaves da publicação anterior e com o pedido de contas pendente.
+ */
+export function dadosParaProximaConta(dados, { novoId, origemId, origemConta = "", origemMlb = "", sugeridas = [], marcarFotos = null, agora = new Date().toISOString() }) {
+  const d = JSON.parse(JSON.stringify(dados || {}));
+  for (const k of CHAVES_DA_PUBLICACAO_ANTERIOR) delete d[k];
+  if (d.ficha && typeof d.ficha === "object") {
+    const campos = d.ficha.campos && typeof d.ficha.campos === "object" ? d.ficha.campos : null;
+    const conf = d.ficha.anuncioConferido && typeof d.ficha.anuncioConferido === "object" ? d.ficha.anuncioConferido : null;
+    if (campos) {
+      campos.anuncioIdPAIIA = novoId;
+      campos.contaDestinoML = "";
+      if (marcarFotos && Array.isArray(campos.fotos) && campos.fotos.length) campos.fotosFichaId = marcarFotos(novoId, campos.fotos);
+    }
+    if (conf && marcarFotos && Array.isArray(conf.fotos) && conf.fotos.length) conf.fotosFichaId = marcarFotos(novoId, conf.fotos);
+    if (conf && conf.fichaIdPAIIA) conf.fichaIdPAIIA = novoId;
+  }
+  d.contas_publicacao = {
+    versao: 1,
+    pendente: true,
+    sugeridas: normalizarContasSelecionadas(sugeridas),
+    origem: { ficha: origemId, conta: idConta(origemConta), mlb: txt(origemMlb) },
+    criado_em: agora,
+  };
+  return d;
+}

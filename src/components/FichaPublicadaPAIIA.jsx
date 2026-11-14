@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../supabase";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
+import FilaContasPublicacao from "./FilaContasPublicacao";
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import CorrecaoCompatMLB from "./CorrecaoCompatMLB";
 import { registroDaFichaOuPublicacao, conferirIntegracao, precisaConferir, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
@@ -126,6 +127,8 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
           ← Voltar à Central de Publicação
         </button>
       </div>
+      {/* (14/11) Contas confirmadas que ainda faltam: a próxima ganha a sua ficha (nada é publicado aqui). */}
+      <FilaContasPublicacao anuncioId={ficha?.id || ""} plano={ficha?.dados_conferencia?.contas_publicacao || null} />
       <section style={caixa}>
         <h2 style={{ color: "#86efac", margin: "0 0 6px" }}>📋 Tela final da ficha — {concluido ? "fluxo concluído" : "fluxo ainda não concluído"}</h2>
         <p style={linha}>
