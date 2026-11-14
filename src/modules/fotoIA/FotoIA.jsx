@@ -302,22 +302,8 @@ export default function FotoIA({
             </option>
           </select>
 
-          {/* (10/11) Modo Econômico (padrão): remove o fundo sem IA generativa e mantém a peça original. */}
-          <div
-            data-paiia-foto-modo="economico"
-            title="Recorte no próprio aparelho, sem créditos — mantém a peça original (PNG 1200 × 1200)"
-            style={{
-              padding: "9px 12px",
-              borderRadius: "10px",
-              background: "#052e16",
-              color: "#bbf7d0",
-              border: "1px solid #16a34a",
-              fontSize: "13px",
-              maxWidth: "100%",
-            }}
-          >
-            🟢 Modo Econômico · sem créditos · PNG 1200 × 1200
-          </div>
+          {/* (10/11) Modo Econômico (padrão) continua funcionando no "Escolher Foto".
+              (14/11) Só o aviso de modo econômico saiu da tela principal. */}
 
           {typeof setAplicarSombra === "function" && (
             <label

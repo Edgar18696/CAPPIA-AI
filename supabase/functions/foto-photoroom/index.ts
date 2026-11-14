@@ -9,7 +9,8 @@
 // Segurança e uso:
 // - exige login; a foto precisa estar na pasta do próprio usuário;
 // - a chave fica no segredo PHOTOROOM_API_KEY (nunca no navegador);
-// - limite mensal por usuário (FOTO_PHOTOROOM_LIMITE_MENSAL, padrão 100),
+// - mesma foto nunca é cobrada duas vezes (recorte com nome fixo, reaproveitado);
+// - limite mensal por usuário (FOTO_PHOTOROOM_LIMITE_MENSAL, padrão 1000),
 //   contado pelos recortes salvos em <usuario>/recortes-photoroom/AAAA-MM/
 //   (sem tabela nova); falha no Photoroom não conta uso;
 // - foto até 30 MB; espera do Photoroom limitada a ~100 s.
@@ -43,6 +44,12 @@ export function caminhoPertenceAoUsuario(caminho: string, usuarioId: string) {
   return texto.startsWith(`${usuarioId}/originais/`);
 }
 
+/** (14/11) Nome fixo do recorte de UMA foto original (mesma foto = mesmo arquivo). */
+export function nomeDoRecorte(caminho: string) {
+  const base = String(caminho || "").split("/").pop() || "foto";
+  return `${base.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120) || "foto"}.png`;
+}
+
 export function codigoDoStatus(status: number) {
   if (status === 401) return "CHAVE_INVALIDA";
   if (status === 402 || status === 403) return "SEM_CREDITO";
@@ -58,7 +65,9 @@ Deno.serve(async (req) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("ANON_KEY") || "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SERVICE_ROLE_KEY") || "";
   const chavePhotoroom = Deno.env.get("PHOTOROOM_API_KEY") || "";
-  const limiteMensal = Math.max(0, Number.parseInt(Deno.env.get("FOTO_PHOTOROOM_LIMITE_MENSAL") || "100", 10) || 0);
+  // (14/11) Franquia PRÓPRIA do Photoroom Basic (1.000/mês contratadas), separada do
+  // limite de 50 do "foto-ia". Pode ser ajustada no segredo FOTO_PHOTOROOM_LIMITE_MENSAL.
+  const limiteMensal = Math.max(0, Number.parseInt(Deno.env.get("FOTO_PHOTOROOM_LIMITE_MENSAL") || "1000", 10) || 0);
 
   if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     return json(req, { sucesso: false, erro: "Foto Profissional indisponível no momento." }, 503);
@@ -93,9 +102,17 @@ Deno.serve(async (req) => {
   // 1) Limite do mês, antes de gastar com o Photoroom.
   const mes = new Date().toISOString().slice(0, 7);
   const pastaMes = `${usuario.id}/recortes-photoroom/${mes}`;
-  const { data: doMes, error: erroLista } = await admin.storage.from(BUCKET).list(pastaMes, { limit: limiteMensal + 1 });
+  const { data: doMes, error: erroLista } = await admin.storage.from(BUCKET).list(pastaMes, { limit: Math.min(limiteMensal + 1, 1000) });
   if (erroLista) return json(req, { sucesso: false, erro: "Não foi possível verificar seu limite do mês." }, 503);
   const usadas = (doMes || []).filter((o) => o.name.endsWith(".png")).length;
+
+  // (14/11) A MESMA foto nunca é cobrada duas vezes: se o recorte dela já existe
+  // (nova tentativa depois de falha na montagem, na Galeria ou na rede), reaproveita.
+  const nomeRecorte = nomeDoRecorte(caminho);
+  if ((doMes || []).some((o) => o.name === nomeRecorte)) {
+    const { data: jaFeito } = admin.storage.from(BUCKET).getPublicUrl(`${pastaMes}/${nomeRecorte}`);
+    return json(req, { sucesso: true, recorteUrl: jaFeito.publicUrl, reaproveitado: true, uso: { usadas, limite: limiteMensal } });
+  }
   if (usadas >= limiteMensal) {
     return json(req, { sucesso: false, codigo: "LIMITE_MENSAL", erro: `Você atingiu o limite de ${limiteMensal} fotos profissionais deste mês.`, uso: { usadas, limite: limiteMensal } }, 429);
   }
@@ -130,8 +147,8 @@ Deno.serve(async (req) => {
   if (!recorte.length) return json(req, { sucesso: false, erro: "O Photoroom devolveu um recorte vazio." }, 502);
 
   // 4) Guarda o recorte (é também o contador do mês) e devolve o endereço.
-  const caminhoRecorte = `${pastaMes}/${Date.now()}-${crypto.randomUUID()}.png`;
-  const { error: erroSalvar } = await admin.storage.from(BUCKET).upload(caminhoRecorte, recorte, { contentType: "image/png", upsert: false });
+  const caminhoRecorte = `${pastaMes}/${nomeRecorte}`; // (14/11) nome fixo por foto: reaproveitável
+  const { error: erroSalvar } = await admin.storage.from(BUCKET).upload(caminhoRecorte, recorte, { contentType: "image/png", upsert: true });
   if (erroSalvar) return json(req, { sucesso: false, erro: "O recorte foi feito, mas não foi salvo. Tente novamente." }, 503);
   const { data: publico } = admin.storage.from(BUCKET).getPublicUrl(caminhoRecorte);
 

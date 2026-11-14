@@ -47,11 +47,16 @@ export async function recortarPhotoroom(foto, { caminho = "", dev = Boolean(impo
 export function recortarComReserva({ photoroom, gratis, aoFalharPhotoroom = () => {} }) {
   return async (foto, contexto = {}) => {
     let falhaPhotoroom;
-    try {
-      return await photoroom(foto, contexto);
-    } catch (e) {
-      falhaPhotoroom = e;
-      try { aoFalharPhotoroom(e); } catch { /* ignora */ }
+    if (contexto?.semPhotoroom) {
+      // (14/11) Sem nova chamada paga: tentativa automática ou 2ª fonte da mesma foto.
+      falhaPhotoroom = new Error("Photoroom não repetido automaticamente");
+    } else {
+      try {
+        return await photoroom(foto, contexto);
+      } catch (e) {
+        falhaPhotoroom = e;
+        try { aoFalharPhotoroom(e); } catch { /* ignora */ }
+      }
     }
     try {
       const r = await gratis(foto, contexto);

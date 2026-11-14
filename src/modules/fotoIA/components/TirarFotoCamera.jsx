@@ -3,14 +3,18 @@
 // (fundo branco 1200×1200) → a mesma foto na Galeria fica tratada. Pode sair da tela:
 // o trabalho continua em segundo plano (FotosCameraSegundoPlano) e é retomado se o
 // navegador fechar. "Escolher Foto" abre a escolha de sempre (lotes de até 8).
+// (14/11) Tela simples: só "Tratando fotografia" e "Salva na Galeria". Baixar a foto
+// fica na Galeria (o botão "Salvar no celular" saiu daqui).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../supabase";
 import { usuarioDaGaleria } from "../../paiiaVoz/servicos/galeriaVoz";
-import { EVENTO_CAMERA, filaCamera, baixar } from "../../../services/fotoIA/filaCameraApp";
-import { salvarNoAparelho, criarArquivoNavegador, baixarArquivoNavegador } from "../../../services/fotoIA/salvarNoAparelho";
+import { EVENTO_CAMERA, filaCamera } from "../../../services/fotoIA/filaCameraApp";
 import { ROTULO_CAMERA, resumoCamera } from "../../../services/fotoIA/fotoCameraGaleria";
 
-const COR = { salvando: "#fde68a", salva: "#93c5fd", tratando: "#93c5fd", pronta: "#86efac", falhou: "#fca5a5" };
+const COR = { salvando: "#93c5fd", salva: "#93c5fd", tratando: "#93c5fd", pronta: "#86efac", falhou: "#fca5a5" };
+
+/** Só a parte clara da mensagem de falha (os detalhes técnicos ficam guardados). */
+const erroCurto = (t) => String(t || "").split(" Detalhes:")[0];
 
 function Miniatura({ item }) {
   const local = useMemo(() => (!item.urlTratada && item.blob instanceof Blob ? URL.createObjectURL(item.blob) : ""), [item.urlTratada, item.blob]);
@@ -25,7 +29,6 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
   const [itens, setItens] = useState([]);
   const [prontas, setProntas] = useState([]);
   const [aviso, setAviso] = useState("");
-  const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
     let vivo = true;
@@ -42,7 +45,7 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
 
   useEffect(() => {
     const t = setTimeout(recarregar, 0);
-    const aoMudar = () => recarregar();
+    const aoMudar = () => { setAviso(""); recarregar(); };
     globalThis.addEventListener(EVENTO_CAMERA, aoMudar);
     return () => { clearTimeout(t); globalThis.removeEventListener(EVENTO_CAMERA, aoMudar); };
   }, [recarregar]);
@@ -55,26 +58,10 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
     if (!fila) { setAviso("Entre na sua conta PAIIA para salvar as fotos na Galeria."); return; }
     try {
       const novos = await fila.adicionar(arquivos);
-      setAviso(novos.length ? "📥 Foto recebida: salvando na Galeria e tratando sozinho. Pode tirar a próxima ou sair da tela." : "Esse arquivo não é uma imagem.");
+      if (!novos.length) setAviso("Esse arquivo não é uma imagem.");
     } catch (erro) {
       setAviso(`Não consegui guardar a foto neste aparelho (${erro?.message || erro}). Tente de novo.`);
     }
-  }
-
-  // (13/11) Um toque: abre o menu do celular ("Salvar imagem"); sem menu, baixa os arquivos.
-  const naoSalvas = prontas.filter((p) => !p.salvaNoAparelho);
-  async function salvarCelular() {
-    const fila = filaCamera(usuario);
-    if (!fila || !naoSalvas.length) return;
-    setSalvando(true);
-    try {
-      const r = await salvarNoAparelho(naoSalvas, { baixar, criarArquivo: criarArquivoNavegador, baixarArquivo: baixarArquivoNavegador });
-      if (r.ids.length) fila.marcarSalvas(r.ids);
-      setAviso(r.modo === "cancelado" ? "" : r.modo === "compartilhar" ? "📲 Escolha \"Salvar imagem\" no menu do celular." : "📲 Fotos baixadas para este aparelho.");
-    } catch (erro) {
-      setAviso(`Não consegui preparar as fotos para o celular (${erro?.message || erro}). Elas continuam na Galeria PAIIA.`);
-    }
-    setSalvando(false);
   }
 
   async function tentarDeNovo(id) {
@@ -97,28 +84,22 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
       </div>
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={aoFotografar} data-paiia-camera-input />
       <p style={{ margin: "10px 2px 0", color: "#94a3b8", fontSize: 13, lineHeight: 1.4 }}>
-        Tirar Foto: salva na Galeria PAIIA na hora e trata sozinho (fundo branco 1200×1200, recorte no próprio celular, sem custo). Fica disponível no PAIIA Voz e no Criar Anúncio. Dica: fotografe de perto, com a peça ocupando metade da tela.
+        Tire a foto: o PAIIA coloca fundo branco e salva na Galeria. Dica: fotografe de perto, com a peça ocupando metade da tela.
       </p>
       {aviso && <div data-paiia-camera-aviso style={{ marginTop: 10, color: "#bfdbfe", fontSize: 14, fontWeight: 700 }}>{aviso}</div>}
       {(itens.length > 0 || prontas.length > 0) && (
         <div style={{ marginTop: 12 }}>
-          <div data-paiia-camera-resumo style={{ color: "#bbf7d0", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+          <div data-paiia-camera-resumo style={{ color: "#bbf7d0", fontSize: 14, fontWeight: 700, marginBottom: 8 }}>
             {resumoCamera(itens, prontas)}
-            {abrirGaleria && <button type="button" onClick={abrirGaleria} style={{ marginLeft: 8, background: "none", border: "none", color: "#67e8f9", textDecoration: "underline", fontWeight: 700, cursor: "pointer", padding: 0 }}>Abrir Galeria</button>}
+            {abrirGaleria && prontas.length > 0 && <button type="button" onClick={abrirGaleria} style={{ marginLeft: 8, background: "none", border: "none", color: "#67e8f9", textDecoration: "underline", fontWeight: 700, cursor: "pointer", padding: 0 }}>Abrir Galeria</button>}
           </div>
-          {naoSalvas.length > 0 && (
-            <button type="button" data-paiia-salvar-celular disabled={salvando} onClick={salvarCelular} style={{ ...botao("#16a34a"), width: "100%", marginBottom: 8 }}>
-              {salvando ? "⏳ Preparando…" : `📲 Salvar no celular (${naoSalvas.length})`}
-            </button>
-          )}
           <div style={{ display: "grid", gap: 8 }}>
             {itens.slice(0, 12).map((item) => (
               <div key={item.id} data-paiia-camera-item={item.estado} style={{ display: "flex", gap: 10, alignItems: "center", background: "#020617", borderRadius: 12, padding: 8 }}>
                 <Miniatura item={item} />
                 <div style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
                   <div style={{ color: COR[item.estado] || "#e2e8f0", fontWeight: 700 }}>{ROTULO_CAMERA[item.estado] || item.estado}</div>
-                  {item.erro && item.estado !== "pronta" && <div style={{ color: "#94a3b8", marginTop: 2, overflowWrap: "anywhere" }}>{item.erro}</div>}
-                  {item.baixaResolucao && <div style={{ color: "#fde68a", marginTop: 2 }}>Foto pequena: ficou ampliada.</div>}
+                  {item.estado === "falhou" && item.erro && <div style={{ color: "#94a3b8", marginTop: 2, overflowWrap: "anywhere" }} title={item.erro}>{erroCurto(item.erro)}</div>}
                 </div>
                 {item.estado === "falhou" && (
                   <div style={{ display: "grid", gap: 6 }}>

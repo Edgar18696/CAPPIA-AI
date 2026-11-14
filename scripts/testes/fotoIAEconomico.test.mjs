@@ -125,7 +125,7 @@ test("tela Foto IA usa o Modo Econômico e não chama mais o Gemini automaticame
   assert.ok(!/11000/.test(corpo), "sem a espera longa entre fotos");
   assert.match(corpo, /modo: economica\.modo/);
   const tela = ler("src/modules/fotoIA/FotoIA.jsx");
-  assert.match(tela, /data-paiia-foto-modo="economico"/);
+  assert.doesNotMatch(tela, /Modo Econômico · sem créditos/, "(14/11) aviso saiu da tela; o modo continua no lote");
   assert.match(tela, /Máximo de 8 fotos por vez/);
 });
 

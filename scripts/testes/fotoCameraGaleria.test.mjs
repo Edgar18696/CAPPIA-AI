@@ -113,7 +113,7 @@ test("1) Tirar Foto: original salva NA HORA na Galeria, tratamento automático l
   assert.match(final.urlTratada, /processadas\/camera-row-1\.png$/);
   assert.deepEqual(chamadas.chaves, ["camera-row-1"]);
   assert.ok(eventos.indexOf("salva") < eventos.indexOf("pronta"), "salva antes de tratar");
-  assert.match(C.resumoCamera(await fila.listar(), fila.listarProntas()), /1 foto\(s\) salva\(s\) na Galeria · 1 tratada/);
+  assert.match(C.resumoCamera(await fila.listar(), fila.listarProntas()), /^✅ Salva na Galeria$/);
   // compatível com a Galeria do Voz / Criar Anúncio: aparece como TRATADA, com a original ligada
   const g = await listarFotosGaleria(sb, U);
   assert.equal(g.fotos.length, 1);
@@ -295,33 +295,16 @@ test("13/11) recorte GRÁTIS no aparelho primeiro; Replicate só como reserva; n
   assert.equal(sb.log.deletes + sb.log.removes + sb2.log.deletes + sb2.log.removes, 0, "nada apagado da Galeria");
 });
 
-test("13/11) Salvar no celular: menu do aparelho com 1 toque; sem menu baixa; cancelar não marca", async () => {
-  const { salvarNoAparelho } = await import("../../src/services/fotoIA/salvarNoAparelho.js");
-  const prontas = [{ id: "a", linhaId: "row-1", urlTratada: "u1" }, { id: "b", linhaId: "row-2", urlTratada: "u2" }, { id: "c" }];
-  const deps = (navegador) => {
-    const baixados = [];
-    return { baixados, d: { baixar: async (u) => new Blob([u], { type: "image/png" }), navegador, criarArquivo: (b, nome) => ({ b, nome }), baixarArquivo: (b, nome) => baixados.push(nome) } };
-  };
-  let compartilhado = null;
-  const celular = { canShare: ({ files }) => files.length > 0, share: async (o) => { compartilhado = o; } };
-  const r1 = deps(celular);
-  const s1 = await salvarNoAparelho(prontas, r1.d);
-  assert.equal(s1.modo, "compartilhar");
-  assert.deepEqual(s1.ids, ["a", "b"], "só as que têm foto tratada");
-  assert.deepEqual(compartilhado.files.map((f) => f.nome), ["paiia-row-1-1200x1200.png", "paiia-row-2-1200x1200.png"]);
-  assert.equal(r1.baixados.length, 0);
-  const r2 = deps({});
-  const s2 = await salvarNoAparelho(prontas, r2.d);
-  assert.equal(s2.modo, "download");
-  assert.equal(r2.baixados.length, 2);
-  const r3 = deps({ canShare: () => true, share: async () => { throw Object.assign(new Error("x"), { name: "AbortError" }); } });
-  const s3 = await salvarNoAparelho(prontas, r3.d);
-  assert.equal(s3.modo, "cancelado");
-  assert.deepEqual(s3.ids, []);
-  assert.equal(r3.baixados.length, 0);
+test("14/11) tela simples: sem 'Salvar no celular' (baixar fica na Galeria) e sem aviso 'Modo Econômico'", () => {
+  const tela = ler("src/modules/fotoIA/components/TirarFotoCamera.jsx");
+  assert.doesNotMatch(tela, /salvarNoAparelho|data-paiia-salvar-celular|📲/);
+  assert.equal(fs.existsSync(new URL("../../src/services/fotoIA/salvarNoAparelho.js", import.meta.url)), false);
+  assert.doesNotMatch(ler("src/modules/fotoIA/FotoIA.jsx"), /Modo Econômico · sem créditos/);
+  assert.deepEqual([...new Set(["salvando", "salva", "tratando"].map((e) => C.ROTULO_CAMERA[e]))], ["Tratando fotografia…"]);
+  assert.equal(C.ROTULO_CAMERA.pronta, "Salva na Galeria");
 });
 
-test("13/11) fila: marcarSalvas e prontas antigas (24 h) saem na faxina", async () => {
+test("13/11) fila: prontas antigas (24 h) saem na faxina", async () => {
   const arm = armazenamentoMemoria();
   await arm.put({ id: "velha", estado: "pronta", criadaEm: 1, prontaEm: Date.now() });
   const sb = supabaseFalso();
@@ -330,9 +313,7 @@ test("13/11) fila: marcarSalvas e prontas antigas (24 h) saem na faxina", async 
   await fila.adicionar([blob()]);
   await fila.rodar();
   assert.deepEqual(await fila.listar(), []);
-  const [p] = fila.listarProntas();
-  fila.marcarSalvas([p.id]);
-  assert.equal(fila.listarProntas()[0].salvaNoAparelho, true);
+  assert.equal(fila.listarProntas().length, 1);
 });
 
 test("13/11) tratamento que não termina: depois do limite volta para nova tentativa (não fica 'tratando' para sempre)", async () => {
@@ -407,5 +388,5 @@ test("14/11) falhas antigas saem da fila depois de 24 h; foto só no aparelho nu
   assert.deepEqual((await fila.listar()).map((i) => i.id), ["f3"]);
   assert.equal(sb.linhas.length, 2, "as duas originais continuam na Galeria");
   assert.equal(sb.log.deletes + sb.log.removes, 0, "nada apagado do Supabase");
-  assert.equal(C.ROTULO_CAMERA.falhou, "fundo branco não aplicado · a original está salva na Galeria");
+  assert.equal(C.ROTULO_CAMERA.falhou, "Fundo branco não aplicado · a original está salva na Galeria");
 });

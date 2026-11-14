@@ -129,7 +129,8 @@ test("13/11 celular: cópia do aparelho ilegível → tenta com a original da Ga
     comporFotoFinal: async ({ original }) => { compostaCom = original; return { blob: new Blob(["final"]) }; },
     baixar: async (u) => (u === "https://x/orig.jpg" ? daGaleria : new Blob(["r"])) };
   const t = await C.tratarFotoDaGaleria({ ...base, recortarLocal: recortar });
-  assert.equal(t.metodo, "photoroom", "Photoroom com a original da Galeria");
+  // (14/11) Photoroom (pago) só uma vez: com a original da Galeria entra o recorte grátis.
+  assert.equal(t.metodo, "local", "grátis com a original da Galeria (Photoroom não repetido)");
   assert.equal(fotoIA, 0, "cota da reserva nem foi tocada");
   assert.equal(compostaCom, daGaleria, "composição com a foto que funcionou");
   // tudo falha: a mensagem separa a cota da reserva dos motivos do Photoroom e do grátis
@@ -138,7 +139,7 @@ test("13/11 celular: cópia do aparelho ilegível → tenta com a original da Ga
     assert.equal(e.codigo, "LIMITE_MENSAL", "cota continua protegida");
     assert.match(e.message, /^Fundo branco não aplicado: o recorte automático não funcionou nesta foto e a reserva Foto IA está no limite do mês\. A foto original está salva na Galeria\./);
     assert.match(e.message, /cópia do aparelho: Photoroom: HTTP 503 · Recorte grátis: modelo não carregou/);
-    assert.match(e.message, /original da Galeria: Photoroom: HTTP 503/);
+    assert.match(e.message, /original da Galeria: Photoroom não repetido automaticamente · Recorte grátis: modelo não carregou/);
     return true;
   });
 });
@@ -232,4 +233,42 @@ test("14/11 modo só gratuito (PAIIA_FOTO_GRATIS=1): Photoroom não é chamado",
   assert.match(String(r.corpo), /só recorte grátis/);
   assert.equal(chamou, false);
   assert.match(fs.readFileSync(new URL("../../vite.config.js", import.meta.url), "utf8"), /desligado: globalThis\.process\?\.env\?\.PAIIA_FOTO_GRATIS === "1"/);
+});
+
+test("14/11 Photoroom pago no máximo UMA vez por foto: 2ª fonte e novas tentativas automáticas usam só o grátis", async () => {
+  const C = await import("../../src/services/fotoIA/fotoCameraGaleria.js");
+  const sb = {
+    storage: { from: () => ({ upload: async () => ({ error: null }), getPublicUrl: (c) => ({ data: { publicUrl: `https://x/${c}` } }) }) },
+    from: () => { const q = { update: () => q, eq: () => q, select: async () => ({ data: [{ id: "row-1" }], error: null }) }; return q; },
+  };
+  let pagas = 0;
+  let gratis = 0;
+  const recortar = (gratisFalha = false) => P.recortarComReserva({
+    photoroom: async () => { pagas += 1; throw new Error("Photoroom: Failed to fetch"); },
+    gratis: async () => { gratis += 1; if (gratisFalha) throw new Error("modelo não carregou"); return { blob: new Blob(["l"]) }; },
+  });
+  const base = { supabase: sb, usuarioId: "u", linhaId: "row-1", urlOriginal: "https://x/o.jpg", caminho: "u/originais/camera-1.jpg", original: new Blob(["a"]),
+    recortarFotoIA: async () => { throw Object.assign(new Error("Você atingiu o limite de 50 Fotos IA deste mês."), { codigo: "LIMITE_MENSAL" }); },
+    comporFotoFinal: async () => ({ blob: new Blob(["f"]) }), baixar: async () => new Blob(["g"]) };
+  // 1ª tentativa: Photoroom falha (rede) → grátis na mesma tentativa; Photoroom 1 vez só
+  const t1 = await C.tratarFotoDaGaleria({ ...base, recortarLocal: recortar() });
+  assert.equal(t1.metodo, "local");
+  assert.equal(pagas, 1);
+  // tudo falha: duas fontes, mas o Photoroom continua 1 vez só
+  pagas = 0;
+  await assert.rejects(C.tratarFotoDaGaleria({ ...base, recortarLocal: recortar(true) }));
+  assert.equal(pagas, 1, "2ª fonte não chama o Photoroom de novo");
+  // nova tentativa automática (semPhotoroom): zero chamadas pagas
+  pagas = 0;
+  await C.tratarFotoDaGaleria({ ...base, recortarLocal: recortar(), semPhotoroom: true });
+  assert.equal(pagas, 0);
+  // a fila passa semPhotoroom nas tentativas automáticas e nas fotos antigas reabertas
+  const fila = fs.readFileSync(new URL("../../src/services/fotoIA/filaCameraApp.js", import.meta.url), "utf8");
+  assert.match(fila, /semPhotoroom: \(Number\(tentativas\) \|\| 0\) > 0 \|\| Boolean\(reaberta\)/);
+  // servidor: mesma foto nunca é cobrada duas vezes; franquia própria de 1000
+  const fn = fs.readFileSync(new URL("../../supabase/functions/foto-photoroom/index.ts", import.meta.url), "utf8");
+  assert.match(fn, /reaproveitado: true/);
+  assert.match(fn, /const caminhoRecorte = `\$\{pastaMes\}\/\$\{nomeRecorte\}`/);
+  assert.match(fn, /FOTO_PHOTOROOM_LIMITE_MENSAL"\) \|\| "1000"/);
+  assert.ok(fn.indexOf("reaproveitado: true") < fn.indexOf("await fetch(ENDERECO"), "reaproveita ANTES de chamar o Photoroom");
 });

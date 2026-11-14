@@ -33,12 +33,13 @@ export const HORAS_MOSTRAR_PRONTAS = 24;
 export const HORAS_MANTER_FALHAS = 24;
 /** Mensagem do limite antigo de 50 do "foto-ia" (versão sem recorte grátis). */
 const LIMITE_ANTIGO = /limite de \d+ Fotos IA/i;
+// (14/11) Só dois estados para o usuário: "Tratando fotografia" e "Salva na Galeria".
 export const ROTULO_CAMERA = {
-  salvando: "salvando na Galeria…",
-  salva: "salva na Galeria · tratando em seguida",
-  tratando: "tratando (fundo branco 1200×1200)…",
-  pronta: "pronta na Galeria",
-  falhou: "fundo branco não aplicado · a original está salva na Galeria",
+  salvando: "Tratando fotografia…",
+  salva: "Tratando fotografia…",
+  tratando: "Tratando fotografia…",
+  pronta: "Salva na Galeria",
+  falhou: "Fundo branco não aplicado · a original está salva na Galeria",
 };
 
 const txt = (v) => String(v ?? "").trim();
@@ -135,7 +136,7 @@ export async function salvarOriginalNaGaleria({ supabase, usuarioId, item, norma
  * (13/11) recortarLocal(blob) → { blob }: recorte GRÁTIS no próprio aparelho, tentado
  * primeiro. Se faltar ou falhar, usa o recorte do servidor ("foto-ia", Replicate) como reserva.
  */
-export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOriginal, caminho, original, recortarFotoIA, recortarLocal = null, comporFotoFinal, baixar }) {
+export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOriginal, caminho, original, recortarFotoIA, recortarLocal = null, comporFotoFinal, baixar, semPhotoroom = false }) {
   let blobRecorte = null;
   let metodo = "local";
   let pixels = null;
@@ -145,10 +146,12 @@ export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOri
     // (13/11) Caso real (celular): a cópia guardada no aparelho (IndexedDB) pode não
     // ser reenviável/legível; aí tenta de novo com a ORIGINAL baixada da Galeria antes
     // de cair na reserva "foto-ia" (que tem a cota mensal).
-    for (const fonte of original ? ["aparelho", "galeria"] : ["galeria"]) {
+    const fontes = original ? ["aparelho", "galeria"] : ["galeria"];
+    for (const fonte of fontes) {
       try {
         const foto = fonte === "aparelho" ? original : (daGaleria ||= await baixar(urlOriginal));
-        const r = await recortarLocal(foto, { caminho: caminho || caminhoDaUrl(urlOriginal), linhaId });
+        // (14/11) Photoroom (pago) no máximo UMA vez por tratamento: só na 1ª fonte.
+        const r = await recortarLocal(foto, { caminho: caminho || caminhoDaUrl(urlOriginal), linhaId, semPhotoroom: semPhotoroom || fonte !== fontes[0] });
         if (r?.blob) { blobRecorte = r.blob; metodo = r.metodo || "local"; pixels = foto; break; }
         motivos.push(`${fonte}: recorte vazio`);
       } catch (e) {
@@ -264,7 +267,7 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
       let relogio;
       const limite = new Promise((_, falha) => { relogio = setTimeout(() => falha(Object.assign(new Error("O tratamento demorou demais; vai tentar de novo."), { temporario: true })), limiteTratamentoMs); });
       const t = await Promise.race([deps.tratar(atual), limite]).finally(() => clearTimeout(relogio));
-      prontas.unshift({ id: atual.id, linhaId: atual.linhaId, urlTratada: t.urlTratada, nome: atual.nome, baixaResolucao: Boolean(t.baixaResolucao), metodo: t.metodo || "", prontaEm: agora(), salvaNoAparelho: false });
+      prontas.unshift({ id: atual.id, linhaId: atual.linhaId, urlTratada: t.urlTratada, nome: atual.nome, baixaResolucao: Boolean(t.baixaResolucao), metodo: t.metodo || "", prontaEm: agora() });
       await armazenamento.delete(atual.id); // sai da fila; NADA é apagado da Galeria
       avisar({ tipo: "pronta", id: atual.id });
     } catch (e) {
@@ -297,7 +300,8 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
   }
 
   async function tentarDeNovo(id) {
-    await armazenamento.atualizar(id, (r) => ({ ...r, estado: r.linhaId ? "salva" : "salvando", tentativas: 0, proximaEm: 0, erro: "" }));
+    // Toque do usuário: pode usar o Photoroom de novo (o servidor reaproveita o recorte já pago).
+    await armazenamento.atualizar(id, (r) => ({ ...r, estado: r.linhaId ? "salva" : "salvando", tentativas: 0, proximaEm: 0, erro: "", reaberta: false }));
     avisar({ tipo: "tentar", id });
     return rodar();
   }
@@ -324,15 +328,10 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     return true;
   }
 
-  /** Prontas desta sessão (mais recentes primeiro); marcarSalvas(ids) após "Salvar no celular". */
+  /** Prontas desta sessão (mais recentes primeiro), para o resumo "Salva na Galeria". */
   const listarProntas = () => prontas.map((p) => ({ ...p }));
-  function marcarSalvas(ids) {
-    const s = new Set(ids || []);
-    for (const p of prontas) if (s.has(p.id)) p.salvaNoAparelho = true;
-    avisar({ tipo: "salvas-no-aparelho", quantidade: s.size });
-  }
 
-  return { adicionar, listar, rodar, tentarDeNovo, faxina, listarProntas, marcarSalvas, removerDaFila };
+  return { adicionar, listar, rodar, tentarDeNovo, faxina, listarProntas, removerDaFila };
 }
 
 /**
@@ -375,12 +374,12 @@ export async function retomarDeOutrosAparelhos({ supabase, usuarioId, tratar, ja
 export function resumoCamera(itens, prontas = []) {
   const n = (e) => (itens || []).filter((i) => i.estado === e).length;
   const tratadas = (prontas?.length || 0) + n("pronta");
-  const salvas = (itens || []).filter((i) => i.linhaId && i.estado !== "pronta").length + tratadas;
   const andamento = n("salvando") + n("salva") + n("tratando");
   if (!itens?.length && !tratadas) return "";
-  const partes = [`✅ ${salvas} foto(s) salva(s) na Galeria`];
-  if (andamento) partes.push(`${andamento} em andamento`);
-  if (tratadas) partes.push(`${tratadas} tratada(s)`);
-  if (n("falhou")) partes.push(`⚠ ${n("falhou")} com falha no tratamento`);
+  // (14/11) Resumo simples: o que está sendo tratado e o que já está na Galeria.
+  const partes = [];
+  if (andamento) partes.push(`⏳ Tratando ${andamento === 1 ? "fotografia" : `${andamento} fotografias`}`);
+  if (tratadas) partes.push(`✅ ${tratadas === 1 ? "Salva na Galeria" : `${tratadas} salvas na Galeria`}`);
+  if (n("falhou")) partes.push(`⚠ ${n("falhou")} sem fundo branco (original na Galeria)`);
   return partes.join(" · ");
 }

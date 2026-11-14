@@ -30,8 +30,11 @@ export function filaCamera(usuarioId) {
     photoroom: (f, ctx) => recortarPhotoroom(f, { caminho: ctx?.caminho, invocar: (nome, opcoes) => supabase.functions.invoke(nome, opcoes), baixar }),
     gratis: (f) => recortarLocalmente(f),
   });
-  const tratar = ({ linhaId, url, urlOriginal, caminho, blob }) => tratarFotoDaGaleria({
+  // (14/11) Photoroom (pago) só na 1ª tentativa de cada foto: novas tentativas
+  // automáticas e fotos antigas reabertas usam só o recorte grátis.
+  const tratar = ({ linhaId, url, urlOriginal, caminho, blob, tentativas, reaberta }) => tratarFotoDaGaleria({
     supabase, usuarioId: id, linhaId, urlOriginal: urlOriginal || url, caminho, original: blob || null, recortarFotoIA, recortarLocal: recortar, comporFotoFinal, baixar,
+    semPhotoroom: (Number(tentativas) || 0) > 0 || Boolean(reaberta),
   });
   const fila = criarFilaCamera({
     armazenamento,
