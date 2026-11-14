@@ -74,3 +74,9 @@ verify_jwt = false
 # para o teste local da auditoria. O usuário é conferido dentro da função (JWT).
 enabled = true
 verify_jwt = false
+
+[functions.foto-photoroom]
+# (14/11/2026) Photoroom Basic da Foto IA. O usuário é conferido dentro da função (JWT);
+# a chave fica no segredo PHOTOROOM_API_KEY (nunca no navegador).
+enabled = true
+verify_jwt = false
