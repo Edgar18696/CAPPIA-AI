@@ -10,20 +10,26 @@ import { supabase } from "../../../supabase";
 import { lerFichaNovoAnuncio } from "../../../services/fichaNovoAnuncioService";
 import { fichaFechada } from "../../../services/fichaNovoAnuncio";
 import { conferirDuplicidadeBase, listarAnunciosDoCodigo } from "../../../services/anuncioPublicacaoService";
-import { produtosBlingRegistradosDoSku } from "../../../services/estoqueBlingPAIIA";
+import { produtosBlingRegistradosDoSku, classificarVinculosBling } from "../../../services/estoqueBlingPAIIA";
 import { verificarDuplicidadeML, nomeDaLoja } from "../../../services/duplicidadeML";
 import { lojaBlingDaConta } from "../../../services/vinculoBlingPublicacao";
 import { cadastrarNoBlingVoz, conferirAntesVoz, conferirIncertaVoz } from "./blingCadastroVoz";
 
 const txt = (v) => String(v ?? "").trim();
 
-/** (14/11) Produtos Bling já registrados por OUTRAS fichas deste SKU (leitura da base PAIIA). */
+/**
+ * (14/11) Produtos Bling com vínculo ATUAL registrados por OUTRAS fichas deste SKU
+ * (leitura da base PAIIA + situação do MLB no Mercado Livre). Vínculo de MLB
+ * excluído/encerrado é só histórico e não impede o cadastro do anúncio novo.
+ */
 async function produtosBlingRegistradosDaFicha(row) {
   const codigo = txt(row?.dados_conferencia?.novo_anuncio?.codigo || row?.codigo);
   if (!codigo) return [];
   const lista = await listarAnunciosDoCodigo(codigo);
   if (!lista?.ok) throw new Error(lista?.erro || "base PAIIA não lida");
-  return produtosBlingRegistradosDoSku(lista.anuncios, { excetoFicha: txt(row?.id) });
+  const registrados = produtosBlingRegistradosDoSku(lista.anuncios, { excetoFicha: txt(row?.id) });
+  const { atuais } = await classificarVinculosBling({ registrados, consultarML: (conta, caminho) => chamarPublicacao({ acao: "ml_consulta", conta_ml: conta, metodo: "GET", caminho }) });
+  return atuais;
 }
 const NAO_LIBERADO = "Execução real ainda não liberada nesta versão: a proteção do servidor contra duplicidade não foi comprovada. Nada foi enviado.";
 

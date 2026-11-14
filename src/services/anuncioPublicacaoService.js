@@ -784,6 +784,20 @@ export async function prepararFichaProximaConta({ anuncioId }) {
 }
 
 /**
+ * (14/11/2026) A ficha retomada ainda vale? Existe, não está cancelada e NÃO foi
+ * excluída da Central (paiia_fichas_arquivadas). Qualquer falha de leitura = não
+ * vale (a tela oferece retomar de novo em vez de reabrir algo incerto).
+ */
+export async function fichaRetomadaDisponivel(fichaId) {
+  if (!fichaId) return false;
+  const r = await obterAnuncio(fichaId);
+  if (!r.ok || r.anuncio.status_fluxo === "cancelado") return false;
+  const { data, error } = await supabase.from("paiia_fichas_arquivadas").select("anuncio_id").eq("anuncio_id", fichaId).limit(1);
+  if (error) return false;
+  return !(Array.isArray(data) && data.length);
+}
+
+/**
  * (14/11/2026) RETOMAR a ficha de um MLB ENCERRADO/EXCLUÍDO no Mercado Livre.
  * situacao = situacaoMLBRegistrado lida AGORA na conta da publicação.
  * - Só com o ML confirmando o encerramento/exclusão (podeRetomarFicha).
@@ -804,10 +818,9 @@ export async function prepararFichaRepublicacao({ anuncioId, situacao }) {
   const pode = podeRetomarFicha({ publicacao: a.publicacao, situacao });
   if (!pode.pode) return { ok: false, erro: pode.motivo };
   const anterior = a.dados_conferencia?.republicacao?.ficha;
-  if (anterior) {
-    const existente = await obterAnuncio(anterior);
-    if (existente.ok && existente.anuncio.status_fluxo !== "cancelado") return { ok: true, anuncioId: existente.anuncio.id, nova: false };
-  }
+  // (14/11) Ficha retomada antes e depois EXCLUÍDA da Central (arquivada), cancelada ou
+  // apagada: não volta. Uma retomada nova só acontece por este toque.
+  if (anterior && (await fichaRetomadaDisponivel(anterior))) return { ok: true, anuncioId: anterior, nova: false };
   const criada = await salvarFichaAprovada({ anuncioId: "", codigo: a.codigo || "", titulo: a.titulo || "", dadosConferencia: {} });
   if (!criada.ok) return criada;
   const novoId = criada.anuncioId;

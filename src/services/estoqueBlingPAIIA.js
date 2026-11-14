@@ -13,6 +13,8 @@
  * Testes: scripts/testes/estoqueBlingPAIIA.test.mjs
  */
 
+import { situacaoMLBRegistrado } from "./duplicidadeML.js";
+
 const texto = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
 const normalizarSku = (v) => texto(v).toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -194,9 +196,15 @@ export function produtosBlingRegistradosDoSku(fichas, { excetoFicha = "" } = {})
  *  "nao_existe"    — a busca não acha e não há registro;
  *  "erro"          — leitura falhou.
  */
-export function situacaoProdutoBling({ leitura, registrados = [] }) {
+export function situacaoProdutoBling({ leitura, registrados = [], antigos = [] }) {
   const regs = Array.isArray(registrados) ? registrados.filter((r) => r?.produto_id) : [];
+  const velhos = Array.isArray(antigos) ? antigos.filter((r) => r?.produto_id) : [];
   if (!leitura || (leitura.ok === false && !leitura.encontrado)) return { estado: "erro", texto: `Bling não consultado (${leitura?.mensagem || leitura?.erro || "sem resposta"}).` };
+  // (14/11) Só vínculos ANTIGOS (MLB encerrado/excluído no ML) e o SKU fora da busca:
+  // anúncio novo segue como SKU novo; o produto antigo não é apagado nem reaproveitado.
+  if (!leitura.encontrado && !leitura.ambiguo && !regs.length && velhos.length) {
+    return { estado: "vinculo_antigo", texto: textoVinculoAntigo(velhos) };
+  }
   if (leitura.ambiguo) return { estado: "outro_id", texto: "Mais de um produto no Bling com este SKU: resolva no Bling (o PAIIA não escolhe sozinho)." };
   if (leitura.encontrado) {
     const id = String(leitura.produto?.id ?? "");
@@ -208,6 +216,35 @@ export function situacaoProdutoBling({ leitura, registrados = [] }) {
   }
   if (regs.length) return { estado: "fora_da_busca", texto: textoProdutoForaDaBusca(regs) };
   return { estado: "nao_existe", texto: "SKU não encontrado no Bling e nenhum produto Bling registrado para ele." };
+}
+
+export function textoVinculoAntigo(velhos) {
+  const lista = velhos.map((r) => `${r.produto_id}${r.mlb ? ` (MLB ${r.mlb}, ${r.rotulo || "excluído/encerrado no Mercado Livre"})` : ""}`).join(", ");
+  return `Vínculo antigo: o produto Bling ${lista} pertencia a uma publicação ENCERRADA e não aparece na busca do Bling. Ele fica só no histórico: não é apagado nem reaproveitado. Este anúncio novo segue como SKU novo no Bling; ao cadastrar, o Bling confere o SKU de novo (ativos e inativos) e não cria se ele já existir.`;
+}
+
+/**
+ * (14/11) Separa os produtos Bling registrados em vínculos ATUAIS e ANTIGOS.
+ * Antigo = o MLB da publicação que registrou o produto está EXCLUÍDO/ENCERRADO
+ * no Mercado Livre (lido AGORA, na conta dele). Qualquer dúvida (sem MLB, sem
+ * conta, erro de leitura, anúncio ativo/pausado) = ATUAL (continua bloqueando).
+ * consultarML(conta, caminho) → resposta de ml_consulta (só GET).
+ */
+export async function classificarVinculosBling({ registrados = [], consultarML }) {
+  const atuais = [];
+  const antigos = [];
+  for (const r of Array.isArray(registrados) ? registrados : []) {
+    if (!r?.produto_id) continue;
+    const mlb = texto(r.mlb).toUpperCase();
+    const conta = texto(r.conta);
+    if (!/^MLB\d+$/.test(mlb) || !conta || typeof consultarML !== "function") { atuais.push(r); continue; }
+    let resp;
+    try { resp = await consultarML(conta, `/items/${mlb}`); } catch (e) { resp = { ok: false, erro: texto(e?.message || e) }; }
+    const s = situacaoMLBRegistrado({ mlb, conta, resp });
+    if (s.libera) antigos.push({ ...r, situacao: s.situacao, rotulo: s.rotulo || "excluído/encerrado no Mercado Livre" });
+    else atuais.push({ ...r, motivo_atual: s.motivo });
+  }
+  return { atuais, antigos };
 }
 
 function textoProdutoForaDaBusca(regs) {

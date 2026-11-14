@@ -152,10 +152,15 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
   out.bling = { produto: bs?.encontrado ? { id: prodId, codigo: txt(bs.produto?.codigo), nome: txt(bs.produto?.nome) } : null, ambiguo: Boolean(bs?.ambiguo), erro: bs?.ok === false && !bs?.encontrado ? txt(bs?.erro || bs?.mensagem) : "", vinculo: null };
   // (14/11) Pelo SKU E pelo ID já registrado nas fichas deste SKU.
   const registradosBling = produtosBlingRegistradosDoSku(out.fichas.map((f) => ({ id: f.id, publicacao: f.publicacao ? { bling_produto_id: f.publicacao.bling_produto_id, mlb_id: f.publicacao.mlb, ml_user_id: f.publicacao.conta } : null, integracao_bling: f.registro_bling })));
-  const sitBling = situacaoProdutoBling({ leitura: bs, registrados: registradosBling });
+  // Vínculo ANTIGO: o MLB que registrou o produto está excluído/encerrado (lido acima, na conta dele).
+  const mlbsEncerrados = new Set((out.mlbs || []).filter((m) => ["excluido", "encerrado"].includes(m.situacao)).map((m) => m.mlb));
+  const antigosBling = registradosBling.filter((r) => mlbsEncerrados.has(normalizarMLB(r.mlb))).map((r) => ({ ...r, rotulo: (out.mlbs.find((m) => m.mlb === normalizarMLB(r.mlb)) || {}).rotulo }));
+  const atuaisBling = registradosBling.filter((r) => !mlbsEncerrados.has(normalizarMLB(r.mlb)));
+  const sitBling = situacaoProdutoBling({ leitura: bs, registrados: atuaisBling, antigos: antigosBling });
   out.bling.situacao = sitBling.estado;
   out.bling.registrados = registradosBling;
-  ponto(pontos, sitBling.estado === "ok" ? "ok" : sitBling.estado === "nao_existe" ? "alerta" : "erro", "Bling", sitBling.estado === "nao_existe" ? `SKU ${SKU} não encontrado no Bling.` : sitBling.texto);
+  out.bling.antigos = antigosBling.map((r) => r.produto_id);
+  ponto(pontos, sitBling.estado === "ok" ? "ok" : ["nao_existe", "vinculo_antigo"].includes(sitBling.estado) ? "alerta" : "erro", "Bling", sitBling.estado === "nao_existe" ? `SKU ${SKU} não encontrado no Bling.` : sitBling.texto);
   const loja = lojaBlingDaConta(out.conta);
   const produtoEsperado = prodId || txt(fichaRef?.registro_bling?.bling_produto_id || fichaRef?.publicacao?.bling_produto_id);
   if (!loja) ponto(pontos, "alerta", "Vínculo no Bling", `A conta ${nomeConta} não tem loja Bling mapeada: o vínculo não é conferido automaticamente.`);

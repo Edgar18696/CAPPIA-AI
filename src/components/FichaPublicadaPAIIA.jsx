@@ -5,7 +5,7 @@ import FilaContasPublicacao from "./FilaContasPublicacao";
 import BotaoCopiarMLB from "./BotaoCopiarMLB";
 import CorrecaoCompatMLB from "./CorrecaoCompatMLB";
 import { registroDaFichaOuPublicacao, conferirIntegracao, precisaConferir, ESTADO as ESTADO_BLING } from "../services/vinculoBlingPublicacao";
-import { salvarRegistroIntegracaoBling, pendenciaPublicacao, prepararFichaRepublicacao } from "../services/anuncioPublicacaoService";
+import { salvarRegistroIntegracaoBling, pendenciaPublicacao, prepararFichaRepublicacao, fichaRetomadaDisponivel } from "../services/anuncioPublicacaoService";
 import { lerSituacaoMLBAtual } from "../services/situacaoMLBAtual";
 import { resumoFichaPublicada } from "../services/situacaoFichaPublicada";
 import { enderecoDaFicha } from "../services/fichasCentral";
@@ -72,7 +72,16 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
   // (14/11) MLB encerrado/excluído: RETOMAR cria uma ficha NOVA com a mesma
   // Conferência (fotos, descrição, aplicações). Esta ficha e o MLB antigo ficam
   // como histórico; nada é publicado e nada vai ao Bling aqui.
-  const fichaRetomada = String(ficha?.dados_conferencia?.republicacao?.ficha || "");
+  // (14/11) Ficha retomada que foi excluída da Central/cancelada/apagada não é reaberta.
+  const ponteiroRetomada = String(ficha?.dados_conferencia?.republicacao?.ficha || "");
+  const [retomadaLida, setRetomadaLida] = useState({ id: "", ok: false });
+  useEffect(() => {
+    let ativo = true;
+    if (!ponteiroRetomada) return undefined;
+    fichaRetomadaDisponivel(ponteiroRetomada).then((ok) => { if (ativo) setRetomadaLida({ id: ponteiroRetomada, ok }); }, () => { if (ativo) setRetomadaLida({ id: ponteiroRetomada, ok: false }); });
+    return () => { ativo = false; };
+  }, [ponteiroRetomada]);
+  const fichaRetomada = ponteiroRetomada && retomadaLida.id === ponteiroRetomada && retomadaLida.ok ? ponteiroRetomada : "";
   const [retomar, setRetomar] = useState({ ocupado: false, erro: "" });
   async function retomarFicha() {
     if (retomar.ocupado || !ficha?.id) return;

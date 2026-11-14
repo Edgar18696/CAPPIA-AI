@@ -49,6 +49,7 @@ import {
 } from "../services/anuncioPublicacaoService";
 import { montarRecuperacaoDaFicha, urlsFotosFicha, mesmaAprovacao, diferencasAssinatura } from "../services/fichaConferencia";
 import { fotosIniciaisConferencia, guardarFotosEmMemoria, simuladorEhDoAnuncio, decidirFotosDaFicha, situacaoFotosNaTela, juntarHistoricoFotos, listaUrls, marcaDasFotos, MEMORIA_FOTOS_DONO } from "../services/fotosDaFicha";
+import { lerAplicacoesDaFicha, valorAplicacoesDaFicha } from "../services/aplicacoesManuaisLocal";
 import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
 import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
 import { abrirFichaNoNovoAnuncio } from "../services/aberturaNovoAnuncio";
@@ -1965,7 +1966,8 @@ const produtoAtual = chaveProduto(anuncio?.codigo || anuncio?.oem);
 // Aplicações manuais antigas com VÁRIOS modelos numa linha (sem motor/ano)
 // viram "modelos confirmados sem detalhes" — nada é inventado nem apagado.
 const [legadoAplicacoes] = useState(() => {
-  const salvas = lerMapaLocal(CHAVE_APLICACOES_MANUAIS)[produtoAtual];
+  // (14/11) Só as aplicações DESTA ficha (anúncio novo do mesmo código não herda as de outra).
+  const salvas = lerAplicacoesDaFicha(lerMapaLocal(CHAVE_APLICACOES_MANUAIS)[produtoAtual], { fichaId: anuncioIdPAIIA, legadoValido: Boolean(fichaSalva) });
   const lista = Array.isArray(salvas) ? salvas.map((a) => normalizarAplicacao(a, "manual")).filter(Boolean) : [];
   return separarAplicacoesLegadas(lista);
 });
@@ -2130,7 +2132,7 @@ function atualizarTextoCompat({ manuais = aplicacoesManuais, modelos = modelosSe
 
 function salvarAplicacoesManuais(lista, base = aplicacoesBase) {
   setAplicacoesManuais(lista);
-  gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, lista.length ? lista : null);
+  gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, valorAplicacoesDaFicha(lista, anuncioIdPAIIA));
   atualizarTextoCompat({ manuais: lista, base });
 }
 
@@ -2238,7 +2240,7 @@ useEffect(() => {
   }
   // Linha antiga convertida: grava já no formato novo (sem perder nada).
   if (legadoAplicacoes.convertidas) {
-    gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, legadoAplicacoes.detalhadas.length ? legadoAplicacoes.detalhadas : null);
+    gravarNoMapaLocal(CHAVE_APLICACOES_MANUAIS, produtoAtual, valorAplicacoesDaFicha(legadoAplicacoes.detalhadas, anuncioIdPAIIA));
   }
 }, [anuncio]); // eslint-disable-line react-hooks/exhaustive-deps
   const [
@@ -7516,7 +7518,8 @@ export default function MercadoLivreTeste(props) {
         localStorage.setItem("paiiaConferenciaPorCodigo", JSON.stringify(mapa));
         if (rec.aplicacoesManuais) {
           const manuais = JSON.parse(localStorage.getItem("paiiaAplicacoesManuaisPorCodigo") || "{}");
-          if (rec.aplicacoesManuais.length) manuais[rec.chave] = rec.aplicacoesManuais;
+          const valor = valorAplicacoesDaFicha(rec.aplicacoesManuais, rec.id);
+          if (valor) manuais[rec.chave] = valor;
           else delete manuais[rec.chave];
           localStorage.setItem("paiiaAplicacoesManuaisPorCodigo", JSON.stringify(manuais));
         }

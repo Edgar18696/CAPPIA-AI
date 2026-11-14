@@ -185,7 +185,7 @@ test("4) Bling: SKU fora da busca + produto 16735464254 registrado = NÃO cria o
 
   const rv = ler("src/components/RevisaoPublicacaoML.jsx");
   assert.ok(rv.includes("produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId })"));
-  assert.ok(/async function criarProdutoBling\(\) \{\n\s+if \(cadastroBling\.faltando\.length\) return;\n[^\n]*\n\s+if \(produtosBlingDoSku\.length\) return;/.test(rv), "criação bloqueada no próprio clique");
+  assert.ok(/async function criarProdutoBling\(\) \{\n\s+if \(cadastroBling\.faltando\.length\) return;\n[^\n]*\n\s+if \(produtosBlingDoSku\.length \|\| conferindoVinculos\) return;/.test(rv), "criação bloqueada no próprio clique (vínculo atual ou ainda conferindo)");
   const i = rv.indexOf('data-paiia-bling-estado="fora-da-busca"');
   const j = rv.indexOf('data-paiia-bling-estado="nao-encontrado"');
   assert.ok(i > 0 && j > i, "o aviso vem ANTES do caminho que oferece criar");
@@ -312,6 +312,75 @@ test("4b) automático da LOJA ONLINE e PAIIA Voz: SKU fora da busca + produto re
 });
 
 // ------------------------------------------------------------------
+test("4c) vínculo ANTIGO (MLB excluído no ML) não trava o anúncio NOVO; vínculo atual ou sem leitura continua travando", async () => {
+  const regs = [{ produto_id: PROD, ficha: "dc8788d6", mlb: MLB_LOJA, conta: LOJA }];
+  const consultar = (status, sub = []) => async (conta, caminho) => (caminho === `/items/${MLB_LOJA}` && conta === LOJA ? { ok: true, dados: itemML(MLB_LOJA, LOJA, { status, sub_status: sub }) } : { ok: false, erro: "?" });
+
+  const exc = await B.classificarVinculosBling({ registrados: regs, consultarML: consultar("closed", ["deleted"]) });
+  assert.deepEqual(exc.atuais, []);
+  assert.equal(exc.antigos[0].produto_id, PROD);
+  assert.equal(exc.antigos[0].situacao, "excluido");
+  const naoAchou = { ok: true, encontrado: false };
+  const sit = B.situacaoProdutoBling({ leitura: naoAchou, registrados: exc.atuais, antigos: exc.antigos });
+  assert.equal(sit.estado, "vinculo_antigo");
+  assert.match(sit.texto, /Vínculo antigo: o produto Bling 16735464254 \(MLB MLB5559219337, excluído no Mercado Livre\).*não é apagado nem reaproveitado.*confere o SKU de novo/);
+  assert.equal(B.decidirCriacaoBling(naoAchou, { registrados: exc.atuais }).acao, "criar", "anúncio novo segue (o servidor ainda confere o SKU)");
+
+  const ativo = await B.classificarVinculosBling({ registrados: regs, consultarML: consultar("active") });
+  assert.equal(ativo.atuais.length, 1, "MLB ativo = vínculo atual");
+  assert.equal(B.decidirCriacaoBling(naoAchou, { registrados: ativo.atuais }).acao, "produto_registrado");
+  const pausado = await B.classificarVinculosBling({ registrados: regs, consultarML: consultar("paused") });
+  assert.equal(pausado.atuais.length, 1, "pausado ainda existe");
+  const semLeitura = await B.classificarVinculosBling({ registrados: regs, consultarML: async () => { throw new Error("timeout"); } });
+  assert.equal(semLeitura.atuais.length, 1, "na dúvida, trava");
+  const semConta = await B.classificarVinculosBling({ registrados: [{ produto_id: PROD, mlb: MLB_LOJA, conta: "" }], consultarML: consultar("closed") });
+  assert.equal(semConta.atuais.length, 1, "sem conta não dá para confirmar: trava");
+
+  const rv = ler("src/components/RevisaoPublicacaoML.jsx");
+  assert.ok(rv.includes("classificarVinculosBling({ registrados: produtosBlingRegistrados, consultarML: (conta, caminho) => chamar(\"ml_consulta\", { metodo: \"GET\", caminho }, conta) })"));
+  assert.ok(rv.includes("const produtosBlingDoSku = vinculosConferidos ? vinculosBling.atuais : produtosBlingRegistrados;"), "enquanto confere, todos travam");
+  assert.ok(rv.includes("if (produtosBlingDoSku.length || conferindoVinculos) return;"), "criar bloqueado enquanto confere");
+  assert.ok(rv.includes("data-paiia-bling-lendo data-paiia-bling-vinculos-conferindo"), "o automático da LOJA ONLINE espera a conferência");
+  assert.ok(rv.includes("data-paiia-bling-vinculo-antigo"), "vínculo antigo aparece como informação");
+  const voz = ler("src/modules/paiiaVoz/servicos/finalizarDepsReais.js");
+  assert.ok(voz.includes("const { atuais } = await classificarVinculosBling({ registrados,"), "PAIIA Voz usa a mesma regra");
+});
+
+test("4d) anúncio NOVO do mesmo código não herda aplicações manuais de outra ficha", async () => {
+  const { lerAplicacoesDaFicha, valorAplicacoesDaFicha } = await import("../../src/services/aplicacoesManuaisLocal.js");
+  const trafic = [{ montadora: "Renault", modelo: "Trafic", ano_inicio: 1989, ano_fim: 2001 }];
+  const gravado = valorAplicacoesDaFicha(trafic, "205d64a9");
+  assert.deepEqual(gravado, { ficha: "205d64a9", lista: trafic });
+  assert.deepEqual(lerAplicacoesDaFicha(gravado, { fichaId: "205d64a9" }), trafic, "a mesma ficha continua com as suas");
+  assert.deepEqual(lerAplicacoesDaFicha(gravado, { fichaId: "nova-ficha" }), [], "ficha nova não herda");
+  assert.deepEqual(lerAplicacoesDaFicha(trafic, { fichaId: "nova-ficha", legadoValido: false }), [], "lista antiga (sem ficha) não passa para anúncio novo");
+  assert.deepEqual(lerAplicacoesDaFicha(trafic, { fichaId: "205d64a9", legadoValido: true }), trafic, "lista antiga da MESMA ficha (cópia local dela) continua valendo");
+  assert.equal(valorAplicacoesDaFicha([], "x"), null);
+  const m = ler("src/components/MercadoLivreTeste.jsx");
+  assert.ok(m.includes("lerAplicacoesDaFicha(lerMapaLocal(CHAVE_APLICACOES_MANUAIS)[produtoAtual], { fichaId: anuncioIdPAIIA, legadoValido: Boolean(fichaSalva) })"));
+  assert.equal((m.match(/valorAplicacoesDaFicha\(/g) || []).length, 3, "toda gravação leva a ficha");
+});
+
+test("4e) ficha retomada que foi excluída da Central (arquivada) não é reaberta", async () => {
+  zerarBanco();
+  const antiga = await fichaPublicada({ conta: LOJA, mlb: MLB_LOJA });
+  const encerrado = D.situacaoMLBRegistrado({ mlb: MLB_LOJA, conta: LOJA, resp: { ok: true, dados: itemML(MLB_LOJA, LOJA, { status: "closed", sub_status: ["deleted"] }) } });
+  const r1 = await S.prepararFichaRepublicacao({ anuncioId: antiga, situacao: encerrado });
+  assert.equal(r1.ok, true, r1.erro);
+  assert.equal(await S.fichaRetomadaDisponivel(r1.anuncioId), true);
+  // Excluída da Central (como a 205d64a9):
+  banco.tabelas.paiia_fichas_arquivadas.push({ anuncio_id: r1.anuncioId, usuario_id: "u", motivo: "Arquivada pela Central de Publicação" });
+  assert.equal(await S.fichaRetomadaDisponivel(r1.anuncioId), false);
+  const r2 = await S.prepararFichaRepublicacao({ anuncioId: antiga, situacao: encerrado });
+  assert.equal(r2.ok, true, r2.erro);
+  assert.notEqual(r2.anuncioId, r1.anuncioId, "a arquivada não volta");
+  assert.equal(r2.nova, true);
+  assert.equal(await S.fichaRetomadaDisponivel("nao-existe"), false);
+  const fp = ler("src/components/FichaPublicadaPAIIA.jsx");
+  assert.ok(fp.includes("fichaRetomadaDisponivel(ponteiroRetomada)"), "botão 'Abrir a ficha retomada' só com a ficha disponível");
+});
+
+// ------------------------------------------------------------------
 test("6) diagnóstico: cada MLB lido na SUA conta; MLB pesquisado na conta certa; Bling pelo SKU e pelo ID", async () => {
   const chamadas = [];
   const fichas = {
@@ -347,8 +416,10 @@ test("6) diagnóstico: cada MLB lido na SUA conta; MLB pesquisado na conta certa
   assert.equal(linhas[MLB_REV].situacao, "ativo");
   assert.equal(linhas[MLB_REV].conta, REV);
   assert.ok(chamadas.some((c) => c[0] === REV && c[1] === `/items/${MLB_REV}`) && chamadas.some((c) => c[0] === LOJA && c[1] === `/items/${MLB_LOJA}`));
-  assert.equal(d.bling.situacao, "fora_da_busca");
-  assert.match(d.pontos.find((p) => p.item === "Bling").texto, /produto Bling 16735464254/);
+  // (14/11) O MLB que registrou o produto está EXCLUÍDO: o vínculo é antigo (histórico).
+  assert.equal(d.bling.situacao, "vinculo_antigo");
+  assert.deepEqual(d.bling.antigos, [PROD]);
+  assert.match(d.pontos.find((p) => p.item === "Bling").texto, /Vínculo antigo: o produto Bling 16735464254/);
   assert.equal(d.bling.vinculo.estado, "integrado", "vínculo conferido pelo ID registrado mesmo com o SKU fora da busca");
   assert.ok(chamadas.filter((c) => c[0] === "bling").every((c) => ["saldo_por_sku", "anuncios_consultar", "anuncios_buscar_mlb"].includes(c[1])), "só leituras");
 });

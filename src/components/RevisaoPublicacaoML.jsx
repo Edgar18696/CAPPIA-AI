@@ -57,7 +57,7 @@ import {
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados, resumoCompatAprovadas } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
-import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, situacaoProdutoBling } from "../services/estoqueBlingPAIIA";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
@@ -357,8 +357,25 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   const [contaEscolhida, setContaEscolhidaLocal] = useState("");
   const [ficha, setFicha] = useState({ carregando: true, disponivel: true, gravada: false, anuncioId: anuncioId || "", erro: "", outros: [] });
   // (14/11) Produtos Bling que OUTRAS fichas deste SKU já registraram (publicação/integração).
-  // Se a busca pelo SKU não achar, o PAIIA explica e NÃO oferece criar outro produto.
-  const produtosBlingDoSku = useMemo(() => produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), [ficha.outros, ficha.anuncioId]);
+  // Vínculo ATUAL (MLB ainda existe ou não confirmado) + SKU fora da busca = NÃO oferece criar.
+  // Vínculo ANTIGO (MLB excluído/encerrado no ML, lido agora) = histórico: o anúncio novo segue.
+  const produtosBlingRegistrados = useMemo(() => produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), [ficha.outros, ficha.anuncioId]);
+  const chaveVinculos = produtosBlingRegistrados.map((r) => `${r.produto_id}:${r.mlb}:${r.conta}`).join("|");
+  const [vinculosBling, setVinculosBling] = useState({ chave: "", carregando: false, atuais: [], antigos: [] });
+  useEffect(() => {
+    let ativo = true;
+    if (!produtosBlingRegistrados.length) return undefined;
+    // Sem setState aqui: enquanto a chave conferida for outra, a tela trata como "conferindo".
+    classificarVinculosBling({ registrados: produtosBlingRegistrados, consultarML: (conta, caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, conta) })
+      .then((r) => { if (ativo) setVinculosBling({ chave: chaveVinculos, carregando: false, ...r }); })
+      .catch(() => { if (ativo) setVinculosBling({ chave: chaveVinculos, carregando: false, atuais: produtosBlingRegistrados, antigos: [] }); });
+    return () => { ativo = false; };
+  }, [chaveVinculos]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Enquanto confere no ML, todos contam como ATUAIS (na dúvida, nunca cria).
+  const vinculosConferidos = vinculosBling.chave === chaveVinculos && !vinculosBling.carregando;
+  const produtosBlingDoSku = vinculosConferidos ? vinculosBling.atuais : produtosBlingRegistrados;
+  const vinculosBlingAntigos = vinculosConferidos ? vinculosBling.antigos : [];
+  const conferindoVinculos = produtosBlingRegistrados.length > 0 && !vinculosConferidos;
   const [gravandoConta, setGravandoConta] = useState(false);
   // "Publicar sem compatibilidade — vou cadastrar manualmente depois":
   // autorização gravada NA FICHA (lida da base: F5/Voltar não volta a bloquear).
@@ -882,7 +899,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   async function criarProdutoBling() {
     if (cadastroBling.faltando.length) return;
     // (14/11) Produto Bling já registrado para este SKU (outra ficha): nunca cria outro.
-    if (produtosBlingDoSku.length) return;
+    if (produtosBlingDoSku.length || conferindoVinculos) return;
     const enviado = cadastroBling.produto;
     // Verificação PONTUAL no servidor (17/10/2026): busca exata do SKU
     // (ativos e inativos, variações de escrita) antes de criar e de novo sob
@@ -1723,6 +1740,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               </div>
             )}
           </div>
+        ) : estoque?.ok && !estoque?.encontrado && conferindoVinculos ? (
+          <div data-paiia-bling-lendo data-paiia-bling-vinculos-conferindo style={info}>⏳ Conferindo no Mercado Livre o vínculo Bling já registrado para este SKU…</div>
         ) : estoque?.ok && produtosBlingDoSku.length ? (
           <div data-paiia-bling-estado="fora-da-busca" style={erro}>
             ⚠ {situacaoProdutoBling({ leitura: estoque, registrados: produtosBlingDoSku }).texto}
@@ -1731,6 +1750,9 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
         ) : estoque?.ok ? (
           <div data-paiia-bling-estado="nao-encontrado" style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>
             <div>⚠ SKU <b>{anuncio?.codigo}</b> não encontrado no Bling.</div>
+            {vinculosBlingAntigos.length > 0 && (
+              <div data-paiia-bling-vinculo-antigo style={info}>ℹ {textoVinculoAntigo(vinculosBlingAntigos)}</div>
+            )}
             {!painelBling ? (
               <div style={{ marginTop: 8 }}>
                 <button type="button" data-paiia-abrir-criar-bling onClick={() => { setPainelBling(true); setCriacaoBling(null); }} disabled={!contaOk || criacaoBling?.ocupado} style={botaoAzul}>
