@@ -29,12 +29,16 @@ export const MINUTOS_OUTRO_APARELHO = 10;
 export const MAX_TENTATIVAS_AUTO = 3;
 export const ESPERA_TENTATIVA_MIN = [1, 3, 10];
 export const HORAS_MOSTRAR_PRONTAS = 24;
+/** (14/11) Falhas com a original salva na Galeria saem da fila depois disso. */
+export const HORAS_MANTER_FALHAS = 24;
+/** Mensagem do limite antigo de 50 do "foto-ia" (versão sem recorte grátis). */
+const LIMITE_ANTIGO = /limite de \d+ Fotos IA/i;
 export const ROTULO_CAMERA = {
   salvando: "salvando na Galeria…",
   salva: "salva na Galeria · tratando em seguida",
   tratando: "tratando (fundo branco 1200×1200)…",
   pronta: "pronta na Galeria",
-  falhou: "tratamento falhou · a original está salva na Galeria",
+  falhou: "fundo branco não aplicado · a original está salva na Galeria",
 };
 
 const txt = (v) => String(v ?? "").trim();
@@ -158,8 +162,12 @@ export async function tratarFotoDaGaleria({ supabase, usuarioId, linhaId, urlOri
       const recorte = await recortarFotoIA({ supabase, caminho: caminho || caminhoDaUrl(urlOriginal), chave: chaveTratamento(linhaId) });
       blobRecorte = await baixar(recorte.recorteUrl);
     } catch (e) {
-      // Diz QUAL etapa falhou: a cota é só da reserva "foto-ia", não do Photoroom.
-      if (motivos.length) e.message = `Reserva Foto IA: ${txt(e?.message || e)} · Antes falharam → ${motivos.join(" | ")}`;
+      // (14/11) Mensagem clara primeiro; os detalhes de cada etapa vêm depois.
+      // A cota de 50 é só da reserva "foto-ia" (Replicate), não do recorte grátis.
+      if (motivos.length) {
+        const reserva = txt(e?.codigo) === "LIMITE_MENSAL" ? "a reserva Foto IA está no limite do mês" : `a reserva Foto IA também falhou (${txt(e?.message || e)})`;
+        e.message = `Fundo branco não aplicado: o recorte automático não funcionou nesta foto e ${reserva}. A foto original está salva na Galeria. Detalhes: ${motivos.join(" | ")}`;
+      }
       throw e;
     }
   }
@@ -219,7 +227,20 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
       tentativas,
       erro: txt(e?.message || e).slice(0, 500), // (13/11) cabe o motivo de cada etapa
       proximaEm: auto ? agora() + espera : 0,
+      falhouEm: agora(),
     });
+  }
+
+  /**
+   * (14/11) Fotos que falharam SÓ pelo limite antigo de 50 do "foto-ia" (versão que
+   * não tinha o recorte grátis) ganham UMA nova tentativa automática pelo caminho novo.
+   */
+  async function reabrirFalhasDoLimiteAntigo() {
+    for (const item of await listar()) {
+      if (item.estado === "falhou" && item.linhaId && !item.reaberta && LIMITE_ANTIGO.test(txt(item.erro)) && !/^Fundo branco não aplicado/.test(txt(item.erro))) {
+        await mudar(item.id, { estado: "salva", tentativas: 0, proximaEm: 0, erro: "", reaberta: true });
+      }
+    }
   }
 
   async function processarUm(item) {
@@ -257,6 +278,7 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     if (rodando) return rodando;
     rodando = (async () => {
       try {
+        await reabrirFalhasDoLimiteAntigo();
         const lista = await listar();
         const t = agora();
         for (const item of lista.reverse()) {
@@ -280,11 +302,26 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     return rodar();
   }
 
-  /** (13/11) Prontas de versões anteriores (que ficavam 24 h) também saem da fila. Galeria intacta. */
+  /**
+   * (13/11) Prontas de versões anteriores (que ficavam 24 h) também saem da fila.
+   * (14/11) Falhas com a original JÁ na Galeria saem da fila depois de HORAS_MANTER_FALHAS
+   * (não acumulam). Foto sem original na Galeria (só neste aparelho) NUNCA é tirada.
+   */
   async function faxina() {
+    const limite = agora() - HORAS_MANTER_FALHAS * 3600_000;
     for (const item of await listar()) {
       if (item.estado === "pronta") await armazenamento.delete(item.id);
+      else if (item.estado === "falhou" && item.linhaId && (item.falhouEm || item.criadaEm || 0) < limite) await armazenamento.delete(item.id);
     }
+  }
+
+  /** (14/11) "Remover da fila": só tira o aviso; a original continua na Galeria. */
+  async function removerDaFila(id) {
+    const item = (await listar()).find((i) => i.id === id);
+    if (!item || item.estado !== "falhou" || !item.linhaId) return false;
+    await armazenamento.delete(id);
+    avisar({ tipo: "removida", id });
+    return true;
   }
 
   /** Prontas desta sessão (mais recentes primeiro); marcarSalvas(ids) após "Salvar no celular". */
@@ -295,7 +332,7 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     avisar({ tipo: "salvas-no-aparelho", quantidade: s.size });
   }
 
-  return { adicionar, listar, rodar, tentarDeNovo, faxina, listarProntas, marcarSalvas };
+  return { adicionar, listar, rodar, tentarDeNovo, faxina, listarProntas, marcarSalvas, removerDaFila };
 }
 
 /**

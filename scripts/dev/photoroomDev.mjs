@@ -151,7 +151,7 @@ export function registroArquivo(pasta) {
   };
 }
 
-export function criarMiddlewarePhotoroom({ arquivoChave = ARQUIVO_CHAVE_PHOTOROOM, chamar = chamarPhotoroom, limpar = limparMarcaSandbox, contador = contadorMemoria(), registrar = () => {} } = {}) {
+export function criarMiddlewarePhotoroom({ arquivoChave = ARQUIVO_CHAVE_PHOTOROOM, chamar = chamarPhotoroom, limpar = limparMarcaSandbox, contador = contadorMemoria(), registrar = () => {}, desligado = false } = {}) {
   return async (req, res, next) => {
     if (!String(req.url || "").startsWith(ROTA_PHOTOROOM_LOCAL)) return next();
     const inicio = Date.now();
@@ -161,6 +161,8 @@ export function criarMiddlewarePhotoroom({ arquivoChave = ARQUIVO_CHAVE_PHOTOROO
       res.statusCode = status; res.setHeader("Content-Type", "application/json; charset=utf-8"); res.end(JSON.stringify(obj));
     };
     if (req.method !== "POST") return responder(405, { ok: false, erro: "Use POST." });
+    // (14/11) Teste "só gratuito" (PAIIA_FOTO_GRATIS=1): igual ao site sem a função paga.
+    if (desligado) return responder(503, { ok: false, erro: "Photoroom desligado neste teste (só recorte grátis)." });
     let texto = "";
     try { texto = fs.readFileSync(arquivoChave, "utf8"); } catch { /* sem arquivo */ }
     const k = escolherChave(texto);

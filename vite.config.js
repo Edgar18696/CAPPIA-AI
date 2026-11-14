@@ -37,6 +37,8 @@ export default defineConfig({
         server.middlewares.use(criarMiddlewarePhotoroom({
           contador: contadorArquivo(`${pasta}\\uso-pago.json`),
           registrar: registroArquivo(pasta),
+          // (14/11) PAIIA_FOTO_GRATIS=1: testa só o recorte grátis, como no site hoje.
+          desligado: globalThis.process?.env?.PAIIA_FOTO_GRATIS === "1",
         }));
       },
     },

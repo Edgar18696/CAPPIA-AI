@@ -360,3 +360,52 @@ test("13/11) servidor de teste no celular: sem recarga automática quando PAIIA_
   const cfg = ler("vite.config.js");
   assert.match(cfg, /globalThis\.process\?\.env\?\.PAIIA_TESTE_CELULAR === "1" \? \{ server: \{ ws: false \} \} : \{\}/);
 });
+
+test("14/11) fotos travadas pelo limite antigo de 50 ganham UMA nova tentativa pelo caminho novo", async () => {
+  const sb = supabaseFalso();
+  const arm = armazenamentoMemoria();
+  const s = await C.salvarOriginalNaGaleria({ supabase: sb, usuarioId: U, item: { id: "velha", blob: blob(), nome: "a.jpg" } });
+  // como ficou no site antigo: falhou pelo limite do foto-ia, original na Galeria
+  await arm.put({ id: "velha", blob: blob(), nome: "a.jpg", criadaEm: Date.now(), estado: "falhou", tentativas: 1, erro: "Você atingiu o limite de 50 Fotos IA deste mês.", ...s });
+  const { deps, chamadas } = depsReais(sb);
+  const fila = C.criarFilaCamera({ armazenamento: arm, deps });
+  await fila.rodar();
+  assert.deepEqual(await fila.listar(), [], "tratada e fora da fila");
+  assert.equal(fila.listarProntas().length, 1);
+  assert.equal(chamadas.recorte, 1);
+  // se falhar de novo pelo limite, NÃO reabre em loop
+  const arm2 = armazenamentoMemoria();
+  const sb2 = supabaseFalso();
+  const s2 = await C.salvarOriginalNaGaleria({ supabase: sb2, usuarioId: U, item: { id: "v2", blob: blob(), nome: "b.jpg" } });
+  await arm2.put({ id: "v2", blob: blob(), nome: "b.jpg", criadaEm: Date.now(), estado: "falhou", tentativas: 1, erro: "Você atingiu o limite de 50 Fotos IA deste mês.", ...s2 });
+  const { deps: d2, chamadas: c2 } = depsReais(sb2, { falhaRecorte: async () => { throw Object.assign(new Error("Você atingiu o limite de 50 Fotos IA deste mês."), { codigo: "LIMITE_MENSAL", temporario: false }); } });
+  const f2 = C.criarFilaCamera({ armazenamento: arm2, deps: d2 });
+  await f2.rodar();
+  await f2.rodar();
+  await f2.rodar();
+  assert.equal(c2.recorte, 1, "só uma nova tentativa");
+  const [i2] = await f2.listar();
+  assert.equal(i2.estado, "falhou");
+  assert.equal(i2.reaberta, true);
+});
+
+test("14/11) falhas antigas saem da fila depois de 24 h; foto só no aparelho nunca sai; 'Remover da fila' não apaga a Galeria", async () => {
+  const sb = supabaseFalso();
+  const arm = armazenamentoMemoria();
+  let t = Date.parse("2026-11-14T12:00:00Z");
+  const { deps } = depsReais(sb);
+  const fila = C.criarFilaCamera({ armazenamento: arm, deps, agora: () => t });
+  const s = await C.salvarOriginalNaGaleria({ supabase: sb, usuarioId: U, item: { id: "f1", blob: blob(), nome: "a.jpg" } });
+  await arm.put({ id: "f1", blob: blob(), criadaEm: t, estado: "falhou", erro: "Fundo branco não aplicado: …", falhouEm: t - 25 * 3600_000, ...s });
+  await arm.put({ id: "f2", blob: blob(), criadaEm: t, estado: "falhou", erro: "Fundo branco não aplicado: …", falhouEm: t - 3600_000, ...(await C.salvarOriginalNaGaleria({ supabase: sb, usuarioId: U, item: { id: "f2", blob: blob(), nome: "b.jpg" } })) });
+  await arm.put({ id: "f3", blob: blob(), criadaEm: t - 30 * 3600_000, estado: "falhou", erro: "sem rede", falhouEm: t - 30 * 3600_000 }); // sem linhaId: original só no aparelho
+  await fila.faxina();
+  const ids = (await fila.listar()).map((i) => i.id).sort();
+  assert.deepEqual(ids, ["f2", "f3"], "a de 25 h saiu; a recente fica; a que só existe no aparelho nunca sai");
+  assert.equal(await fila.removerDaFila("f3"), false, "sem original na Galeria: não remove");
+  assert.equal(await fila.removerDaFila("f2"), true);
+  assert.deepEqual((await fila.listar()).map((i) => i.id), ["f3"]);
+  assert.equal(sb.linhas.length, 2, "as duas originais continuam na Galeria");
+  assert.equal(sb.log.deletes + sb.log.removes, 0, "nada apagado do Supabase");
+  assert.equal(C.ROTULO_CAMERA.falhou, "fundo branco não aplicado · a original está salva na Galeria");
+});

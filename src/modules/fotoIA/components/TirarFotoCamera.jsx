@@ -82,6 +82,11 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
     if (fila) fila.tentarDeNovo(id).catch(() => {});
   }
 
+  async function removerDaFila(id) {
+    const fila = filaCamera(usuario);
+    if (fila && (await fila.removerDaFila(id).catch(() => false))) setAviso("Removida da fila. A foto original continua na Galeria.");
+  }
+
   const botao = (cor) => ({ flex: "1 1 150px", padding: "16px 14px", borderRadius: 14, border: "none", fontSize: 17, fontWeight: 800, color: "#fff", background: cor, cursor: "pointer", minHeight: 56 });
 
   return (
@@ -116,7 +121,11 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
                   {item.baixaResolucao && <div style={{ color: "#fde68a", marginTop: 2 }}>Foto pequena: ficou ampliada.</div>}
                 </div>
                 {item.estado === "falhou" && (
-                  <button type="button" data-paiia-camera-tentar onClick={() => tentarDeNovo(item.id)} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #f87171", background: "transparent", color: "#fecaca", fontWeight: 700, cursor: "pointer" }}>Tentar de novo</button>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <button type="button" data-paiia-camera-tentar onClick={() => tentarDeNovo(item.id)} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #f87171", background: "transparent", color: "#fecaca", fontWeight: 700, cursor: "pointer" }}>Tentar de novo</button>
+                    {/* (14/11) Só tira o aviso da fila; a original continua na Galeria. */}
+                    {item.linhaId && <button type="button" data-paiia-camera-remover onClick={() => removerDaFila(item.id)} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #475569", background: "transparent", color: "#cbd5e1", fontWeight: 700, cursor: "pointer" }}>Remover da fila</button>}
+                  </div>
                 )}
               </div>
             ))}

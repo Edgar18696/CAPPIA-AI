@@ -136,7 +136,7 @@ test("13/11 celular: cópia do aparelho ilegível → tenta com a original da Ga
   const nada = P.recortarComReserva({ photoroom: async () => { throw new Error("Photoroom: HTTP 503"); }, gratis: async () => { throw new Error("modelo não carregou"); } });
   await assert.rejects(C.tratarFotoDaGaleria({ ...base, recortarLocal: nada }), (e) => {
     assert.equal(e.codigo, "LIMITE_MENSAL", "cota continua protegida");
-    assert.match(e.message, /^Reserva Foto IA: Você atingiu o limite/);
+    assert.match(e.message, /^Fundo branco não aplicado: o recorte automático não funcionou nesta foto e a reserva Foto IA está no limite do mês\. A foto original está salva na Galeria\./);
     assert.match(e.message, /cópia do aparelho: Photoroom: HTTP 503 · Recorte grátis: modelo não carregou/);
     assert.match(e.message, /original da Galeria: Photoroom: HTTP 503/);
     return true;
@@ -222,4 +222,14 @@ test("13/11 diagnóstico: contador de pagas em arquivo (reiniciar não zera), re
   assert.ok(!log.includes(PROD), "log sem chave");
   assert.ok(fs.existsSync(path.join(pasta, "ultimo-recorte.png")));
   assert.equal(D.dimensoes(png), "1920x2560");
+});
+
+test("14/11 modo só gratuito (PAIIA_FOTO_GRATIS=1): Photoroom não é chamado", async () => {
+  let chamou = false;
+  const mw = D.criarMiddlewarePhotoroom({ arquivoChave: arquivoChave(`PHOTOROOM_SANDBOX_KEY=${CHAVE}\n`), chamar: async () => { chamou = true; return { status: 200, corpo: Buffer.from("x") }; }, desligado: true });
+  const r = res(); await mw(req(Buffer.from("F")), r, () => {}); await r.pronto;
+  assert.equal(r.statusCode, 503);
+  assert.match(String(r.corpo), /só recorte grátis/);
+  assert.equal(chamou, false);
+  assert.match(fs.readFileSync(new URL("../../vite.config.js", import.meta.url), "utf8"), /desligado: globalThis\.process\?\.env\?\.PAIIA_FOTO_GRATIS === "1"/);
 });
