@@ -404,7 +404,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -686,6 +686,41 @@ export async function registrarCanaisPublicacao({ anuncioId, selecao }) {
   if (!gravado || JSON.stringify(gravado.selecionados || []) !== JSON.stringify(canaisSelecionados(s))) {
     return { ok: false, erro: "A ficha mudou ao mesmo tempo: a escolha dos canais não foi gravada. Tente de novo." };
   }
+  return { ok: true, registro: gravado };
+}
+
+/**
+ * (14/11/2026) Contas Mercado Livre CONFIRMADAS na etapa final de Publicação
+ * (dados_conferencia.contas_publicacao; plano montado por contasPublicacaoML).
+ * Grava também a conta de destino desta ficha (a 1ª confirmada), pelo mesmo
+ * caminho da escolha manual (salvarContaDestino). NÃO publica nada.
+ * - Ficha publicada, publicando ou cancelada: nunca é alterada.
+ * - Gravação condicionada à versão lida (updated_at) e relida depois.
+ */
+export async function registrarContasPublicacao({ anuncioId, plano, codigo = "", titulo = "", contaNome = "" }) {
+  if (!anuncioId) return { ok: false, erro: "A ficha ainda não está gravada na base PAIIA: as contas não podem ser confirmadas." };
+  const conta = String(plano?.conta_desta_ficha || "").replace(/\D/g, "");
+  if (!conta || !Array.isArray(plano?.confirmadas) || !plano.confirmadas.includes(conta)) return { ok: false, erro: "Nenhuma conta liberada foi confirmada." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const a = atual.anuncio;
+  if (publicacaoExiste(a.publicacao) || STATUS_FICHA_FECHADA.includes(a.status_fluxo)) {
+    return { ok: false, fechada: true, erro: "Esta ficha já foi publicada, está publicando ou foi cancelada: as contas não são alteradas." };
+  }
+  const dados = a.dados_conferencia || {};
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dados, contas_publicacao: plano }, updated_at: new Date().toISOString() })
+    .eq("id", anuncioId)
+    .eq("updated_at", a.updated_at);
+  if (error) return falha(error);
+  const relida = await obterAnuncio(anuncioId);
+  const gravado = relida.ok ? relida.anuncio.dados_conferencia?.contas_publicacao : null;
+  if (!gravado || JSON.stringify(gravado.confirmadas || []) !== JSON.stringify(plano.confirmadas)) {
+    return { ok: false, erro: "A ficha mudou ao mesmo tempo: as contas não foram gravadas. Tente de novo." };
+  }
+  const d = await salvarContaDestino({ anuncioId, codigo: codigo || a.codigo || "", titulo: titulo || a.titulo || "", contaId: conta, contaNome });
+  if (!d.ok) return d;
   return { ok: true, registro: gravado };
 }
 

@@ -24,7 +24,7 @@ test("1) medidas mudaram: frete da ficha desatualizado; recalculado com as medid
 test("2) só no modo automático e só com cotação oficial (estimar:false); a tela normal continua igual", () => {
   const r = fs.readFileSync(new URL("../../src/components/RevisaoPublicacaoML.jsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const f = r.slice(r.indexOf("async function conferirFretePublicacao()"), r.indexOf("useEffect(", r.indexOf("async function conferirFretePublicacao()")));
-  assert.ok(f.includes("const auto = Boolean(autoPublicacao || autoPublicacaoDaUrl());") && f.includes("if (auto && contaEscolhida)") && f.includes('if (s0.estado !== "ok")'));
+  assert.ok(f.includes("const auto = Boolean(autoPublicacao || autoPublicacaoDaUrl());") && f.includes("if ((auto || estimativaDeOutraConta) && contaEscolhida)") && f.includes('if (s0.estado !== "ok")'));
   assert.ok(f.includes("nova.origem === ORIGEM_FRETE.SIMULACAO"), "cotação simulada nunca vale");
 });
 

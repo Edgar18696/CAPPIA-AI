@@ -36,6 +36,8 @@ import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services/registroMLBService";
 import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, ORIGEM_FRETE, reais as reaisFrete } from "../services/fretePrecificacao";
+import { modalidadesDaConta } from "../services/consultaMLLeitura";
+import { modalidadeParaConta } from "../services/contasPublicacaoML";
 import { tipoVeiculoParaPublicacao } from "../services/tipoVeiculoAnuncio";
 import {
   resolverCompatibilidades,
@@ -328,7 +330,7 @@ async function chamar(acao, extra = {}, contaML = "") {
   return data || { ok: false, erro: "Resposta vazia do servidor." };
 }
 
-export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp = "", anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades, modoSimples = false }) {
+export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp = "", anuncio, titulo, onFechar, contaDestino = "", onContaDestino, anuncioId = "", onAnuncioId, quantidadeFicha = "", onQuantidadeConfirmada, bloqueioFicha = "", onPublicado, onAbrirTelaFinal, onVoltarCompatibilidades, modoSimples = false, contasPermitidas = null }) {
   const [conexao, setConexao] = useState(null);
   const [preparo, setPreparo] = useState(null);
   const [validacao, setValidacao] = useState(null);
@@ -449,8 +451,11 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
 
   const contaInfo = contasConectadas.find((c) => String(c.ml_user_id) === contaEscolhida) || null;
   // Opções: TODAS as contas conectadas na base (uma opção por ID).
+  // (14/11) Com contas confirmadas na etapa final, só a conta DESTA ficha aparece aqui.
+  const permitidas = Array.isArray(contasPermitidas) && contasPermitidas.length ? new Set(contasPermitidas.map(String)) : null;
   const opcoesConta = [...new Map(contasConectadas
     .filter((c) => String(c.ml_user_id || "").trim())
+    .filter((c) => !permitidas || permitidas.has(String(c.ml_user_id)))
     .map((c) => [String(c.ml_user_id), { nome: nomeDaLoja(c.ml_user_id, c.nickname), id: String(c.ml_user_id), conectada: true, nickname: c.nickname || "" }])).values()];
 
   const fotosUrls = useMemo(
@@ -1328,8 +1333,16 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     // no ML com as medidas ATUAIS no preço da ficha (cotação oficial; nunca estimativa) e segue. Não depende do
     // custo nem da tabela de margens (que exigia o procedimento antigo). Cotação recusada = motivo específico.
     const auto = Boolean(autoPublicacao || autoPublicacaoDaUrl());
-    if (auto && contaEscolhida) {
-      const atualAuto = { conta: contaEscolhida, medida: logistica?.medida, modalidade: logistica?.modalidade || registro?.modalidade, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio, preco: campos.preco };
+    // (14/11) O frete da preparação é só ESTIMATIVA de referência (cotada em outra conta): a cotação
+    // OFICIAL é feita aqui, na conta desta ficha, com a modalidade ativa NESTA conta.
+    const estimativaDeOutraConta = Boolean(contaEscolhida && registro?.conta && String(registro.conta) !== String(contaEscolhida));
+    let modalidadeConta = logistica?.modalidade || registro?.modalidade;
+    if (estimativaDeOutraConta) {
+      const mods = await modalidadesDaConta(contaEscolhida);
+      modalidadeConta = modalidadeParaConta(mods?.modalidades, modalidadeConta) || modalidadeConta;
+    }
+    if ((auto || estimativaDeOutraConta) && contaEscolhida) {
+      const atualAuto = { conta: contaEscolhida, medida: logistica?.medida, modalidade: modalidadeConta, categoria: campos.categoria_id, tipoAnuncio: campos.tipoAnuncio, preco: campos.preco };
       const s0 = situacaoFrete({ registro, atual: atualAuto });
       if (s0.estado !== "ok") {
         const m = logistica?.medida || {};

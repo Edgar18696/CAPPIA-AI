@@ -3,6 +3,7 @@ import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
 import AutorizacaoUnicaPublicacao from "./AutorizacaoUnicaPublicacao";
+import { nomeContaPublicacao } from "../services/contasPublicacaoML";
 import { nomeDaLoja } from "../services/duplicidadeML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
@@ -1585,6 +1586,10 @@ function moverFoto(
   const contasMLDisponiveis = contasMLConectadas(estadoContasML);
   // (Autorização única) nº da autorização da publicação automática: do Voz (URL) ou do Novo Anúncio.
   const [publicacaoManual, setPublicacaoManual] = useState(false);
+  // (14/11) Contas confirmadas na etapa final (plano gravado na ficha) e nova leitura da revisão
+  // depois da confirmação (a conta de destino desta ficha acabou de ser gravada).
+  const [planoContas, setPlanoContas] = useState(null);
+  const [versaoRevisaoML, setVersaoRevisaoML] = useState(0);
   const lojaOnlineConectada = contasMLDisponiveis.some((c) => nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE");
   const [autoPiloto, setAutoPiloto] = useState(() => { try { const id = new URL(window.location.href).searchParams.get("auto") || ""; return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : ""; } catch { return ""; } });
   // Caminho único: LOJA ONLINE conectada (ou piloto rodando) e você não pediu o modo manual.
@@ -5020,13 +5025,27 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             <AutorizacaoUnicaPublicacao
               anuncioId={anuncioIdPAIIA}
               sku={anuncioConferido?.codigo || ""}
+              codigo={anuncioConferido?.codigo || anuncioConferido?.oem || ""}
+              titulo={anuncioConferido?.titulo || ""}
               preco={anuncioConferido?.preco || ""}
               quantidade={quantidadeEstoque}
               contas={contasMLDisponiveis}
-              onAutorizar={(contaId, id) => { setContaDestinoML(contaId); setAutoPiloto(id); }}
+              dadosFrete={{ registro: registroFreteConf || null, medida: anuncioConferido?.logistica?.medida || registroFreteConf?.medida || null, categoria: anuncioConferido?.categoriaId || registroFreteConf?.categoria || "", tipoAnuncio: anuncioConferido?.tipoAnuncio || registroFreteConf?.tipoAnuncio || "" }}
+              onAutorizar={(contaId, id, plano) => { setPlanoContas(plano || null); setContaDestinoML(contaId); setVersaoRevisaoML((v) => v + 1); setAutoPiloto(id); }}
               ativo={Boolean(autoPiloto) || publicacaoManual}
-              onManual={() => setPublicacaoManual(true)}
+              onManual={(contaId, plano) => {
+                // (14/11) Conta confirmada que não é a LOJA ONLINE: Publicação de sempre, já com a conta
+                // gravada na ficha; publicar continua dependendo do seu toque. Sem conta = modo manual (correção).
+                if (contaId) { setPlanoContas(plano || null); setContaDestinoML(contaId); setVersaoRevisaoML((v) => v + 1); }
+                setPublicacaoManual(true);
+              }}
             />
+            {planoContas && (
+              <div data-paiia-plano-contas={planoContas.confirmadas.join(",")} style={{ ...bloco, borderColor: "#22c55e", color: "#bbf7d0", fontSize: 14 }}>
+                ✅ Contas confirmadas: <b>{planoContas.confirmadas.map(nomeContaPublicacao).join(", ")}</b>. Esta ficha publica em <b>{nomeContaPublicacao(planoContas.conta_desta_ficha)}</b>.
+                {planoContas.fila.length > 0 && <> Depois: <b data-paiia-fila-contas>{planoContas.fila.map(nomeContaPublicacao).join(", ")}</b> (uma ficha por conta; cada uma com a sua conferência e o seu toque em Publicar).</>}
+              </div>
+            )}
             <PilotoAutomaticoPublicacao
               conta={contaDestinoML || ""}
               sku={anuncioConferido?.codigo || ""}
@@ -5066,6 +5085,8 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             />
             {mercadoLivreLiberado && (
             <RevisaoPublicacaoML
+              key={`revisao-ml-${versaoRevisaoML}`}
+              contasPermitidas={planoContas ? [planoContas.conta_desta_ficha] : null}
               autoPublicacao={autoPiloto}
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
               titulo={anuncioConferido.titulo}

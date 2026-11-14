@@ -60,6 +60,7 @@ import { padronizarTitulo, padronizarDescricao } from "../services/padronizarTex
 import useFichaNovoAnuncio from "../hooks/useFichaNovoAnuncio";
 import { OPCOES_TIPO_VEICULO, TIPO_CARRO, normalizarTipoVeiculo } from "../services/tipoVeiculoAnuncio";
 import { kgParaG, medidaDoNovoAnuncio, textoMedida } from "../services/dadosTecnicosAnuncio";
+import { contaReferenciaFrete, nomeContaPublicacao } from "../services/contasPublicacaoML";
 import {
   gerarAnuncioV2,
 } from "../services/inteligencia";
@@ -1718,11 +1719,13 @@ function formatarPrecoAppia(
   // ML → PRECIFICAÇÃO). Cotação oficial da conta ativa; sem cotação real,
   // ESTIMATIVA PAIIA identificada (publicação bloqueada). =====
   const estadoContasNA = useContasML();
-  // (19/10) Conta Mercado Livre DO ANÚNCIO (escolhida aqui entre as contas
-  // conectadas em Contas Marketplace); sem escolha, a conta ativa.
+  // (14/11/2026) A conta NÃO é escolhida aqui: o frete da preparação é só uma
+  // ESTIMATIVA de referência, cotada numa conta conectada (a ativa; senão a
+  // primeira na ordem LOJA ONLINE, REVELAÇÃO, CIEBR). As contas da publicação
+  // são escolhidas na etapa final de Publicação, onde cada conta marcada tem
+  // a sua cotação OFICIAL conferida separadamente.
   const contasConectadasNA = contasMLConectadas(estadoContasNA);
-  const contaEscolhidaNA = contasConectadasNA.find((c) => String(c.ml_user_id) === String(contaAnuncioML)) || null;
-  const contaAtivaNA = contaEscolhidaNA || contasConectadasNA.find((c) => c.ativa) || null;
+  const contaAtivaNA = contaReferenciaFrete(contasConectadasNA);
   const contaFreteId = String(contaAtivaNA?.ml_user_id || "");
   const [modalidadesFrete, setModalidadesFrete] = useState({ carregando: false, lista: [], erro: "" });
   const [modalidadeFreteML, setModalidadeFreteML] = useState("");
@@ -5831,18 +5834,14 @@ marcarAnuncioPronto({
             <div style={{ fontWeight: 700, color: "#bae6fd", marginBottom: 8 }}>
               {FRETE_SIMULADO_PERMITIDO && (freteSimuladoNA(registroFreteML) || contaAtivaNA?.simulacao === true)
                 ? <span data-paiia-frete-titulo-simulacao>🧪 Frete de venda — SIMULAÇÃO do modo teste (não é cotação oficial)</span>
-                : "🚚 Frete de venda — cotação oficial do Mercado Livre"}
+                : <span data-paiia-frete-titulo-estimativa>🚚 Frete de venda — estimativa de referência (Mercado Livre)</span>}
             </div>
+            <p data-paiia-frete-estimativa-nota style={{ color: "#94a3b8", fontSize: 12, margin: "0 0 8px" }}>
+              {contasConectadasNA.length
+                ? "Só para calcular o preço. As contas (LOJA ONLINE, REVELAÇÃO, CIEBR) são escolhidas na etapa final de Publicação, onde o frete oficial de cada conta é conferido separadamente."
+                : "⚠ Nenhuma conta do Mercado Livre conectada (Contas Marketplace): sem conta não há como estimar o frete."}
+            </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-              <label>
-                Conta:{" "}
-                <select data-paiia-frete-conta value={contaFreteId} onChange={(e) => setContaAnuncioML(e.target.value)} disabled={!contasConectadasNA.length} style={{ ...campoPrecificacaoAppia, display: "inline-block", width: "auto", padding: "4px 8px", marginTop: 0 }}>
-                  {!contasConectadasNA.length && <option value="">nenhuma conta conectada (Contas Marketplace)</option>}
-                  {contasConectadasNA.map((c) => (
-                    <option key={c.ml_user_id} value={String(c.ml_user_id)}>{c.nome || c.nickname || c.ml_user_id} (ID {c.ml_user_id}){c.ativa ? " · ativa" : ""}</option>
-                  ))}
-                </select>
-              </label>
               <span data-paiia-frete-medida>Embalagem: <b>{medidaFreteNA ? textoMedida(medidaFreteNA) : "⚠ informe peso e as 3 medidas em Dados técnicos"}</b></span>
               <label>
                 Modalidade:{" "}
@@ -5898,7 +5897,7 @@ marcarAnuncioPronto({
                     </span>
                   ) : null}
                   <span style={{ color: "#94a3b8", fontSize: 12 }}>
-                    Origem: <b data-paiia-frete-origem>Mercado Livre — cotação oficial da conta {registroFreteML.conta}</b> · tipo <b data-paiia-frete-tipo-cotado>{registroFreteML.tipoAnuncio === "premium" ? "Premium" : "Clássico"}</b>
+                    Origem: <b data-paiia-frete-origem>Mercado Livre — estimativa de referência (cotação oficial na conta {nomeContaPublicacao(registroFreteML.conta)}; cada conta é conferida na Publicação)</b> · tipo <b data-paiia-frete-tipo-cotado>{registroFreteML.tipoAnuncio === "premium" ? "Premium" : "Clássico"}</b>
                     {fr.cotadoEm ? <> · resposta do ML em <b data-paiia-frete-horario>{new Date(fr.cotadoEm).toLocaleString("pt-BR")}</b></> : ""}
                   </span>
                   {situacaoFreteNA.estado === "ok" || aguardandoPreco ? <span style={{ color: "#86efac" }}> ✔ cotação válida</span> : null}
