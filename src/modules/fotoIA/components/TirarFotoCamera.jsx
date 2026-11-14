@@ -10,6 +10,7 @@ import { supabase } from "../../../supabase";
 import { usuarioDaGaleria } from "../../paiiaVoz/servicos/galeriaVoz";
 import { EVENTO_CAMERA, filaCamera } from "../../../services/fotoIA/filaCameraApp";
 import { ROTULO_CAMERA, resumoCamera } from "../../../services/fotoIA/fotoCameraGaleria";
+import { marcarCameraAberta, limparCameraAberta, fotoPerdidaNaRecarga, MSG_FOTO_PERDIDA } from "../../../services/fotoIA/cameraRetorno";
 
 const COR = { salvando: "#93c5fd", salva: "#93c5fd", tratando: "#93c5fd", pronta: "#86efac", falhou: "#fca5a5" };
 
@@ -29,6 +30,9 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
   const [itens, setItens] = useState([]);
   const [prontas, setProntas] = useState([]);
   const [aviso, setAviso] = useState("");
+  // (14/11) Foto perdida porque o celular recarregou a página com a câmera aberta.
+  const [avisoPerda, setAvisoPerda] = useState(() =>
+    fotoPerdidaNaRecarga(globalThis.sessionStorage, { inicioDaPagina: globalThis.performance?.timeOrigin }) ? MSG_FOTO_PERDIDA : "");
 
   useEffect(() => {
     let vivo = true;
@@ -53,7 +57,9 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
   async function aoFotografar(e) {
     const arquivos = Array.from(e.target.files || []);
     e.target.value = "";
+    limparCameraAberta(globalThis.sessionStorage);
     if (!arquivos.length) return;
+    setAvisoPerda("");
     const fila = filaCamera(usuario);
     if (!fila) { setAviso("Entre na sua conta PAIIA para salvar as fotos na Galeria."); return; }
     try {
@@ -79,13 +85,14 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
   return (
     <section data-paiia-foto-camera style={{ maxWidth: 950, margin: "0 auto 20px", padding: 14, borderRadius: 16, background: "#0f172a", border: "1px solid #2563eb", boxSizing: "border-box" }}>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button type="button" data-paiia-tirar-foto disabled={desativado} onClick={() => cameraRef.current?.click()} style={botao("linear-gradient(135deg,#2563eb,#06b6d4)")}>📷 Tirar Foto</button>
+        <button type="button" data-paiia-tirar-foto disabled={desativado} onClick={() => { marcarCameraAberta(globalThis.sessionStorage); cameraRef.current?.click(); }} style={botao("linear-gradient(135deg,#2563eb,#06b6d4)")}>📷 Tirar Foto</button>
         <button type="button" data-paiia-escolher-foto disabled={desativado} onClick={aoEscolherFoto} style={botao("#334155")}>🖼️ Escolher Foto</button>
       </div>
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={aoFotografar} data-paiia-camera-input />
       <p style={{ margin: "10px 2px 0", color: "#94a3b8", fontSize: 13, lineHeight: 1.4 }}>
         Tire a foto: o PAIIA coloca fundo branco e salva na Galeria. Dica: fotografe de perto, com a peça ocupando metade da tela.
       </p>
+      {avisoPerda && <div data-paiia-camera-foto-perdida role="alert" style={{ marginTop: 10, padding: 10, borderRadius: 10, border: "1px solid #f59e0b", color: "#fde68a", fontSize: 14, fontWeight: 700 }}>⚠ {avisoPerda}</div>}
       {aviso && <div data-paiia-camera-aviso style={{ marginTop: 10, color: "#bfdbfe", fontSize: 14, fontWeight: 700 }}>{aviso}</div>}
       {(itens.length > 0 || prontas.length > 0) && (
         <div style={{ marginTop: 12 }}>

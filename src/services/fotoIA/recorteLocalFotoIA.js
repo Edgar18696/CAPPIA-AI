@@ -88,6 +88,19 @@ let proximoId = 1;
 const pendentes = new Map();
 const sessoesPagina = new Map();
 
+/**
+ * (14/11) Libera a memória do modelo de recorte (~44 MB + execução). No celular, manter
+ * o modelo carregado aumenta a chance de o sistema fechar a aba quando a câmera abre.
+ * Na próxima foto ele é carregado de novo (o arquivo fica no cache do navegador).
+ */
+export function liberarRecorteLocal() {
+  try { worker?.terminate?.(); } catch { /* já encerrado */ }
+  worker = null;
+  pendentes.forEach((p) => p.falha(new Error("recorte encerrado")));
+  pendentes.clear();
+  sessoesPagina.clear();
+}
+
 function obterWorker() {
   if (workerFalhou || typeof Worker === "undefined") return null;
   if (!worker) {

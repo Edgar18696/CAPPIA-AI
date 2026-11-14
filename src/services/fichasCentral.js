@@ -220,6 +220,9 @@ export function rascunhoLocalJaNaBase(local, fichas) {
 // Tela no endereço (F5 volta para a mesma etapa, não para a Home).
 // ---------------------------------------------------------------
 export const TELAS_DO_FLUXO = Object.freeze(["novoAnuncio", "centralPublicacao", "mercadoLivreTeste", "paiiaVoz"]);
+// (14/11) Foto IA também volta para ela mesma: o celular pode fechar a aba enquanto a
+// câmera está aberta (falta de memória) e, ao recarregar, o PAIIA abria na Home.
+export const TELAS_QUE_REABREM = Object.freeze([...TELAS_DO_FLUXO, "foto"]);
 
 /**
  * Tela a abrir no carregamento.
@@ -236,13 +239,13 @@ export function telaInicialDoEndereco(search, padrao = "home", { fichaNovoAnunci
     if (m && m[1] === "novoAnuncio" && fichaNovoAnuncioLocal && f[1].toLowerCase() === String(fichaNovoAnuncioLocal).toLowerCase()) return "novoAnuncio";
     return "mercadoLivreTeste";
   }
-  return m && TELAS_DO_FLUXO.includes(m[1]) ? m[1] : padrao;
+  return m && TELAS_QUE_REABREM.includes(m[1]) ? m[1] : padrao;
 }
 
 /** Endereço com ?tela= da etapa atual (ou sem ele, fora do fluxo). Não mexe em ?ficha=. */
 export function enderecoComTela(href, tela) {
   const url = new URL(href);
-  if (TELAS_DO_FLUXO.includes(tela)) url.searchParams.set("tela", tela);
+  if (TELAS_QUE_REABREM.includes(tela)) url.searchParams.set("tela", tela);
   else url.searchParams.delete("tela");
   // #na-etapa-... só vale no Novo Anúncio (etapa em que estava).
   if (tela !== "novoAnuncio") url.hash = "";

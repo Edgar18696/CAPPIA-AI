@@ -4,7 +4,7 @@
 import { supabase } from "../../supabase";
 import { armazenamentoIndexedDB, armazenamentoMemoria } from "../../modules/paiiaVoz/servicos/fotosVozLocal.js";
 import { recortarFotoIA } from "./pipelineFotoIA.js";
-import { recortarLocalmente } from "./recorteLocalFotoIA.js";
+import { recortarLocalmente, liberarRecorteLocal } from "./recorteLocalFotoIA.js";
 import { recortarPhotoroom, recortarComReserva } from "./recortePhotoroom.js";
 import { comporFotoFinal, normalizarArquivoParaEnvio } from "./composicaoFotoIA.js";
 import { criarFilaCamera, retomarDeOutrosAparelhos, salvarOriginalNaGaleria, tratarFotoDaGaleria } from "./fotoCameraGaleria.js";
@@ -28,7 +28,8 @@ export function filaCamera(usuarioId) {
   // → "foto-ia" (Replicate) como última reserva.
   const recortar = recortarComReserva({
     photoroom: (f, ctx) => recortarPhotoroom(f, { caminho: ctx?.caminho, invocar: (nome, opcoes) => supabase.functions.invoke(nome, opcoes), baixar }),
-    gratis: (f) => recortarLocalmente(f),
+    // (14/11) Libera o modelo logo depois: menos memória presa quando a câmera abrir de novo.
+    gratis: async (f) => { try { return await recortarLocalmente(f); } finally { liberarRecorteLocal(); } },
   });
   // (14/11) Photoroom (pago) UMA vez por foto: novas tentativas automáticas, retomadas
   // de tratamento interrompido, fotos antigas reabertas e fotos de outro aparelho

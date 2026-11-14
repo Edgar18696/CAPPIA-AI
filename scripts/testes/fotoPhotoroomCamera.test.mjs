@@ -101,7 +101,7 @@ test("fonte: chave só em arquivo fora do projeto; nada de VITE_ nem chave no sr
   const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
   const fila = ler("src/services/fotoIA/filaCameraApp.js");
   assert.match(fila, /photoroom: \(f, ctx\) => recortarPhotoroom\(f, \{ caminho: ctx\?\.caminho/);
-  assert.match(fila, /gratis: \(f\) => recortarLocalmente\(f\)/);
+  assert.match(fila, /gratis: async \(f\) => \{ try \{ return await recortarLocalmente\(f\); \}/);
   for (const p of ["src/services/fotoIA/recortePhotoroom.js", "src/services/fotoIA/filaCameraApp.js", "vite.config.js"]) {
     const t = ler(p);
     assert.doesNotMatch(t, /VITE_PHOTOROOM|sandbox_[A-Za-z0-9]{10,}|sk_pr_[A-Za-z0-9]{6,}/, p);

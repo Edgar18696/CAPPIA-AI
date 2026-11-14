@@ -420,3 +420,36 @@ test("14/11) uma chamada paga por foto: retomada de 'tratando' interrompido e no
   assert.match(app, /tratar: \(x\) => tratar\(\{ \.\.\.x, deOutroAparelho: true \}\)/);
   assert.match(app, /Boolean\(jaTentouPhotoroom\) \|\| Boolean\(deOutroAparelho\)/);
 });
+
+test("14/11) celular fecha a página com a câmera aberta: PAIIA volta para a Foto IA (não para a Home) e avisa que a foto não chegou", async () => {
+  const F = await import("../../src/services/fichasCentral.js");
+  assert.equal(F.telaInicialDoEndereco("?tela=foto", "home"), "foto", "recarga volta para a Foto IA");
+  assert.equal(new URL(F.enderecoComTela("https://www.paiia.com.br/", "foto")).searchParams.get("tela"), "foto");
+  // o resto do comportamento não muda
+  assert.deepEqual([...F.TELAS_DO_FLUXO], ["novoAnuncio", "centralPublicacao", "mercadoLivreTeste", "paiiaVoz"]);
+  assert.equal(F.telaInicialDoEndereco("?tela=galeria", "home"), "home");
+  assert.equal(new URL(F.enderecoComTela("https://www.paiia.com.br/?tela=foto", "home")).searchParams.get("tela"), null);
+  // aviso de foto perdida
+  const R = await import("../../src/services/fotoIA/cameraRetorno.js");
+  const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
+  const a = mem();
+  R.marcarCameraAberta(a, 1000);
+  assert.equal(R.fotoPerdidaNaRecarga(a, { inicioDaPagina: 5000, agora: 6000 }), true, "câmera aberta antes de a página recarregar");
+  assert.equal(R.fotoPerdidaNaRecarga(a, { inicioDaPagina: 5000, agora: 6000 }), false, "avisa uma vez só");
+  R.marcarCameraAberta(a, 9000);
+  assert.equal(R.fotoPerdidaNaRecarga(a, { inicioDaPagina: 5000, agora: 9500 }), false, "mesma página (sem recarga): não avisa");
+  R.marcarCameraAberta(a, 1000);
+  assert.equal(R.fotoPerdidaNaRecarga(a, { inicioDaPagina: 5000, agora: 1000 + R.VALIDADE_AVISO_MS + 1 }), false, "marca antiga não avisa");
+  R.marcarCameraAberta(a, 1000);
+  R.limparCameraAberta(a);
+  assert.equal(R.fotoPerdidaNaRecarga(a, { inicioDaPagina: 5000, agora: 6000 }), false, "a foto chegou: nada a avisar");
+  assert.equal(R.fotoPerdidaNaRecarga(null, { inicioDaPagina: 5000 }), false, "sem armazenamento não quebra");
+  // tela: marca ao tocar em Tirar Foto, limpa quando a foto chega, mostra o aviso
+  const tela = ler("src/modules/fotoIA/components/TirarFotoCamera.jsx");
+  assert.match(tela, /marcarCameraAberta\(globalThis\.sessionStorage\); cameraRef\.current\?\.click\(\)/);
+  assert.match(tela, /limparCameraAberta\(globalThis\.sessionStorage\)/);
+  assert.match(tela, /data-paiia-camera-foto-perdida/);
+  // memória: o modelo do recorte grátis é liberado depois de cada uso
+  assert.match(ler("src/services/fotoIA/recorteLocalFotoIA.js"), /export function liberarRecorteLocal\(\)/);
+  assert.match(ler("src/services/fotoIA/filaCameraApp.js"), /finally \{ liberarRecorteLocal\(\); \}/);
+});
