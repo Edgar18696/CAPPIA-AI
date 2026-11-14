@@ -92,11 +92,45 @@ export function estadoFichaCentral(row) {
   }
 }
 
+/**
+ * (14/11/2026) Anúncio CONCLUÍDO — sai da lista de trabalho da Central e fica
+ * no Histórico (nada é apagado). Só quando TUDO está certo:
+ *  - publicado no Mercado Livre (MLB gravado), sem pendência de publicação
+ *    (status "publicado"; "publicado_com_pendencia" continua na lista);
+ *  - Bling concluído: integrado; ou conta sem etapa de Bling (sem registro e
+ *    sem produto Bling a vincular) — "Aguardando Bling" continua na lista;
+ *  - confirmado no Mercado Livre: a conferência "anúncio ativo" deu ok (ou a
+ *    ficha é anterior a essa conferência);
+ *  - conferências em segundo plano (fotos, estoque...) podem CONTINUAR rodando:
+ *    só FALHA real (erro) ou tentativas encerradas trazem o anúncio de volta
+ *    à lista, como pendência.
+ */
+export function fichaConcluida(row) {
+  const r = row || {};
+  if (!fichaJaPublicada(r)) return false;
+  const estado = estadoFichaCentral(r);
+  if (estado !== ESTADO_CENTRAL.INTEGRADO_BLING && estado !== ESTADO_CENTRAL.PUBLICADO) return false;
+  const pub = r.publicacao || {};
+  if (!txt(pub.mlb_id) && !/^MLB\d{6,}$/i.test(txt(r.integracao_bling?.mlb))) return false;
+  if (pub.status_publicacao && pub.status_publicacao !== "publicado") return false;
+  if (r.status_fluxo && r.status_fluxo !== "publicado") return false;
+  const pos = r.pos_publicacao;
+  if (pos && typeof pos === "object" && !pos.concluido) {
+    if (pos.desistiu) return false;
+    if (Object.values(pos).some((v) => v && typeof v === "object" && v.estado === "erro")) return false;
+    if (pos.ativo && pos.ativo.estado !== "ok") return false;
+  }
+  return true;
+}
+
 /** Linha pronta para a tela (estado + textos), sem inventar dado. */
 export function resumoFichaCentral(row) {
   const estado = estadoFichaCentral(row);
   const pub = row?.publicacao || null;
   return {
+    // (14/11) Concluído: vai para o Histórico da Central (com SKU, MLB, conta, data e situação).
+    concluida: fichaConcluida(row),
+    publicadoEm: txt(pub?.publicado_em),
     id: txt(row?.id),
     codigo: txt(row?.codigo),
     titulo: txt(row?.titulo),

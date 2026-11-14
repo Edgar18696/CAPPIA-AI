@@ -46,7 +46,9 @@ test("2) a exclusão definitiva só é chamada DEPOIS da confirmação e uma de 
 });
 
 test("3) todas as fichas têm Excluir; ficha não elegível ou protegida pelo banco só é ARQUIVADA", () => {
-  const bloco = painel.slice(painel.indexOf("{fichas.map((f) => ("), painel.indexOf("{estado.fichas.length > 12"));
+  // (14/11) A lista de trabalho termina no "Mostrar todas" (os concluídos ficam no Histórico, sem Excluir).
+  const bloco = painel.slice(painel.indexOf("{fichas.map((f) => ("), painel.indexOf("{trabalho.length > 12"));
+  assert.ok(bloco.length > 100, "bloco da lista de trabalho encontrado");
   assert.ok(/<button[^>]*data-paiia-excluir-ficha=\{f\.id\}/.test(bloco), "botão em toda ficha");
   assert.ok(!bloco.includes("data-paiia-ficha-protegida"), "sem 🔒 Protegida");
   const f = painel.slice(painel.indexOf("async function excluir(f)"), painel.indexOf("async function arquivar(f)"));

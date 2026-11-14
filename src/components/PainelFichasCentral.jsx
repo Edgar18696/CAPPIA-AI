@@ -190,14 +190,18 @@ export default function PainelFichasCentral({ setScreen }) {
   const publicadosPorCodigo = new Map(
     estado.fichas.filter((f) => f.publicado).map((f) => [String(f.codigo || "").toUpperCase().replace(/[^A-Z0-9]/g, ""), f.mlb || "MLB"])
   );
-  const fichas = mostrarTodas ? estado.fichas : estado.fichas.slice(0, 12);
-  const contagem = estado.fichas.reduce((m, f) => ({ ...m, [f.estado]: (m[f.estado] || 0) + 1 }), {});
+  // (14/11) Lista de TRABALHO: só o que ainda precisa de você. Concluídos (publicado +
+  // Bling concluído + conferências sem falha) vão sozinhos para o Histórico, sem apagar nada.
+  const trabalho = estado.fichas.filter((f) => !f.concluida);
+  const concluidas = estado.fichas.filter((f) => f.concluida);
+  const fichas = mostrarTodas ? trabalho : trabalho.slice(0, 12);
+  const contagem = trabalho.reduce((m, f) => ({ ...m, [f.estado]: (m[f.estado] || 0) + 1 }), {});
 
   return (
     <section data-paiia-fichas-central style={caixa}>
       <h3 style={{ color: "#fde047", margin: "0 0 6px" }}>📂 Suas fichas de anúncio</h3>
       <p style={{ color: "#94a3b8", fontSize: 13, margin: "0 0 10px" }}>
-        Todas as fichas aparecem aqui, mesmo as que ainda não estão prontas. Abrir uma ficha só navega: nada é apagado nem publicado. "Excluir" tira a ficha da Central. Produtos no Bling e anúncios no Mercado Livre não são alterados.
+        Aqui ficam só os anúncios em andamento, aguardando aprovação ou com pendência. Anúncio publicado e confirmado, com o Bling concluído, vai sozinho para o Histórico (abaixo) — nada é apagado. Abrir uma ficha só navega. "Excluir" tira a ficha da Central; produtos no Bling e anúncios no Mercado Livre não são alterados.
       </p>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -228,8 +232,8 @@ export default function PainelFichasCentral({ setScreen }) {
       {aviso.texto && <p data-paiia-exclusao-msg style={{ ...sub, color: aviso.erro ? "#fca5a5" : "#86efac" }}>{aviso.texto}</p>}
       {estado.carregando && <p style={sub}>⏳ Lendo as fichas na base PAIIA...</p>}
       {estado.erro && <p style={{ ...sub, color: "#fca5a5" }}>❌ {estado.erro}</p>}
-      {!estado.carregando && !estado.erro && !estado.fichas.length && !mostrarLocal && (
-        <p style={sub}>Nenhuma ficha encontrada.</p>
+      {!estado.carregando && !estado.erro && !trabalho.length && !mostrarLocal && (
+        <p data-paiia-central-limpa style={sub}>{concluidas.length ? "✅ Nenhum anúncio pendente: a Central está limpa. Pode começar o próximo." : "Nenhuma ficha encontrada."}</p>
       )}
 
       {fichas.map((f) => (
@@ -268,10 +272,31 @@ export default function PainelFichasCentral({ setScreen }) {
           </button>
         </div>
       ))}
-      {estado.fichas.length > 12 && (
+      {trabalho.length > 12 && (
         <button type="button" onClick={() => setMostrarTodas((v) => !v)} style={{ ...botao, marginTop: 8 }}>
-          {mostrarTodas ? "Mostrar menos" : `Mostrar todas (${estado.fichas.length})`}
+          {mostrarTodas ? "Mostrar menos" : `Mostrar todas (${trabalho.length})`}
         </button>
+      )}
+
+      {concluidas.length > 0 && (
+        <details data-paiia-historico-central style={{ marginTop: 14, borderTop: "1px solid #1e293b", paddingTop: 10 }}>
+          <summary style={{ cursor: "pointer", color: "#86efac", fontWeight: 700 }}>📜 Histórico — anúncios concluídos ({concluidas.length})</summary>
+          <p style={sub}>Publicados e confirmados no Mercado Livre, com o Bling concluído. Ficam guardados aqui (nada foi apagado). Se uma conferência automática encontrar falha, o anúncio volta para a lista acima como pendência.</p>
+          {concluidas.map((f) => (
+            <div key={f.id} data-paiia-historico-ficha={f.id} style={{ ...linha, opacity: 0.9 }}>
+              <span style={{ flex: 1, minWidth: 180 }}>
+                <b>{f.codigo || "Sem código"}</b> · {f.titulo || "Sem título"}
+                {f.mlb ? <span style={sub}> · {f.mlb}</span> : null}
+                {f.mlb ? <BotaoCopiarMLB mlb={f.mlb} compacto /> : null}
+                {f.conta ? <span style={sub}> · {f.conta}</span> : null}
+                {f.publicadoEm ? <span style={sub}> · {dataCurta(f.publicadoEm)}</span> : null}
+                <span style={{ ...sub, color: "#86efac" }}> · {f.texto}</span>
+                {f.pendencia ? <span style={sub}> · {f.pendencia} (segue em segundo plano)</span> : null}
+              </span>
+              <button type="button" data-paiia-abrir-ficha={f.id} onClick={() => abrirFicha(f.id)} style={botao}>👁 Ver ficha</button>
+            </div>
+          ))}
+        </details>
       )}
     </section>
   );
@@ -280,6 +305,16 @@ export default function PainelFichasCentral({ setScreen }) {
 const caixa = { border: "1px solid #334155", borderRadius: 12, padding: 14, background: "#0f172a", marginBottom: 16 };
 const linha = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid #1e293b", color: "#e2e8f0", fontSize: 14 };
 const sub = { color: "#94a3b8", fontSize: 12 };
+/** Data da publicação para o Histórico (dd/mm/aaaa hh:mm, horário de Brasília). */
+function dataCurta(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  try {
+    return d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return d.toISOString().slice(0, 16).replace("T", " ");
+  }
+}
 const botaoExcluir = { padding: "6px 12px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#fca5a5", cursor: "pointer", fontSize: 13 };
 const botao = { padding: "6px 12px", borderRadius: 8, border: "1px solid #475569", background: "#334155", color: "#e2e8f0", cursor: "pointer", fontSize: 13 };
 const etiqueta = (e) => ({ background: COR_ESTADO_CENTRAL[e].fundo, color: COR_ESTADO_CENTRAL[e].texto, borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" });
