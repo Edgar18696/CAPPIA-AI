@@ -271,6 +271,47 @@ test("5) retomar ficha de MLB encerrado (base FALSA): ficha nova com fotos/descr
 });
 
 // ------------------------------------------------------------------
+test("4b) automático da LOJA ONLINE e PAIIA Voz: SKU fora da busca + produto registrado = PAUSA, nada criado no Bling", async () => {
+  const { etapaBling } = await import("../../src/services/pilotoPublicacao.js");
+  const texto = "⚠ O SKU não aparece na busca do Bling, mas o produto Bling 16735464254 (MLB MLB5559219337) já foi registrado para ele.";
+  const cliques = [];
+  const elem = (attrs) => ({ getAttribute: (k) => attrs[k] ?? null, hasAttribute: (k) => k in attrs, disabled: false });
+  const bloco = elem({ "data-paiia-bling-estado": "fora-da-busca" });
+  const p = {
+    achar: (sel) => (sel === "[data-paiia-bling-estado]" || sel === '[data-paiia-bling-estado="fora-da-busca"]' ? bloco : null),
+    texto: (e) => (e === bloco ? texto : ""),
+    clicar: (e) => cliques.push(e),
+    esperar: async () => {},
+  };
+  const esperarAte = async (fn) => fn();
+  const r = await etapaBling(p, { L: { passo: 1000, intervalo: 1 }, esperarAte });
+  assert.ok(r && /16735464254/.test(r.texto) && /Nada foi criado no Bling/.test(r.texto), JSON.stringify(r));
+  assert.equal(cliques.length, 0, "não clica em nada (nem criar)");
+
+  const { cadastrarNoBlingVoz } = await import("../../src/modules/paiiaVoz/servicos/blingCadastroVoz.js");
+  const chamadas = [];
+  // Ficha completa (mesmo formato dos testes do Voz × Bling): só o registro do produto impede o cadastro.
+  const row = { id: "voz1", codigo: SKU, dados_conferencia: { novo_anuncio: { codigo: SKU, titulo: "Alavanca Trava Fechadura Porta Traseira", preco: "48,00", medida: { peso_g: 250, comprimento_cm: 15, largura_cm: 10, altura_cm: 10 } }, paiia_voz: { complemento: { marca: "Renault", quantidadeEstoque: "1" } } } };
+  const chamar = async (c) => { chamadas.push(c.acao); return { ok: true, criado: true, produto: { id: "novo" } }; };
+  const v = await cadastrarNoBlingVoz(row, { chamarBling: chamar, produtosRegistrados: async () => [{ produto_id: PROD, mlb: MLB_LOJA }] });
+  assert.equal(v.ok, false);
+  assert.equal(v.tipo, "produto_registrado", JSON.stringify(v));
+  assert.match(v.erro, /16735464254.*NÃO cria outro produto/);
+  assert.equal(chamadas.includes("criar_produto"), false, "criar_produto nunca chamado");
+  const falhaLeitura = await cadastrarNoBlingVoz(row, { chamarBling: chamar, produtosRegistrados: async () => { throw new Error("base fora do ar"); } });
+  assert.equal(falhaLeitura.tipo, "bloqueado", "sem conseguir conferir, não cria");
+  assert.equal(chamadas.includes("criar_produto"), false);
+  // Sem produto registrado o Voz segue igual a antes (chama a ação protegida do servidor).
+  await cadastrarNoBlingVoz(row, { chamarBling: chamar, produtosRegistrados: async () => [] });
+  assert.equal(chamadas.includes("criar_produto"), true, "fluxo normal do Voz preservado");
+
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes('origemFila.motivo === "republicacao"') && a.includes("data-paiia-origem-retomada"), "ficha retomada não aparece como 'continuação da fila'");
+  const painel = ler("src/components/PainelIntegracaoBling.jsx");
+  assert.ok(painel.includes("data-paiia-integracao-historico") && ler("src/components/FichaPublicadaPAIIA.jsx").includes("encerrado={resumo.encerrado"), "painel do Bling vira histórico com o MLB encerrado");
+});
+
+// ------------------------------------------------------------------
 test("6) diagnóstico: cada MLB lido na SUA conta; MLB pesquisado na conta certa; Bling pelo SKU e pelo ID", async () => {
   const chamadas = [];
   const fichas = {

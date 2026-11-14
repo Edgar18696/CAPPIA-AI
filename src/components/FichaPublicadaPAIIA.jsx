@@ -247,7 +247,7 @@ export default function FichaPublicadaPAIIA({ ficha, setScreen }) {
       {mlbFicha && contaFicha && !situacaoML.excluido && <CorrecaoCompatMLB ficha={ficha} mlb={mlbFicha} conta={contaFicha} />}
 
       {registro && (
-        <PainelIntegracaoBling registro={registro} verificando={verificando} onVerificar={() => verificar(true)} />
+        <PainelIntegracaoBling registro={registro} verificando={verificando} onVerificar={() => verificar(true)} encerrado={resumo.encerrado ? (situacaoML.situacao === "excluido" ? "excluído" : "encerrado") : ""} />
       )}
 
       <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>

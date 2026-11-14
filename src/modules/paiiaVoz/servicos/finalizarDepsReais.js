@@ -9,12 +9,22 @@
 import { supabase } from "../../../supabase";
 import { lerFichaNovoAnuncio } from "../../../services/fichaNovoAnuncioService";
 import { fichaFechada } from "../../../services/fichaNovoAnuncio";
-import { conferirDuplicidadeBase } from "../../../services/anuncioPublicacaoService";
+import { conferirDuplicidadeBase, listarAnunciosDoCodigo } from "../../../services/anuncioPublicacaoService";
+import { produtosBlingRegistradosDoSku } from "../../../services/estoqueBlingPAIIA";
 import { verificarDuplicidadeML, nomeDaLoja } from "../../../services/duplicidadeML";
 import { lojaBlingDaConta } from "../../../services/vinculoBlingPublicacao";
 import { cadastrarNoBlingVoz, conferirAntesVoz, conferirIncertaVoz } from "./blingCadastroVoz";
 
 const txt = (v) => String(v ?? "").trim();
+
+/** (14/11) Produtos Bling já registrados por OUTRAS fichas deste SKU (leitura da base PAIIA). */
+async function produtosBlingRegistradosDaFicha(row) {
+  const codigo = txt(row?.dados_conferencia?.novo_anuncio?.codigo || row?.codigo);
+  if (!codigo) return [];
+  const lista = await listarAnunciosDoCodigo(codigo);
+  if (!lista?.ok) throw new Error(lista?.erro || "base PAIIA não lida");
+  return produtosBlingRegistradosDoSku(lista.anuncios, { excetoFicha: txt(row?.id) });
+}
 const NAO_LIBERADO = "Execução real ainda não liberada nesta versão: a proteção do servidor contra duplicidade não foi comprovada. Nada foi enviado.";
 
 async function chamarPublicacao(corpo) {
@@ -72,7 +82,7 @@ export const depsFinalizarReais = {
   },
   executar: {
     // (Bling real) ação EXISTENTE criar_produto, com a sua autorização única; sucesso só com releitura.
-    async bling_criar(ctx) { return cadastrarNoBlingVoz(ctx.row, { chamarBling }); },
+    async bling_criar(ctx) { return cadastrarNoBlingVoz(ctx.row, { chamarBling, produtosRegistrados: () => produtosBlingRegistradosDaFicha(ctx.row) }); },
     async ml_publicar() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; },
     async ml_compat() { return { ok: false, bloqueado: true, erro: NAO_LIBERADO }; },
     async bling_vinculo(ctx) {

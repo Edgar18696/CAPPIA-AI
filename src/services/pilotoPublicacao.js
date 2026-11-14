@@ -92,6 +92,9 @@ export async function etapaBling(p, { L, esperarAte, encerrado = () => false }) 
     if (est === "erro" || !est) return { texto: `${(textoDo('[data-paiia-bling-estado="erro"]') || "Não foi possível consultar o Bling agora").replace(/[.\s]+$/, "")}. Nada foi criado nem alterado no Bling.` };
   }
   if (est === "ambiguo") return { texto: textoDo('[data-paiia-bling-estado="ambiguo"]') || "Mais de um produto no Bling com este SKU: resolva no Bling." };
+  // (14/11) SKU fora da busca do Bling, mas com produto Bling já registrado para ele: PAUSA.
+  // Nunca cadastra outro produto (seria duplicidade do mesmo SKU).
+  if (est === "fora-da-busca") return { texto: `${textoDo('[data-paiia-bling-estado="fora-da-busca"]') || "O SKU não aparece na busca do Bling, mas já tem produto Bling registrado"}. Nada foi criado no Bling.` };
   return null;
 }
 

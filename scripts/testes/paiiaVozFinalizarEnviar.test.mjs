@@ -27,6 +27,7 @@ test("3) não publica: termina abrindo a Publicação da MESMA ficha (confirmaç
 
 test("4) (08/11) cadastro real no Bling pela ação existente, protegida no servidor; publicação no ML continua bloqueada nesta tela", () => {
   const reais = ler("src/modules/paiiaVoz/servicos/finalizarDepsReais.js");
-  assert.ok(reais.includes("cadastrarNoBlingVoz(ctx.row, { chamarBling })") && reais.includes("conferirAntesVoz(ctx, { chamarBling })"));
+  // (14/11) + produtos Bling já registrados para o SKU (nunca cadastra outro).
+  assert.ok(reais.includes("cadastrarNoBlingVoz(ctx.row, { chamarBling, produtosRegistrados: () => produtosBlingRegistradosDaFicha(ctx.row) })") && reais.includes("conferirAntesVoz(ctx, { chamarBling })"));
   assert.ok(/async ml_publicar\(\) \{ return \{ ok: false, bloqueado: true/.test(reais));
 });

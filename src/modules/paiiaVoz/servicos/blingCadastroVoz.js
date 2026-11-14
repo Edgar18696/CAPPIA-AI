@@ -6,7 +6,7 @@
 // Aqui: monta os dados com a MESMA função da Publicação, chama o servidor e
 // só diz "sucesso" depois de RELER o Bling (produto, SKU e saldo oficial).
 // =============================================================
-import { montarProdutoBling, conferirProdutoCriado, normalizarQuantidade } from "../../../services/estoqueBlingPAIIA.js";
+import { montarProdutoBling, conferirProdutoCriado, normalizarQuantidade, decidirCriacaoBling } from "../../../services/estoqueBlingPAIIA.js";
 import { entradaDaFicha } from "./preparoConferenciaVoz.js";
 
 export const CONFIRMACAO_CRIAR = "CRIAR_PRODUTO_BLING";
@@ -28,9 +28,16 @@ export function produtoDaFicha(row) {
  * Cadastra (com a sua autorização única) e CONFERE.
  * Devolve { ok, blingProdutoId?, texto?, erro?, incerto?, estoquePendente?, tipo }.
  */
-export async function cadastrarNoBlingVoz(row, { chamarBling }) {
+export async function cadastrarNoBlingVoz(row, { chamarBling, produtosRegistrados = null }) {
   const { produto, faltando } = produtoDaFicha(row);
   if (faltando.length) return { ok: false, tipo: "faltando", erro: `Faltam dados na ficha para cadastrar no Bling: ${faltando.join(", ")}. Nada foi enviado.` };
+  // (14/11) Outra ficha deste SKU já registrou um produto Bling: nunca cadastra outro
+  // (o SKU pode ter saído da busca por estar inativo/excluído/com código alterado no Bling).
+  if (produtosRegistrados) {
+    let regs;
+    try { regs = await produtosRegistrados(); } catch (e) { return { ok: false, tipo: "bloqueado", erro: `Não consegui conferir os produtos Bling já registrados para este SKU (${txt(e?.message || e).slice(0, 120)}). Nada foi criado.` }; }
+    if (Array.isArray(regs) && regs.length) return { ok: false, tipo: "produto_registrado", erro: decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: regs }).motivo };
+  }
   let r;
   try {
     r = await chamarBling({ acao: "criar_produto", confirmado: true, confirmacao: CONFIRMACAO_CRIAR, produto, conferencia_manual: true });

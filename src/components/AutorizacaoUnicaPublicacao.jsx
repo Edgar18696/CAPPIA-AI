@@ -117,7 +117,12 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
       <div style={{ fontSize: 13, color: "#bbf7d0", marginBottom: 8 }}>
         SKU <b>{sku || "—"}</b>{preco ? <> · preço <b>{preco}</b></> : ""}{quantidade ? <> · quantidade <b>{quantidade}</b></> : ""}. Marque uma, duas ou as três. Cada conta é conferida separadamente; um problema numa conta não trava as outras.
       </div>
-      {origemFila?.conta && (
+      {origemFila?.conta && origemFila.motivo === "republicacao" && (
+        <div data-paiia-origem-retomada={origemFila.conta} style={{ fontSize: 13, color: "#fde68a", marginBottom: 8 }}>
+          🔁 Ficha retomada: o anúncio anterior{origemFila.mlb ? <> <b>{origemFila.mlb}</b></> : ""} em <b>{nomeContaPublicacao(origemFila.conta)}</b> foi encerrado/excluído no Mercado Livre e NÃO é reutilizado. Sugerimos a mesma conta; ela é conferida de novo (duplicidade ao vivo) e só publica com a sua confirmação.
+        </div>
+      )}
+      {origemFila?.conta && origemFila.motivo !== "republicacao" && (
         <div data-paiia-origem-fila={origemFila.conta} style={{ fontSize: 13, color: "#bae6fd", marginBottom: 8 }}>
           ➡ Continuação da fila: este anúncio já foi publicado em <b>{nomeContaPublicacao(origemFila.conta)}</b>{origemFila.mlb ? <> ({origemFila.mlb})</> : ""}. Marcamos as contas que faltam; confira e confirme.
         </div>

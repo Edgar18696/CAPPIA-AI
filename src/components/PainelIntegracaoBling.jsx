@@ -14,11 +14,25 @@ const COR = {
   [ESTADO.ERRO_CONSULTA]: "#fdba74",
 };
 
-export default function PainelIntegracaoBling({ registro, verificando = false, onVerificar }) {
+export default function PainelIntegracaoBling({ registro, verificando = false, onVerificar, encerrado = "" }) {
   if (!registro?.mlb) return null;
   const estado = registro.estado || ESTADO.AGUARDANDO;
   const integrado = estado === ESTADO.INTEGRADO;
   const automatico = vinculoAutomaticoDaLoja(registro.bling_loja_id);
+
+  // (14/11) MLB encerrado/excluído no Mercado Livre: o painel vira HISTÓRICO
+  // (nada de "✅ Publicado" como situação atual e nenhum convite a vincular).
+  if (encerrado) {
+    return (
+      <div data-paiia-integracao-bling={estado} data-paiia-integracao-historico style={{ ...caixa, borderColor: "#7f1d1d" }}>
+        <div style={{ ...linha, color: "#fca5a5", fontWeight: 700 }}>⛔ MLB {registro.mlb} {encerrado} no Mercado Livre — publicação anterior (histórico)</div>
+        <div style={sub}>
+          Histórico: publicado no Mercado Livre{integrado ? `; vinculado no Bling (anúncio Bling ${registro.bling_anuncio_id || "—"} · produto ${registro.bling_produto_id || "—"}${registro.bling_loja_nome ? ` · ${registro.bling_loja_nome}` : ""})` : `; Bling: ${TEXTO_ESTADO[estado] || estado}`}.
+          {registro.sku_oficial ? ` SKU ${registro.sku_oficial}.` : ""} Este MLB não é reutilizado.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div data-paiia-integracao-bling={estado} style={caixa}>

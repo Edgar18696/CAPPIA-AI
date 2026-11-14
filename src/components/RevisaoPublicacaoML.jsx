@@ -1597,7 +1597,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               const publicado = publicacaoExiste(pub);
               return (
                 <div key={a.id} style={{ color: "#e2e8f0", fontSize: 13, margin: "4px 0" }}>
-                  • {loja} — {publicado ? `publicado (${pub.mlb_id})${pendenciaPublicacao(pub) ? ` — ⚠ COM PENDÊNCIA: ${pendenciaPublicacao(pub).replace(/^PENDÊNCIA — /, "").slice(0, 160)}` : ""}` : "em andamento"} · {new Date(a.updated_at).toLocaleString("pt-BR")}
+                  • {loja} — {publicado ? `publicação registrada (${pub.mlb_id}; histórico — a situação atual no Mercado Livre é conferida na duplicidade)${pendenciaPublicacao(pub) ? ` — ⚠ COM PENDÊNCIA: ${pendenciaPublicacao(pub).replace(/^PENDÊNCIA — /, "").slice(0, 160)}` : ""}` : "em andamento"} · {new Date(a.updated_at).toLocaleString("pt-BR")}
                   {!publicado && (
                     <button type="button" data-paiia-continuar-ficha onClick={() => continuarFicha(a)} style={{ ...botaoCinza, marginLeft: 8, padding: "4px 10px" }}>
                       Continuar esta ficha
