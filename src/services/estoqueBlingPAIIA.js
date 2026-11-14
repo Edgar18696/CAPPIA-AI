@@ -149,13 +149,70 @@ export function montarProdutoBling({ anuncio = {}, titulo = "", quantidade, logi
  *  "ja_existe" → NÃO cria: mostra o produto existente;
  *  "ambiguo"   → NÃO cria: mais de um produto com o SKU;
  *  "erro"      → NÃO cria: leitura falhou (na dúvida, nunca cria).
+ *  "produto_registrado" → (14/11) NÃO cria: o SKU sumiu da busca do Bling, mas
+ *                outra ficha deste SKU já registrou um produto Bling (ID).
+ *                Provável: produto inativo, excluído ou com o código alterado.
+ * registrados: produtosBlingRegistradosDoSku(...) das outras fichas do SKU.
  */
-export function decidirCriacaoBling(leitura) {
+export function decidirCriacaoBling(leitura, { registrados = [] } = {}) {
   if (!leitura || leitura.ok === false && !leitura.encontrado) return { acao: "erro", motivo: leitura?.mensagem || leitura?.erro || "Não foi possível consultar o Bling." };
   if (leitura.ambiguo) return { acao: "ambiguo", motivo: "Mais de um produto no Bling com este SKU." };
   if (leitura.encontrado) return { acao: "ja_existe", motivo: "O SKU já existe no Bling: nada é criado.", produto: leitura.produto || null };
-  if (leitura.encontrado === false && leitura.ok !== false) return { acao: "criar" };
+  if (leitura.encontrado === false && leitura.ok !== false) {
+    const regs = Array.isArray(registrados) ? registrados.filter((r) => r?.produto_id) : [];
+    if (regs.length) return { acao: "produto_registrado", motivo: textoProdutoForaDaBusca(regs), produtos: regs };
+    return { acao: "criar" };
+  }
   return { acao: "erro", motivo: "Resposta do Bling sem confirmação de que o SKU não existe." };
+}
+
+/**
+ * (14/11) Produtos Bling já REGISTRADOS por outras fichas deste SKU (publicação
+ * ou registro da integração). fichas = listarAnunciosDoCodigo(...).anuncios.
+ * Devolve [{ produto_id, ficha, mlb, conta }] sem repetir o mesmo produto.
+ */
+export function produtosBlingRegistradosDoSku(fichas, { excetoFicha = "" } = {}) {
+  const out = new Map();
+  for (const f of Array.isArray(fichas) ? fichas : []) {
+    if (!f || String(f.id || "") === String(excetoFicha || "")) continue;
+    const pub = f.publicacao || {};
+    const reg = f.integracao_bling || {};
+    for (const id of [pub.bling_produto_id, reg.bling_produto_id]) {
+      const pid = String(id ?? "").trim();
+      if (!pid || out.has(pid)) continue;
+      out.set(pid, { produto_id: pid, ficha: String(f.id || ""), mlb: String(pub.mlb_id || reg.mlb || ""), conta: String(pub.ml_user_id || reg.ml_user_id || "") });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * (14/11) Produto Bling pelo SKU × pelo ID registrado (só leitura).
+ *  "ok"            — a busca pelo SKU acha o MESMO ID registrado (ou não há registro);
+ *  "outro_id"      — a busca acha OUTRO produto com este SKU (confira duplicidade no Bling);
+ *  "fora_da_busca" — a busca não acha, mas há produto registrado (inativo/excluído/código alterado?);
+ *  "nao_existe"    — a busca não acha e não há registro;
+ *  "erro"          — leitura falhou.
+ */
+export function situacaoProdutoBling({ leitura, registrados = [] }) {
+  const regs = Array.isArray(registrados) ? registrados.filter((r) => r?.produto_id) : [];
+  if (!leitura || (leitura.ok === false && !leitura.encontrado)) return { estado: "erro", texto: `Bling não consultado (${leitura?.mensagem || leitura?.erro || "sem resposta"}).` };
+  if (leitura.ambiguo) return { estado: "outro_id", texto: "Mais de um produto no Bling com este SKU: resolva no Bling (o PAIIA não escolhe sozinho)." };
+  if (leitura.encontrado) {
+    const id = String(leitura.produto?.id ?? "");
+    const outros = regs.filter((r) => r.produto_id !== id);
+    if (regs.length && outros.length === regs.length) {
+      return { estado: "outro_id", texto: `A busca pelo SKU acha o produto ${id}, mas este SKU tinha o produto ${regs.map((r) => r.produto_id).join(", ")} registrado (MLB ${regs.map((r) => r.mlb || "—").join(", ")}). Confira no Bling se há dois cadastros do mesmo SKU.` };
+    }
+    return { estado: "ok", texto: `Produto no Bling: ID ${id} (SKU ${leitura.produto?.codigo || "—"}).` };
+  }
+  if (regs.length) return { estado: "fora_da_busca", texto: textoProdutoForaDaBusca(regs) };
+  return { estado: "nao_existe", texto: "SKU não encontrado no Bling e nenhum produto Bling registrado para ele." };
+}
+
+function textoProdutoForaDaBusca(regs) {
+  const lista = regs.map((r) => `${r.produto_id}${r.mlb ? ` (MLB ${r.mlb})` : ""}`).join(", ");
+  return `O SKU não aparece na busca do Bling, mas o produto Bling ${lista} já foi registrado para ele. Provável: produto inativo, excluído ou com o código alterado no Bling. Confira em Produtos → Situação: Todos/Excluídos. O PAIIA NÃO cria outro produto.`;
 }
 
 /**

@@ -33,18 +33,52 @@ export function anuncioEncerradoML(item) {
 }
 
 /**
+ * (14/11) Situação ATUAL de um anúncio no Mercado Livre, sem misturar casos:
+ *   "excluido"   — sub_status com "deleted" (excluído pelo vendedor/ML);
+ *   "encerrado"  — status "closed" (finalizado);
+ *   "pausado"    — status "paused";
+ *   "ativo"      — status "active";
+ *   "em_revisao" — status "under_review";
+ *   "inativo"    — status "inactive" sem "deleted";
+ *   "desconhecida" — qualquer outra resposta.
+ * Só "excluido" e "encerrado" deixam de ser anúncio existente (anuncioEncerradoML).
+ */
+export const ROTULO_SITUACAO_ML = Object.freeze({
+  excluido: "excluído no Mercado Livre",
+  encerrado: "encerrado (finalizado) no Mercado Livre",
+  pausado: "pausado no Mercado Livre",
+  ativo: "ativo no Mercado Livre",
+  em_revisao: "em revisão no Mercado Livre",
+  inativo: "inativo no Mercado Livre",
+  desconhecida: "situação desconhecida no Mercado Livre",
+});
+export function classificarSituacaoML(item) {
+  if (!item || typeof item !== "object") return "desconhecida";
+  const sub = Array.isArray(item.sub_status) ? item.sub_status.map((s) => String(s).toLowerCase()) : [];
+  const st = String(item.status || "").toLowerCase();
+  if (sub.includes("deleted")) return "excluido";
+  if (st === "closed") return "encerrado";
+  if (st === "paused") return "pausado";
+  if (st === "active") return "ativo";
+  if (st === "under_review") return "em_revisao";
+  if (st === "inactive") return "inativo";
+  return "desconhecida";
+}
+
+/**
  * MLB registrado na base PAIIA (ou em outra ficha) × situação REAL no
  * Mercado Livre, na conta da publicação. Só LIBERA com confirmação segura:
  * resposta ok, mesmo MLB, mesmo vendedor (= conta) e anúncio encerrado/
  * excluído. Erro, token, timeout, "não encontrado", resposta ambígua ou
  * vendedor diferente = BLOQUEIA ("não foi possível confirmar").
  * resp = retorno de ml_consulta GET /items/<MLB> ({ ok, status, dados, erro }).
- * Devolve { libera, mlb, conta, status, sub_status, motivo }.
+ * Devolve { libera, mlb, conta, status, sub_status, situacao, preco, motivo }.
+ * situacao = classificarSituacaoML (só com resposta confiável; senão "nao_confirmada").
  */
 export function situacaoMLBRegistrado({ mlb, conta, resp }) {
   const id = String(mlb || "").trim().toUpperCase();
   const contaTxt = String(conta || "");
-  const base = { libera: false, mlb: id, conta: contaTxt, status: "", sub_status: [] };
+  const base = { libera: false, mlb: id, conta: contaTxt, status: "", sub_status: [], situacao: "nao_confirmada", preco: null };
   if (!/^MLB\d+$/.test(id)) return { ...base, motivo: "registro sem MLB válido: não foi possível confirmar no Mercado Livre" };
   if (!contaTxt) return { ...base, motivo: "sem conta para conferir" };
   if (!resp?.ok) {
@@ -58,8 +92,38 @@ export function situacaoMLBRegistrado({ mlb, conta, resp }) {
   const info = { ...base, status: String(it.status || ""), sub_status: sub };
   if (String(it.seller_id ?? "") !== contaTxt) return { ...info, motivo: `vendedor diferente no Mercado Livre (${it.seller_id ?? "—"})` };
   if (!info.status) return { ...info, motivo: "resposta ambígua do Mercado Livre (sem status)" };
-  if (anuncioEncerradoML(it)) return { ...info, libera: true, motivo: "excluído/encerrado no Mercado Livre" };
-  return { ...info, motivo: `ainda existe no Mercado Livre nesta conta (${info.status}${sub.length ? ` / ${sub.join(", ")}` : ""})` };
+  const situacao = classificarSituacaoML(it);
+  const preco = Number.isFinite(Number(it.price)) ? Number(it.price) : null;
+  const rotulo = ROTULO_SITUACAO_ML[situacao];
+  if (anuncioEncerradoML(it)) return { ...info, situacao, rotulo, preco, libera: true, motivo: "excluído/encerrado no Mercado Livre" };
+  return { ...info, situacao, rotulo, preco, motivo: `ainda existe no Mercado Livre nesta conta (${info.status}${sub.length ? ` / ${sub.join(", ")}` : ""})` };
+}
+
+/**
+ * (14/11) Cada MLB registrado na base PAIIA (publicações deste código NESTA
+ * conta) conferido AGORA no Mercado Livre, na própria conta. Só leitura.
+ * jaListados: MLBs que a busca da conta já trouxe (duplicados/possíveis) — não
+ * são abertos de novo. Uma consulta que falha vira "não foi possível confirmar"
+ * (bloqueia em avaliarRegistrosBase), nunca exceção.
+ * Devolve [{ ...situacaoMLBRegistrado, mlb, ficha_origem }].
+ */
+export async function conferirRegistrosNoML({ registros, conta, consultar, jaListados = [] }) {
+  const listados = new Set((jaListados || []).map((x) => String(x || "").toUpperCase()));
+  const out = [];
+  for (const p of Array.isArray(registros) ? registros : []) {
+    const mlb = String(p?.mlb_id || "").trim().toUpperCase();
+    if (mlb && listados.has(mlb)) continue;
+    let resp = null;
+    if (/^MLB\d+$/.test(mlb)) {
+      try {
+        resp = await consultar(`/items/${mlb}`);
+      } catch (e) {
+        resp = { ok: false, erro: String(e?.message || e || "falha na consulta") };
+      }
+    }
+    out.push({ ...situacaoMLBRegistrado({ mlb, conta, resp }), mlb: mlb || "sem MLB", ficha_origem: String(p?.anuncio_id || "") });
+  }
+  return out;
 }
 
 /**

@@ -5,7 +5,7 @@ import { CANAL, erroSelecao, montarRegistroCanais, normalizarSelecao, canaisSele
 import { lerRegistroDoSKU } from "./registroMLBService";
 import { registrosQueBloqueiam } from "./registroMLB";
 import { TEXTO_FICHA_EXCLUIDA } from "./exclusaoFicha";
-import { dadosParaProximaConta, nomeContaPublicacao, situacaoFila } from "./contasPublicacaoML.js";
+import { dadosParaProximaConta, dadosParaRepublicacao, podeRetomarFicha, nomeContaPublicacao, situacaoFila } from "./contasPublicacaoML.js";
 import { marcaDasFotos } from "./fotosDaFicha.js";
 
 /*
@@ -406,7 +406,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao", "republicacao"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -781,6 +781,57 @@ export async function prepararFichaProximaConta({ anuncioId }) {
     return error ? falha(error) : { ok: false, erro: "A ficha mudou ao mesmo tempo: a próxima conta não foi preparada. Tente de novo." };
   }
   return { ok: true, anuncioId: novoId, conta, nova: true };
+}
+
+/**
+ * (14/11/2026) RETOMAR a ficha de um MLB ENCERRADO/EXCLUÍDO no Mercado Livre.
+ * situacao = situacaoMLBRegistrado lida AGORA na conta da publicação.
+ * - Só com o ML confirmando o encerramento/exclusão (podeRetomarFicha).
+ * - A ficha publicada e a publicação dela NÃO mudam (histórico); só ganha o
+ *   ponteiro dados_conferencia.republicacao (gravação condicionada à versão).
+ * - Ficha nova = mesma Conferência aprovada (fotos, descrição, aplicações),
+ *   MLB anterior no histórico, mesma conta SUGERIDA (passa pela conferência
+ *   ao vivo e pela confirmação). Nada é publicado e nada vai ao Bling.
+ * - Toque repetido / outra aba: devolve a MESMA ficha nova.
+ * Devolve { ok, anuncioId (ficha nova), nova } | { ok:false, erro }.
+ */
+export async function prepararFichaRepublicacao({ anuncioId, situacao }) {
+  if (!anuncioId) return { ok: false, erro: "Sem ficha para retomar." };
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const a = atual.anuncio;
+  if (!publicacaoExiste(a.publicacao)) return { ok: false, naoPublicada: true, erro: "Esta ficha ainda não foi publicada: continue a publicação normal." };
+  const pode = podeRetomarFicha({ publicacao: a.publicacao, situacao });
+  if (!pode.pode) return { ok: false, erro: pode.motivo };
+  const anterior = a.dados_conferencia?.republicacao?.ficha;
+  if (anterior) {
+    const existente = await obterAnuncio(anterior);
+    if (existente.ok && existente.anuncio.status_fluxo !== "cancelado") return { ok: true, anuncioId: existente.anuncio.id, nova: false };
+  }
+  const criada = await salvarFichaAprovada({ anuncioId: "", codigo: a.codigo || "", titulo: a.titulo || "", dadosConferencia: {} });
+  if (!criada.ok) return criada;
+  const novoId = criada.anuncioId;
+  const dadosNovos = dadosParaRepublicacao(a.dados_conferencia, { novoId, origemId: a.id, publicacao: a.publicacao, situacao, marcarFotos: marcaDasFotos });
+  const { error: erroNova } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dadosNovos, salvo_em: new Date().toISOString() }, updated_at: new Date().toISOString() })
+    .eq("id", novoId);
+  if (erroNova) { await cancelarFichaSemConta(novoId); return falha(erroNova); }
+  const republicacao = { ficha: novoId, mlb: pode.mlb, conta: pode.conta, situacao_ml: pode.situacao, criada_em: new Date().toISOString() };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...a.dados_conferencia, republicacao } })
+    .eq("id", a.id)
+    .eq("updated_at", a.updated_at);
+  const relida = await obterAnuncio(a.id);
+  const gravada = relida.ok ? relida.anuncio.dados_conferencia?.republicacao?.ficha : "";
+  if (error || gravada !== novoId) {
+    // Outra aba retomou ao mesmo tempo: a ficha criada aqui é cancelada e vale a outra.
+    await cancelarFichaSemConta(novoId);
+    if (gravada) return { ok: true, anuncioId: gravada, nova: false };
+    return error ? falha(error) : { ok: false, erro: "A ficha mudou ao mesmo tempo: nada foi retomado. Tente de novo." };
+  }
+  return { ok: true, anuncioId: novoId, nova: true };
 }
 
 /** Vínculo com o produto criado no Bling (após a criação autorizada). */

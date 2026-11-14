@@ -57,7 +57,7 @@ import {
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados, resumoCompatAprovadas } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
-import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling } from "../services/estoqueBlingPAIIA";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, situacaoProdutoBling } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
@@ -356,6 +356,9 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   const contasConectadas = contasMLConectadas(estadoContas);
   const [contaEscolhida, setContaEscolhidaLocal] = useState("");
   const [ficha, setFicha] = useState({ carregando: true, disponivel: true, gravada: false, anuncioId: anuncioId || "", erro: "", outros: [] });
+  // (14/11) Produtos Bling que OUTRAS fichas deste SKU já registraram (publicação/integração).
+  // Se a busca pelo SKU não achar, o PAIIA explica e NÃO oferece criar outro produto.
+  const produtosBlingDoSku = useMemo(() => produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), [ficha.outros, ficha.anuncioId]);
   const [gravandoConta, setGravandoConta] = useState(false);
   // "Publicar sem compatibilidade — vou cadastrar manualmente depois":
   // autorização gravada NA FICHA (lida da base: F5/Voltar não volta a bloquear).
@@ -878,6 +881,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   }
   async function criarProdutoBling() {
     if (cadastroBling.faltando.length) return;
+    // (14/11) Produto Bling já registrado para este SKU (outra ficha): nunca cria outro.
+    if (produtosBlingDoSku.length) return;
     const enviado = cadastroBling.produto;
     // Verificação PONTUAL no servidor (17/10/2026): busca exata do SKU
     // (ativos e inativos, variações de escrita) antes de criar e de novo sob
@@ -1698,6 +1703,9 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
           <div data-paiia-bling-estado="encontrado" style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>
             <div>✅ Produto já existe no Bling: <b>{estoque.produto?.nome}</b> (ID {estoque.produto?.id}, SKU {estoque.produto?.codigo}).</div>
             {estoque.registradoNaFicha && <div data-paiia-bling-registrado style={info}>ℹ {estoque.mensagem}</div>}
+            {situacaoProdutoBling({ leitura: estoque, registrados: produtosBlingDoSku }).estado === "outro_id" && (
+              <div data-paiia-bling-outro-id style={erro}>⚠ {situacaoProdutoBling({ leitura: estoque, registrados: produtosBlingDoSku }).texto}</div>
+            )}
             <div data-paiia-bling-estoque>Estoque no Bling: físico <b>{estoque.saldoFisicoTotal ?? "—"}</b> · disponível <b>{estoque.saldoVirtualTotal ?? "—"}</b>{estoque.ok === false && estoque.mensagem ? ` — ${estoque.mensagem}` : ""}</div>
             {/* (03/11/2026) Vínculo automático só nas contas com loja Bling mapeada (hoje só LojaOnlineSP). */}
             {lojaBlingDaConta(contaEscolhida)?.vinculo_automatico ? (
@@ -1714,6 +1722,11 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
                 {(criacaoBling.problemas || []).map((p) => <div key={p}>• {p}</div>)}
               </div>
             )}
+          </div>
+        ) : estoque?.ok && produtosBlingDoSku.length ? (
+          <div data-paiia-bling-estado="fora-da-busca" style={erro}>
+            ⚠ {situacaoProdutoBling({ leitura: estoque, registrados: produtosBlingDoSku }).texto}
+            <div style={{ ...info, marginTop: 6 }}>Depois de conferir no Bling: reative/corrija o cadastro e toque em "Reler Bling", ou siga com "Publicar sem Bling".</div>
           </div>
         ) : estoque?.ok ? (
           <div data-paiia-bling-estado="nao-encontrado" style={{ color: "#e2e8f0", fontSize: 14, lineHeight: 1.7 }}>

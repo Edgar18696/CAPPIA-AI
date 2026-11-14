@@ -24,14 +24,23 @@ export async function lerSituacaoMLBAtual({ mlb, conta }) {
   return { lido: true, ...textoSituacaoMLBAtual({ mlb: id, conta: contaTxt, resp }) };
 }
 
-/** Texto da situação atual (função pura, testável). */
+/**
+ * Texto da situação atual (função pura, testável).
+ * (14/11) Diferencia excluído, encerrado, pausado, ativo, em revisão e inativo.
+ * Devolve { excluido (= deixou de existir: excluído OU encerrado), situacao,
+ *           confirmada, preco, texto }.
+ */
 export function textoSituacaoMLBAtual({ mlb, conta, resp }) {
   const s = situacaoMLBRegistrado({ mlb, conta, resp });
   const existe = resp?.ok && resp?.dados?.id && String(resp.dados.seller_id ?? "") === String(conta);
-  const texto = s.libera
-    ? "anúncio excluído/encerrado"
-    : existe
-      ? `anúncio existe (${s.status}${s.sub_status.length ? ` / ${s.sub_status.join(", ")}` : ""})`
-      : `não foi possível confirmar (${s.motivo})`;
-  return { excluido: s.libera, texto };
+  const detalhe = `${s.status}${s.sub_status.length ? ` / ${s.sub_status.join(", ")}` : ""}`;
+  const texto = s.situacao === "excluido"
+    ? `anúncio excluído no Mercado Livre (${detalhe})`
+    : s.situacao === "encerrado"
+      ? `anúncio encerrado (finalizado) no Mercado Livre (${detalhe})`
+      : existe
+        ? `anúncio ${{ ativo: "ativo", pausado: "pausado", em_revisao: "em revisão", inativo: "inativo" }[s.situacao] || "existe"} (${detalhe})`
+        : `não foi possível confirmar (${s.motivo})`;
+  // registro: leitura completa (situacaoMLBRegistrado) — usada para RETOMAR a ficha com segurança.
+  return { excluido: s.libera, situacao: existe || s.libera ? s.situacao : "nao_confirmada", confirmada: Boolean(existe || s.libera), preco: s.preco, texto, registro: s };
 }

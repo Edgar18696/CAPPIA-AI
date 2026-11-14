@@ -14,6 +14,7 @@
 // nenhuma delas grava no Mercado Livre, no Bling ou na base.
 // =============================================================
 import { parametrosCotacao, cotarNoPreco, resultadoDoPreco, reais, ORIGEM_FRETE } from "./fretePrecificacao.js";
+import { conferirRegistrosNoML, avaliarRegistrosBase } from "./duplicidadeML.js";
 
 /** As três contas Mercado Livre do PAIIA, na ordem da publicação. */
 export const CONTAS_PUBLICACAO_ML = Object.freeze([
@@ -121,12 +122,26 @@ export async function verificarContaPublicacao({ contaId, dados = {}, deps = {} 
       add("Duplicidade", "erro", `Não foi possível conferir a base PAIIA nesta conta (${txt(dupBase?.erro) || "sem resposta"}).`);
     } else {
       const ml = await seguro(() => deps.duplicidadeML({ conta: id, codigos: [sku, txt(dados.codigo)].filter(Boolean), consultar: deps.consultar(id) }));
-      resultado.duplicidade = { base: (dupBase.registros || []).map((r) => txt(r.mlb_id) || txt(r.id)), ml: ml?.erro ? null : { duplicados: ml?.duplicados || [], possiveis: ml?.possiveis || [] } };
-      if (ml?.erro) add("Duplicidade", "erro", `Não foi possível conferir os anúncios desta conta no Mercado Livre (${ml.erro}).`);
-      else if ((dupBase.registros || []).length) add("Duplicidade", "erro", `Este SKU já tem publicação registrada nesta conta: ${resultado.duplicidade.base.join(", ")}.`);
-      else if ((ml.duplicados || []).length) add("Duplicidade", "erro", `Este SKU já tem anúncio nesta conta: ${ml.duplicados.map((d) => `${d.id} (${d.status})`).join(", ")}.`);
-      else if ((ml.possiveis || []).length) add("Duplicidade", "conferir", `Possível duplicidade (mesmo código, SKU diferente): ${ml.possiveis.map((d) => `${d.id} (${d.status})`).join(", ")}. Confira no Mercado Livre e marque se NÃO for o mesmo produto.`);
-      else add("Duplicidade", "ok", "Nenhum anúncio deste SKU nesta conta.");
+      const registros = dupBase.registros || [];
+      resultado.duplicidade = { base: registros.map((r) => txt(r.mlb_id) || txt(r.id)), ml: ml?.erro ? null : { duplicados: ml?.duplicados || [], possiveis: ml?.possiveis || [] }, anteriores: [] };
+      if (ml?.erro) {
+        add("Duplicidade", "erro", `Não foi possível conferir os anúncios desta conta no Mercado Livre (${ml.erro}).`);
+      } else {
+        // (14/11) Cada MLB registrado na base é conferido AGORA no Mercado Livre
+        // desta conta: só "excluído" ou "encerrado" confirmado deixa de bloquear
+        // (vira histórico). Dúvida, ativo ou pausado continuam bloqueando.
+        const jaListados = [...(ml.duplicados || []), ...(ml.possiveis || [])].map((d) => d.id);
+        const conferidosBase = await conferirRegistrosNoML({ registros, conta: id, consultar: deps.consultar(id), jaListados });
+        const av = avaliarRegistrosBase({ registros, ml: { ...ml, conferidosBase } });
+        resultado.duplicidade.anteriores = av.anteriores.map((a) => ({ mlb: a.mlb, situacao: a.situacao, rotulo: a.rotulo || "", ficha_origem: a.ficha_origem || "" }));
+        const historico = av.anteriores.length
+          ? ` Histórico: ${av.anteriores.map((a) => `${a.mlb} ${a.rotulo || "excluído/encerrado no Mercado Livre"}`).join("; ")} — não bloqueia.`
+          : "";
+        if ((ml.duplicados || []).length) add("Duplicidade", "erro", `Este SKU já tem anúncio nesta conta: ${ml.duplicados.map((d) => `${d.id} (${d.status})`).join(", ")}.`);
+        else if (av.pendentes.length) add("Duplicidade", "erro", `Este SKU já tem publicação registrada nesta conta que ainda existe ou não pôde ser confirmada no Mercado Livre: ${av.pendentes.map((p) => `${p.mlb} (${p.motivo})`).join("; ")}.`);
+        else if ((ml.possiveis || []).length) add("Duplicidade", "conferir", `Possível duplicidade (mesmo código, SKU diferente): ${ml.possiveis.map((d) => `${d.id} (${d.status})`).join(", ")}. Confira no Mercado Livre e marque se NÃO for o mesmo produto.${historico}`);
+        else add("Duplicidade", "ok", `Nenhum anúncio ativo deste SKU nesta conta.${historico}`);
+      }
     }
   }
 
@@ -272,7 +287,7 @@ export function contaReferenciaFrete(contasConectadas = []) {
 // ------------------------------------------------------------------
 
 /** Chaves da ficha que pertencem à PUBLICAÇÃO anterior: nunca vão para a ficha da próxima conta. */
-export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas"]);
+export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas", "republicacao"]);
 
 /**
  * Situação da fila numa ficha publicada. A ficha só aponta a PRÓXIMA conta
@@ -312,5 +327,53 @@ export function dadosParaProximaConta(dados, { novoId, origemId, origemConta = "
     origem: { ficha: origemId, conta: idConta(origemConta), mlb: txt(origemMlb) },
     criado_em: agora,
   };
+  return d;
+}
+
+// ------------------------------------------------------------------
+// (14/11) RETOMAR uma ficha cujo MLB foi ENCERRADO ou EXCLUÍDO no Mercado
+// Livre. A ficha publicada e a linha de publicação dela ficam INTACTAS
+// (histórico). Uma ficha nova recebe a mesma Conferência aprovada (fotos,
+// descrição, aplicações, preço) e:
+//   - mlbs_anteriores com o MLB encerrado (histórico, não bloqueia);
+//   - pedido de conta pendente, sugerindo a MESMA conta;
+//   - origem.motivo = "republicacao".
+// Nada é publicado e nada vai ao Bling aqui: a conta passa de novo pela
+// conferência (duplicidade AO VIVO no ML) e pela confirmação final.
+// ------------------------------------------------------------------
+
+/** Pode retomar? Só com o ML confirmando AGORA que ESTE MLB, nesta conta, está encerrado/excluído. */
+export function podeRetomarFicha({ publicacao, situacao }) {
+  const mlb = txt(publicacao?.mlb_id).toUpperCase();
+  const conta = idConta(publicacao?.ml_user_id);
+  if (!mlb || !conta) return { pode: false, motivo: "Esta ficha não tem MLB publicado: continue a publicação normal." };
+  if (!situacao || situacao.libera !== true) {
+    return { pode: false, motivo: `O Mercado Livre não confirmou que o ${mlb} está encerrado ou excluído (${txt(situacao?.motivo) || "sem leitura"}). A ficha não é reaberta.` };
+  }
+  if (txt(situacao.mlb).toUpperCase() !== mlb || idConta(situacao.conta) !== conta) {
+    return { pode: false, motivo: "A leitura do Mercado Livre não é deste MLB/conta: a ficha não é reaberta." };
+  }
+  return { pode: true, mlb, conta, situacao: txt(situacao.situacao) };
+}
+
+/** dados_conferencia da ficha que RETOMA a publicação (função pura). */
+export function dadosParaRepublicacao(dados, { novoId, origemId, publicacao, situacao, marcarFotos = null, agora = new Date().toISOString() }) {
+  const mlb = txt(publicacao?.mlb_id).toUpperCase();
+  const conta = idConta(publicacao?.ml_user_id);
+  const d = dadosParaProximaConta(dados, { novoId, origemId, origemConta: conta, origemMlb: mlb, sugeridas: [conta], marcarFotos, agora });
+  d.contas_publicacao.origem.motivo = "republicacao";
+  d.mlbs_anteriores = [{
+    mlb,
+    conta,
+    status_ml: txt(situacao?.status),
+    sub_status_ml: Array.isArray(situacao?.sub_status) ? situacao.sub_status : [],
+    situacao: situacao?.situacao === "excluido" ? "excluido_no_ml" : "encerrado_no_ml",
+    texto: `MLB anterior: ${mlb} — ${txt(situacao?.rotulo) || "excluído/encerrado no Mercado Livre"} — não bloqueia nova publicação.`,
+    ficha_origem: txt(origemId),
+    publicado_em: txt(publicacao?.publicado_em),
+    preco_no_ml: Number.isFinite(Number(situacao?.preco)) && situacao?.preco !== null ? Number(situacao.preco) : null,
+    bling_produto_id: txt(publicacao?.bling_produto_id || dados?.integracao_bling?.bling_produto_id),
+    conferido_em: agora,
+  }];
   return d;
 }

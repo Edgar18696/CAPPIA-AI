@@ -168,8 +168,11 @@ test("histórico do MLB antigo: acrescenta, nunca apaga, não duplica; preservad
 });
 
 test("ficha antiga: tela mostra histórico + situação atual lida do ML, sem reescrever", () => {
-  assert.equal(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: item({ status: "inactive", sub_status: ["deleted"] }) }).texto, "anúncio excluído/encerrado");
-  assert.match(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: item({ status: "active" }) }).texto, /^anúncio existe \(active\)/);
+  // (14/11) Excluído e encerrado aparecem separados; ativo e pausado pelo nome.
+  assert.equal(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: item({ status: "inactive", sub_status: ["deleted"] }) }).texto, "anúncio excluído no Mercado Livre (inactive / deleted)");
+  assert.equal(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: item({ status: "closed" }) }).texto, "anúncio encerrado (finalizado) no Mercado Livre (closed)");
+  assert.match(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: item({ status: "active" }) }).texto, /^anúncio ativo \(active\)/);
+  assert.match(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: item({ status: "paused" }) }).texto, /^anúncio pausado \(paused\)/);
   assert.match(textoSituacaoMLBAtual({ mlb: MLB, conta: CONTA, resp: { ok: false, erro: "timeout" } }).texto, /^não foi possível confirmar/);
   const fp = ler("src/components/FichaPublicadaPAIIA.jsx");
   assert.ok(fp.includes("Histórico da ficha:") && fp.includes("Situação atual no Mercado Livre:"));

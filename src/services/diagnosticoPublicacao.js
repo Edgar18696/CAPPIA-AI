@@ -7,7 +7,8 @@
 // NUNCA grava: as consultas são injetadas e só aceitam leitura (ver LEITURAS_*).
 // Não mostra token, chave ou dado de acesso: só os campos do anúncio/ficha.
 // =============================================================
-import { verificarDuplicidadeML, nomeDaLoja } from "./duplicidadeML.js";
+import { verificarDuplicidadeML, nomeDaLoja, situacaoMLBRegistrado } from "./duplicidadeML.js";
+import { produtosBlingRegistradosDoSku, situacaoProdutoBling } from "./estoqueBlingPAIIA.js";
 import { lojaBlingDaConta, avaliarPorProduto, normalizarMLB, ACAO_LEITURA, ACAO_BUSCA_MLB, ESTADO, TEXTO_ESTADO } from "./vinculoBlingPublicacao.js";
 
 /** Únicas ações do Bling permitidas aqui (todas de leitura). */
@@ -82,8 +83,38 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
   const mlbsRegistro = [...new Set(out.registros.map((r) => normalizarMLB(r.mlb)).filter(Boolean))];
   if (mlbsRegistro.length > 1) ponto(pontos, "alerta", "Registro interno", `O SKU tem ${mlbsRegistro.length} MLBs registrados: ${mlbsRegistro.join(", ")}.`);
 
-  // 3) Conta: a da ficha publicada, a da publicação ou a do registro.
-  out.conta = txt(fichasComMLB[0]?.publicacao?.conta || fichasComMLB[0]?.conta || out.fichas[0]?.conta || out.registros.find((r) => normalizarMLB(r.mlb) === out.mlb)?.conta);
+  // 3) Conta: a do MLB pesquisado (ficha ou registro DESTE MLB). (14/11) Antes
+  // valia a ficha mais recente — com 2 MLBs em contas diferentes, o MLB era lido
+  // pela conta errada ("Access ... forbidden").
+  const temMLB = (f, m) => [f.publicacao?.mlb, f.registro_bling?.mlb, f.pos_publicacao?.mlb].map(normalizarMLB).includes(m);
+  const fichaDoMLB = out.mlb ? out.fichas.find((f) => temMLB(f, out.mlb)) : null;
+  const regDoMLB = out.registros.find((r) => normalizarMLB(r.mlb) === out.mlb);
+  out.conta = txt(fichaDoMLB?.publicacao?.conta || fichaDoMLB?.conta || regDoMLB?.conta || fichasComMLB[0]?.publicacao?.conta || fichasComMLB[0]?.conta || out.fichas[0]?.conta);
+  const fichaRef = fichaDoMLB || fichasComMLB[0] || null;
+
+  // 3b) (14/11) TODOS os MLBs deste SKU, cada um lido na SUA conta: situação
+  // atual (ativo, pausado, encerrado, excluído), preço e SKU no anúncio.
+  const porMLB = new Map();
+  for (const f of out.fichas) {
+    for (const m of [f.publicacao?.mlb, f.registro_bling?.mlb].map(normalizarMLB).filter(Boolean)) {
+      if (!porMLB.has(m)) porMLB.set(m, { mlb: m, conta: txt(f.publicacao?.conta || f.conta), ficha: f.id, bling_produto_id: txt(f.publicacao?.bling_produto_id || f.registro_bling?.bling_produto_id) });
+    }
+  }
+  for (const r0 of out.registros) {
+    const m = normalizarMLB(r0.mlb);
+    if (m && !porMLB.has(m)) porMLB.set(m, { mlb: m, conta: r0.conta, ficha: r0.ficha, bling_produto_id: r0.bling_produto_id });
+  }
+  out.mlbs = [];
+  for (const x of porMLB.values()) {
+    if (!x.conta) { out.mlbs.push({ ...x, situacao: "sem_conta" }); continue; }
+    const ri = await q.ml(x.conta, `/items/${x.mlb}`);
+    const s = situacaoMLBRegistrado({ mlb: x.mlb, conta: x.conta, resp: ri });
+    const it = ri?.ok ? ri.dados : null;
+    const linha = { ...x, conta_nome: nomeDaLoja(x.conta), situacao: s.situacao, rotulo: s.rotulo || s.motivo, status: s.status, sub_status: s.sub_status, preco: s.preco, sku: it ? [attr(it, "SELLER_SKU"), txt(it.seller_custom_field)].filter(Boolean).join(" / ") : "" };
+    out.mlbs.push(linha);
+    const nivelMLB = s.situacao === "ativo" ? "ok" : s.situacao === "nao_confirmada" ? "erro" : "alerta";
+    ponto(pontos, nivelMLB, "MLBs do SKU", `${x.mlb} (${linha.conta_nome}): ${linha.rotulo}${linha.preco !== null && linha.preco !== undefined ? ` · preço ${linha.preco}` : ""}${linha.sku ? ` · SKU ${linha.sku}` : ""}${x.bling_produto_id ? ` · produto Bling ${x.bling_produto_id}` : ""}.`);
+  }
   if (!out.mlb) { ponto(pontos, "alerta", "Mercado Livre", "Nenhum MLB gravado para este SKU: nada a consultar no Mercado Livre."); return out; }
   if (!out.conta) { ponto(pontos, "erro", "Mercado Livre", "Conta do Mercado Livre não encontrada na ficha: consulta não feita."); return out; }
   const nomeConta = nomeDaLoja(out.conta);
@@ -119,11 +150,14 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
   const bs = await q.bling({ acao: "saldo_por_sku", sku: SKU });
   const prodId = txt(bs?.produto?.id);
   out.bling = { produto: bs?.encontrado ? { id: prodId, codigo: txt(bs.produto?.codigo), nome: txt(bs.produto?.nome) } : null, ambiguo: Boolean(bs?.ambiguo), erro: bs?.ok === false && !bs?.encontrado ? txt(bs?.erro || bs?.mensagem) : "", vinculo: null };
-  if (bs?.ambiguo) ponto(pontos, "erro", "Bling", `Mais de um produto no Bling com o SKU ${SKU}.`);
-  else if (!bs?.encontrado) ponto(pontos, bs?.ok ? "alerta" : "erro", "Bling", bs?.ok ? `SKU ${SKU} não encontrado no Bling.` : `Bling não consultado (${out.bling.erro || "erro"}).`);
-  else ponto(pontos, "ok", "Bling", `Produto no Bling: ID ${prodId} (SKU ${txt(bs.produto?.codigo)}).`);
+  // (14/11) Pelo SKU E pelo ID já registrado nas fichas deste SKU.
+  const registradosBling = produtosBlingRegistradosDoSku(out.fichas.map((f) => ({ id: f.id, publicacao: f.publicacao ? { bling_produto_id: f.publicacao.bling_produto_id, mlb_id: f.publicacao.mlb, ml_user_id: f.publicacao.conta } : null, integracao_bling: f.registro_bling })));
+  const sitBling = situacaoProdutoBling({ leitura: bs, registrados: registradosBling });
+  out.bling.situacao = sitBling.estado;
+  out.bling.registrados = registradosBling;
+  ponto(pontos, sitBling.estado === "ok" ? "ok" : sitBling.estado === "nao_existe" ? "alerta" : "erro", "Bling", sitBling.estado === "nao_existe" ? `SKU ${SKU} não encontrado no Bling.` : sitBling.texto);
   const loja = lojaBlingDaConta(out.conta);
-  const produtoEsperado = prodId || txt(fichasComMLB[0]?.registro_bling?.bling_produto_id || fichasComMLB[0]?.publicacao?.bling_produto_id);
+  const produtoEsperado = prodId || txt(fichaRef?.registro_bling?.bling_produto_id || fichaRef?.publicacao?.bling_produto_id);
   if (!loja) ponto(pontos, "alerta", "Vínculo no Bling", `A conta ${nomeConta} não tem loja Bling mapeada: o vínculo não é conferido automaticamente.`);
   else if (produtoEsperado) {
     const regV = { mlb: out.mlb, bling_loja_id: loja.bling_loja_id, bling_produto_id: produtoEsperado };
@@ -139,7 +173,7 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
     }
     out.bling.vinculo = { loja: loja.bling_loja_nome, produto_esperado: produtoEsperado, estado: v.estado, mensagem: v.mensagem };
     ponto(pontos, v.estado === ESTADO.INTEGRADO ? "ok" : v.estado === ESTADO.AGUARDANDO ? "alerta" : "erro", "Vínculo no Bling", `${String(v.mensagem).replace(/\.\s*$/, "")} (loja ${loja.bling_loja_nome}, produto ${produtoEsperado}).`);
-    const gravado = fichasComMLB[0]?.registro_bling?.estado || "";
+    const gravado = fichaRef?.registro_bling?.estado || "";
     if (gravado && gravado !== v.estado) ponto(pontos, "alerta", "Vínculo no Bling", `A ficha registra "${gravado}", mas a leitura agora dá "${v.estado}".`);
   }
   return out;
@@ -150,6 +184,7 @@ export function textoDiagnostico(d) {
   const linhas = [`Diagnóstico (somente leitura) — SKU ${d.sku} · ${d.mlb || "sem MLB"} · conta ${d.conta || "—"}`];
   for (const p of d.pontos) linhas.push(`${p.nivel === "ok" ? "✅" : p.nivel === "alerta" ? "⚠" : "❌"} ${p.item}: ${p.texto}`);
   if (d.ml) linhas.push(`ML: ${JSON.stringify(d.ml)}`);
+  if (d.mlbs) linhas.push(`MLBs do SKU: ${JSON.stringify(d.mlbs)}`);
   linhas.push(`Fichas: ${JSON.stringify(d.fichas)}`);
   linhas.push(`Registro interno: ${JSON.stringify(d.registros)}`);
   if (d.buscaSku) linhas.push(`Busca do SKU: ${JSON.stringify(d.buscaSku)}`);
