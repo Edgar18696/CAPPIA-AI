@@ -4,11 +4,11 @@
 // os testes provarem que nada foi para o ML, o Bling ou a base de
 // conhecimento. Suporta só o que os serviços da ficha usam.
 // =============================================================
-export const banco = { tabelas: { paiia_anuncios: [], paiia_anuncios_publicacoes: [], paiia_registro_mlb: [] }, chamadas: [], funcoes: [], seq: 0, falhar: {} };
+export const banco = { tabelas: { paiia_anuncios: [], paiia_anuncios_publicacoes: [], paiia_registro_mlb: [], paiia_fichas_arquivadas: [] }, chamadas: [], funcoes: [], seq: 0, falhar: {} };
 export const USUARIO = "11111111-2222-4333-8444-555555555555";
 
 export function zerarBanco() {
-  banco.tabelas = { paiia_anuncios: [], paiia_anuncios_publicacoes: [], paiia_registro_mlb: [] };
+  banco.tabelas = { paiia_anuncios: [], paiia_anuncios_publicacoes: [], paiia_registro_mlb: [], paiia_fichas_arquivadas: [] };
   banco.falhar = {};
   banco.chamadas = [];
   banco.funcoes = [];
