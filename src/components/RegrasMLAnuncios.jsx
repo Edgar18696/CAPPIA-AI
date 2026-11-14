@@ -1,10 +1,14 @@
 // =============================================================
 // PAIIA — Central do Paizinho: janela "Regras do Mercado Livre — Anúncios".
-// SOMENTE LEITURA: mostra as regras oficiais (fonte e data), o cruzamento das
-// 3 contas, o risco e as recomendações. Nunca altera, pausa ou encerra anúncios.
+// Mostra SÓ as regras, políticas e exigências oficiais (fonte e data) e o que
+// as fontes não esclarecem. Nunca altera, pausa ou encerra anúncios.
+// (13/11) O "Cruzamento das 3 contas" saiu desta janela (que fica só para regras
+// oficiais), mas o componente CruzamentoContas, a leitura (leituraContas.js) e os
+// resultados guardados no navegador continuam intactos, para a futura área
+// "Comparativo das 3 Contas".
 // =============================================================
 import { useMemo, useState } from "react";
-import { REGRAS, LACUNAS, NIVEIS_RISCO, RECOMENDACOES, SINAIS_MESMO_PRODUTO, ETAPAS, CONTAS_REGRAS, DATA_ACESSO } from "../services/regrasML/catalogoRegras";
+import { REGRAS, LACUNAS, DATA_ACESSO } from "../services/regrasML/catalogoRegras";
 import { lerTresContas, montarCruzamento } from "../services/regrasML/leituraContas";
 
 // (12/11) Leitura das 3 contas (somente GET) liberada também no site, por
@@ -16,7 +20,8 @@ const NIVEL = { alto: ["Precisa de atenção", "#f87171"], conferir: ["Conferir 
 const real = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const simNao = (v) => (v === true ? "✅ igual" : v === false ? "❌ diferente" : "— sem dado");
 
-function CruzamentoContas() {
+// (13/11) Guardado para a futura área "Comparativo das 3 Contas" (não aparece nas Regras).
+export function CruzamentoContas() {
   const [versao, setVersao] = useState(0);
   const [lendo, setLendo] = useState("");
   const [erro, setErro] = useState("");
@@ -112,17 +117,12 @@ export default function RegrasMLAnuncios({ aoFechar }) {
       <div style={S.topo}>
         <div>
           <h2 style={S.titulo}>📜 Regras do Mercado Livre — Anúncios</h2>
-          <p style={S.sub}>Mesmo produto anunciado nas contas {CONTAS_REGRAS.map((c) => c.nome).join(", ")}. Fontes oficiais do Mercado Livre, acessadas em {DATA_ACESSO}.</p>
+          <p style={S.sub}>Regras, políticas e exigências oficiais do Mercado Livre para anúncios. Fontes oficiais acessadas em {DATA_ACESSO}.</p>
         </div>
         {aoFechar && <button type="button" onClick={aoFechar} style={S.fechar}>Fechar</button>}
       </div>
 
-      <div style={S.trava}>🔒 Somente leitura. Esta janela só faz consultas (GET) no Mercado Livre: nenhum anúncio é alterado, pausado ou encerrado. Qualquer ação depende da sua autorização, item por item.</div>
-
-      <CruzamentoContas />
-
-      <h3 style={S.h3}>Situação</h3>
-      <ul style={S.lista}>{ETAPAS.map((e) => <li key={e.etapa}><strong>{e.etapa}:</strong> <span style={e.situacao === "pronto" ? S.ok : S.pendente}>{e.situacao}</span></li>)}</ul>
+      <div style={S.trava}>🔒 Somente consulta. Esta janela mostra as regras oficiais: nenhum anúncio é lido, alterado, pausado ou encerrado.</div>
 
       <h3 style={S.h3}>Regras oficiais</h3>
       <div style={S.grade}>{REGRAS.map((r) => (
@@ -137,27 +137,9 @@ export default function RegrasMLAnuncios({ aoFechar }) {
       <h3 style={S.h3}>O que as fontes oficiais não esclarecem</h3>
       <ul style={S.lista}>{LACUNAS.map((l) => <li key={l}>{l}</li>)}</ul>
       <p style={S.nota}>Até haver resposta oficial do suporte do ML, esses casos são tratados como risco, nunca como permitidos.</p>
-
-      <h3 style={S.h3}>Como o mesmo produto será reconhecido</h3>
-      <ol style={S.lista}>{SINAIS_MESMO_PRODUTO.map((s) => <li key={s}>{s}</li>)}</ol>
-
-      <h3 style={S.h3}>Níveis de risco</h3>
-      <div style={S.grade}>{NIVEIS_RISCO.map((n) => (
-        <article key={n.nivel} style={{ ...S.regra, borderColor: n.cor }}>
-          <strong style={{ color: n.cor }}>{n.nivel}</strong>
-          <p style={S.texto}>{n.criterio}</p>
-          <small style={S.base}>Base: {n.base}</small>
-        </article>
-      ))}</div>
-
-      <h3 style={S.h3}>Recomendações (sempre pendentes da sua autorização)</h3>
-      <div style={S.grade}>{RECOMENDACOES.map((r) => (
-        <article key={r.acao} style={S.regra}>
-          <strong>{r.acao}</strong>
-          <p style={S.texto}>{r.texto}</p>
-          <small style={S.base}>Base: {r.base}</small>
-        </article>
-      ))}</div>
+      {/* (13/11) Situação da leitura, sinais de mesmo produto, níveis de risco e
+          recomendações são do futuro "Comparativo das 3 Contas": saíram desta janela,
+          mas continuam no catálogo (catalogoRegras.js) e no CruzamentoContas. */}
     </section>
   );
 }

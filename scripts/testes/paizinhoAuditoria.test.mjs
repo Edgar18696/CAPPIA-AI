@@ -547,3 +547,25 @@ test("Central (12/11, 2ª): só 4 funções na página; cartões retirados conti
   const app = fs.readFileSync(path.join(RAIZ, "src/App.jsx"), "utf8");
   for (const tela of ["centralPrecificacao", "centralPesquisa", "novoAnuncio"]) assert.match(app, new RegExp(`screen === "${tela}"`));
 });
+
+test("Regras do ML (13/11): só regras oficiais; Cruzamento das 3 contas saiu da janela mas continua guardado", async () => {
+  const janela = fs.readFileSync(path.join(RAIZ, "src/components/RegrasMLAnuncios.jsx"), "utf8");
+  const tela = janela.slice(janela.indexOf("export default function RegrasMLAnuncios"));
+  assert.doesNotMatch(tela, /<CruzamentoContas|Ler as 3 contas|Cruzamento das 3 contas/, "nada do cruzamento na janela de Regras");
+  assert.match(tela, /Regras oficiais/);
+  assert.match(tela, /O que as fontes oficiais não esclarecem/);
+  // (13/11, 2ª) Sem indicadores de comparação na tela: situação da leitura, contas,
+  // sinais de mesmo produto, níveis de risco e recomendações.
+  const visivel = tela.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  assert.doesNotMatch(visivel, /Situação|ETAPAS|CONTAS_REGRAS|Mesmo produto anunciado|SINAIS_MESMO_PRODUTO|Como o mesmo produto|NIVEIS_RISCO|Níveis de risco|RECOMENDACOES|Recomendações/);
+  // ...mas continuam no catálogo para o futuro "Comparativo das 3 Contas".
+  const cat = await import("../../src/services/regrasML/catalogoRegras.js");
+  for (const k of ["ETAPAS", "CONTAS_REGRAS", "SINAIS_MESMO_PRODUTO", "NIVEIS_RISCO", "RECOMENDACOES"]) assert.ok(cat[k]?.length > 0, `${k} preservado`);
+  // Funcionalidade preservada para o futuro "Comparativo das 3 Contas".
+  assert.match(janela, /export function CruzamentoContas\(\)/);
+  assert.match(janela, /lerTresContas\(\{ aoProgredir: setLendo \}\)/);
+  assert.match(janela, /montarCruzamento\(\)/);
+  const leitura = fs.readFileSync(path.join(RAIZ, "src/services/regrasML/leituraContas.js"), "utf8");
+  assert.match(leitura, /export (async )?function lerTresContas/);
+  assert.match(leitura, /export function montarCruzamento/);
+});
