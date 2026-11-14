@@ -515,6 +515,11 @@ export default function NovoAnuncio({
   // ABERTURA decidida uma vez: criação nova, ficha pedida (?ficha=) ou o
   // anúncio em andamento (services/aberturaNovoAnuncio). Um anúncio novo
   // nunca herda nada de outro; a ficha B mostra só os dados de B.
+  // (14/11) Voltou da tela completa da Galeria com fotos escolhidas ("Inserir no
+  // anúncio"): lido ANTES da abertura e do efeito que apagam a marca. Ver marcarEdicaoExterna.
+  const [voltouDaGaleriaComFotos] = useState(() => {
+    try { return globalThis.localStorage?.getItem("voltarParaFotosAnuncio") === "true"; } catch { return false; }
+  });
   const [abertura] = useState(() => decidirAberturaNovoAnuncio());
   // Criação nova pedida / ficha pedida: a edição antiga (Meus Anúncios,
   // Projetos, Meus Rascunhos) que ficou no App não vale aqui.
@@ -2318,6 +2323,13 @@ setVeioDaCentralTecnica(true);
       freteML: registroFreteML,
     },
   });
+
+  // (14/11) Fotos escolhidas na tela completa da Galeria são edição do usuário:
+  // a ficha que já existia grava as novas fotos (antes sumiam ao reabrir).
+  const { marcarEdicaoExterna } = fichaNovo;
+  useEffect(() => {
+    if (voltouDaGaleriaComFotos) marcarEdicaoExterna();
+  }, [voltouDaGaleriaComFotos, marcarEdicaoExterna]);
 
   // Dados extras do anúncio que também precisam voltar da Galeria.
   const extrasRascunho = {

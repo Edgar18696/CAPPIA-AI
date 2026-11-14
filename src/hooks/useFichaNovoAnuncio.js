@@ -220,5 +220,17 @@ export default function useFichaNovoAnuncio({ estado, desativado = false, abertu
   }, []);
   const propsInteracao = { onInputCapture: marcarEdicao, onChangeCapture: marcarEdicao, onClickCapture: marcarEdicao };
 
-  return { fichaId, status, salvarAgora, novaFicha, fichaServeParaCodigo, propsInteracao };
+  /**
+   * (14/11) Edição feita pelo usuário FORA desta tela e trazida para cá — ex.: fotos
+   * escolhidas na tela completa da Galeria ("Inserir no anúncio"). Sem isso, a ficha
+   * já existente reabria "sem edição" e as fotos sumiam ao reabrir. Agenda a gravação.
+   */
+  const marcarEdicaoExterna = useCallback(() => {
+    const st = ref.current;
+    st.editou = true;
+    window.clearTimeout(st.timer);
+    st.timer = window.setTimeout(() => { gravar(); }, ESPERA_MS);
+  }, [gravar]);
+
+  return { fichaId, status, salvarAgora, novaFicha, fichaServeParaCodigo, propsInteracao, marcarEdicaoExterna };
 }
