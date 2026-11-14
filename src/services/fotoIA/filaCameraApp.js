@@ -30,11 +30,12 @@ export function filaCamera(usuarioId) {
     photoroom: (f, ctx) => recortarPhotoroom(f, { caminho: ctx?.caminho, invocar: (nome, opcoes) => supabase.functions.invoke(nome, opcoes), baixar }),
     gratis: (f) => recortarLocalmente(f),
   });
-  // (14/11) Photoroom (pago) só na 1ª tentativa de cada foto: novas tentativas
-  // automáticas e fotos antigas reabertas usam só o recorte grátis.
-  const tratar = ({ linhaId, url, urlOriginal, caminho, blob, tentativas, reaberta }) => tratarFotoDaGaleria({
+  // (14/11) Photoroom (pago) UMA vez por foto: novas tentativas automáticas, retomadas
+  // de tratamento interrompido, fotos antigas reabertas e fotos de outro aparelho
+  // usam só o recorte grátis (nada de lote pago de fotos antigas).
+  const tratar = ({ linhaId, url, urlOriginal, caminho, blob, tentativas, reaberta, jaTentouPhotoroom, deOutroAparelho }) => tratarFotoDaGaleria({
     supabase, usuarioId: id, linhaId, urlOriginal: urlOriginal || url, caminho, original: blob || null, recortarFotoIA, recortarLocal: recortar, comporFotoFinal, baixar,
-    semPhotoroom: (Number(tentativas) || 0) > 0 || Boolean(reaberta),
+    semPhotoroom: (Number(tentativas) || 0) > 0 || Boolean(reaberta) || Boolean(jaTentouPhotoroom) || Boolean(deOutroAparelho),
   });
   const fila = criarFilaCamera({
     armazenamento,
@@ -46,7 +47,7 @@ export function filaCamera(usuarioId) {
   });
   fila.retomarOutros = async () => {
     const locais = new Set((await fila.listar()).map((i) => String(i.linhaId || "")).filter(Boolean));
-    return retomarDeOutrosAparelhos({ supabase, usuarioId: id, tratar, ja: jaRetomadas, locais });
+    return retomarDeOutrosAparelhos({ supabase, usuarioId: id, tratar: (x) => tratar({ ...x, deOutroAparelho: true }), ja: jaRetomadas, locais });
   };
   filas.set(id, fila);
   return fila;

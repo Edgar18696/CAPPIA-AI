@@ -390,3 +390,33 @@ test("14/11) falhas antigas saem da fila depois de 24 h; foto só no aparelho nu
   assert.equal(sb.log.deletes + sb.log.removes, 0, "nada apagado do Supabase");
   assert.equal(C.ROTULO_CAMERA.falhou, "Fundo branco não aplicado · a original está salva na Galeria");
 });
+
+test("14/11) uma chamada paga por foto: retomada de 'tratando' interrompido e nova tentativa automática não usam o Photoroom; 'Tentar de novo' libera", async () => {
+  const sb = supabaseFalso();
+  const arm = armazenamentoMemoria();
+  let t = 1_000_000;
+  const vistos = [];
+  let falhar = true;
+  const { deps } = depsReais(sb);
+  const tratarReal = deps.tratar;
+  deps.tratar = async (item) => { vistos.push(Boolean(item.jaTentouPhotoroom)); if (falhar) throw Object.assign(new Error("Failed to fetch"), { temporario: true }); return tratarReal(item); };
+  const fila = C.criarFilaCamera({ armazenamento: arm, deps, agora: () => t });
+  await fila.adicionar([blob()]);
+  await fila.rodar(); // 1ª: pode usar o Photoroom
+  t += 60 * 60_000; await fila.rodar(); // automática: não
+  assert.deepEqual(vistos, [false, true]);
+  // "tratando" interrompido (navegador fechou) e retomado depois de 3 min: não
+  const [i] = await fila.listar();
+  await arm.atualizar(i.id, (r) => ({ ...r, estado: "tratando", tratandoDesde: t, proximaEm: 0 }));
+  t += 4 * 60_000; await fila.rodar();
+  assert.equal(vistos.at(-1), true);
+  // toque do usuário em "Tentar de novo": libera (o servidor reaproveita o recorte já pago)
+  falhar = false;
+  await fila.tentarDeNovo(i.id);
+  assert.equal(vistos.at(-1), false);
+  assert.deepEqual(await fila.listar(), []);
+  // fotos de outro aparelho entram como "deOutroAparelho" (sem Photoroom)
+  const app = ler("src/services/fotoIA/filaCameraApp.js");
+  assert.match(app, /tratar: \(x\) => tratar\(\{ \.\.\.x, deOutroAparelho: true \}\)/);
+  assert.match(app, /Boolean\(jaTentouPhotoroom\) \|\| Boolean\(deOutroAparelho\)/);
+});

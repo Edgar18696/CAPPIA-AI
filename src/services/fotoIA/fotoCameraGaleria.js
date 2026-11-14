@@ -261,7 +261,11 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
     }
     if (!atual || !atual.linhaId || atual.estado === "pronta") return;
     try {
-      atual = await mudar(atual.id, { estado: "tratando", tratandoDesde: agora() });
+      // (14/11) Uma chamada paga por foto: marca ANTES de tratar. Se esta tentativa for
+      // interrompida (navegador fechado, rede), a retomada já sabe que o Photoroom foi tentado.
+      const jaTentouPhotoroom = Boolean(atual.photoroomTentado);
+      atual = await mudar(atual.id, { estado: "tratando", tratandoDesde: agora(), photoroomTentado: true });
+      atual = { ...atual, jaTentouPhotoroom };
       avisar({ tipo: "tratando", id: atual.id });
       // (13/11) Nunca fica "tratando" para sempre: passou do limite, volta para nova tentativa.
       let relogio;
@@ -301,7 +305,7 @@ export function criarFilaCamera({ armazenamento, deps, agora = () => Date.now(),
 
   async function tentarDeNovo(id) {
     // Toque do usuário: pode usar o Photoroom de novo (o servidor reaproveita o recorte já pago).
-    await armazenamento.atualizar(id, (r) => ({ ...r, estado: r.linhaId ? "salva" : "salvando", tentativas: 0, proximaEm: 0, erro: "", reaberta: false }));
+    await armazenamento.atualizar(id, (r) => ({ ...r, estado: r.linhaId ? "salva" : "salvando", tentativas: 0, proximaEm: 0, erro: "", reaberta: false, photoroomTentado: false }));
     avisar({ tipo: "tentar", id });
     return rodar();
   }
