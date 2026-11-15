@@ -146,6 +146,12 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
     else ponto(pontos, skus.some((s) => normSku(s) === normSku(SKU)) ? "ok" : "erro", "SKU no ML", `SKU gravado no anúncio: ${skus.join(" / ")}${skus.some((s) => normSku(s) === normSku(SKU)) ? "" : ` (diferente de ${SKU})`}.`);
   }
 
+  // (15/11) SKU corrigido no ML (e no Bling) e a ficha ainda com o antigo: oferece corrigir a ficha.
+  if (out.ml) {
+    const skuML = out.ml.sku_atributo || out.ml.seller_custom_field;
+    const dona = out.fichas.find((f) => normalizarMLB(f.publicacao?.mlb) === out.mlb);
+    if (dona && skuML && normSku(skuML) !== normSku(SKU)) out.skuDivergente = { ficha: dona.id, mlb: out.mlb, skuAntigo: SKU, skuNovo: skuML };
+  }
   // 5) A busca do SKU na conta (é o que o painel usa) e duplicidade.
   const b = await q.ml(out.conta, `/users/${out.conta}/items/search?seller_sku=${encodeURIComponent(SKU)}`);
   out.buscaSku = b?.ok ? { resultados: Array.isArray(b.dados?.results) ? b.dados.results : [], total: b.dados?.paging?.total ?? null } : { erro: txt(b?.erro || "sem resposta") };

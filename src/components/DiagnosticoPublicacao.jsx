@@ -5,6 +5,7 @@ import { supabase } from "../supabase";
 import { listarAnunciosDoCodigo, obterAnuncio } from "../services/anuncioPublicacaoService";
 import { lerRegistroDoSKU } from "../services/registroMLBService";
 import { desfazerMLBDeOutroProduto } from "../services/anuncioPublicacaoService";
+import { corrigirSkuDaFicha } from "../services/correcaoSku";
 import { diagnosticarPublicacao, textoDiagnostico } from "../services/diagnosticoPublicacao";
 
 const depsReais = {
@@ -49,6 +50,20 @@ A ficha volta para "aprovada, não publicada". O registro errado fica guardado n
     const r = await desfazerMLBDeOutroProduto({ anuncioId: t.ficha, mlb: t.mlb, motivo: `MLB do SKU ${t.sku_do_mlb} gravado por engano na ficha do SKU ${st.d?.sku || ""}` }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
     setDesfeito((d) => ({ ...d, [t.ficha]: { rodando: false, r } }));
   }
+  // (15/11) Corrigir o SKU da ficha para o SKU que o anúncio JÁ tem no ML (e no Bling). Dois toques; nada é publicado.
+  const [corrSku, setCorrSku] = useState({ armado: "", rodando: false, r: null });
+  async function corrigirSku(t) {
+    if (corrSku.rodando) return;
+    if (corrSku.armado !== t.ficha) { setCorrSku({ armado: t.ficha, rodando: false, r: null }); return; }
+    setCorrSku((c) => ({ ...c, rodando: true }));
+    const deps = {
+      lerItem: async (conta, mlb) => { const r = await depsReais.consultarML(conta, `/items/${mlb}`); return r?.ok ? r.dados : null; },
+      lerBling: (sku) => depsReais.consultarBling({ acao: "saldo_por_sku", sku }),
+      fichasDoCodigo: async (sku) => { const l = await listarAnunciosDoCodigo(sku); return l?.ok ? l.anuncios : null; },
+    };
+    const r = await corrigirSkuDaFicha({ anuncioId: t.ficha, skuAntigo: t.skuAntigo, skuNovo: t.skuNovo }, deps).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
+    setCorrSku({ armado: "", rodando: false, r });
+  }
   async function copiar() {
     try { await navigator.clipboard.writeText(textoDiagnostico(st.d)); setSt((s) => ({ ...s, copiado: true })); } catch { /* sem área de transferência */ }
   }
@@ -89,6 +104,21 @@ A ficha volta para "aprovada, não publicada". O registro errado fica guardado n
               )}
             </div>
           ))}
+          {st.d.skuDivergente && (
+            <div data-paiia-sku-divergente={st.d.skuDivergente.ficha} style={{ margin: "8px 0", padding: 10, border: "1px solid #f59e0b", borderRadius: 8, background: "#451a03", color: "#fde68a" }}>
+              ⚠ O {st.d.skuDivergente.mlb} está com o SKU <b>{st.d.skuDivergente.skuNovo}</b> no Mercado Livre; a ficha {st.d.skuDivergente.ficha.slice(0, 8)} ainda tem <b>{st.d.skuDivergente.skuAntigo}</b>.
+              {corrSku.r ? (
+                <div data-paiia-sku-corrigido={corrSku.r.ok ? "ok" : "erro"} style={{ marginTop: 6, color: corrSku.r.ok ? COR.ok : COR.erro }}>
+                  {corrSku.r.ok ? `✅ SKU da ficha corrigido para ${st.d.skuDivergente.skuNovo} (publicação: ${corrSku.r.publicacao}; registro interno: ${corrSku.r.registro}). Confira com o SKU novo.` : `❌ ${corrSku.r.erro}`}
+                </div>
+              ) : (
+                <div><button type="button" data-paiia-corrigir-sku onClick={() => corrigirSku(st.d.skuDivergente)} disabled={corrSku.rodando} style={{ ...botao, marginTop: 6, background: corrSku.armado ? "#b45309" : "#92400e", borderColor: "#f59e0b" }}>
+                  {corrSku.rodando ? "⏳ Corrigindo..." : corrSku.armado ? `⚠ Toque de novo para CONFIRMAR: ficha passa a ${st.d.skuDivergente.skuNovo}` : `Corrigir o SKU da ficha para ${st.d.skuDivergente.skuNovo}`}
+                </button></div>
+              )}
+              <div style={{ fontSize: 12, color: "#fcd34d", marginTop: 4 }}>Só corrige se o Mercado Livre e o Bling (mesmo produto) já tiverem o SKU novo. Não publica, não cria produto, não muda preço nem estoque.</div>
+            </div>
+          )}
           <button type="button" data-paiia-diagnostico-copiar onClick={copiar} style={{ ...botao, marginTop: 8, background: "#1e293b", borderColor: "#334155" }}>{st.copiado ? "✓ Copiado" : "📋 Copiar resultado"}</button>
         </div>
       )}
