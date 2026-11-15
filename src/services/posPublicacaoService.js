@@ -48,10 +48,26 @@ export async function registrarPosPublicacao({ anuncioId, mlb, conta, sku, quant
   return { ok: false, erro: "A ficha estava sendo gravada por outro aparelho." };
 }
 
-async function consultarItemML(conta, mlb) {
-  const { data, error } = await supabase.functions.invoke("mercadolivre-publicacao", { body: { acao: "consultar_item", conta_ml: String(conta), item_id: mlb } });
+/**
+ * (15/11) "consultar_item" devolve status/sub_status, mas NÃO a quantidade: a conferência de
+ * estoque ficava "pendente" para sempre (20–36 tentativas por ficha, 48 h). Sem quantidade na
+ * 1ª resposta, lê o próprio anúncio (GET /items/<MLB>, só leitura) e completa status + quantidade.
+ */
+export async function consultarItemML(conta, mlb, { invocar = (n, o) => supabase.functions.invoke(n, o) } = {}) {
+  const { data, error } = await invocar("mercadolivre-publicacao", { body: { acao: "consultar_item", conta_ml: String(conta), item_id: mlb } });
   if (error) throw new Error(error.message || "falha ao falar com o servidor");
-  return data?.ok ? data : null;
+  if (!data?.ok) return null;
+  if (Number.isFinite(Number(data.available_quantity)) && data.available_quantity !== null && data.available_quantity !== "") return data;
+  const m = String(mlb || "").toUpperCase();
+  if (!/^MLB\d{6,}$/.test(m)) return data;
+  try {
+    const r = await invocar("mercadolivre-publicacao", { body: { acao: "ml_consulta", conta_ml: String(conta), metodo: "GET", caminho: `/items/${m}` } }); // mesma leitura comprovada no Diagnóstico
+    const it = r?.data?.ok ? r.data.dados : null;
+    if (!it || String(it.id || m).toUpperCase() !== m) return data;
+    return { ...data, status: data.status || it.status, sub_status: data.sub_status || it.sub_status, available_quantity: it.available_quantity };
+  } catch {
+    return data; // sem a 2ª leitura: segue como antes (estoque continua pendente, nova tentativa depois)
+  }
 }
 async function consultarBling(corpo) {
   const { data, error } = await supabase.functions.invoke("bling-integracao", { body: corpo });

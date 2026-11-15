@@ -130,8 +130,53 @@ test("3) em segundo plano pela FICHA (fechou a tela / outro aparelho): registra,
   // SÓ LEITURA: nenhuma publicação, cadastro ou vínculo foi pedido ao ML/Bling
   assert.ok(F.banco.funcoes.length >= 3);
   assert.deepEqual(F.banco.funcoes.filter(proibidas), [], JSON.stringify(F.banco.funcoes));
-  assert.ok(F.banco.funcoes.every((f) => (f.nome === "mercadolivre-publicacao" && f.corpo.acao === "consultar_item") || (f.nome === "bling-integracao" && /^anuncios_(consultar|buscar_mlb)$/.test(f.corpo.acao))));
+  assert.ok(F.banco.funcoes.every(soLeitura), JSON.stringify(F.banco.funcoes));
   assert.ok(!F.banco.chamadas.some((c) => c.op === "insert" || c.op === "delete"), "nenhuma ficha ou publicação criada/apagada");
+});
+
+// (15/11) Únicas chamadas permitidas nas conferências posteriores (todas de leitura).
+function soLeitura(f) {
+  if (f.nome === "mercadolivre-publicacao" && f.corpo.acao === "consultar_item") return true;
+  if (f.nome === "mercadolivre-publicacao" && f.corpo.acao === "ml_consulta") return f.corpo.metodo === "GET" && /^\/items\/MLB\d+$/.test(f.corpo.caminho);
+  return f.nome === "bling-integracao" && /^anuncios_(consultar|buscar_mlb)$/.test(f.corpo.acao);
+}
+
+test("3b) caso REAL (15/11): consultar_item vem SEM quantidade → lê o anúncio (GET) e o estoque conclui; antes ficava pendente por 48 h", async () => {
+  F.zerarBanco();
+  const { id } = fichaPublicada({ id: "real1" });
+  await S.registrarPosPublicacao({ anuncioId: id, mlb: MLB, conta: CONTA, sku: "IWP211", quantidade: 3 });
+  respostas = {
+    "mercadolivre-publicacao": (corpo) => corpo.acao === "consultar_item"
+      ? { data: { ok: true, status: "active", sub_status: [] }, error: null } // como o servidor responde hoje
+      : { data: { ok: true, dados: { id: MLB, status: "active", sub_status: [], available_quantity: 3 } }, error: null },
+    "bling-integracao": blingIntegrado(),
+  };
+  await S.processarPosPendentes({ agora: Date.now() + 1000 });
+  const pos = linha(id).dados_conferencia.pos_publicacao;
+  assert.equal(pos.estoque.estado, "ok", JSON.stringify(pos.estoque));
+  assert.match(pos.estoque.texto, /3 un\. no Mercado Livre, igual à ficha/);
+  assert.equal(pos.concluido, true, "ativo + estoque + vínculo confirmados = concluído (vai para o Histórico)");
+  assert.equal(C.fichaConcluida({ id, codigo: "IWP211", status_fluxo: "publicado", publicacao: { mlb_id: MLB, ml_user_id: CONTA, bling_produto_id: "999", status_publicacao: "publicado" }, integracao_bling: linha(id).dados_conferencia.integracao_bling, pos_publicacao: pos }), true);
+  assert.ok(F.banco.funcoes.every(soLeitura), JSON.stringify(F.banco.funcoes));
+  assert.ok(F.banco.funcoes.some((f) => f.corpo.acao === "ml_consulta"), "fez a leitura complementar");
+  assert.ok(!F.banco.chamadas.some((c) => c.op === "insert" || c.op === "delete"));
+});
+
+test("3c) quantidade diferente no ML continua aparecendo como pendência (nunca escondida); 2ª leitura falhou = segue pendente, sem inventar", async () => {
+  // Diferente da ficha: erro visível
+  let r = await S.consultarItemML(CONTA, MLB, { invocar: async (n, o) => (o.body.acao === "consultar_item" ? { data: { ok: true, status: "active" } } : { data: { ok: true, dados: { id: MLB, available_quantity: 5 } } }) });
+  assert.equal(P.avaliarEstoque(r, 3).estado, "erro");
+  // 2ª leitura falhou: não inventa número
+  r = await S.consultarItemML(CONTA, MLB, { invocar: async (n, o) => { if (o.body.acao === "consultar_item") return { data: { ok: true, status: "active" } }; throw new Error("rede"); } });
+  assert.equal(P.avaliarEstoque(r, 3).estado, "pendente");
+  // Resposta de OUTRO anúncio na 2ª leitura: ignorada
+  r = await S.consultarItemML(CONTA, MLB, { invocar: async (n, o) => (o.body.acao === "consultar_item" ? { data: { ok: true, status: "active" } } : { data: { ok: true, dados: { id: "MLB999999999", available_quantity: 3 } } }) });
+  assert.equal(P.avaliarEstoque(r, 3).estado, "pendente");
+  // Já veio com quantidade: uma chamada só
+  const chamadas = [];
+  r = await S.consultarItemML(CONTA, MLB, { invocar: async (n, o) => { chamadas.push(o.body.acao); return { data: { ok: true, status: "active", available_quantity: 3 } }; } });
+  assert.deepEqual(chamadas, ["consultar_item"]);
+  assert.equal(P.avaliarEstoque(r, 3).estado, "ok");
 });
 
 test("4) falha simulada no Bling (servidor): pendência na ficha e na Central de Publicação; tenta de novo depois", async () => {
