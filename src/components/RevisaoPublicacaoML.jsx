@@ -26,7 +26,9 @@ import {
   garantirRegistroIntegracaoBling,
   registrarMLBsAnteriores,
   registrarCategoriasRejeitadas,
+  fichaComMLB,
 } from "../services/anuncioPublicacaoService";
+import { conferirMLBDevolvido } from "../services/mlbDevolvido";
 import { conferirCategoriaParaPublicar } from "../services/categoriaML";
 import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
 import { extrasDaDecisao } from "../services/atributosCategoriaML";
@@ -1209,6 +1211,23 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
       // (PAIIA Voz, publicação automática) nº ÚNICO da autorização: o servidor recusa repetição.
       ...(autoPublicacao ? { autorizacao_id: autoPublicacao } : {}),
     }, contaEscolhida);
+    // (15/11) O MLB devolvido é MESMO deste anúncio? Relido no ML: SKU desta ficha e nenhuma outra ficha
+    // com ele. Caso real: o servidor devolveu o MLB de OUTRO produto e ele foi gravado nesta ficha.
+    if (r?.ok && r.publicado && r.item_id) {
+      const conf = await conferirMLBDevolvido({ mlb: r.item_id, sku: skuEnvio, anuncioId: ficha.anuncioId }, {
+        lerItem: async (m) => { const x = await chamar("ml_consulta", { metodo: "GET", caminho: `/items/${m}` }, contaEscolhida); return x?.ok && x.dados?.id ? x.dados : null; },
+        fichaComMLB: (m, atual) => fichaComMLB(m, atual),
+      });
+      if (!conf.ok) {
+        const falhou = { ok: false, erro: `Publicação NÃO confirmada: ${conf.texto}`, mlb_devolvido: String(r.item_id), motivo_mlb: conf.motivo };
+        setResultado(falhou);
+        setArmado(false);
+        setOcupado("");
+        // Pendência visível na Central (status "erro" com o motivo); o MLB devolvido NÃO entra na ficha.
+        if (ficha.anuncioId) await registrarResultadoPublicacao({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, resultado: falhou, bling: estoque, sku: skuEnvio, verificacao: null }).catch(() => null);
+        return;
+      }
+    }
     let verificacao = null;
     let registroBling = null;
     if (r?.ok && r.publicado && r.item_id) {

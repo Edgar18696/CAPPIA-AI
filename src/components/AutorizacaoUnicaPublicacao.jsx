@@ -101,9 +101,12 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
     if (!r.ok) { setErro(`${r.erro || "Não foi possível gravar as contas."} Nada foi publicado.`); return; }
     if (contaFicha === CONTA_PUBLICACAO_AUTOMATICA && loja && String(loja.ml_user_id) === contaFicha) {
       // Mesmo nº se a autorização desta ficha já foi dada (toque repetido / recarregar): o servidor nunca publica 2x.
-      let id;
-      try { id = sessionStorage.getItem(CHAVE(anuncioId)) || ""; } catch { id = ""; }
-      if (!/^[0-9a-f-]{36}$/i.test(id)) { id = novaAutorizacaoId(); try { sessionStorage.setItem(CHAVE(anuncioId), id); } catch { /* segue com o nº em memória */ } }
+      // (15/11) Só reaproveita o nº guardado para ESTA ficha (com ID). Sem ID: sempre um nº novo e nada é
+      // guardado — antes, "paiiaAutorizacaoPublicacao:" (sem ID) era a mesma chave para fichas diferentes.
+      const fichaDaAut = /^[0-9a-f-]{36}$/i.test(String(anuncioId || "")) ? String(anuncioId) : "";
+      let id = "";
+      if (fichaDaAut) { try { id = sessionStorage.getItem(CHAVE(fichaDaAut)) || ""; } catch { id = ""; } }
+      if (!/^[0-9a-f-]{36}$/i.test(id)) { id = novaAutorizacaoId(); if (fichaDaAut) { try { sessionStorage.setItem(CHAVE(fichaDaAut), id); } catch { /* segue com o nº em memória */ } } }
       try { const u = new URL(window.location.href); u.searchParams.set("auto", id); u.searchParams.set("ficha", anuncioId); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch { /* sem URL */ }
       onAutorizar?.(contaFicha, id, plano);
     } else {

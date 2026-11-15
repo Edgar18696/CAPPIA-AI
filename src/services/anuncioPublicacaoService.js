@@ -406,7 +406,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao", "republicacao"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao", "republicacao", "mlb_trocado"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -997,4 +997,52 @@ export async function garantirRegistroIntegracaoBling({ anuncioId, registro }) {
     if (ultimo.ok && gravado && String(gravado.mlb || "") === String(registro.mlb)) return { ok: true, registro: gravado };
   }
   return { ok: false, erro: ultimo.erro || "O registro do MLB não ficou gravado na ficha." };
+}
+
+// -------------------------------------------------------------
+// (15/11) MLB devolvido pela publicação × ficha (caso SKU 7527362 / MLB5560614343)
+// -------------------------------------------------------------
+/** ID de OUTRA ficha que já tem este MLB (publicação ou registro do Bling). "" = nenhuma. Erro na leitura → lança. */
+export async function fichaComMLB(mlb, anuncioIdAtual = "") {
+  const m = String(mlb || "").trim().toUpperCase();
+  if (!/^MLB\d{6,}$/.test(m)) return "";
+  const atual = String(anuncioIdAtual || "");
+  const pub = await supabase.from(T_PUBLICACOES).select("anuncio_id").eq("mlb_id", m).limit(5);
+  if (pub.error) throw new Error(pub.error.message || "falha ao ler publicações");
+  const outraPub = (pub.data || []).map((p) => String(p.anuncio_id || "")).find((id) => id && id !== atual);
+  if (outraPub) return outraPub;
+  const reg = await supabase.from(T_ANUNCIOS).select("id").eq("dados_conferencia->integracao_bling->>mlb", m).limit(5);
+  if (reg.error) throw new Error(reg.error.message || "falha ao ler fichas");
+  return (reg.data || []).map((r) => String(r.id || "")).find((id) => id && id !== atual) || "";
+}
+
+/**
+ * (15/11) PREPARADO — só roda com autorização. Tira de uma ficha o MLB de OUTRO produto que foi
+ * gravado por engano (integracao_bling + pos_publicacao) e volta a ficha para "aprovada, não
+ * publicada". Nada é apagado: o registro errado fica em dados_conferencia.mlb_trocado.
+ * Não toca no Mercado Livre, no Bling, em preço, fotos, compatibilidades nem na aprovação.
+ * Só age se: a publicação da ficha NÃO tem este MLB e o registro do Bling/pós-publicação tem.
+ */
+export async function desfazerMLBDeOutroProduto({ anuncioId, mlb, motivo = "" }) {
+  const m = String(mlb || "").trim().toUpperCase();
+  if (!anuncioId || !/^MLB\d{6,}$/.test(m)) return { ok: false, erro: "Sem ficha ou MLB inválido." };
+  const { data: f, error } = await supabase.from(T_ANUNCIOS).select("id, status_fluxo, updated_at, dados_conferencia").eq("id", anuncioId).maybeSingle();
+  if (error) return falha(error);
+  if (!f) return { ok: false, erro: "Ficha não encontrada." };
+  const pub = await supabase.from(T_PUBLICACOES).select("mlb_id").eq("anuncio_id", anuncioId).eq("marketplace", MARKETPLACE_ML);
+  if (pub.error) return falha(pub.error);
+  if ((pub.data || []).some((p) => String(p.mlb_id || "").toUpperCase() === m)) return { ok: false, erro: `A publicação desta ficha tem o ${m}: não é um registro trocado. Nada foi alterado.` };
+  const d = f.dados_conferencia || {};
+  const temNoBling = String(d.integracao_bling?.mlb || "").toUpperCase() === m;
+  const temNoPos = String(d.pos_publicacao?.mlb || "").toUpperCase() === m;
+  if (!temNoBling && !temNoPos) return { ok: false, erro: `A ficha não tem o ${m} registrado. Nada foi alterado.` };
+  const agora = new Date().toISOString();
+  const { integracao_bling: ib, pos_publicacao: pp, ...resto } = d;
+  const mlb_trocado = [...(Array.isArray(d.mlb_trocado) ? d.mlb_trocado : []), { desfeito_em: agora, mlb: m, motivo: String(motivo || "MLB de outro produto gravado por engano").slice(0, 300), integracao_bling: temNoBling ? ib : null, pos_publicacao: temNoPos ? pp : null }];
+  const novos = { ...resto, ...(temNoBling ? {} : { integracao_bling: ib }), ...(temNoPos ? {} : { pos_publicacao: pp }), mlb_trocado };
+  const status = f.status_fluxo === "publicado" ? "conferencia_aprovada" : f.status_fluxo;
+  const { data: upd, error: e2 } = await supabase.from(T_ANUNCIOS).update({ dados_conferencia: novos, status_fluxo: status, updated_at: agora }).eq("id", anuncioId).eq("updated_at", f.updated_at).select("id");
+  if (e2) return falha(e2);
+  if (!Array.isArray(upd) || !upd.length) return { ok: false, erro: "A ficha mudou ao mesmo tempo (conferência em segundo plano). Tente de novo em alguns segundos; nada foi alterado." };
+  return { ok: true, status, guardado: mlb_trocado.length };
 }

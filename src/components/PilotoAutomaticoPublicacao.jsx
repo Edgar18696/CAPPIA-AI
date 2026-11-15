@@ -7,7 +7,8 @@ import { supabase } from "../supabase";
 import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl, mlbRegistradoDaFicha, situacaoEtapaPiloto } from "../services/pilotoPublicacao";
 
 const COR_ETAPA = { ok: "#86efac", conferir: "#fde68a", atual: "#67e8f9", pausa: "#fde68a", pendente: "#64748b" };
-import { obterAnuncio } from "../services/anuncioPublicacaoService";
+import { obterAnuncio, fichaComMLB } from "../services/anuncioPublicacaoService";
+import { conferirMLBDevolvido } from "../services/mlbDevolvido";
 import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
 import { marcarFichaLiberada } from "../modules/paiiaVoz/servicos/limpezaPosPublicacaoVoz";
@@ -49,7 +50,16 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         const t = globalThis.__paiiaModoTeste && globalThis.__paiiaLerFichaPiloto;
         const r = await (t || obterAnuncio)(id);
         if (!r?.ok) return r?.naoEncontrado ? { mlb: "" } : { erro: r?.erro || "ficha não lida" };
-        return { mlb: mlbRegistradoDaFicha(r.anuncio), link: r.anuncio?.publicacao?.mlb_link || "" };
+        const mlb = mlbRegistradoDaFicha(r.anuncio);
+        if (!mlb || t) return { mlb, link: r.anuncio?.publicacao?.mlb_link || "" };
+        // (15/11) MLB gravado na ficha tem de ser DESTE produto (caso real: MLB de outro SKU gravado por engano).
+        // Não confirmado = pausa antes de tudo; nada é enviado nem registrado.
+        const conf = await conferirMLBDevolvido({ mlb, sku: dadosRef.current.sku || r.anuncio?.codigo, anuncioId: id }, {
+          lerItem: async (m) => { const { data } = await supabase.functions.invoke("mercadolivre-publicacao", { body: { acao: "ml_consulta", conta_ml: String(dadosRef.current.conta || conta), metodo: "GET", caminho: `/items/${m}` } }); return data?.ok && data.dados?.id ? data.dados : null; },
+          fichaComMLB: (m, atual) => fichaComMLB(m, atual),
+        });
+        if (!conf.ok) return { erro: conf.texto };
+        return { mlb, link: r.anuncio?.publicacao?.mlb_link || "" };
       },
       progresso: (etapa, texto = "") => setSt((s) => ({ ...s, etapa, texto })),
       encerrado: () => encerradoRef.current,

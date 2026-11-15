@@ -31,7 +31,7 @@ test("3) a autorização vai ao servidor; outros anúncios do SKU não bloqueiam
 
 test("4) Novo Anúncio: a MESMA autorização única abre o MESMO piloto (só LOJA ONLINE), com nº reaproveitado", () => {
   const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
-  assert.ok(a.includes('nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE"') && a.includes("sessionStorage.getItem(CHAVE(anuncioId))") && a.includes("disabled={!marcado}"));
+  assert.ok(a.includes('nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE"') && a.includes("sessionStorage.getItem(CHAVE(fichaDaAut))") /* (15/11) nº reaproveitado só para a MESMA ficha com ID */ && a.includes("disabled={!marcado}"));
   const m = ler("src/components/MercadoLivreTeste.jsx");
   assert.ok(m.includes("<AutorizacaoUnicaPublicacao") && m.includes("autoId={autoPiloto}"));
   const p = ler("src/services/pilotoPublicacao.js");
