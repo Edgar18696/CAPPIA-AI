@@ -287,7 +287,7 @@ export function contaReferenciaFrete(contasConectadas = []) {
 // ------------------------------------------------------------------
 
 /** Chaves da ficha que pertencem à PUBLICAÇÃO anterior: nunca vão para a ficha da próxima conta. */
-export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas", "republicacao"]);
+export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas", "republicacao", "mlb_trocado"]);
 
 /**
  * Situação da fila numa ficha publicada. A ficha só aponta a PRÓXIMA conta
@@ -376,4 +376,49 @@ export function dadosParaRepublicacao(dados, { novoId, origemId, publicacao, sit
     conferido_em: agora,
   }];
   return d;
+}
+
+// ------------------------------------------------------------------
+// (15/11) PUBLICAR EM OUTRA CONTA, a qualquer momento (dias depois, sem plano
+// prévio). Cada conta tem a SUA ficha (cópia da Conferência aprovada) e o SEU
+// MLB; todas ligadas à ficha de origem (contas_publicacao.continuacoes/origem).
+// Nunca reaproveita MLB, vínculo do Bling ou conferências de outra conta.
+// ------------------------------------------------------------------
+export const ESTADO_CONTA_PRODUTO = Object.freeze({ PUBLICADA: "publicada", EM_ANDAMENTO: "em_andamento", DISPONIVEL: "disponivel" });
+const MLB_OK = /^MLB\d{6,}$/;
+
+/**
+ * Quadro das 3 contas para um produto (SKU), a partir das fichas do código
+ * (listarAnunciosDoCodigo: com a linha de publicação de cada ficha).
+ *  - publicada: alguma ficha publicada nesta conta, com MLB próprio na publicação;
+ *  - em_andamento: ficha não publicada com esta conta de destino (ou continuação aberta);
+ *  - disponivel: nenhuma das duas.
+ * Só a linha de PUBLICAÇÃO conta como MLB da conta (registro do Bling, pós-publicação ou
+ * histórico de MLB trocado/encerrado nunca contam). Devolve [{ conta, nome, estado, mlb, ficha }].
+ */
+export function situacaoContasDoProduto({ fichas = [], continuacoes = {} } = {}) {
+  const lista = (Array.isArray(fichas) ? fichas : []).filter((f) => f && f.status_fluxo !== "cancelado");
+  return CONTAS_PUBLICACAO_ML.map(({ id, nome }) => {
+    const pub = lista.find((f) => idConta(f.publicacao?.ml_user_id) === id && MLB_OK.test(txt(f.publicacao?.mlb_id).toUpperCase()));
+    if (pub) return { conta: id, nome, estado: ESTADO_CONTA_PRODUTO.PUBLICADA, mlb: txt(pub.publicacao.mlb_id).toUpperCase(), ficha: txt(pub.id), publicado_em: txt(pub.publicacao.publicado_em) };
+    const naoPublicada = (f) => !MLB_OK.test(txt(f.publicacao?.mlb_id).toUpperCase()) && !["publicado", "publicado_com_pendencia", "publicando"].includes(f.status_fluxo);
+    const cont = txt(continuacoes?.[id]?.ficha);
+    const andamento = lista.find((f) => naoPublicada(f) && (txt(f.id) === cont || idConta(f.publicacao?.ml_user_id || f.conta_destino_ml_user_id) === id));
+    if (andamento) return { conta: id, nome, estado: ESTADO_CONTA_PRODUTO.EM_ANDAMENTO, mlb: "", ficha: txt(andamento.id) };
+    return { conta: id, nome, estado: ESTADO_CONTA_PRODUTO.DISPONIVEL, mlb: "", ficha: "" };
+  });
+}
+
+/** Pode preparar a ficha de OUTRA conta a partir desta ficha? → { ok, motivo, existente } */
+export function podePublicarEmOutraConta({ fichaOrigem, conta, quadro = [] }) {
+  const id = idConta(conta);
+  const nome = nomeContaPublicacao(id);
+  if (!CONTAS_PUBLICACAO_ML.some((c) => c.id === id)) return { ok: false, motivo: "Conta fora da lista (LOJA ONLINE, REVELAÇÃO, CIEBR)." };
+  const pubOrigem = fichaOrigem?.publicacao || null;
+  if (!MLB_OK.test(txt(pubOrigem?.mlb_id).toUpperCase())) return { ok: false, motivo: "Esta ficha ainda não foi publicada: escolha a conta na própria publicação dela." };
+  if (idConta(pubOrigem.ml_user_id) === id) return { ok: false, motivo: `Esta ficha já é a publicação em ${nome} (${txt(pubOrigem.mlb_id)}).` };
+  const linha = quadro.find((l) => l.conta === id);
+  if (linha?.estado === ESTADO_CONTA_PRODUTO.PUBLICADA) return { ok: false, motivo: `Este produto já está publicado em ${nome} (${linha.mlb}): não é duplicado.` };
+  if (linha?.estado === ESTADO_CONTA_PRODUTO.EM_ANDAMENTO) return { ok: true, existente: linha.ficha };
+  return { ok: true, existente: "" };
 }

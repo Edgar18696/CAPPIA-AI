@@ -5,7 +5,7 @@ import { CANAL, erroSelecao, montarRegistroCanais, normalizarSelecao, canaisSele
 import { lerRegistroDoSKU } from "./registroMLBService";
 import { registrosQueBloqueiam } from "./registroMLB";
 import { TEXTO_FICHA_EXCLUIDA } from "./exclusaoFicha";
-import { dadosParaProximaConta, dadosParaRepublicacao, podeRetomarFicha, nomeContaPublicacao, situacaoFila } from "./contasPublicacaoML.js";
+import { dadosParaProximaConta, dadosParaRepublicacao, podeRetomarFicha, nomeContaPublicacao, situacaoFila, situacaoContasDoProduto, podePublicarEmOutraConta } from "./contasPublicacaoML.js";
 import { marcaDasFotos } from "./fotosDaFicha.js";
 
 /*
@@ -1045,4 +1045,66 @@ export async function desfazerMLBDeOutroProduto({ anuncioId, mlb, motivo = "" })
   if (e2) return falha(e2);
   if (!Array.isArray(upd) || !upd.length) return { ok: false, erro: "A ficha mudou ao mesmo tempo (conferência em segundo plano). Tente de novo em alguns segundos; nada foi alterado." };
   return { ok: true, status, guardado: mlb_trocado.length };
+}
+
+// -------------------------------------------------------------
+// (15/11) PUBLICAR EM OUTRA CONTA do Mercado Livre (qualquer ficha publicada, a qualquer momento)
+// -------------------------------------------------------------
+/** Quadro das 3 contas deste produto (só leitura). → { ok, quadro, ficha } */
+export async function contasDoProduto(anuncioId) {
+  const atual = await obterAnuncio(anuncioId);
+  if (!atual.ok) return atual;
+  const a = atual.anuncio;
+  const l = await listarAnunciosDoCodigo(a.codigo || "");
+  if (!l.ok) return l;
+  const fichas = l.anuncios.some((f) => f.id === a.id) ? l.anuncios : [a, ...l.anuncios];
+  return { ok: true, ficha: a, quadro: situacaoContasDoProduto({ fichas, continuacoes: a.dados_conferencia?.contas_publicacao?.continuacoes || {} }) };
+}
+
+/**
+ * Prepara a ficha da conta ESCOLHIDA a partir de uma ficha publicada: cópia da Conferência
+ * aprovada (título, descrição, fotos, SKU, categoria, aplicações, preço), SEM MLB, vínculo do
+ * Bling ou conferências da outra conta. Não publica, não grava conta de destino e não toca no
+ * Mercado Livre nem no Bling: na ficha nova a conta passa pela conferência dela (duplicidade ao
+ * vivo, Bling pelo SKU, estoque, frete) e pela sua confirmação.
+ * Conta já publicada = recusa (não duplica). Já em andamento = reabre a MESMA ficha.
+ * Devolve { ok, anuncioId, conta, nova }.
+ */
+export async function prepararFichaOutraConta({ anuncioId, conta }) {
+  if (!anuncioId) return { ok: false, erro: "Sem ficha de origem." };
+  const c = await contasDoProduto(anuncioId);
+  if (!c.ok) return c;
+  const a = c.ficha;
+  const pode = podePublicarEmOutraConta({ fichaOrigem: a, conta, quadro: c.quadro });
+  if (!pode.ok) return { ok: false, erro: pode.motivo };
+  const id = String(conta).replace(/\D/g, "");
+  if (pode.existente && await fichaRetomadaDisponivel(pode.existente)) return { ok: true, anuncioId: pode.existente, conta: id, nova: false };
+  const criada = await salvarFichaAprovada({ anuncioId: "", codigo: a.codigo || "", titulo: a.titulo || "", dadosConferencia: {} });
+  if (!criada.ok) return criada;
+  const novoId = criada.anuncioId;
+  const dadosNovos = dadosParaProximaConta(a.dados_conferencia, {
+    novoId, origemId: a.id, origemConta: String(a.publicacao?.ml_user_id || ""), origemMlb: a.publicacao?.mlb_id || "",
+    sugeridas: [id], marcarFotos: marcaDasFotos,
+  });
+  const { error: erroNova } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...dadosNovos, salvo_em: new Date().toISOString() }, updated_at: new Date().toISOString() })
+    .eq("id", novoId);
+  if (erroNova) { await cancelarFichaSemConta(novoId); return falha(erroNova); }
+  // Liga a ficha nova à de origem (só a chave contas_publicacao.continuacoes; o resto fica intacto).
+  const plano = a.dados_conferencia?.contas_publicacao || {};
+  const continuacoes = { ...(plano.continuacoes || {}), [id]: { ficha: novoId, criada_em: new Date().toISOString(), avulsa: true } };
+  const { error } = await supabase
+    .from(T_ANUNCIOS)
+    .update({ dados_conferencia: { ...a.dados_conferencia, contas_publicacao: { versao: 1, ...plano, continuacoes } } })
+    .eq("id", a.id)
+    .eq("updated_at", a.updated_at);
+  const relida = await obterAnuncio(a.id);
+  const gravada = relida.ok ? relida.anuncio.dados_conferencia?.contas_publicacao?.continuacoes?.[id]?.ficha : "";
+  if (error || gravada !== novoId) {
+    await cancelarFichaSemConta(novoId);
+    if (gravada) return { ok: true, anuncioId: gravada, conta: id, nova: false };
+    return error ? falha(error) : { ok: false, erro: "A ficha mudou ao mesmo tempo (conferência em segundo plano): nada foi preparado. Tente de novo em alguns segundos." };
+  }
+  return { ok: true, anuncioId: novoId, conta: id, nova: true };
 }
