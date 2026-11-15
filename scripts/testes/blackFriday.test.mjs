@@ -582,3 +582,19 @@ test("função paizinho-bf-leitura: só GET, confere usuário, conta do usuário
   assert.doesNotMatch(src, /\.insert\(|\.update\(|\.upsert\(|\.delete\(|refresh_token/);
   assert.doesNotMatch(src, /access_token[^)]*json\(/, "nunca devolve o token");
 });
+
+test("diagnóstico de escopos: só a própria conta, só resumos seguros (sem chave, segredo ou id completo)", () => {
+  assert.equal(P.conferirLeituraBF(`/users/${REV}/applications`, REV).ok, true);
+  assert.equal(P.conferirLeituraBF(`/users/${LOJA}/applications`, REV).ok, false);
+  assert.equal(P.conferirLeituraBF("/applications/paiia", CIEBR).ok, true);
+  assert.equal(P.conferirLeituraBF("/applications/123456", CIEBR).ok, false, "id real nunca vem do navegador");
+  const app = P.resumirAplicativo({ id: 1234567890, name: "PAIIA", secret_key: "S", redirect_uri: "https://x", scopes: ["read", "write", "offline_access"], owner_id: 9, functional_permissions: ["items"] });
+  assert.deepEqual(app, { name: "PAIIA", scopes: ["read", "write", "offline_access"], functional_permissions: ["items"], id: "…7890" });
+  const aut = P.resumirAutorizacoes([{ app_id: "111", scopes: ["read"] }, { app_id: "1234567890", scopes: ["read", "write"], date_created: "2026-05-01" }], "1234567890");
+  assert.deepEqual(aut, { autorizacoes_na_conta: 2, paiia: { app_id: "…7890", scopes: ["read", "write"], data: "2026-05-01", campos: ["app_id", "scopes", "date_created"] } });
+  assert.equal(P.resumirAutorizacoes([], "1").paiia, null);
+  const src = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-bf-leitura/index.ts"), "utf8");
+  assert.match(src, /resumirAplicativo\(r\.dados\)/);
+  assert.match(src, /resumirAutorizacoes\(r\.dados, appId\)/);
+  assert.doesNotMatch(src, /ML_CLIENT_SECRET/);
+});

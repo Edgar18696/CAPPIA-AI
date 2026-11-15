@@ -31,6 +31,11 @@ const PADROES = Object.freeze([
   { tipo: "promocoes_anuncio", re: /^\/seller-promotions\/items\/(MLB\d+)\?app_version=v2$/ },
   { tipo: "promocoes_conta", re: /^\/seller-promotions\/users\/(\d+)\?app_version=v2(?:&offset=\d{1,4})?(?:&limit=\d{1,3})?$/ },
   { tipo: "catalogo", re: /^\/products\/(MLB[A-Z0-9]{1,20})$/ },
+  // (15/11) Diagnóstico das permissões do 403 das promoções (só leitura):
+  // autorizações que ESTA conta deu (o servidor devolve só a do PAIIA) e o
+  // cadastro do aplicativo PAIIA (o id real vem do segredo do servidor; nada de chave).
+  { tipo: "autorizacoes_conta", re: /^\/users\/(\d+)\/applications$/ },
+  { tipo: "aplicativo", re: /^\/applications\/paiia$/ },
 ]);
 
 /** É uma leitura da Black Friday? */
@@ -49,6 +54,7 @@ export function conferirLeituraBF(caminho, conta) {
   if (!p) return { ok: false, erro: "Leitura não permitida na Black Friday (só promoções e catálogo)." };
   const m = c.match(p.re);
   if (p.tipo === "promocoes_conta" && m[1] !== id) return { ok: false, erro: "Promoções só da própria conta." };
+  if (p.tipo === "autorizacoes_conta" && m[1] !== id) return { ok: false, erro: "Autorizações só da própria conta." };
   return p.tipo === "promocoes_anuncio" ? { ok: true, tipo: p.tipo, anuncio: m[1] } : { ok: true, tipo: p.tipo };
 }
 
@@ -63,6 +69,37 @@ export const anuncioEhDaConta = (dados, conta) => String(dados?.seller_id) === t
 export function detalheRecusaML(status, corpo) {
   const causa = Array.isArray(corpo?.cause) ? corpo.cause.map((x) => (typeof x === "object" ? txt(x?.code || x?.message || JSON.stringify(x)) : txt(x))).filter(Boolean).slice(0, 5) : [];
   return { status: Number(status) || null, mensagem: txt(corpo?.message), codigo: txt(corpo?.error), causa };
+}
+
+const mascarar = (v) => { const t = txt(v); return t.length > 4 ? `…${t.slice(-4)}` : t ? "…" : ""; };
+const CAMPOS_APLICATIVO = /^(name|short_name|site_id|scopes|status|active|certification_status|catalog_|functional|permission|domains?|topics|notifications?_)/i;
+const CAMPOS_SECRETOS = /secret|token|password|key|redirect|callback|url|email|phone|owner/i;
+
+/**
+ * (15/11) Resumo SEGURO do cadastro do aplicativo PAIIA (GET /applications/{id}):
+ * só nome, escopos e campos de permissão. Nunca segredo, chave, endereço ou dono.
+ */
+export function resumirAplicativo(dados) {
+  const out = {};
+  for (const [k, v] of Object.entries(dados || {})) {
+    if (CAMPOS_SECRETOS.test(k) || !CAMPOS_APLICATIVO.test(k)) continue;
+    out[k] = v;
+  }
+  out.id = mascarar(dados?.id);
+  return out;
+}
+
+/**
+ * (15/11) Da lista de autorizações da conta (GET /users/{id}/applications),
+ * devolve SÓ a do aplicativo PAIIA (escopos e data), com o id mascarado.
+ */
+export function resumirAutorizacoes(lista, appId) {
+  const l = Array.isArray(lista) ? lista : Array.isArray(lista?.results) ? lista.results : [];
+  const nossa = l.find((x) => txt(x?.app_id ?? x?.application_id ?? x?.id) === txt(appId));
+  return {
+    autorizacoes_na_conta: l.length,
+    paiia: nossa ? { app_id: mascarar(appId), scopes: nossa.scopes ?? null, data: txt(nossa.date_created || nossa.date || nossa.created_at) || null, campos: Object.keys(nossa).filter((k) => !CAMPOS_SECRETOS.test(k)) } : null,
+  };
 }
 
 /**

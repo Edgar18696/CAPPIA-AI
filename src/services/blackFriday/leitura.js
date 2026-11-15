@@ -275,6 +275,9 @@ export async function diagnosticarAnuncio({ conta, itemId, consultar }) {
     ["Preço de venda (sale_price)", `/items/${id}/sale_price?context=channel_marketplace`],
     ["Promoções da conta", `/seller-promotions/users/${c.id}?app_version=v2`],
     ["Frete do anúncio", `/users/${c.id}/shipping_options/free?item_id=${id}&verbose=true`],
+    // (15/11) Permissões (diagnóstico do 403 das promoções)
+    ["Autorização desta conta ao PAIIA (escopos)", `/users/${c.id}/applications`],
+    ["Cadastro do aplicativo PAIIA (permissões)", "/applications/paiia"],
   ];
   const out = [];
   for (const [etapa, caminho] of etapas) {
@@ -293,6 +296,8 @@ export async function diagnosticarAnuncio({ conta, itemId, consultar }) {
 
 /** Resumo curto de uma resposta do ML (formato e campos), sem despejar o conteúdo todo. */
 export function resumirResposta(d) {
+  // Resumos de permissão já vêm prontos e seguros do servidor: mostra inteiro.
+  if (d && typeof d === "object" && ("paiia" in d || "scopes" in d)) return JSON.stringify(d).slice(0, 600);
   if (Array.isArray(d)) return `lista com ${d.length} item(ns)${d[0] && typeof d[0] === "object" ? `; campos: ${Object.keys(d[0]).slice(0, 12).join(", ")}` : ""}${d.length ? `; 1º: ${JSON.stringify(d[0]).slice(0, 300)}` : ""}`;
   if (d && typeof d === "object") {
     const listas = Object.entries(d).filter(([, v]) => Array.isArray(v)).map(([k, v]) => `${k}: ${v.length}`);

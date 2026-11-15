@@ -23,7 +23,7 @@
 // =============================================================
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js";
-import { conferirLeituraBF, caminhoDono, anuncioEhDaConta, detalheRecusaML } from "../../../src/services/blackFriday/leituraPermitida.js";
+import { conferirLeituraBF, caminhoDono, anuncioEhDaConta, detalheRecusaML, resumirAplicativo, resumirAutorizacoes } from "../../../src/services/blackFriday/leituraPermitida.js";
 
 const ML = "https://api.mercadolibre.com";
 const cors = {
@@ -71,7 +71,19 @@ Deno.serve(async (req) => {
     if (!anuncioEhDaConta(dono.dados, conta)) return json({ ok: false, status: 403, erro: "Promoções só de anúncios da conta informada." });
   }
 
-  // 5) A leitura pedida
+  // 5) (15/11) Diagnóstico de permissões: só resumos seguros (nunca chave/segredo; id mascarado).
+  if (conf.tipo === "aplicativo" || conf.tipo === "autorizacoes_conta") {
+    const appId = env("ML_CLIENT_ID");
+    if (!appId) return json({ ok: false, status: 500, erro: "Aplicativo do ML não configurado no servidor." });
+    if (conf.tipo === "aplicativo") {
+      const r = await get(`/applications/${appId}`);
+      return json(r.ok ? { ok: true, status: r.status, dados: resumirAplicativo(r.dados) } : r);
+    }
+    const r = await get(caminho);
+    return json(r.ok ? { ok: true, status: r.status, dados: resumirAutorizacoes(r.dados, appId) } : r);
+  }
+
+  // 6) A leitura pedida
   return json(await get(caminho));
 });
 
