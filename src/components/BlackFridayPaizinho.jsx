@@ -46,14 +46,17 @@ export default function BlackFridayPaizinho() {
 
   useEffect(() => {
     let vivo = true;
-    supabase.auth.getUser().then(({ data }) => {
+    const aplicar = (id) => {
       if (!vivo) return;
-      const id = data?.user?.id || "";
       setUsuarioId(id);
-      if (!id) setErroLogin("Entre no PAIIA para usar a Black Friday.");
-      else { const g = lerLeituraGuardada(id); if (g) setLeitura(g); }
-    }).catch(() => vivo && setErroLogin("Não foi possível confirmar o login."));
-    return () => { vivo = false; };
+      if (!id) { setErroLogin("Entre no PAIIA para usar a Black Friday: use o botão \"Login\" no topo da página."); setLeitura(null); return; }
+      setErroLogin("");
+      const g = lerLeituraGuardada(id); setLeitura(g || null);
+    };
+    supabase.auth.getUser().then(({ data }) => aplicar(data?.user?.id || "")).catch(() => vivo && setErroLogin("Não foi possível confirmar o login."));
+    // (15/11) Entrou ou trocou de conta com a aba aberta: a tela acompanha sem recarregar.
+    const { data: ouvinte } = supabase.auth.onAuthStateChange((_evento, sessao) => aplicar(sessao?.user?.id || ""));
+    return () => { vivo = false; ouvinte?.subscription?.unsubscribe(); };
   }, []);
 
   const registro = useMemo(() => (usuarioId ? criarRegistroBF({ storage: localStorage, usuarioId }) : null), [usuarioId]);
