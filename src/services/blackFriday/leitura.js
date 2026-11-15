@@ -279,7 +279,7 @@ export async function diagnosticarAnuncio({ conta, itemId, consultar }) {
   const out = [];
   for (const [etapa, caminho] of etapas) {
     const r = await consultar(caminho);
-    out.push({ etapa, caminho, ok: !!r?.ok, status: r?.status ?? null, erro: r?.ok ? null : txt(r?.erro) || "falhou", resumo: r?.ok ? resumirResposta(r.dados) : null });
+    out.push({ etapa, caminho, ok: !!r?.ok, status: r?.status ?? null, erro: r?.ok ? null : txt(r?.erro) || "falhou", resumo: r?.ok ? resumirResposta(r.dados) : null, via: r?.via || "mercadolivre-publicacao (ml_consulta)", recusa_ml: r?.recusa_ml || null });
     if (etapa === "Compatibilidades" && r?.ok) {
       const pid = idsCatalogoDaCompatibilidade(r)[0];
       if (pid) {

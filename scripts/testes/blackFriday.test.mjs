@@ -538,3 +538,47 @@ test("comparar as 3 contas: mesmo teste num anúncio de cada conta mostra quem r
   assert.deepEqual(m.contas.find((c) => c.nome === "CIEBR"), { nome: "CIEBR", item: null, resultados: [] });
   assert.ok(m.etapas.includes("Preço de venda (sale_price)"));
 });
+
+/* -------- (15/11) função própria de leitura: paizinho-bf-leitura (preparada) -------- */
+
+const P = await import("../../src/services/blackFriday/leituraPermitida.js");
+
+test("leituras permitidas da Black Friday: só promoções (anúncio e própria conta) e catálogo, só nas 3 contas", () => {
+  assert.deepEqual(P.conferirLeituraBF("/seller-promotions/items/MLB123?app_version=v2", REV), { ok: true, tipo: "promocoes_anuncio", anuncio: "MLB123" });
+  assert.equal(P.conferirLeituraBF(`/seller-promotions/users/${REV}?app_version=v2`, REV).ok, true);
+  assert.equal(P.conferirLeituraBF(`/seller-promotions/users/${LOJA}?app_version=v2`, REV).ok, false, "promoções de outra conta");
+  assert.equal(P.conferirLeituraBF("/products/MLB18500844", CIEBR).ok, true);
+  assert.equal(P.conferirLeituraBF("/products/MLB1", "123").ok, false, "conta fora da campanha");
+  for (const c of ["/items/MLB1", "/orders/search?seller=1", "/seller-promotions/items/MLB1", "/seller-promotions/items/MLB1?app_version=v2&x=1", "/products/MLB1/../users/me", "/seller-promotions/promotions/P1/items?app_version=v2"]) {
+    assert.equal(P.conferirLeituraBF(c, LOJA).ok, false, c);
+  }
+  assert.equal(P.anuncioEhDaConta({ seller_id: 2412238242 }, REV), true);
+  assert.equal(P.anuncioEhDaConta({ seller_id: 1 }, REV), false);
+  assert.deepEqual(P.detalheRecusaML(403, { message: "At least one policy returned UNAUTHORIZED.", error: "forbidden", status: 403, cause: [] }), { status: 403, mensagem: "At least one policy returned UNAUTHORIZED.", codigo: "forbidden", causa: [] });
+});
+
+test("roteador: promoções/catálogo pela função própria; sem ela publicada (404) volta para a ml_consulta", async () => {
+  const usados = [];
+  const principal = async (c) => { usados.push(["ml_consulta", c]); return { ok: false, erro: "fora da lista permitida" }; };
+  const semFuncao = P.consultorLeituraBF(LOJA, async () => ({ error: { message: "x", context: { status: 404 } } }));
+  const rota = P.roteadorBF({ principal, bf: semFuncao });
+  await rota("/products/MLB9");
+  await rota("/items/MLB1");
+  assert.deepEqual(usados.map((u) => u[1]), ["/products/MLB9", "/items/MLB1"]);
+  const corpos = [];
+  const comFuncao = P.consultorLeituraBF(LOJA, async (nome, { body }) => { corpos.push({ nome, ...body }); return { data: { ok: true, dados: [] } }; });
+  const r = await P.roteadorBF({ principal, bf: comFuncao })("/seller-promotions/items/MLB1?app_version=v2");
+  assert.equal(r.via, "paizinho-bf-leitura");
+  assert.deepEqual(corpos, [{ nome: "paizinho-bf-leitura", conta: LOJA, caminho: "/seller-promotions/items/MLB1?app_version=v2" }]);
+});
+
+test("função paizinho-bf-leitura: só GET, confere usuário, conta do usuário e dono do anúncio; não grava nada", () => {
+  const src = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-bf-leitura/index.ts"), "utf8");
+  assert.match(src, /conferirLeituraBF\(caminho, conta\)/);
+  assert.match(src, /sb\.auth\.getUser\(jwt\)/);
+  assert.match(src, /\.eq\("usuario_id", usuarioId\)\.eq\("marketplace", "mercado_livre"\)\.eq\("ml_user_id", conta\)/);
+  assert.match(src, /anuncioEhDaConta\(dono\.dados, conta\)/);
+  assert.doesNotMatch(src, /method: "(POST|PUT|DELETE|PATCH)"/);
+  assert.doesNotMatch(src, /\.insert\(|\.update\(|\.upsert\(|\.delete\(|refresh_token/);
+  assert.doesNotMatch(src, /access_token[^)]*json\(/, "nunca devolve o token");
+});

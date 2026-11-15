@@ -16,11 +16,8 @@ import { escolherCusto, conferirCustoDoKit } from "../paizinhoAuditoria/analise.
 import { faixaDoPreco } from "../fretePrecificacao.js";
 import { CAMPANHA_BF } from "./calendario.js";
 
-export const CONTAS_BLACK_FRIDAY = Object.freeze([
-  Object.freeze({ id: "1729335019", nome: "LOJA ONLINE" }),
-  Object.freeze({ id: "2412238242", nome: "REVELAÇÃO" }),
-  Object.freeze({ id: "824312524", nome: "CIEBR" }),
-]);
+import { CONTAS_BLACK_FRIDAY } from "./contas.js";
+export { CONTAS_BLACK_FRIDAY };
 
 export const DESCONTOS = Object.freeze({ renault: 10, demais: 5 });
 export const PADROES_BF = Object.freeze({

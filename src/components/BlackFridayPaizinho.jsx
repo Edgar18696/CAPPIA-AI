@@ -12,9 +12,13 @@ import { supabase } from "../supabase";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha } from "../services/blackFriday/calendario";
 import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO, custosDoPerfil, filtrarLinhas, resumirSimulacao, podeAprovar, contarMotivos } from "../services/blackFriday/regras";
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
+import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
+// (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela
+// ml_consulta. Enquanto a função própria não estiver publicada, tudo segue pela ml_consulta.
+const consultorConta = (id) => roteadorBF({ principal: consultorBF(id, invocar), bf: consultorLeituraBF(id, invocar) });
 const real = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const pctTxt = (v) => (v === null || v === undefined ? "—" : `${String(v).replace(".", ",")}%`);
 const COR_SITUACAO = { apto: "#4ade80", atencao: "#fbbf24", revisao: "#fb923c", bloqueado: "#f87171", excluido: "#94a3b8" };
@@ -89,7 +93,7 @@ export default function BlackFridayPaizinho() {
     try {
       const r = await lerContasBF({
         contas, limite: Number(limite),
-        consultorDaConta: (id) => consultorBF(id, invocar),
+        consultorDaConta: consultorConta,
         consultarCusto: consultorCustoBF(invocar),
         aoProgredir: setLendo,
         cancelado: () => cancelar.current,
@@ -121,7 +125,7 @@ export default function BlackFridayPaizinho() {
   async function diagnosticar() {
     setDiagLendo(true); setDiag(null);
     try {
-      const r = await diagnosticarAnuncio({ conta: diagConta, itemId: diagItem, consultar: consultorBF(diagConta, invocar) });
+      const r = await diagnosticarAnuncio({ conta: diagConta, itemId: diagItem, consultar: consultorConta(diagConta) });
       setDiag(r);
       registro?.registrar("diagnostico", { conta: CONTAS_BLACK_FRIDAY.find((c) => c.id === diagConta)?.nome, item: diagItem.trim().toUpperCase(), falhas: r.filter((x) => !x.ok).length });
     } catch (e) { setDiag([{ etapa: "Diagnóstico", ok: false, erro: String(e?.message || e) }]); }
@@ -131,7 +135,7 @@ export default function BlackFridayPaizinho() {
   async function diagnosticarTresContas() {
     setDiagLendo(true); setMatriz(null);
     try {
-      const m = await diagnosticarContas({ leitura, consultorDaConta: (id) => consultorBF(id, invocar) });
+      const m = await diagnosticarContas({ leitura, consultorDaConta: consultorConta });
       setMatriz(m);
       registro?.registrar("diagnostico", { contas: m.contas.map((c) => `${c.nome}: ${c.resultados.filter((r) => !r.ok).length} recusa(s)`).join(" · ") });
     } catch (e) { setAviso(String(e?.message || e)); }
@@ -334,7 +338,7 @@ export default function BlackFridayPaizinho() {
       </div>
       {matriz && <div style={S.tabelaCaixa}><table style={S.tabela}>
         <thead><tr><th style={S.th}>Leitura</th>{matriz.contas.map((c) => <th key={c.nome} style={S.th}>{c.nome}{c.item ? ` (${c.item})` : " (sem anúncio lido)"}</th>)}</tr></thead>
-        <tbody>{matriz.etapas.map((et) => <tr key={et}><td style={S.td}>{et}</td>{matriz.contas.map((c) => { const r = c.resultados.find((x) => x.etapa === et); return <td key={c.nome} style={{ ...S.td, whiteSpace: "normal", maxWidth: 280 }} title={r ? (r.ok ? r.resumo : r.erro) : ""}>{!r ? "—" : r.ok ? "✅ ok" : <>❌ {r.status ? `HTTP ${r.status} · ` : ""}<small>{r.erro}{explicarErro(r.erro) ? ` → ${explicarErro(r.erro)}` : ""}</small></>}</td>; })}</tr>)}</tbody>
+        <tbody>{matriz.etapas.map((et) => <tr key={et}><td style={S.td}>{et}</td>{matriz.contas.map((c) => { const r = c.resultados.find((x) => x.etapa === et); return <td key={c.nome} style={{ ...S.td, whiteSpace: "normal", maxWidth: 280 }} title={r ? (r.ok ? r.resumo : r.erro) : ""}>{!r ? "—" : r.ok ? "✅ ok" : <>❌ {r.status ? `HTTP ${r.status} · ` : ""}<small>{r.erro}{explicarErro(r.erro) ? ` → ${explicarErro(r.erro)}` : ""}{r.recusa_ml ? ` · ML: ${[r.recusa_ml.codigo, ...r.recusa_ml.causa].filter(Boolean).join(", ")}` : ""} · via {r.via}</small></>}</td>; })}</tr>)}</tbody>
       </table></div>}
       {diag && <div style={S.tabelaCaixa}><table style={S.tabela}><tbody>{diag.map((d, i) => (
         <tr key={i}><td style={S.td}>{d.ok ? "✅" : "❌"} {d.etapa}</td><td style={{ ...S.td, whiteSpace: "normal" }}><small style={S.base}>{d.caminho}{d.status ? ` · HTTP ${d.status}` : ""}</small><br /><small>{d.ok ? d.resumo : d.erro}</small></td></tr>
