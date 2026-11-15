@@ -297,7 +297,7 @@ export async function diagnosticarAnuncio({ conta, itemId, consultar }) {
 /** Resumo curto de uma resposta do ML (formato e campos), sem despejar o conteúdo todo. */
 export function resumirResposta(d) {
   // Resumos de permissão já vêm prontos e seguros do servidor: mostra inteiro.
-  if (d && typeof d === "object" && ("paiia" in d || "scopes" in d)) return JSON.stringify(d).slice(0, 600);
+  if (d && typeof d === "object" && ("paiia" in d || "scopes" in d)) return JSON.stringify(d).slice(0, 3000);
   if (Array.isArray(d)) return `lista com ${d.length} item(ns)${d[0] && typeof d[0] === "object" ? `; campos: ${Object.keys(d[0]).slice(0, 12).join(", ")}` : ""}${d.length ? `; 1º: ${JSON.stringify(d[0]).slice(0, 300)}` : ""}`;
   if (d && typeof d === "object") {
     const listas = Object.entries(d).filter(([, v]) => Array.isArray(v)).map(([k, v]) => `${k}: ${v.length}`);
@@ -335,6 +335,51 @@ export async function diagnosticarContas({ leitura, consultorDaConta }) {
   }
   const etapas = [...new Set(contas.flatMap((x) => x.resultados.map((r) => r.etapa)))];
   return { etapas, contas };
+}
+
+/**
+ * (15/11) Conclusão do diagnóstico de PERMISSÕES, por conta, a partir da tabela
+ * "Comparar as 3 contas". O OAuth do Mercado Livre só tem 3 escopos (read, write,
+ * offline_access): NÃO existe escopo próprio de promoções na autorização da conta.
+ * O acesso a promoções vem das PERMISSÕES FUNCIONAIS do aplicativo (painel de
+ * desenvolvedores do ML), que o ML aplica às autorizações das contas.
+ */
+export function concluirPermissoes(matriz) {
+  const achar = (c, inicio) => c.resultados.find((r) => r.etapa.startsWith(inicio));
+  const app = matriz?.contas?.map((c) => achar(c, "Cadastro do aplicativo")).find((r) => r?.ok) || null;
+  return (matriz?.contas || []).map((c) => {
+    if (!c.item) return { conta: c.nome, conclusao: "Sem anúncio lido nesta conta: faça uma consulta antes.", falta: null, procedimento: null };
+    const aut = achar(c, "Autorização desta conta");
+    const promoItem = achar(c, "Promoções (seller-promotions)");
+    const promoConta = achar(c, "Promoções da conta");
+    const escopos = (() => { try { return JSON.parse(aut?.resumo || "null")?.paiia?.scopes || null; } catch { return null; } })();
+    const lista = Array.isArray(escopos) ? escopos.map((s) => txt(s).toLowerCase()) : null;
+    const promoOk = !!(promoItem?.ok && promoConta?.ok);
+    const recusa403 = [promoItem, promoConta].some((r) => r && !r.ok && Number(r.status) === 403);
+    const base = { conta: c.nome, escopos: lista, promocoes_anuncio: promoItem ? (promoItem.ok ? "ok" : `HTTP ${promoItem.status ?? "?"}`) : "não testado", promocoes_conta: promoConta ? (promoConta.ok ? "ok" : `HTTP ${promoConta.status ?? "?"}`) : "não testado" };
+    if (promoOk) return { ...base, conclusao: "Promoções liberadas.", falta: null, procedimento: null };
+    if (!aut?.ok || !lista) return { ...base, conclusao: "Não foi possível ler a autorização desta conta ao PAIIA.", falta: "leitura dos escopos", procedimento: "Rodar o diagnóstico de novo; se persistir, conferir a conexão em Contas Marketplace (sem reconectar ainda)." };
+    if (!lista.includes("write")) return { ...base, conclusao: "A conta autorizou o PAIIA sem escrita.", falta: "escopo write na autorização da conta", procedimento: "Reconectar esta conta em Contas Marketplace (só com autorização)." };
+    if (recusa403) {
+      return {
+        ...base,
+        conclusao: "Escopos da conta completos (o ML não tem escopo próprio de promoções); mesmo assim o ML recusa promoções por política (403).",
+        falta: `permissão funcional de promoções no aplicativo PAIIA${app ? "" : " (cadastro do aplicativo não pôde ser lido para confirmar)"}`,
+        procedimento: "1) No painel de desenvolvedores do ML, ativar no aplicativo PAIIA a permissão funcional de promoções/ofertas; 2) reconectar esta conta para a autorização valer com a permissão nova; 3) testar de novo. Tudo só com autorização.",
+      };
+    }
+    return { ...base, conclusao: "Promoções falharam por outro motivo (ver a mensagem).", falta: "ver mensagem do ML", procedimento: "Analisar a mensagem na tabela." };
+  });
+}
+
+/** (15/11) Texto completo do diagnóstico para copiar (sem chaves: os resumos já vêm mascarados do servidor). */
+export function textoDiagnostico(matriz) {
+  const linhas = [];
+  for (const c of matriz?.contas || []) {
+    linhas.push(`== ${c.nome}${c.item ? ` (${c.item})` : ""} ==`);
+    for (const r of c.resultados) linhas.push(`${r.ok ? "OK " : "ERRO"} ${r.etapa}${r.status ? ` [HTTP ${r.status}]` : ""}: ${r.ok ? r.resumo : r.erro}${r.recusa_ml ? ` | ML: ${JSON.stringify(r.recusa_ml)}` : ""}`);
+  }
+  return linhas.join("\n");
 }
 
 /** (15/11) Falhas agrupadas por conta e etapa, com o 1º erro de cada grupo. */

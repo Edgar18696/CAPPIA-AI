@@ -598,3 +598,24 @@ test("diagnóstico de escopos: só a própria conta, só resumos seguros (sem ch
   assert.match(src, /resumirAutorizacoes\(r\.dados, appId\)/);
   assert.doesNotMatch(src, /ML_CLIENT_SECRET/);
 });
+
+test("conclusão de permissões por conta: escopos completos + 403 → falta permissão funcional de promoções no aplicativo", () => {
+  const res = (etapa, ok, extra = {}) => ({ etapa, ok, ...extra });
+  const aut = (scopes) => res("Autorização desta conta ao PAIIA (escopos)", true, { resumo: JSON.stringify({ autorizacoes_na_conta: 1, paiia: { app_id: "…7890", scopes } }) });
+  const p403 = [res("Promoções (seller-promotions)", false, { status: 403, erro: "At least one policy returned UNAUTHORIZED." }), res("Promoções da conta", false, { status: 403, erro: "At least one policy returned UNAUTHORIZED." })];
+  const m = { contas: [
+    { nome: "LOJA ONLINE", item: "MLB1", resultados: [aut(["offline_access", "read", "write"]), ...p403, res("Cadastro do aplicativo PAIIA (permissões)", true, { resumo: "{}" })] },
+    { nome: "REVELAÇÃO", item: "MLB2", resultados: [aut(["read", "offline_access"]), ...p403] },
+    { nome: "CIEBR", item: null, resultados: [] },
+  ] };
+  const [loja, rev, ciebr] = L.concluirPermissoes(m);
+  assert.deepEqual(loja.escopos, ["offline_access", "read", "write"]);
+  assert.match(loja.falta, /^permissão funcional de promoções no aplicativo PAIIA$/);
+  assert.match(loja.procedimento, /painel de desenvolvedores do ML.*reconectar/);
+  assert.equal(loja.promocoes_anuncio, "HTTP 403");
+  assert.match(rev.falta, /escopo write/);
+  assert.match(ciebr.conclusao, /Sem anúncio lido/);
+  const t = L.textoDiagnostico(m);
+  assert.match(t, /== LOJA ONLINE \(MLB1\) ==/);
+  assert.match(t, /ERRO Promoções da conta \[HTTP 403\]/);
+});

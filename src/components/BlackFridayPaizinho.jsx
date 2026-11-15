@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha } from "../services/blackFriday/calendario";
 import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO, custosDoPerfil, filtrarLinhas, resumirSimulacao, podeAprovar, contarMotivos } from "../services/blackFriday/regras";
-import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
+import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
 
@@ -340,6 +340,21 @@ export default function BlackFridayPaizinho() {
         <thead><tr><th style={S.th}>Leitura</th>{matriz.contas.map((c) => <th key={c.nome} style={S.th}>{c.nome}{c.item ? ` (${c.item})` : " (sem anúncio lido)"}</th>)}</tr></thead>
         <tbody>{matriz.etapas.map((et) => <tr key={et}><td style={S.td}>{et}</td>{matriz.contas.map((c) => { const r = c.resultados.find((x) => x.etapa === et); return <td key={c.nome} style={{ ...S.td, whiteSpace: "normal", maxWidth: 280 }} title={r ? (r.ok ? r.resumo : r.erro) : ""}>{!r ? "—" : r.ok ? (/^(Autoriza|Cadastro)/.test(et) ? <>✅ <small>{r.resumo}</small></> : "✅ ok") : <>❌ {r.status ? `HTTP ${r.status} · ` : ""}<small>{r.erro}{explicarErro(r.erro) ? ` → ${explicarErro(r.erro)}` : ""}{r.recusa_ml ? ` · ML: ${[r.recusa_ml.codigo, ...r.recusa_ml.causa].filter(Boolean).join(", ")}` : ""} · via {r.via}</small></>}</td>; })}</tr>)}</tbody>
       </table></div>}
+      {matriz && <>
+        <h4 style={{ ...S.h3, fontSize: 15 }}>Permissões de promoções — conclusão por conta</h4>
+        <ul style={S.lista}>{concluirPermissoes(matriz).map((p) => (
+          <li key={p.conta}><small><strong>{p.conta}:</strong> {p.conclusao}
+            {p.escopos && <> Escopos: {p.escopos.join(", ")}.</>}
+            {p.promocoes_anuncio && <> Promoções do anúncio: {p.promocoes_anuncio}; da conta: {p.promocoes_conta}.</>}
+            {p.falta && <><br />Falta: {p.falta}.</>}
+            {p.procedimento && <><br />Procedimento: {p.procedimento}</>}
+          </small></li>
+        ))}</ul>
+        <div style={S.acoes}>
+          <button type="button" style={S.filtro} onClick={() => { try { navigator.clipboard.writeText(textoDiagnostico(matriz)); setAviso("Diagnóstico completo copiado: cole na conversa com o Cláudio."); } catch { setAviso("Não foi possível copiar automaticamente."); } }}>📋 Copiar diagnóstico completo</button>
+          <small style={S.base}>O texto não tem chaves: o servidor já devolve tudo resumido e mascarado.</small>
+        </div>
+      </>}
       {diag && <div style={S.tabelaCaixa}><table style={S.tabela}><tbody>{diag.map((d, i) => (
         <tr key={i}><td style={S.td}>{d.ok ? "✅" : "❌"} {d.etapa}</td><td style={{ ...S.td, whiteSpace: "normal" }}><small style={S.base}>{d.caminho}{d.status ? ` · HTTP ${d.status}` : ""}</small><br /><small>{d.ok ? d.resumo : d.erro}</small></td></tr>
       ))}</tbody></table></div>}
