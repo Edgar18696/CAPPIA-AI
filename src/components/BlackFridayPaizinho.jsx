@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha } from "../services/blackFriday/calendario";
 import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO, custosDoPerfil, filtrarLinhas, resumirSimulacao, podeAprovar, contarMotivos } from "../services/blackFriday/regras";
-import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, agruparFalhas } from "../services/blackFriday/leitura";
+import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
@@ -46,6 +46,7 @@ export default function BlackFridayPaizinho() {
   const [diagItem, setDiagItem] = useState("");
   const [diag, setDiag] = useState(null);
   const [diagLendo, setDiagLendo] = useState(false);
+  const [matriz, setMatriz] = useState(null);
   const cancelar = useRef(false);
 
   useEffect(() => {
@@ -97,7 +98,8 @@ export default function BlackFridayPaizinho() {
       try { localStorage.setItem(chaveLeitura(usuarioId), JSON.stringify(r)); } catch { setAviso("Leitura grande demais para guardar neste navegador: fica só nesta tela."); }
       const lidos = Object.values(r.contas).reduce((s, c) => s + c.lidos, 0);
       registro.registrar("consulta_concluida", { contas: nomes, anuncios: lidos, falhas: r.falhas.length, interrompida: cancelar.current });
-      for (const f of r.falhas.slice(0, 100)) registro.registrar("erro", { conta: f.conta, etapa: f.etapa, item: f.id, erro: f.erro });
+      // (15/11) Um registro por conta + etapa (com a quantidade), em vez de 1 por anúncio cortado em 100.
+      for (const g of agruparFalhas(r.falhas)) registro.registrar("erro", { conta: g.conta, etapa: g.etapa, quantidade: g.quantidade, erro: g.erros.map((e) => `${e.erro} (${e.n})`).join(" | "), exemplo: r.falhas.find((f) => f.conta === g.conta && f.etapa === g.etapa)?.id || null });
     } catch (e) {
       setAviso(String(e?.message || e));
       registro.registrar("erro", { etapa: "consulta", erro: String(e?.message || e) });
@@ -123,6 +125,16 @@ export default function BlackFridayPaizinho() {
       setDiag(r);
       registro?.registrar("diagnostico", { conta: CONTAS_BLACK_FRIDAY.find((c) => c.id === diagConta)?.nome, item: diagItem.trim().toUpperCase(), falhas: r.filter((x) => !x.ok).length });
     } catch (e) { setDiag([{ etapa: "Diagnóstico", ok: false, erro: String(e?.message || e) }]); }
+    setDiagLendo(false);
+  }
+
+  async function diagnosticarTresContas() {
+    setDiagLendo(true); setMatriz(null);
+    try {
+      const m = await diagnosticarContas({ leitura, consultorDaConta: (id) => consultorBF(id, invocar) });
+      setMatriz(m);
+      registro?.registrar("diagnostico", { contas: m.contas.map((c) => `${c.nome}: ${c.resultados.filter((r) => !r.ok).length} recusa(s)`).join(" · ") });
+    } catch (e) { setAviso(String(e?.message || e)); }
     setDiagLendo(false);
   }
 
@@ -310,7 +322,7 @@ export default function BlackFridayPaizinho() {
       </>}
       {leitura?.falhas?.length > 0 ? <>
         <p style={S.nota}>Leituras com falha na última consulta, por etapa (mensagem real do servidor/ML):</p>
-        <ul style={S.lista}>{agruparFalhas(leitura.falhas).slice(0, 15).map((g) => <li key={`${g.conta}-${g.etapa}`}><small><strong>{g.conta} · {g.etapa}: {g.quantidade}</strong>{g.erros.map((e) => ` — "${e.erro}" (${e.n})`).join("")}</small></li>)}</ul>
+        <ul style={S.lista}>{agruparFalhas(leitura.falhas).slice(0, 15).map((g) => <li key={`${g.conta}-${g.etapa}`}><small><strong>{g.conta} · {g.etapa}: {g.quantidade}</strong>{g.erros.map((e) => ` — "${e.erro}" (${e.n})${explicarErro(e.erro) ? ` → ${explicarErro(e.erro)}` : ""}`).join("")}</small></li>)}</ul>
       </> : leitura && <p style={S.nota}>Nenhuma leitura com falha na última consulta.</p>}
       <div style={S.acoes}>
         <select value={diagConta} onChange={(e) => setDiagConta(e.target.value)} style={{ ...S.busca, flex: "0 1 170px" }} aria-label="Conta do diagnóstico">
@@ -318,7 +330,12 @@ export default function BlackFridayPaizinho() {
         </select>
         <input value={diagItem} onChange={(e) => setDiagItem(e.target.value)} placeholder="MLB do anúncio para testar" style={{ ...S.busca, flex: "0 1 220px" }} />
         <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
+        <button type="button" style={S.filtro} onClick={diagnosticarTresContas} disabled={diagLendo || !leitura}>{diagLendo ? "🔄 Testando…" : "🩺 Comparar as 3 contas"}</button>
       </div>
+      {matriz && <div style={S.tabelaCaixa}><table style={S.tabela}>
+        <thead><tr><th style={S.th}>Leitura</th>{matriz.contas.map((c) => <th key={c.nome} style={S.th}>{c.nome}{c.item ? ` (${c.item})` : " (sem anúncio lido)"}</th>)}</tr></thead>
+        <tbody>{matriz.etapas.map((et) => <tr key={et}><td style={S.td}>{et}</td>{matriz.contas.map((c) => { const r = c.resultados.find((x) => x.etapa === et); return <td key={c.nome} style={{ ...S.td, whiteSpace: "normal", maxWidth: 280 }} title={r ? (r.ok ? r.resumo : r.erro) : ""}>{!r ? "—" : r.ok ? "✅ ok" : <>❌ {r.status ? `HTTP ${r.status} · ` : ""}<small>{r.erro}{explicarErro(r.erro) ? ` → ${explicarErro(r.erro)}` : ""}</small></>}</td>; })}</tr>)}</tbody>
+      </table></div>}
       {diag && <div style={S.tabelaCaixa}><table style={S.tabela}><tbody>{diag.map((d, i) => (
         <tr key={i}><td style={S.td}>{d.ok ? "✅" : "❌"} {d.etapa}</td><td style={{ ...S.td, whiteSpace: "normal" }}><small style={S.base}>{d.caminho}{d.status ? ` · HTTP ${d.status}` : ""}</small><br /><small>{d.ok ? d.resumo : d.erro}</small></td></tr>
       ))}</tbody></table></div>}
@@ -327,7 +344,7 @@ export default function BlackFridayPaizinho() {
       <h3 style={S.h3}>5. Histórico de operações e erros</h3>
       {!historico.length ? <p style={S.nota}>Nenhuma operação registrada ainda.</p> : <>
         <p style={S.nota}>{historico.length} registro(s) · {erros.length} erro(s). Guardado só neste navegador, para o seu usuário.</p>
-        <ul style={S.lista}>{historico.slice(0, 30).map((h) => <li key={h.id}><small>{new Date(h.quando).toLocaleString("pt-BR")} · <strong>{h.tipo}</strong>{h.conta ? ` · ${h.conta}` : h.contas ? ` · ${h.contas}` : ""}{h.item ? ` · ${h.item}` : ""}{h.erro ? ` · ${h.erro}` : ""}{h.anuncios !== undefined ? ` · ${h.anuncios} anúncios` : ""}{h.aprovados !== undefined ? ` · ${h.aprovados} aprovado(s)` : ""}{h.decisao ? ` · ${h.decisao}` : ""}</small></li>)}</ul>
+        <ul style={S.lista}>{historico.slice(0, 30).map((h) => <li key={h.id}><small>{new Date(h.quando).toLocaleString("pt-BR")} · <strong>{h.tipo}</strong>{h.conta ? ` · ${h.conta}` : h.contas ? ` · ${h.contas}` : ""}{h.etapa ? ` · ${h.etapa}` : ""}{h.quantidade ? ` · ${h.quantidade} anúncio(s)` : ""}{h.item ? ` · ${h.item}` : h.exemplo ? ` · ex.: ${h.exemplo}` : ""}{h.erro ? ` · ${h.erro}` : ""}{h.erro && explicarErro(h.erro) ? ` → ${explicarErro(h.erro)}` : ""}{h.anuncios !== undefined ? ` · ${h.anuncios} anúncios` : ""}{h.aprovados !== undefined ? ` · ${h.aprovados} aprovado(s)` : ""}{h.decisao ? ` · ${h.decisao}` : ""}</small></li>)}</ul>
       </>}
     </section>
   );

@@ -510,3 +510,31 @@ test("Central: aba Black Friday montada à parte; Ranqueamento e Regras intactos
   assert.doesNotMatch(tela, /paiiaPaizinhoRelatorioTeste|paiiaRegrasMLLeitura|paiiaPaizinhoBlingCache/, "não usa as chaves do Ranqueamento/Regras");
   assert.deepEqual(R.CONTAS_BLACK_FRIDAY.map((c) => c.id), [LOJA, REV, CIEBR]);
 });
+
+/* ------------- (15/11) recusa "At least one policy returned UNAUTHORIZED" ------------- */
+
+test("UNAUTHORIZED do ML: explicado como recusa de permissão e não repetido na mesma leitura", async () => {
+  assert.match(L.explicarErro("At least one policy returned UNAUTHORIZED."), /PERMISSÃO do Mercado Livre/);
+  assert.match(L.explicarErro("Caminho fora da lista permitida"), /servidor do PAIIA/);
+  assert.equal(L.explicarErro("qualquer outra coisa"), "");
+  let n = 0;
+  const invocar = async () => { n++; return { data: { ok: false, status: 403, erro: "At least one policy returned UNAUTHORIZED." } }; };
+  const consultar = L.consultorBF(REV, invocar, { esperar: async () => {} });
+  await consultar("/seller-promotions/items/MLB1?app_version=v2");
+  const b = await consultar("/seller-promotions/items/MLB2?app_version=v2");
+  assert.equal(n, 1);
+  assert.equal(b.recusado, true);
+  assert.equal(b.ok, false, "recusa continua sendo falha (nunca 'sem promoção')");
+});
+
+test("comparar as 3 contas: mesmo teste num anúncio de cada conta mostra quem recusa o quê", async () => {
+  const leitura = { contas: { [LOJA]: { itens: [{ item: { id: "MLB1" } }] }, [REV]: { itens: [{ item: { id: "MLB2" } }] } } };
+  const consultorDaConta = (conta) => async (c) => (conta === REV && c.startsWith("/seller-promotions") ? { ok: false, status: 403, erro: "At least one policy returned UNAUTHORIZED." } : { ok: true, dados: [] });
+  const m = await L.diagnosticarContas({ leitura, consultorDaConta });
+  const rev = m.contas.find((c) => c.nome === "REVELAÇÃO");
+  const loja = m.contas.find((c) => c.nome === "LOJA ONLINE");
+  assert.equal(rev.resultados.find((r) => r.etapa === "Promoções (seller-promotions)").ok, false);
+  assert.equal(loja.resultados.find((r) => r.etapa === "Promoções (seller-promotions)").ok, true);
+  assert.deepEqual(m.contas.find((c) => c.nome === "CIEBR"), { nome: "CIEBR", item: null, resultados: [] });
+  assert.ok(m.etapas.includes("Preço de venda (sale_price)"));
+});

@@ -249,7 +249,8 @@ export function consultorBF(conta, invocar, { esperar = (ms) => new Promise((r) 
         } else r = data || { ok: false, erro: "resposta vazia" };
       } catch (e) { r = { ok: false, erro: txt(e?.message || e) }; }
       if (r?.ok) return r;
-      if (caminhoRecusado(r)) { const marcado = { ...r, recusado: true }; recusados.set(tipo, marcado); return marcado; }
+      // Recusa de permissão do ML (403 PolicyAgent) também não muda repetindo: mesmo tratamento.
+      if (caminhoRecusado(r) || /policy returned UNAUTHORIZED/i.test(txt(r?.erro))) { const marcado = { ...r, recusado: true }; recusados.set(tipo, marcado); return marcado; }
       const passageiro = [429, 500, 502, 503, 504].includes(Number(r?.status)) || /too many|rate limit|Failed to fetch/i.test(txt(r?.erro));
       if (!passageiro) return r;
       await esperar(800 * 2 ** t);
@@ -298,6 +299,37 @@ export function resumirResposta(d) {
     return `campos: ${Object.keys(d).slice(0, 15).join(", ")}${listas.length ? ` · listas → ${listas.join(", ")}` : ""}${Array.isArray(d.products) && d.products[0] ? ` · 1º veículo: ${JSON.stringify(d.products[0]).slice(0, 300)}` : ""}`;
   }
   return txt(d).slice(0, 200);
+}
+
+/**
+ * (15/11) Tradução dos erros conhecidos do ML para o usuário.
+ * "At least one policy returned UNAUTHORIZED" (403 do PolicyAgent do ML) = o ML recusou por
+ * PERMISSÃO: o aplicativo do PAIIA ou a autorização daquela conta não tem acesso ao recurso
+ * (comum em promoções, quando a conta não está habilitada ou foi autorizada antes da permissão).
+ */
+export function explicarErro(erro) {
+  const e = txt(erro);
+  if (/policy returned UNAUTHORIZED|PolicyAgent/i.test(e)) return "recusa de PERMISSÃO do Mercado Livre para esta conta neste recurso (não é defeito do anúncio)";
+  if (/fora da lista permitida|não permitid|nao permitid/i.test(e)) return "endereço bloqueado pelo servidor do PAIIA (lista de leituras permitidas)";
+  if (/invalid.*token|token.*(vencid|expir)|unauthori[sz]ed$/i.test(e)) return "acesso da conta vencido: renovar em Contas Marketplace";
+  if (/too many|limitou/i.test(e)) return "limite de consultas do Mercado Livre: tentar de novo mais tarde";
+  return "";
+}
+
+/**
+ * (15/11) Diagnóstico das 3 contas de uma vez: testa as mesmas leituras num anúncio
+ * de cada conta (o 1º da última consulta) para comparar quem recusa o quê.
+ * @returns {Promise<{ etapas: string[], contas: { nome, item, resultados: object[] }[] }>}
+ */
+export async function diagnosticarContas({ leitura, consultorDaConta }) {
+  const contas = [];
+  for (const c of CONTAS_BLACK_FRIDAY) {
+    const item = leitura?.contas?.[c.id]?.itens?.[0]?.item?.id;
+    if (!item) { contas.push({ nome: c.nome, item: null, resultados: [] }); continue; }
+    contas.push({ nome: c.nome, item, resultados: await diagnosticarAnuncio({ conta: c.id, itemId: item, consultar: consultorDaConta(c.id) }) });
+  }
+  const etapas = [...new Set(contas.flatMap((x) => x.resultados.map((r) => r.etapa)))];
+  return { etapas, contas };
 }
 
 /** (15/11) Falhas agrupadas por conta e etapa, com o 1º erro de cada grupo. */
