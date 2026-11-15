@@ -133,10 +133,18 @@ export function consultorLeituraBF(conta, invocar) {
  */
 export function roteadorBF({ principal, bf }) {
   let bfAusente = false;
+  // (15/11) Recusa de PERMISSÃO do ML (403 "policy returned UNAUTHORIZED") não muda
+  // repetindo: depois da 1ª, o mesmo tipo de leitura nesta conta devolve a mesma
+  // recusa sem chamar o servidor (antes eram centenas de consultas iguais).
+  // A recusa continua sendo FALHA (nunca "sem promoção").
+  const recusados = new Map();
   return async (caminho) => {
     if (bfAusente || !ehLeituraBF(caminho)) return principal(caminho);
+    const tipo = PADROES.find((p) => p.re.test(txt(caminho)))?.tipo;
+    if (recusados.has(tipo)) return recusados.get(tipo);
     const r = await bf(caminho);
     if (r?.funcao_ausente) { bfAusente = true; return principal(caminho); }
+    if (!r?.ok && Number(r?.status) === 403 && /policy returned UNAUTHORIZED/i.test(txt(r?.erro))) recusados.set(tipo, { ...r, recusado: true, repetida: true });
     return r;
   };
 }

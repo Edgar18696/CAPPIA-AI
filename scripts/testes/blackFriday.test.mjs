@@ -619,3 +619,20 @@ test("conclusão de permissões por conta: escopos completos + 403 → falta per
   assert.match(t, /== LOJA ONLINE \(MLB1\) ==/);
   assert.match(t, /ERRO Promoções da conta \[HTTP 403\]/);
 });
+
+test("recusa de permissão pela função própria: 1 consulta por tipo e conta, o resto sai da memória (e continua falha)", async () => {
+  let chamadas = 0;
+  const bf = async () => { chamadas++; return { ok: false, status: 403, erro: "At least one policy returned UNAUTHORIZED.", via: "paizinho-bf-leitura" }; };
+  const principal = async () => ({ ok: true, dados: {} });
+  const rota = P.roteadorBF({ principal, bf });
+  for (let i = 1; i <= 50; i++) {
+    const r = await rota(`/seller-promotions/items/MLB${i}?app_version=v2`);
+    assert.equal(r.ok, false);
+  }
+  assert.equal(chamadas, 1, "50 anúncios = 1 chamada");
+  await rota(`/seller-promotions/users/${LOJA}?app_version=v2`);
+  assert.equal(chamadas, 2, "outro tipo de leitura é testado uma vez");
+  const okCat = P.roteadorBF({ principal, bf: async () => { chamadas++; return { ok: true, dados: { name: "Renault Clio" } }; } });
+  await okCat("/products/MLB1"); await okCat("/products/MLB2");
+  assert.equal(chamadas, 4, "leitura que funciona não é bloqueada");
+});
