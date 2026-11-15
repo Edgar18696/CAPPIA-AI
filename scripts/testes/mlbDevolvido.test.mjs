@@ -148,3 +148,26 @@ test("10) correção recusa quando o MLB é MESMO da ficha (publicação tem o M
   assert.equal(r2.ok, false);
   assert.ok(!F.banco.chamadas.some((c) => c.op === "update"), "nada gravado");
 });
+
+test("11) Diagnóstico aponta o MLB de outro produto na ficha e oferece o botão (com confirmação); ficha certa não aparece", async () => {
+  const { diagnosticarPublicacao } = await import("../../src/services/diagnosticoPublicacao.js");
+  const LOJA = "1729335019";
+  const fichaFlange = { id: "4ab28be5-194e-45c8-b0da-4b8c0875a1af", status_fluxo: "publicado", conta_destino_ml_user_id: LOJA, updated_at: "2026-11-15T11:27:00Z",
+    dados_conferencia: { integracao_bling: { mlb: "MLB5560614343", estado: "produto_incorreto", bling_produto_id: "16735738672" }, pos_publicacao: { mlb: "MLB5560614343" } },
+    publicacao: { mlb_id: null, ml_user_id: LOJA, status_publicacao: "pendente" } };
+  const deps = (ficha) => ({
+    listarFichas: async () => ({ ok: true, anuncios: [{ id: ficha.id }] }),
+    lerFicha: async () => ({ ok: true, anuncio: ficha }),
+    lerRegistro: async () => ({ ok: true, registros: [] }),
+    consultarML: async (conta, cam) => (cam.startsWith("/items/MLB5560614343") ? { ok: true, dados: { ...PARAFUSO, seller_id: LOJA, status: "active" } } : { ok: true, dados: { results: [], paging: { total: 0 } } }),
+    consultarBling: async () => ({ ok: true, encontrado: false }),
+  });
+  const d = await diagnosticarPublicacao({ sku: "7527362" }, deps(fichaFlange));
+  assert.deepEqual(d.mlbTrocado, [{ ficha: fichaFlange.id, mlb: "MLB5560614343", sku_do_mlb: "8200642689" }]);
+  assert.ok(d.pontos.some((p) => p.item === "MLB de outro produto" && p.nivel === "erro" && /Não use "Concluir Bling"/.test(p.texto)));
+  // Ficha do próprio parafuso (publicação com o MLB): nada a corrigir.
+  const fichaParafuso = { ...fichaFlange, id: "f5ad389b-0000-4000-8000-000000000001", publicacao: { mlb_id: "MLB5560614343", ml_user_id: LOJA, status_publicacao: "publicado" } };
+  assert.deepEqual((await diagnosticarPublicacao({ sku: "8200642689" }, deps(fichaParafuso))).mlbTrocado, []);
+  const tela = ler("src/components/DiagnosticoPublicacao.jsx");
+  assert.ok(tela.includes("window.confirm(") && tela.includes("desfazerMLBDeOutroProduto({ anuncioId: t.ficha, mlb: t.mlb"), "só com toque + confirmação");
+});

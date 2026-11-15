@@ -4,6 +4,7 @@ import { useState } from "react";
 import { supabase } from "../supabase";
 import { listarAnunciosDoCodigo, obterAnuncio } from "../services/anuncioPublicacaoService";
 import { lerRegistroDoSKU } from "../services/registroMLBService";
+import { desfazerMLBDeOutroProduto } from "../services/anuncioPublicacaoService";
 import { diagnosticarPublicacao, textoDiagnostico } from "../services/diagnosticoPublicacao";
 
 const depsReais = {
@@ -36,6 +37,18 @@ export default function DiagnosticoPublicacao() {
       setSt({ rodando: false, d: null, erro: String(e?.message || e), copiado: false });
     }
   }
+  // (15/11) Tirar da ficha o MLB de OUTRO produto (só com o seu toque + confirmação; nada é apagado).
+  const [desfeito, setDesfeito] = useState({});
+  async function desfazerTrocado(t) {
+    if (desfeito[t.ficha]?.rodando) return;
+    const ok = window.confirm(`Tirar o ${t.mlb} (anúncio do SKU ${t.sku_do_mlb}) da ficha ${t.ficha.slice(0, 8)}?
+
+A ficha volta para "aprovada, não publicada". O registro errado fica guardado na ficha. Nada é alterado no Mercado Livre nem no Bling.`);
+    if (!ok) return;
+    setDesfeito((d) => ({ ...d, [t.ficha]: { rodando: true } }));
+    const r = await desfazerMLBDeOutroProduto({ anuncioId: t.ficha, mlb: t.mlb, motivo: `MLB do SKU ${t.sku_do_mlb} gravado por engano na ficha do SKU ${st.d?.sku || ""}` }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
+    setDesfeito((d) => ({ ...d, [t.ficha]: { rodando: false, r } }));
+  }
   async function copiar() {
     try { await navigator.clipboard.writeText(textoDiagnostico(st.d)); setSt((s) => ({ ...s, copiado: true })); } catch { /* sem área de transferência */ }
   }
@@ -64,6 +77,18 @@ export default function DiagnosticoPublicacao() {
               ))}
             </tbody></table>
           )}
+          {(st.d.mlbTrocado || []).map((t) => (
+            <div key={t.ficha} data-paiia-mlb-trocado={t.ficha} style={{ margin: "8px 0", padding: 10, border: "1px solid #f87171", borderRadius: 8, background: "#450a0a", color: "#fecaca" }}>
+              ⚠ Ficha {t.ficha.slice(0, 8)}: o {t.mlb} é do SKU {t.sku_do_mlb}, não deste produto.
+              {desfeito[t.ficha]?.r ? (
+                <div data-paiia-mlb-trocado-resultado={desfeito[t.ficha].r.ok ? "ok" : "erro"} style={{ marginTop: 6, color: desfeito[t.ficha].r.ok ? COR.ok : COR.erro }}>
+                  {desfeito[t.ficha].r.ok ? "✅ MLB retirado desta ficha: ela voltou para aprovada, não publicada (registro errado guardado). Confira de novo." : `❌ ${desfeito[t.ficha].r.erro}`}
+                </div>
+              ) : (
+                <div><button type="button" data-paiia-desfazer-mlb-trocado onClick={() => desfazerTrocado(t)} disabled={desfeito[t.ficha]?.rodando} style={{ ...botao, marginTop: 6, background: "#7f1d1d", borderColor: "#f87171" }}>{desfeito[t.ficha]?.rodando ? "⏳ Corrigindo..." : "Tirar este MLB da ficha (pede confirmação)"}</button></div>
+              )}
+            </div>
+          ))}
           <button type="button" data-paiia-diagnostico-copiar onClick={copiar} style={{ ...botao, marginTop: 8, background: "#1e293b", borderColor: "#334155" }}>{st.copiado ? "✓ Copiado" : "📋 Copiar resultado"}</button>
         </div>
       )}

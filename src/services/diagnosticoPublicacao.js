@@ -115,6 +115,20 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
     const nivelMLB = s.situacao === "ativo" ? "ok" : s.situacao === "nao_confirmada" ? "erro" : "alerta";
     ponto(pontos, nivelMLB, "MLBs do SKU", `${x.mlb} (${linha.conta_nome}): ${linha.rotulo}${linha.preco !== null && linha.preco !== undefined ? ` · preço ${linha.preco}` : ""}${linha.sku ? ` · SKU ${linha.sku}` : ""}${x.bling_produto_id ? ` · produto Bling ${x.bling_produto_id}` : ""}.`);
   }
+  // (15/11) MLB de OUTRO produto registrado na ficha (caso 7527362 × MLB5560614343): a publicação da
+  // ficha está sem MLB, mas o registro do Bling/pós-publicação aponta um MLB cujo SKU não é o desta ficha.
+  out.mlbTrocado = [];
+  for (const f of out.fichas) {
+    if (normalizarMLB(f.publicacao?.mlb)) continue;
+    for (const m of [...new Set([f.registro_bling?.mlb, f.pos_publicacao?.mlb].map(normalizarMLB).filter(Boolean))]) {
+      const linha = out.mlbs.find((x) => x.mlb === m);
+      const skus = txt(linha?.sku).split(" / ").filter(Boolean);
+      if (linha && skus.length && !skus.some((x) => normSku(x) === normSku(SKU))) {
+        out.mlbTrocado.push({ ficha: f.id, mlb: m, sku_do_mlb: linha.sku });
+        ponto(pontos, "erro", "MLB de outro produto", `Ficha ${f.id.slice(0, 8)} tem o ${m} registrado, mas esse anúncio é do SKU ${linha.sku} (não ${SKU}) e a publicação desta ficha está sem MLB: registro trocado. Não use "Concluir Bling" nesta ficha.`);
+      }
+    }
+  }
   if (!out.mlb) { ponto(pontos, "alerta", "Mercado Livre", "Nenhum MLB gravado para este SKU: nada a consultar no Mercado Livre."); return out; }
   if (!out.conta) { ponto(pontos, "erro", "Mercado Livre", "Conta do Mercado Livre não encontrada na ficha: consulta não feita."); return out; }
   const nomeConta = nomeDaLoja(out.conta);
