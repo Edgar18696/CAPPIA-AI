@@ -145,7 +145,127 @@ test("NÃO cumulativo: anúncio já em promoção (ativa ou programada) vai para
 test("promoções não lidas → revisão (não presume que o anúncio aceita desconto)", () => {
   const l = R.simularAnuncio(leituraAnuncio({ promocoes: { lido: false, ativas: [], candidatas: [], erro: "fora da lista permitida" } }), { perfil: PERFIL });
   assert.equal(l.situacao, "revisao");
-  assert.match(l.motivos.join(" "), /Promoções do anúncio não lidas \(fora da lista permitida\)/);
+  assert.match(l.motivos.join(" "), /Promoção não verificada \(fora da lista permitida\)/);
+  assert.equal(l.promocao, "nao_verificada");
+});
+
+/* --------------------- (15/11) pacote de correções --------------------- */
+
+const RENAULT_LOTE = { item: item({ attributes: [{ id: "BRAND", value_name: "Renault" }] }), custo: { ok: true, encontrado: false } };
+
+test("Renault de lote sem custo: mantém 10%, mostra 'Custo não informado' e vai para Atenção (nunca libera sozinha)", () => {
+  const l = R.simularAnuncio(leituraAnuncio(RENAULT_LOTE), { perfil: PERFIL });
+  assert.equal(l.classe, "renault");
+  assert.equal(l.desconto_pct, 10);
+  assert.equal(l.preco_final, 180);
+  assert.equal(l.custo, null);
+  assert.equal(l.lucro, null, "lucro não é inventado");
+  assert.equal(l.margem_pct, null);
+  // 180 − 22 tarifa − 20 frete − 10,80 imposto = 127,20 de sobra (70,7%)
+  assert.equal(l.repasse, 127.2);
+  assert.equal(l.repasse_pct, 70.7);
+  assert.equal(l.situacao, "atencao");
+  assert.match(l.alertas[0], /^Custo não informado — margem não verificável/);
+  assert.equal(R.podeAprovar(l), true);
+  // Aprovação de Atenção exige a confirmação extra.
+  const reg = G.criarRegistroBF({ storage: memoria(), usuarioId: "u1" });
+  assert.equal(reg.aprovar([l]).aprovados.length, 0);
+  assert.equal(reg.aprovar([l], { confirmarAtencao: true }).aprovados.length, 1);
+});
+
+test("Renault de lote sem custo com RISCO (despesas > 40% do preço final) ou despesas desconhecidas → revisão", () => {
+  const caro = R.simularAnuncio(leituraAnuncio({ ...RENAULT_LOTE, item: item({ price: 60, attributes: [{ id: "BRAND", value_name: "Renault" }] }), tarifaFinal: { valor: 12 }, freteAtual: { ok: true, custo_vendedor: 15 }, freteFinal: { ok: true, custo_vendedor: 15 } }), { perfil: PERFIL });
+  assert.equal(caro.situacao, "revisao");
+  assert.match(caro.motivos.join(" "), /RISCO: tarifa, frete e impostos já consomem/);
+  const semImposto = R.simularAnuncio(leituraAnuncio(RENAULT_LOTE), { perfil: { impostoPct: null, custoPedido: 0 } });
+  assert.equal(semImposto.situacao, "revisao");
+  assert.match(semImposto.motivos.join(" "), /risco não avaliado/);
+  const semTarifa = R.simularAnuncio(leituraAnuncio({ ...RENAULT_LOTE, tarifaFinal: null }), { perfil: PERFIL });
+  assert.equal(semTarifa.situacao, "revisao");
+});
+
+test("produto que não é Renault sem custo continua em revisão", () => {
+  const l = R.simularAnuncio(leituraAnuncio({ custo: { ok: true, encontrado: false } }), { perfil: PERFIL });
+  assert.equal(l.classe, "demais");
+  assert.equal(l.situacao, "revisao");
+});
+
+test("promoções: preço de venda (sale_price) acusa promoção ativa → conflito; sem desconto agora → ainda 'não verificada'", () => {
+  const naoLida = { lido: false, ativas: [], candidatas: [], erro: "fora da lista permitida" };
+  const ativa = R.lerPrecoVenda({ ok: true, dados: { amount: 170, regular_amount: 200, metadata: { promotion_id: "P9", promotion_type: "DEAL" } } });
+  assert.deepEqual([ativa.lido, ativa.ativa, ativa.tipo], [true, true, "DEAL"]);
+  const c = R.simularAnuncio(leituraAnuncio({ promocoes: naoLida, precoVenda: ativa }), { perfil: PERFIL });
+  assert.equal(c.promocao, "conflito");
+  assert.equal(c.promocoes_ativas[0].id, "P9");
+  assert.match(c.motivos.join(" "), /descontos não são cumulativos/);
+  const semDesc = R.lerPrecoVenda({ ok: true, dados: { amount: 200, regular_amount: null } });
+  assert.equal(semDesc.ativa, false);
+  const n = R.simularAnuncio(leituraAnuncio({ promocoes: naoLida, precoVenda: semDesc }), { perfil: PERFIL });
+  assert.equal(n.promocao, "nao_verificada", "falha na leitura nunca vira 'sem promoção'");
+  assert.match(n.motivos.join(" "), /programadas não puderam ser conferidas/);
+  assert.equal(R.lerPrecoVenda({ ok: false, erro: "x" }).lido, false);
+  assert.equal(R.simularAnuncio(leituraAnuncio(), { perfil: PERFIL }).promocao, "sem_promocao");
+});
+
+test("Renault pelo catálogo do ML: compatibilidade sem marca → marca lida em /products/{id} (com memória)", async () => {
+  const itens = [item({ id: "MLB1", title: "Sensor Sandero" }), item({ id: "MLB2", title: "Bobina" })];
+  const chamadas = [];
+  const consultar = async (c) => {
+    chamadas.push(c);
+    if (c.startsWith(`/users/${LOJA}/items/search`)) return { ok: true, dados: { results: ["MLB1", "MLB2"] } };
+    const det = c.match(/^\/items\/(MLB\d+)$/);
+    if (det) return { ok: true, dados: itens.find((x) => x.id === det[1]) };
+    if (c === "/items/MLB1/compatibilities") return { ok: true, dados: { products: [{ catalog_product_id: "V1" }, { catalog_product_id: "V2" }] } };
+    if (c === "/items/MLB2/compatibilities") return { ok: true, dados: { products: [{ catalog_product_id: "V2" }, { catalog_product_id: "V3" }] } };
+    if (c === "/products/V1") return { ok: true, dados: { name: "Renault Sandero 1.6 2012" } };
+    if (c === "/products/V2") return { ok: true, dados: { attributes: [{ id: "BRAND", value_name: "Nissan" }] } };
+    if (c === "/products/V3") return { ok: false, erro: "fora da lista permitida" };
+    if (c.startsWith("/seller-promotions/")) return { ok: true, dados: [] };
+    if (c.includes("shipping_options")) return { ok: true, dados: { coverage: { all_country: { list_cost: 20, billable_weight: 300 } } } };
+    if (c.startsWith("/sites/MLB/listing_prices")) return { ok: true, dados: [{ sale_fee_amount: 22 }] };
+    return { ok: false, erro: "?" };
+  };
+  const r = await L.lerContaBF({ conta: LOJA, consultar, limite: 10 });
+  const porId = Object.fromEntries(r.itens.map((x) => [x.item.id, x]));
+  assert.deepEqual(porId.MLB1.compat.marcas.sort(), ["nissan", "renault"]);
+  assert.equal(R.classificarRenault(porId.MLB1.item, porId.MLB1.compat).classe, "renault", "Renault + outras montadoras = 10%");
+  const c2 = R.classificarRenault(porId.MLB2.item, porId.MLB2.compat);
+  assert.equal(c2.classe, "revisao", "veículo sem marca conferida: não deduz");
+  assert.match(c2.duvida, /Conferidos 1 de 2 veículos/);
+  assert.equal(chamadas.filter((c) => c === "/products/V2").length, 1, "memória por veículo");
+});
+
+test("adaptador: endereço recusado pela lista permitida não é repetido; motivo real do corpo do erro", async () => {
+  let n = 0;
+  const invocar = async (_nome, { body }) => { n++; return body.caminho.startsWith("/seller-promotions") ? { data: { ok: false, erro: "Caminho fora da lista permitida" } } : { data: null, error: { message: "Edge Function returned a non-2xx status code", context: { status: 401, json: async () => ({ erro: "Token da conta vencido" }) } } }; };
+  const consultar = L.consultorBF(LOJA, invocar, { esperar: async () => {} });
+  const a = await consultar("/seller-promotions/items/MLB1?app_version=v2");
+  const b = await consultar("/seller-promotions/items/MLB2?app_version=v2");
+  assert.equal(a.ok, false);
+  assert.equal(b.recusado, true);
+  assert.equal(n, 1, "a 2ª recusa não chama o servidor de novo");
+  const e = await consultar("/items/MLB1");
+  assert.equal(e.erro, "Token da conta vencido");
+  assert.equal(e.status, 401);
+});
+
+test("diagnóstico de um anúncio: só GET, mostra resposta real ou erro de cada leitura", async () => {
+  const caminhos = [];
+  const consultar = async (c) => { caminhos.push(c); if (c.endsWith("/compatibilities")) return { ok: true, dados: { products: [{ catalog_product_id: "V1" }] } }; if (c === "/products/V1") return { ok: true, dados: { name: "Renault Logan" } }; if (c.startsWith("/seller-promotions")) return { ok: false, erro: "fora da lista permitida" }; return { ok: true, dados: { id: "MLB1", price: 10 } }; };
+  const d = await L.diagnosticarAnuncio({ conta: LOJA, itemId: "mlb-1", consultar });
+  assert.ok(d.some((x) => x.etapa.startsWith("Promoções") && !x.ok && /lista permitida/.test(x.erro)));
+  assert.match(d.find((x) => x.etapa.startsWith("Marca")).resumo, /marca: renault/);
+  assert.ok(caminhos.every((c) => c.startsWith("/")));
+  await assert.rejects(() => L.diagnosticarAnuncio({ conta: LOJA, itemId: "abc", consultar }), /MLB/);
+  await assert.rejects(() => L.diagnosticarAnuncio({ conta: "1", itemId: "MLB1", consultar }), /3 contas/);
+});
+
+test("falhas agrupadas por etapa e motivos mais comuns", () => {
+  const g = L.agruparFalhas([{ conta: "CIEBR", etapa: "promoções", erro: "fora da lista" }, { conta: "CIEBR", etapa: "promoções", erro: "fora da lista" }, { conta: "CIEBR", etapa: "frete", erro: "x" }]);
+  assert.deepEqual(g[0], { conta: "CIEBR", etapa: "promoções", quantidade: 2, erros: [{ erro: "fora da lista", n: 2 }] });
+  const m = R.contarMotivos([R.simularAnuncio(leituraAnuncio({ promocoes: { lido: false, ativas: [] } }), { perfil: PERFIL }), R.simularAnuncio(leituraAnuncio({ promocoes: { lido: false, ativas: [] } }), { perfil: PERFIL })]);
+  assert.equal(m[0].quantidade, 2);
+  assert.match(m[0].motivo, /^Promoção não verificada/);
 });
 
 test("lerPromocoes: separa ativas/programadas de candidatas; formato estranho = não lido", () => {
@@ -181,10 +301,7 @@ test("custo nunca inventado: sem custo, custo a confirmar, Renault de lote → m
   assert.equal(semCusto.situacao, "revisao");
   const naoLido = R.simularAnuncio(leituraAnuncio({ custo: undefined }), { perfil: PERFIL });
   assert.match(naoLido.motivos.join(" "), /custo não lido no Bling/);
-  const lote = R.simularAnuncio(leituraAnuncio({ item: item({ attributes: [{ id: "BRAND", value_name: "Renault" }] }), custo: { ok: true, encontrado: false } }), { perfil: PERFIL });
-  assert.equal(lote.classe, "renault");
-  assert.equal(lote.custo, null);
-  assert.match(lote.motivos.join(" "), /Peça Renault sem custo individual.*custo não é inventado/);
+  assert.match(naoLido.motivos.join(" "), /^Custo não informado — margem não verificável/);
   const aConfirmar = R.simularAnuncio(leituraAnuncio({ custo: { ok: true, encontrado: true, custo: { fornecedores: [{ padrao: true, precoCusto: 50 }, { padrao: false, precoCusto: 90 }] } } }), { perfil: PERFIL });
   assert.equal(aConfirmar.custo, null);
   assert.match(aConfirmar.motivos.join(" "), /custo a confirmar/);

@@ -26,6 +26,9 @@ export const DESCONTOS = Object.freeze({ renault: 10, demais: 5 });
 export const PADROES_BF = Object.freeze({
   margemMinimaPct: 10,   // abaixo disto (e acima de zero) = alerta de margem
   limiteFreteGratis: 79, // abaixo deste preço a regra de frete do ML muda
+  // (15/11) Peça sem custo (lote Renault): tarifa+frete+imposto podem consumir no máximo 40%
+  // do preço final (repasse ≥ 60%); acima disso é risco relevante → revisão.
+  repasseMinimoPct: 60,
 });
 
 export const CLASSES = Object.freeze({ RENAULT: "renault", DEMAIS: "demais", REVISAO: "revisao" });
@@ -74,6 +77,28 @@ export function marcasDaCompatibilidade(resp) {
 }
 
 /**
+ * (15/11) Marca do veículo de um produto do catálogo do ML (GET /products/{id}):
+ * atributo BRAND ou, sem ele, a 1ª palavra do nome ("Renault Sandero 1.6 2012").
+ */
+export function marcaDoProdutoCatalogo(resp) {
+  if (!resp?.ok) return null;
+  const d = resp.dados || {};
+  const attrs = Array.isArray(d.attributes) ? d.attributes : [];
+  const b = attrs.find((x) => x?.id === "BRAND" || x?.id === "VEHICLE_BRAND");
+  const nome = txt(b?.value_name ?? b?.values?.[0]?.name);
+  if (nome) return normalizar(nome);
+  const n = normalizar(d.name);
+  return n ? n.split(" ")[0] : null;
+}
+
+/** Ids de catálogo dos veículos de uma resposta de compatibilidades. */
+export function idsCatalogoDaCompatibilidade(resp) {
+  const d = resp?.dados;
+  const lista = Array.isArray(d?.products) ? d.products : Array.isArray(d?.compatibilities) ? d.compatibilities : Array.isArray(d) ? d : [];
+  return [...new Set(lista.map((p) => txt(p?.catalog_product_id || p?.id)).filter(Boolean))];
+}
+
+/**
  * Classifica o anúncio: Renault (10%), Demais (5%) ou Revisão.
  * `decisao` = escolha manual do usuário na revisão ("renault"|"demais"|"excluir").
  * @returns {{ classe, evidencias: string[], duvida: string|null, manual: boolean }}
@@ -105,7 +130,8 @@ export function classificarRenault(item, compat = null, decisao = null) {
       duvida: `Código ${codigo} no padrão de numeração Renault, sem aplicação Renault confirmada.` };
   }
   if (c.lido && c.quantidade > 0 && !c.legivel) {
-    return { classe: CLASSES.REVISAO, evidencias: [], manual: false, duvida: "Compatibilidades lidas, mas sem a marca dos veículos: não dá para confirmar se há Renault." };
+    const conf = Number.isFinite(c.conferidos) ? ` Conferidos ${c.conferidos} de ${c.quantidade} veículos no catálogo do ML, nenhum Renault.` : "";
+    return { classe: CLASSES.REVISAO, evidencias: [], manual: false, duvida: `Compatibilidades lidas, mas sem a marca de todos os veículos: não dá para confirmar se há Renault.${conf}` };
   }
   return { classe: CLASSES.DEMAIS, evidencias: c.lido ? [] : ["Compatibilidades não lidas: sem indício de Renault no anúncio"], duvida: null, manual: false };
 }
@@ -136,6 +162,40 @@ export function lerPromocoes(resp) {
     candidatas: lista.filter((p) => txt(p?.status).toLowerCase() === "candidate").map(resumo),
     erro: null,
   };
+}
+
+/**
+ * (15/11) Preço de venda atual (GET /items/{id}/sale_price?context=channel_marketplace).
+ * Mostra se HÁ promoção ativa agora; não mostra as programadas.
+ */
+export function lerPrecoVenda(resp) {
+  if (!resp?.ok) return { lido: false, erro: txt(resp?.erro) || `HTTP ${resp?.status || "?"}` };
+  const d = resp.dados || {};
+  const valor = num(d.amount);
+  const regular = num(d.regular_amount);
+  if (!(valor > 0)) return { lido: false, erro: "preço de venda sem valor" };
+  const ativa = regular > valor;
+  return { lido: true, ativa, preco: valor, regular: regular || null, tipo: txt(d.metadata?.promotion_type) || null, promocao_id: txt(d.metadata?.promotion_id) || null };
+}
+
+const reaisBF = (v) => `R$ ${centavos(v).toFixed(2).replace(".", ",")}`;
+
+/**
+ * (15/11) Situação de promoções do anúncio. Falha de leitura NUNCA vale como ausência.
+ * @returns {{ estado: "sem_promocao"|"conflito"|"nao_verificada", texto: string, ativas: object[] }}
+ */
+export function verificarPromocao(promo, precoVenda, item) {
+  const p = promo || { lido: false, ativas: [] };
+  const sv = precoVenda || { lido: false };
+  const ativas = [...(p.ativas || [])];
+  if (sv.lido && sv.ativa && !ativas.length) ativas.push({ id: sv.promocao_id, tipo: sv.tipo || "preço promocional", status: "started", preco: sv.preco, preco_original: sv.regular });
+  if (num(item?.original_price) > num(item?.price) && !ativas.length) ativas.push({ id: null, tipo: "preço promocional", status: "started", preco: num(item.price), preco_original: num(item.original_price) });
+  if (ativas.length) {
+    return { estado: "conflito", ativas, texto: `Já participa de promoção (${ativas.map((x) => `${x.tipo || "?"} ${x.status}${x.preco ? ` a ${reaisBF(x.preco)}` : ""}`).join(", ")}): descontos não são cumulativos.` };
+  }
+  if (p.lido) return { estado: "sem_promocao", ativas, texto: "Sem promoção ativa ou programada (lido no ML)." };
+  const extra = sv.lido ? " O preço de venda atual não tem desconto, mas promoções programadas não puderam ser conferidas." : "";
+  return { estado: "nao_verificada", ativas, texto: `Promoção não verificada (${p.erro || "sem leitura"}).${extra} Fica em revisão.` };
 }
 
 /** Impostos/custo por pedido cadastrados em "Preços, Custos e Lucro" (paiiaPerfilCustos). */
@@ -171,11 +231,10 @@ export function simularAnuncio(a, op = {}) {
 
   if (cls.classe === CLASSES.REVISAO) motivos.push(cls.duvida);
 
-  // Promoções já existentes: nunca acumula.
+  // Promoções já existentes: nunca acumula. Falha de leitura NUNCA vale como "sem promoção".
   const promo = a.promocoes || { lido: false, ativas: [], candidatas: [] };
-  if (!promo.lido) motivos.push(`Promoções do anúncio não lidas (${promo.erro || "sem leitura"}): não dá para garantir que não há outra promoção.`);
-  else if (promo.ativas.length) motivos.push(`Já participa de promoção (${promo.ativas.map((p) => `${p.tipo || "?"} ${p.status}`).join(", ")}): descontos não são cumulativos.`);
-  if (num(item.original_price) > precoOriginal) motivos.push(`Anúncio já com preço promocional (de ${centavos(item.original_price)} por ${precoOriginal}).`);
+  const verif = verificarPromocao(promo, a.precoVenda, item);
+  if (verif.estado !== "sem_promocao") motivos.push(verif.texto);
 
   // Tarifa de venda NO PREÇO FINAL (muda com o preço).
   const tarifa = a.tarifaFinal && txt(a.tarifaFinal.valor) !== "" ? centavos(a.tarifaFinal.valor) : null;
@@ -202,15 +261,32 @@ export function simularAnuncio(a, op = {}) {
     if (e.custo > 0 && !e.a_confirmar) custo = e.custo;
     custoMotivo = e.a_confirmar ? `custo a confirmar (${e.motivo})` : e.custo > 0 ? "" : e.motivo;
   }
-  const renaultMarca = normalizar(atributo(item, "BRAND")).includes("renault");
-  if (custo === null) motivos.push(renaultMarca ? `Peça Renault sem custo individual no Bling (${custoMotivo}): margem não verificável — custo não é inventado.` : `Sem custo confiável: ${custoMotivo}. Margem não verificável.`);
+  if (perfil.impostoPct === null) motivos.push("Imposto não cadastrado em Preços, Custos e Lucro: despesas da venda incompletas.");
 
-  if (perfil.impostoPct === null) motivos.push("Imposto não cadastrado em Preços, Custos e Lucro: margem não verificável.");
+  // (15/11) Despesas CONHECIDAS da venda (sem o custo da peça): tarifa + frete + imposto + custo por pedido.
+  // "Repasse" = o que sobra do preço final para pagar a peça. Serve para achar risco sem inventar custo.
+  const imposto = perfil.impostoPct === null ? null : centavos(precoFinal * perfil.impostoPct / 100);
+  const despesasConhecidas = tarifa !== null && frete !== null && imposto !== null;
+  const repasse = despesasConhecidas && precoFinal > 0 ? centavos(precoFinal - tarifa - frete - imposto - num(perfil.custoPedido)) : null;
+  const repassePct = repasse !== null ? Math.round((repasse / precoFinal) * 1000) / 10 : null;
+
+  if (custo === null) {
+    const texto = `Custo não informado — margem não verificável (${custoMotivo}). Custo e lucro não são inventados.`;
+    // Peça Renault comprovada (lote sem custo individual): mantém os 10%, mas nunca libera sozinha:
+    // só vai para "Atenção" (aprovação com confirmação extra) se as despesas conhecidas deixarem
+    // repasse suficiente; risco relevante ou despesas desconhecidas → revisão.
+    if (cls.classe === CLASSES.RENAULT) {
+      if (repasse === null) motivos.push(`${texto} Despesas da venda incompletas: risco não avaliado.`);
+      else if (repassePct < cfg.repasseMinimoPct) motivos.push(`${texto} RISCO: tarifa, frete e impostos já consomem ${String(Math.round((100 - repassePct) * 10) / 10).replace(".", ",")}% do preço final (sobra ${reaisBF(repasse)} para a peça).`);
+      else alertas.push(`${texto} Despesas conhecidas consomem ${String(Math.round((100 - repassePct) * 10) / 10).replace(".", ",")}%; sobra ${reaisBF(repasse)} para a peça.`);
+    } else {
+      motivos.push(texto);
+    }
+  }
 
   let lucro = null;
   let margemPct = null;
-  const imposto = perfil.impostoPct === null ? null : centavos(precoFinal * perfil.impostoPct / 100);
-  if (custo !== null && tarifa !== null && frete !== null && imposto !== null && precoFinal > 0) {
+  if (custo !== null && despesasConhecidas && precoFinal > 0) {
     lucro = centavos(precoFinal - tarifa - frete - imposto - custo - num(perfil.custoPedido));
     margemPct = Math.round((lucro / precoFinal) * 1000) / 10;
     if (lucro < 0) motivos.push(`PREJUÍZO de R$ ${(-lucro).toFixed(2).replace(".", ",")} por venda no preço final.`);
@@ -233,8 +309,9 @@ export function simularAnuncio(a, op = {}) {
     preco_original: precoOriginal,
     preco_final: precoFinal,
     custo, tarifa, frete, frete_origem: freteOrigem, imposto, custo_pedido: num(perfil.custoPedido),
-    lucro, margem_pct: margemPct,
-    promocoes_ativas: promo.ativas || [],
+    lucro, margem_pct: margemPct, repasse, repasse_pct: repassePct, custo_motivo: custo === null ? custoMotivo : null,
+    promocao: verif.estado, promocao_texto: verif.texto,
+    promocoes_ativas: verif.ativas,
     modalidades_candidatas: [...new Set((promo.candidatas || []).map((p) => p.tipo).filter(Boolean))],
     situacao, motivos, alertas, bloqueios,
   };
@@ -256,6 +333,18 @@ export function filtrarLinhas(linhas, f = {}) {
     (!f.margemAbaixo || (l.margem_pct !== null && l.margem_pct < num(f.margemAbaixo))) &&
     (!f.soAlertas || l.alertas.length > 0 || l.motivos.length > 0) &&
     (!busca || normalizar(l.titulo).includes(busca) || (buscaCod && (codigoLimpo(l.id).includes(buscaCod) || codigoLimpo(l.sku).includes(buscaCod)))));
+}
+
+/** (15/11) Motivos de revisão/atenção mais comuns (para saber o que destrava mais anúncios). */
+export function contarMotivos(linhas) {
+  const n = new Map();
+  for (const l of linhas || []) {
+    for (const m of [...(l.motivos || []), ...(l.alertas || [])]) {
+      const k = txt(m).split(/[(:]/)[0].replace(/"[^"]*"/g, "…").replace(/\d[\d.,]*/g, "N").trim();
+      n.set(k, (n.get(k) || 0) + 1);
+    }
+  }
+  return [...n.entries()].sort((a, b) => b[1] - a[1]).map(([motivo, quantidade]) => ({ motivo, quantidade }));
 }
 
 /** Totais para os cartões do topo. */

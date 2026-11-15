@@ -13,7 +13,11 @@
 import { txt, num, centavos, skuDoItem, comLimite } from "../paizinhoAuditoria/util.js";
 import { medidasDoAnuncio } from "../paizinhoAuditoria/analise.js";
 import { lerRespostaCotacao, caminhoCotacao, parametrosCotacao, faixaDoPreco } from "../fretePrecificacao.js";
-import { CONTAS_BLACK_FRIDAY, contaBF, classificarRenault, marcasDaCompatibilidade, lerPromocoes, precoComDesconto, DESCONTOS, CLASSES, simularAnuncio } from "./regras.js";
+import { tipoDeCaminho, caminhoRecusado } from "../paizinhoAuditoria/coleta.js";
+import { CONTAS_BLACK_FRIDAY, contaBF, classificarRenault, marcasDaCompatibilidade, lerPromocoes, lerPrecoVenda, marcaDoProdutoCatalogo, idsCatalogoDaCompatibilidade, precoComDesconto, DESCONTOS, CLASSES, simularAnuncio } from "./regras.js";
+
+/** (15/11) Quantos veículos do catálogo são conferidos por anúncio quando a compatibilidade vem sem marca. */
+export const LIMITE_VEICULOS_CONFERIDOS = 10;
 
 export const PADROES_LEITURA = Object.freeze({ limitePorConta: 50, paralelo: 4, paraleloBling: 2 });
 const ATRIBUTOS_GUARDADOS = ["BRAND", "PART_NUMBER", "OEM", "ORIGINAL_OEM", "MPN", "SELLER_SKU"];
@@ -68,6 +72,7 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
   // 2) Cada anúncio: detalhes (dono conferido), compatibilidades, promoções, frete atual
   const itens = [];
   const fretes = {};
+  const marcaVeiculo = {}; // memória: id do veículo no catálogo → marca
   let descartados = 0;
   let feitos = 0;
   await comLimite(alvo, paralelo, async (id) => {
@@ -78,11 +83,40 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
     if (String(r.dados?.seller_id) !== c.id) { descartados++; return; } // NUNCA mistura contas
     const item = resumirItem(r.dados);
     const compatResp = await consultar(`/items/${id}/compatibilities`);
-    const compat = marcasDaCompatibilidade(compatResp);
+    let compat = marcasDaCompatibilidade(compatResp);
     if (!compat.lido) falha("compatibilidades", id, compatResp);
+    // (15/11) Compatibilidade sem a marca dos veículos: confere a marca no catálogo do ML
+    // (GET /products/{id}, com memória por veículo). Sem Renault entre os conferidos e com
+    // veículos não conferidos, continua em revisão (nunca deduz).
+    if (compat.lido && !compat.legivel) {
+      const idsVeiculos = idsCatalogoDaCompatibilidade(compatResp);
+      const conferir = idsVeiculos.slice(0, LIMITE_VEICULOS_CONFERIDOS);
+      const marcas = new Set();
+      let lidas = 0;
+      for (const pid of conferir) {
+        // Memória da CONSULTA (não só do resultado): anúncios em paralelo não repetem o mesmo veículo.
+        if (!(pid in marcaVeiculo)) {
+          marcaVeiculo[pid] = consultar(`/products/${pid}`).then((pr) => {
+            if (!pr?.ok) falha("marca do veículo (catálogo)", `${id} → ${pid}`, pr);
+            return marcaDoProdutoCatalogo(pr);
+          });
+        }
+        const marca = await marcaVeiculo[pid];
+        if (marca) { marcas.add(marca); lidas++; }
+      }
+      const comRenault = marcas.has("renault");
+      compat = { lido: true, quantidade: compat.quantidade, marcas: [...marcas], legivel: comRenault || (lidas === idsVeiculos.length && idsVeiculos.length > 0), conferidos: lidas };
+    }
     const promoResp = await consultar(`/seller-promotions/items/${id}?app_version=v2`);
     const promocoes = lerPromocoes(promoResp);
     if (!promocoes.lido) falha("promoções", id, promoResp);
+    // (15/11) Segunda fonte: preço de venda atual (mostra promoção ATIVA; não as programadas).
+    let precoVenda = null;
+    if (!promocoes.lido) {
+      const pv = await consultar(`/items/${id}/sale_price?context=channel_marketplace`);
+      precoVenda = lerPrecoVenda(pv);
+      if (!precoVenda.lido) falha("preço de venda", id, pv);
+    }
     const classe = classificarRenault(item, compat).classe;
     const finais = precosFinaisPossiveis(item.price, classe);
     if (item.shipping.free_shipping) {
@@ -100,7 +134,7 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
         if (!cot.ok) falha("frete no preço final", id, cot);
       }
     }
-    itens.push({ item, compat, promocoes });
+    itens.push({ item, compat, promocoes, precoVenda });
   });
 
   // 3) Tarifa de venda no PREÇO FINAL (com memória por preço+tipo+categoria)
@@ -170,7 +204,7 @@ export async function lerContasBF({ contas, consultorDaConta, consultarCusto = n
 export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPct } = {}) {
   const linhas = [];
   for (const r of Object.values(leitura?.contas || {})) {
-    for (const { item, compat, promocoes } of r.itens) {
+    for (const { item, compat, promocoes, precoVenda } of r.itens) {
       const chave = `${r.conta}:${item.id}`;
       const decisao = decisoes[chave] || null;
       const classe = classificarRenault(item, compat, decisao).classe;
@@ -178,7 +212,7 @@ export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPc
       const tarifaFinal = r.tarifas?.[chaveTarifa(pf, item.listing_type_id, item.category_id)] || null;
       const sku = skuDoItem(item);
       linhas.push(simularAnuncio({
-        conta: r.conta, item, compat, promocoes, tarifaFinal,
+        conta: r.conta, item, compat, promocoes, precoVenda, tarifaFinal,
         freteAtual: r.fretes?.[`${item.id}|atual`] || null,
         freteFinal: r.fretes?.[`${item.id}|${pf.toFixed(2)}`] || null,
         custo: sku ? leitura.custos?.[sku] : undefined,
@@ -195,22 +229,89 @@ export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPc
  */
 export function consultorBF(conta, invocar, { esperar = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   const contaId = txt(conta).replace(/\D/g, "");
+  // (15/11) Endereço recusado pelo servidor ("fora da lista permitida"): não insiste no mesmo tipo
+  // de endereço nesta leitura (antes eram 150 recusas iguais). A recusa continua sendo FALHA.
+  const recusados = new Map();
   return async (caminho) => {
     const c = txt(caminho);
     if (!c.startsWith("/")) return { ok: false, erro: "Caminho inválido." };
+    const tipo = tipoDeCaminho(c);
+    if (recusados.has(tipo)) return recusados.get(tipo);
     for (let t = 0; t < 4; t++) {
       let r;
       try {
         const { data, error } = await invocar("mercadolivre-publicacao", { body: { acao: "ml_consulta", conta_ml: contaId, metodo: "GET", caminho: c } });
-        r = error ? { ok: false, erro: error.message, status: error.context?.status } : data || { ok: false, erro: "resposta vazia" };
+        if (error) {
+          // O motivo real vem no corpo da resposta de erro (a mensagem do supabase é genérica).
+          let erro = error.message;
+          try { const corpo = await error.context?.json?.(); if (corpo?.erro || corpo?.error || corpo?.message) erro = corpo.erro || corpo.error || corpo.message; } catch { /* mantém */ }
+          r = { ok: false, erro, status: error.context?.status };
+        } else r = data || { ok: false, erro: "resposta vazia" };
       } catch (e) { r = { ok: false, erro: txt(e?.message || e) }; }
       if (r?.ok) return r;
+      if (caminhoRecusado(r)) { const marcado = { ...r, recusado: true }; recusados.set(tipo, marcado); return marcado; }
       const passageiro = [429, 500, 502, 503, 504].includes(Number(r?.status)) || /too many|rate limit|Failed to fetch/i.test(txt(r?.erro));
       if (!passageiro) return r;
       await esperar(800 * 2 ** t);
     }
     return { ok: false, erro: "o Mercado Livre limitou as consultas" };
   };
+}
+
+/**
+ * (15/11) Diagnóstico de UM anúncio: roda cada leitura da Black Friday e mostra
+ * a resposta real (situação, erro e um resumo do conteúdo). Só GET.
+ */
+export async function diagnosticarAnuncio({ conta, itemId, consultar }) {
+  const c = contaBF(conta);
+  const id = txt(itemId).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!c) throw new Error("Escolha uma das 3 contas.");
+  if (!/^MLB\d+$/.test(id)) throw new Error("Informe o código do anúncio (MLB…).");
+  const etapas = [
+    ["Anúncio", `/items/${id}`],
+    ["Compatibilidades", `/items/${id}/compatibilities`],
+    ["Promoções (seller-promotions)", `/seller-promotions/items/${id}?app_version=v2`],
+    ["Preço de venda (sale_price)", `/items/${id}/sale_price?context=channel_marketplace`],
+    ["Promoções da conta", `/seller-promotions/users/${c.id}?app_version=v2`],
+    ["Frete do anúncio", `/users/${c.id}/shipping_options/free?item_id=${id}&verbose=true`],
+  ];
+  const out = [];
+  for (const [etapa, caminho] of etapas) {
+    const r = await consultar(caminho);
+    out.push({ etapa, caminho, ok: !!r?.ok, status: r?.status ?? null, erro: r?.ok ? null : txt(r?.erro) || "falhou", resumo: r?.ok ? resumirResposta(r.dados) : null });
+    if (etapa === "Compatibilidades" && r?.ok) {
+      const pid = idsCatalogoDaCompatibilidade(r)[0];
+      if (pid) {
+        const pr = await consultar(`/products/${pid}`);
+        out.push({ etapa: "Marca do 1º veículo (catálogo)", caminho: `/products/${pid}`, ok: !!pr?.ok, status: pr?.status ?? null, erro: pr?.ok ? null : txt(pr?.erro) || "falhou", resumo: pr?.ok ? `marca: ${marcaDoProdutoCatalogo(pr) || "não encontrada"} · ${resumirResposta(pr.dados)}` : null });
+      }
+    }
+  }
+  return out;
+}
+
+/** Resumo curto de uma resposta do ML (formato e campos), sem despejar o conteúdo todo. */
+export function resumirResposta(d) {
+  if (Array.isArray(d)) return `lista com ${d.length} item(ns)${d[0] && typeof d[0] === "object" ? `; campos: ${Object.keys(d[0]).slice(0, 12).join(", ")}` : ""}${d.length ? `; 1º: ${JSON.stringify(d[0]).slice(0, 300)}` : ""}`;
+  if (d && typeof d === "object") {
+    const listas = Object.entries(d).filter(([, v]) => Array.isArray(v)).map(([k, v]) => `${k}: ${v.length}`);
+    return `campos: ${Object.keys(d).slice(0, 15).join(", ")}${listas.length ? ` · listas → ${listas.join(", ")}` : ""}${Array.isArray(d.products) && d.products[0] ? ` · 1º veículo: ${JSON.stringify(d.products[0]).slice(0, 300)}` : ""}`;
+  }
+  return txt(d).slice(0, 200);
+}
+
+/** (15/11) Falhas agrupadas por conta e etapa, com o 1º erro de cada grupo. */
+export function agruparFalhas(falhas) {
+  const g = new Map();
+  for (const f of falhas || []) {
+    const k = `${f.conta}|${f.etapa}`;
+    const atual = g.get(k) || { conta: f.conta, etapa: f.etapa, quantidade: 0, erros: new Map() };
+    atual.quantidade++;
+    const e = txt(f.erro) || "sem mensagem";
+    atual.erros.set(e, (atual.erros.get(e) || 0) + 1);
+    g.set(k, atual);
+  }
+  return [...g.values()].map((x) => ({ conta: x.conta, etapa: x.etapa, quantidade: x.quantidade, erros: [...x.erros.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([erro, n]) => ({ erro, n })) })).sort((a, b) => b.quantidade - a.quantidade);
 }
 
 /** Adaptador do Bling: custo_por_sku (somente leitura). */

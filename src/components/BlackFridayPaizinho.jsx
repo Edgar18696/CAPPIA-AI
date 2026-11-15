@@ -10,8 +10,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha } from "../services/blackFriday/calendario";
-import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO, custosDoPerfil, filtrarLinhas, resumirSimulacao, podeAprovar } from "../services/blackFriday/regras";
-import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF } from "../services/blackFriday/leitura";
+import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO, custosDoPerfil, filtrarLinhas, resumirSimulacao, podeAprovar, contarMotivos } from "../services/blackFriday/regras";
+import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, agruparFalhas } from "../services/blackFriday/leitura";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
@@ -42,6 +42,10 @@ export default function BlackFridayPaizinho() {
   const [filtro, setFiltro] = useState({ classe: "", situacao: "", contas: [], busca: "", margemAbaixo: "", soAlertas: false });
   const [marcados, setMarcados] = useState(() => new Set());
   const [mostrar, setMostrar] = useState(POR_PAGINA);
+  const [diagConta, setDiagConta] = useState(CONTAS_BLACK_FRIDAY[0].id);
+  const [diagItem, setDiagItem] = useState("");
+  const [diag, setDiag] = useState(null);
+  const [diagLendo, setDiagLendo] = useState(false);
   const cancelar = useRef(false);
 
   useEffect(() => {
@@ -110,6 +114,16 @@ export default function BlackFridayPaizinho() {
     // Aprovação cujo preço ou situação mudou desde então sai do plano (nunca usa preço antigo).
     const { desatualizadas } = registro.conferirAprovacoes(l);
     setAviso(desatualizadas.length ? `${desatualizadas.length} aprovação(ões) ficaram desatualizadas (preço ou situação mudou) e saíram do plano.` : "");
+  }
+
+  async function diagnosticar() {
+    setDiagLendo(true); setDiag(null);
+    try {
+      const r = await diagnosticarAnuncio({ conta: diagConta, itemId: diagItem, consultar: consultorBF(diagConta, invocar) });
+      setDiag(r);
+      registro?.registrar("diagnostico", { conta: CONTAS_BLACK_FRIDAY.find((c) => c.id === diagConta)?.nome, item: diagItem.trim().toUpperCase(), falhas: r.filter((x) => !x.ok).length });
+    } catch (e) { setDiag([{ etapa: "Diagnóstico", ok: false, erro: String(e?.message || e) }]); }
+    setDiagLendo(false);
   }
 
   function decidir(l, decisao) {
@@ -241,8 +255,12 @@ export default function BlackFridayPaizinho() {
                     <td style={S.td}>{real(l.preco_original)}</td>
                     <td style={S.td}>{l.classe === CLASSES.REVISAO ? "a decidir" : `${l.desconto_pct}%`}</td>
                     <td style={S.td}>{real(l.preco_final)}</td>
-                    <td style={{ ...S.td, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={l.margem_pct === null ? "Margem não verificável" : `Preço ${real(l.preco_final)} − tarifa ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo ${real(l.custo)} − custo/pedido ${real(l.custo_pedido)} = ${real(l.lucro)}`}>
-                      {l.margem_pct === null ? "não verificável" : `${pctTxt(l.margem_pct)} (${real(l.lucro)})`}
+                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 150, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={`Preço ${real(l.preco_final)} − tarifa ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo/pedido ${real(l.custo_pedido)}${l.custo !== null ? ` − custo ${real(l.custo)} = ${real(l.lucro)}` : ` = sobra ${real(l.repasse)} para a peça`}`}>
+                      {l.margem_pct !== null
+                        ? `${pctTxt(l.margem_pct)} (${real(l.lucro)})`
+                        : l.custo === null
+                          ? <><span>Custo não informado — margem não verificável</span>{l.repasse !== null && <><br /><small style={S.base}>Sobra p/ peça: {real(l.repasse)} ({pctTxt(l.repasse_pct)})</small></>}</>
+                          : "não verificável"}
                     </td>
                     <td style={{ ...S.td, whiteSpace: "normal", minWidth: 200 }}>
                       <span style={{ ...S.selo, color: COR_SITUACAO[l.situacao], borderColor: COR_SITUACAO[l.situacao] }}>{aprovado ? "Aprovado (plano)" : ROTULO_SITUACAO[l.situacao]}</span>
@@ -283,6 +301,27 @@ export default function BlackFridayPaizinho() {
       <h3 style={S.h3}>4. Acompanhamento</h3>
       <p style={S.nota}>Ofertas desta campanha ativas no Mercado Livre: <strong>0</strong> (nada foi ativado). {simulado ? `${promosExistentes.length} anúncio(s) já participam de outra promoção (conflito, vão para revisão).` : "Simule para ver as promoções já existentes."}</p>
       {simulado && promosExistentes.length > 0 && <ul style={S.lista}>{promosExistentes.slice(0, 20).map((l) => <li key={l.chave}>{l.conta_nome} · {l.id}: {l.promocoes_ativas.map((p) => `${p.tipo || "?"} (${p.status}${p.preco ? `, ${real(p.preco)}` : ""})`).join(", ")}</li>)}</ul>}
+
+      {/* (15/11) Diagnóstico das leituras: o que falhou e por quê (respostas reais da API). */}
+      <h3 style={S.h3}>Diagnóstico das leituras</h3>
+      {simulado && linhas.length > 0 && <>
+        <p style={S.nota}>O que mais segura os anúncios em revisão ou atenção:</p>
+        <ul style={S.lista}>{contarMotivos(linhas).slice(0, 8).map((m) => <li key={m.motivo}><small><strong>{m.quantidade}</strong> · {m.motivo}</small></li>)}</ul>
+      </>}
+      {leitura?.falhas?.length > 0 ? <>
+        <p style={S.nota}>Leituras com falha na última consulta, por etapa (mensagem real do servidor/ML):</p>
+        <ul style={S.lista}>{agruparFalhas(leitura.falhas).slice(0, 15).map((g) => <li key={`${g.conta}-${g.etapa}`}><small><strong>{g.conta} · {g.etapa}: {g.quantidade}</strong>{g.erros.map((e) => ` — "${e.erro}" (${e.n})`).join("")}</small></li>)}</ul>
+      </> : leitura && <p style={S.nota}>Nenhuma leitura com falha na última consulta.</p>}
+      <div style={S.acoes}>
+        <select value={diagConta} onChange={(e) => setDiagConta(e.target.value)} style={{ ...S.busca, flex: "0 1 170px" }} aria-label="Conta do diagnóstico">
+          {CONTAS_BLACK_FRIDAY.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+        </select>
+        <input value={diagItem} onChange={(e) => setDiagItem(e.target.value)} placeholder="MLB do anúncio para testar" style={{ ...S.busca, flex: "0 1 220px" }} />
+        <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
+      </div>
+      {diag && <div style={S.tabelaCaixa}><table style={S.tabela}><tbody>{diag.map((d, i) => (
+        <tr key={i}><td style={S.td}>{d.ok ? "✅" : "❌"} {d.etapa}</td><td style={{ ...S.td, whiteSpace: "normal" }}><small style={S.base}>{d.caminho}{d.status ? ` · HTTP ${d.status}` : ""}</small><br /><small>{d.ok ? d.resumo : d.erro}</small></td></tr>
+      ))}</tbody></table></div>}
 
       {/* 10. Histórico */}
       <h3 style={S.h3}>5. Histórico de operações e erros</h3>
