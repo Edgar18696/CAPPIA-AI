@@ -2,6 +2,7 @@ import { useState } from "react";
 import { supabase } from "../supabase";
 import RelatorioManhaPaizinho from "./RelatorioManhaPaizinho";
 import RegrasMLAnuncios from "./RegrasMLAnuncios";
+import BlackFridayPaizinho from "./BlackFridayPaizinho";
 
 const TAREFAS = [
   {
@@ -283,6 +284,13 @@ const FUNCOES_CENTRAL = [
     descricao: "Consulta e cruzamento das contas LOJA ONLINE, REVELAÇÃO e CIEBR. Somente leitura.",
     painel: "regras",
   },
+  {
+    id: "black-friday",
+    icone: "🛍️",
+    titulo: "Black Friday",
+    descricao: "Simule e aprove as ofertas de 27 a 30/11 nas 3 contas. Fase 1: só simulação.",
+    painel: "blackfriday",
+  },
 ];
 
 const rolarPara = (id) => setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }), 30);
@@ -304,6 +312,8 @@ export default function CentralPaizinho({ setScreen }) {
   const [executando, setExecutando] = useState(false);
   const [resultadoSite, setResultadoSite] = useState(null);
   const [regrasAbertas, setRegrasAbertas] = useState(false);
+  // (15/11) Black Friday: uma vez aberta, fica montada (só escondida) para não perder a leitura.
+  const [blackFridayAberta, setBlackFridayAberta] = useState(false);
 
   function abrirRegras() {
     setSelecionada(null);
@@ -315,6 +325,7 @@ export default function CentralPaizinho({ setScreen }) {
   function abrirFuncao(f) {
     if (f.destino) { setScreen(f.destino); return; }
     if (f.painel === "regras") { abrirRegras(); return; }
+    if (f.painel === "blackfriday") { setSelecionada(null); setBlackFridayAberta(true); setPainel("blackfriday"); rolarPara("black-friday-paizinho"); return; }
     if (f.painel === "ranqueamento") { setSelecionada(null); setPainel("ranqueamento"); rolarPara("ranqueamento-paizinho"); return; }
     if (f.tarefa) escolher(TAREFAS.find((t) => t.id === f.tarefa));
   }
@@ -512,6 +523,8 @@ export default function CentralPaizinho({ setScreen }) {
 
       {/* Uma vez aberta, a janela de Regras fica montada (só escondida) para não perder a leitura das contas. */}
       {regrasAbertas && <div style={{ display: painel === "regras" ? "block" : "none" }}><RegrasMLAnuncios aoFechar={() => { setRegrasAbertas(false); setPainel("ranqueamento"); }} /></div>}
+
+      {blackFridayAberta && <div style={{ display: painel === "blackfriday" ? "block" : "none" }}><BlackFridayPaizinho /></div>}
 
       {painel === "tarefa" && selecionada && <section id="tarefa-paizinho" style={S.fluxo}>
         <h2 style={S.fluxoTitulo}>{selecionada.icone} {selecionada.titulo}</h2>

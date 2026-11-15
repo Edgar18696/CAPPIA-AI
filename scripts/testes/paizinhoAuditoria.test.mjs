@@ -529,7 +529,8 @@ test("Central (12/11, 2ª): só 4 funções na página; cartões retirados conti
   const src = fs.readFileSync(path.join(RAIZ, "src/components/CentralPaizinho.jsx"), "utf8");
   const bloco = src.slice(src.indexOf("const FUNCOES_CENTRAL"), src.indexOf("const rolarPara"));
   const ids = [...bloco.matchAll(/^\s{4}id: "([a-z-]+)"/gm)].map((m) => m[1]);
-  assert.deepEqual(ids, ["ranqueamento", "precos", "vendas-despesas", "regras-ml"]);
+  // (15/11) 5ª função: Black Friday 2026 (aprovada pelo Edgar).
+  assert.deepEqual(ids, ["ranqueamento", "precos", "vendas-despesas", "regras-ml", "black-friday"]);
   assert.match(bloco, /destino: "centralPrecificacao"/);
   assert.match(bloco, /tarefa: "financeiro"/);
   // Retirados só da página: continuam em TAREFAS.
