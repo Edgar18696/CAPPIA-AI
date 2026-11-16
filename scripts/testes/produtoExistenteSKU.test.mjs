@@ -108,14 +108,95 @@ test("ficha publicada com o MLB da flange: CIEBR/REVELAÇÃO aproveitam os dados
   }
 });
 
-test("ficha com o MLB do PARAFUSO gravado: não vira fonte 'publicada' e o MLB aparece como de outra peça", async () => {
+test("ficha com o MLB do PARAFUSO gravado: lido no ML = outra peça; sem ler = só 'não confirmado' (nunca anúncio)", async () => {
   const fichas = [fichaFlange({ mlb: MLB_PARAFUSO, status: "publicado" })];
-  const q = Q.quadroProdutoExistente({ fichas, reconhecimento: await reconhecer({ fichas, lerRegistro: async () => ({ ok: true, registros: [] }) }) });
+  const ml = mlFalso();
+  const r = await reconhecer({ fichas, ml, lerRegistro: async () => ({ ok: true, registros: [] }) });
+  // Sem a leitura do MLB da ficha: ficha salva ≠ anúncio confirmado.
+  const q0 = Q.quadroProdutoExistente({ fichas, reconhecimento: r });
+  assert.ok(linha(q0, LOJA).naoConfirmados.some((o) => o.mlb === MLB_PARAFUSO));
+  assert.ok(!linha(q0, LOJA).outraPeca.some((o) => o.mlb === MLB_PARAFUSO));
+  // Lido na conta da ficha: o anúncio tem OUTRO SKU.
+  r.identidades = await Q.identidadesDasFichas({ codigo: FLANGE, fichas, reconhecimento: r, consultarML: ml.consultarML });
+  const q = Q.quadroProdutoExistente({ fichas, reconhecimento: r });
   const loja = linha(q, LOJA);
   assert.deepEqual(loja.anuncios.map((a) => a.mlb), [MLB_FLANGE]);
-  assert.ok(loja.outraPeca.some((o) => o.mlb === MLB_PARAFUSO && o.ficha === "ficha-flange"));
+  const o = loja.outraPeca.find((x) => x.mlb === MLB_PARAFUSO);
+  assert.ok(o && o.ficha === "ficha-flange");
+  assert.match(o.motivo, new RegExp(`SKU ${SKU_PARAFUSO}, não ${FLANGE}`));
   assert.equal(q.fonte.publicada, false, "nunca aproveita como publicada pelo MLB de outra peça");
   assert.equal(Q.acaoDaConta(linha(q, CIEBR), q.fonte).tipo, "abrir");
+});
+
+// ---- CIEBR: ficha registra MLB7998291430 e a busca por SKU não o devolve ----
+const MLB_CIEBR = "MLB7998291430";
+const fichasCiebr = () => [fichaFlange({ mlb: MLB_FLANGE, status: "publicado" }), fichaFlange({ id: "ficha-ciebr", conta: CIEBR, mlb: MLB_CIEBR, status: "publicado" })];
+const itemCiebr = (extra = {}) => ({ id: MLB_CIEBR, seller_id: Number(CIEBR), status: "active", title: "Flange Tampa Combustível Uno", attributes: [], ...extra });
+async function quadroCiebr(item) {
+  const fichas = fichasCiebr();
+  const ml = mlFalso({ itens: [itemFlange, ...(item ? [item] : [])] });
+  // A busca da CIEBR (SKU e texto) não devolve o anúncio: só a leitura direta do MLB o acha.
+  const semBuscaCiebr = async (conta, caminho) => (String(conta) === CIEBR && /items\/search/.test(caminho) ? { ok: true, dados: { results: [], paging: { total: 0 } } } : ml.consultarML(conta, caminho));
+  const r = await reconhecer({ fichas, ml: { consultarML: semBuscaCiebr }, lerRegistro: async () => ({ ok: true, registros: [] }) });
+  const antes = ml.chamadas.length;
+  r.identidades = await Q.identidadesDasFichas({ codigo: FLANGE, fichas, reconhecimento: r, consultarML: ml.consultarML });
+  return { q: Q.quadroProdutoExistente({ fichas, reconhecimento: r }), ml, leiturasFichas: ml.chamadas.slice(antes) };
+}
+
+test("CIEBR: MLB da ficha com o SKU só na VARIAÇÃO → confirmado (lido com a conta CIEBR); não duplica", async () => {
+  const { q, ml } = await quadroCiebr(itemCiebr({ variations: [{ id: 9, attributes: [{ id: "SELLER_SKU", value_name: FLANGE }] }] }));
+  const c = linha(q, CIEBR);
+  assert.equal(c.estado, Q.ESTADO_QUADRO.ANUNCIADA);
+  assert.deepEqual(c.anuncios.map((a) => [a.mlb, a.onde, a.daFicha]), [[MLB_CIEBR, "variação 9", true]]);
+  assert.ok(ml.chamadas.some((x) => String(x.conta) === CIEBR && x.caminho === `/items/${MLB_CIEBR}`));
+  assert.equal(Q.acaoDaConta(c, q.fonte).tipo, "nenhuma");
+});
+
+test("CIEBR: SKU no próprio anúncio, a busca não devolve → confirmado pela leitura direta", async () => {
+  const { q } = await quadroCiebr(itemCiebr({ seller_custom_field: FLANGE }));
+  assert.equal(linha(q, CIEBR).estado, Q.ESTADO_QUADRO.ANUNCIADA);
+  assert.equal(linha(q, CIEBR).anuncios[0].onde, "anúncio");
+});
+
+test("CIEBR: MLB da ficha é de OUTRO SKU → 'não é desta peça' com o SKU real; nada usado", async () => {
+  const { q } = await quadroCiebr(itemCiebr({ seller_custom_field: "9999999", title: "Outra peça" }));
+  const c = linha(q, CIEBR);
+  assert.equal(c.anuncios.length, 0);
+  const o = c.outraPeca.find((x) => x.mlb === MLB_CIEBR);
+  assert.match(o.motivo, /SKU 9999999, não 7527362/);
+  assert.equal(o.titulo, "Outra peça");
+});
+
+test("CIEBR: anúncio SEM SKU (nem nas variações) → 'não confirmado', conferir; nunca 'disponível'", async () => {
+  const { q } = await quadroCiebr(itemCiebr({ variations: [{ id: 1, attributes: [] }, { id: 2, attributes: [] }] }));
+  const c = linha(q, CIEBR);
+  assert.equal(c.estado, Q.ESTADO_QUADRO.CONFERIR);
+  assert.match(c.naoConfirmados[0].motivo, /não tem SKU gravado \(nem nas 2 variações\)/);
+  assert.equal(Q.acaoDaConta(c, q.fonte).tipo, "nenhuma");
+});
+
+test("CIEBR: MLB da ficha não lido → 'não confirmado' com o motivo; nada oferecido", async () => {
+  const { q } = await quadroCiebr(null);
+  const c = linha(q, CIEBR);
+  assert.equal(c.estado, Q.ESTADO_QUADRO.CONFERIR);
+  assert.match(c.naoConfirmados[0].motivo, /não foi possível ler no Mercado Livre/);
+});
+
+test("CIEBR: MLB da ficha pertence a OUTRA conta → separado com o vendedor real", async () => {
+  const { q } = await quadroCiebr(itemCiebr({ seller_id: Number(LOJA), seller_custom_field: FLANGE }));
+  assert.match(linha(q, CIEBR).outraPeca.find((o) => o.mlb === MLB_CIEBR).motivo, /pertence ao vendedor 1729335019 \(LOJA ONLINE\)/);
+});
+
+test("CIEBR: anúncio deste SKU, mas ENCERRADO → histórico (não ocupa a conta)", async () => {
+  const { q } = await quadroCiebr(itemCiebr({ seller_custom_field: FLANGE, status: "closed" }));
+  const c = linha(q, CIEBR);
+  assert.equal(c.historico[0].mlb, MLB_CIEBR);
+  assert.equal(c.anuncios.length, 0);
+});
+
+test("identidadesDasFichas só lê (GET /items) e não relê o MLB que a busca já confirmou", async () => {
+  const { leiturasFichas } = await quadroCiebr(itemCiebr({ seller_custom_field: FLANGE }));
+  assert.deepEqual(leiturasFichas.map((x) => [String(x.conta), x.caminho]), [[CIEBR, `/items/${MLB_CIEBR}`]]);
 });
 
 test("conta com ML fora do ar: 'não conferida' e nenhuma ação (nunca vira 'sem anúncio')", async () => {

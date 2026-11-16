@@ -16,7 +16,7 @@ const SELO = {
   [ESTADO_QUADRO.ANUNCIADA]: { txt: "✅ Já anunciada", cor: "#86efac" },
   [ESTADO_QUADRO.EM_ANDAMENTO]: { txt: "⏳ Ficha em andamento", cor: "#93c5fd" },
   [ESTADO_QUADRO.DISPONIVEL]: { txt: "➕ Sem anúncio deste SKU", cor: "#e2e8f0" },
-  [ESTADO_QUADRO.CONFERIR]: { txt: "⚠ Possível anúncio — confira", cor: "#fde68a" },
+  [ESTADO_QUADRO.CONFERIR]: { txt: "⚠ Anúncio não confirmado — confira", cor: "#fde68a" },
   [ESTADO_QUADRO.INCOMPLETA]: { txt: "⏸ Não conferida", cor: "#fde68a" },
 };
 const STATUS_FICHA = { publicado: "publicada", publicado_com_pendencia: "publicada (com pendência)", publicando: "publicando", conferencia_aprovada: "aprovada", rascunho: "rascunho", erro_publicacao: "erro na publicação" };
@@ -98,7 +98,7 @@ export default function ProdutoExistenteSKU({ codigo = "", fichas = [], onPesqui
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <b style={{ minWidth: 110 }}>{l.nome}</b>
                 <span style={{ color: SELO[l.estado].cor, fontSize: 13, flex: "1 1 160px" }}>
-                  {SELO[l.estado].txt}{l.anuncios.length ? `: ${l.anuncios.map((x) => `${x.mlb}${x.status ? ` (${x.status})` : ""}`).join(", ")}` : ""}{l.motivo ? ` — ${l.motivo}` : ""}
+                  {SELO[l.estado].txt}{l.anuncios.length ? `: ${l.anuncios.map((x) => `${x.mlb}${x.status ? ` (${x.status})` : ""}${x.onde ? ` · SKU no ${x.onde}` : ""}`).join(", ")} — confirmado no Mercado Livre` : ""}{l.motivo ? ` — ${l.motivo}` : ""}
                 </span>
                 {(a.tipo === "preparar" || a.tipo === "abrir") && (
                   <button type="button" data-paiia-acao-conta-existente={`${a.tipo}:${l.conta}`} onClick={() => agir(a)} disabled={Boolean(ocupado)} style={{ ...botao, background: ocupado ? "#475569" : "#7c3aed" }}>
@@ -108,8 +108,16 @@ export default function ProdutoExistenteSKU({ codigo = "", fichas = [], onPesqui
               </div>
               {l.outraPeca.length > 0 && (
                 <div data-paiia-mlb-outra-peca={l.outraPeca.map((o) => o.mlb).join(",")} style={{ fontSize: 12, color: "#fca5a5", marginTop: 4 }}>
-                  ⛔ Não é desta peça (nunca usado): {l.outraPeca.map((o) => `${o.mlb} — ${o.motivo}`).join(" · ")}
+                  ⛔ Não é desta peça (nunca usado): {l.outraPeca.map((o) => `${o.mlb} — ${o.motivo}${o.titulo ? ` (“${o.titulo}”)` : ""}`).join(" · ")}
                 </div>
+              )}
+              {(l.naoConfirmados || []).length > 0 && (
+                <div data-paiia-mlb-nao-confirmado={l.naoConfirmados.map((o) => o.mlb).join(",")} style={{ fontSize: 12, color: "#fde68a", marginTop: 4 }}>
+                  ⚠ Só na ficha, NÃO confirmado no Mercado Livre (não é usado; nada é publicado nesta conta até conferir): {l.naoConfirmados.map((o) => `${o.mlb} — ${o.motivo}${o.titulo ? ` (“${o.titulo}”)` : ""}`).join(" · ")}
+                </div>
+              )}
+              {(l.historico || []).length > 0 && (
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>Histórico: {l.historico.map((o) => `${o.mlb} — ${o.motivo}`).join(" · ")}</div>
               )}
               {l.possiveis.length > 0 && (
                 <div style={{ fontSize: 12, color: "#fde68a", marginTop: 4 }}>⚠ Parecidos (SKU diferente): {l.possiveis.map((p) => `${p.mlb} — ${p.motivo}`).join(" · ")}</div>

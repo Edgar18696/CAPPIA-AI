@@ -114,3 +114,20 @@ test("texto para copiar não leva token/chave; tela é temporária, recolhida e 
   const t = textoDiagnostico({ sku: SKU, mlb: MLB, conta: CONTA, pontos: [{ nivel: "ok", item: "X", texto: "y" }], fichas: [], registros: [] });
   assert.ok(!/token|Bearer/i.test(t));
 });
+
+test("(16/11) SKU só na VARIAÇÃO: o diagnóstico lê o SKU das variações (antes parecia 'sem SKU')", async () => {
+  const { deps } = mundo({ skuAttr: "" });
+  const base = deps.consultarML;
+  deps.consultarML = async (conta, caminho) => {
+    const r = await base(conta, caminho);
+    if (r?.ok && r.dados?.id === MLB) r.dados.variations = [{ id: 111, attributes: [{ id: "SELLER_SKU", value_name: SKU }] }, { id: 222, attributes: [] }];
+    return r;
+  };
+  const d = await diagnosticarPublicacao({ sku: SKU }, deps);
+  assert.deepEqual(nivel(d, "SKU no ML"), ["ok"]);
+  assert.deepEqual(d.ml.skus_variacoes.map((v) => v.id), ["111", "222"]);
+  const linha = d.mlbs.find((x) => x.mlb === MLB);
+  assert.equal(linha.sku, SKU);
+  assert.equal(linha.variacoes, 2);
+  assert.ok(!d.pontos.some((p) => p.item === "MLB de outro produto"));
+});

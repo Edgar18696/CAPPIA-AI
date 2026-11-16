@@ -19,6 +19,8 @@
 // =============================================================
 import { ESTADO_RECONHECIMENTO } from "./reconhecimentoSKU.js";
 import { nomeContaPublicacao } from "./contasPublicacaoML.js";
+import { normalizarCodigoComparacao, skusDoAnuncio } from "./duplicidadeML.js";
+import { situacaoDoItemML } from "./registroMLB.js";
 
 /** Ordem de exibição pedida: LOJA ONLINE, CIEBR, REVELAÇÃO. */
 export const ORDEM_CONTAS_QUADRO = Object.freeze(["1729335019", "824312524", "2412238242"]);
@@ -38,6 +40,78 @@ const MLB = (v) => {
   return /^MLB\d{6,}$/.test(t) ? t : "";
 };
 const PUBLICADOS = ["publicado", "publicado_com_pendencia", "publicando"];
+
+// -------------------------------------------------------------
+// (16/11) FICHA SALVA × ANÚNCIO CONFIRMADO. Um MLB gravado numa ficha só vale como anúncio
+// deste SKU depois de o PRÓPRIO anúncio ser lido no ML, na conta da ficha, com o SKU do
+// anúncio OU de uma VARIAÇÃO igual ao código. Caso real: CIEBR, ficha com MLB7998291430.
+// -------------------------------------------------------------
+export const IDENTIDADE = Object.freeze({
+  CONFIRMADO: "confirmado",
+  OUTRO_SKU: "outro_sku",
+  SEM_SKU: "sem_sku",
+  OUTRA_CONTA: "outra_conta",
+  NAO_LIDO: "nao_lido",
+});
+
+/** MLBs gravados nas fichas (publicação ou registro do Bling), com a conta de cada um. */
+export function mlbsDasFichas(fichas = []) {
+  const out = new Map();
+  for (const f of fichasExistentes(fichas)) {
+    const conta = idConta(f.publicacao?.ml_user_id || f.conta_destino_ml_user_id);
+    for (const m of [f.publicacao?.mlb_id, f.integracao_bling?.mlb].map(MLB).filter(Boolean)) {
+      if (!out.has(m)) out.set(m, { mlb: m, conta, ficha: txt(f.id) });
+    }
+  }
+  return [...out.values()];
+}
+
+/** SKU de cada variação do anúncio (id da variação + SKUs). */
+function skusDasVariacoes(item) {
+  const valor = (lista, id) => (Array.isArray(lista) ? lista : []).find((a) => a?.id === id)?.value_name || "";
+  return (Array.isArray(item?.variations) ? item.variations : []).map((v) => ({
+    id: txt(v?.id),
+    skus: [v?.seller_custom_field, valor(v?.attributes, "SELLER_SKU"), valor(v?.attribute_combinations, "SELLER_SKU")].map(txt).filter(Boolean),
+  }));
+}
+
+/**
+ * Identidade REAL de um MLB lido no ML (resp = ml_consulta GET /items/<MLB> na conta da ficha).
+ * → { mlb, conta, tipo, onde, skus, variacoes, status, situacao, titulo, vendedor, motivo }
+ */
+export function identidadeMLB({ mlb, conta, sku, resp }) {
+  const m = MLB(mlb);
+  const base = { mlb: m, conta: idConta(conta), skus: [], variacoes: [], status: "", situacao: "", titulo: "", vendedor: "", onde: "" };
+  if (!resp || resp.ok !== true || !resp.dados?.id) return { ...base, tipo: IDENTIDADE.NAO_LIDO, motivo: `não foi possível ler no Mercado Livre (${txt(resp?.erro) || "sem resposta"})` };
+  const it = resp.dados;
+  const r = { ...base, status: txt(it.status), situacao: situacaoDoItemML(it), titulo: txt(it.title).slice(0, 90), vendedor: idConta(it.seller_id), variacoes: skusDasVariacoes(it), skus: skusDoAnuncio(it) };
+  if (MLB(it.id) !== m) return { ...r, tipo: IDENTIDADE.NAO_LIDO, motivo: "o Mercado Livre devolveu outro anúncio" };
+  if (r.vendedor !== r.conta) return { ...r, tipo: IDENTIDADE.OUTRA_CONTA, motivo: `pertence ao vendedor ${r.vendedor} (${nomeContaPublicacao(r.vendedor)}), não a ${nomeContaPublicacao(r.conta)}` };
+  const alvo = normalizarCodigoComparacao(sku);
+  const doAnuncio = skusDoAnuncio({ ...it, variations: [] });
+  if (doAnuncio.some((s) => normalizarCodigoComparacao(s) === alvo)) return { ...r, tipo: IDENTIDADE.CONFIRMADO, onde: "anúncio", motivo: "" };
+  const v = r.variacoes.find((x) => x.skus.some((s) => normalizarCodigoComparacao(s) === alvo));
+  if (v) return { ...r, tipo: IDENTIDADE.CONFIRMADO, onde: `variação ${v.id}`, motivo: "" };
+  if (!r.skus.length) return { ...r, tipo: IDENTIDADE.SEM_SKU, motivo: `o anúncio não tem SKU gravado (nem nas ${r.variacoes.length} variações)` };
+  return { ...r, tipo: IDENTIDADE.OUTRO_SKU, motivo: `o anúncio tem o SKU ${[...new Set(r.skus)].join(" / ")}, não ${txt(sku)}` };
+}
+
+/**
+ * Lê no ML (somente leitura, na conta de cada ficha) os MLBs gravados nas fichas que a busca
+ * por SKU não confirmou. consultarML(conta, caminho) → ml_consulta GET. Nunca lança.
+ */
+export async function identidadesDasFichas({ codigo, fichas = [], reconhecimento = null, consultarML }) {
+  // Confirmado pela busca NA MESMA CONTA da ficha (MLB de outra conta gravado nesta ficha é lido e apontado).
+  const jaConfirmados = new Set((reconhecimento?.contas || []).flatMap((c) => (c.anuncios || []).filter((a) => !a.divergente).map((a) => `${idConta(c.conta)}:${MLB(a.mlb)}`)));
+  const out = [];
+  for (const x of mlbsDasFichas(fichas)) {
+    if (jaConfirmados.has(`${x.conta}:${x.mlb}`) || !x.conta) continue;
+    let resp;
+    try { resp = await consultarML(x.conta, `/items/${x.mlb}`); } catch (e) { resp = { ok: false, erro: txt(e?.message || e) }; }
+    out.push({ ...identidadeMLB({ mlb: x.mlb, conta: x.conta, sku: codigo, resp }), ficha: x.ficha });
+  }
+  return out;
+}
 
 /** Fichas deste código que contam (não canceladas, nem a ficha aberta agora). */
 export function fichasExistentes(anuncios = [], fichaAtualId = "") {
@@ -71,24 +145,39 @@ export function quadroProdutoExistente({ fichas = [], reconhecimento = null } = 
     const outraPeca = (rc?.anuncios || []).filter((a) => a.divergente).map((a) => ({ mlb: MLB(a.mlb), motivo: "o anúncio no Mercado Livre tem OUTRO SKU (não é desta peça)" }));
     const possiveis = (rc?.possiveis || []).map((p) => ({ mlb: MLB(p.mlb), motivo: txt(p.motivo) || "mesmo código no título/número da peça, SKU diferente" }));
     const fichasConta = lista.filter((f) => idConta(f.publicacao?.ml_user_id || f.conta_destino_ml_user_id) === conta);
-    // MLB gravado numa ficha desta conta que o ML NÃO confirma com este SKU: suspeito (nunca usado).
-    const verificada = rc && rc.estado !== ESTADO_RECONHECIMENTO.INCOMPLETA;
-    for (const f of fichasConta) {
-      const m = MLB(f.publicacao?.mlb_id);
-      if (m && verificada && !anuncios.some((a) => a.mlb === m) && !outraPeca.some((o) => o.mlb === m)) {
-        outraPeca.push({ mlb: m, ficha: txt(f.id), motivo: "gravado na ficha, mas o Mercado Livre não confirma este SKU nesse anúncio" });
+    // (16/11) MLB gravado numa FICHA desta conta: só conta como anúncio depois de LIDO no ML
+    // (identidade real, inclusive SKU das variações). Ficha salva ≠ anúncio confirmado.
+    const identidades = (reconhecimento?.identidades || []).filter((i) => idConta(i.conta) === conta);
+    const naoConfirmados = [];
+    const historico = [];
+    for (const x of mlbsDasFichas(lista).filter((y) => y.conta === conta)) {
+      if (anuncios.some((a) => a.mlb === x.mlb) || outraPeca.some((o) => o.mlb === x.mlb)) continue;
+      const id = identidades.find((i) => i.mlb === x.mlb);
+      if (!id) {
+        naoConfirmados.push({ mlb: x.mlb, ficha: x.ficha, motivo: "gravado na ficha; o anúncio ainda não foi lido no Mercado Livre" });
+      } else if (id.tipo === IDENTIDADE.CONFIRMADO && ["encerrado", "excluido"].includes(id.situacao)) {
+        historico.push({ mlb: x.mlb, ficha: x.ficha, motivo: `anúncio deste SKU, mas ${id.situacao} no Mercado Livre (histórico)` });
+      } else if (id.tipo === IDENTIDADE.CONFIRMADO) {
+        anuncios.push({ mlb: x.mlb, status: id.status, registrado: false, daFicha: true, onde: id.onde });
+        confirmados.add(x.mlb);
+      } else if (id.tipo === IDENTIDADE.OUTRO_SKU || id.tipo === IDENTIDADE.OUTRA_CONTA) {
+        outraPeca.push({ mlb: x.mlb, ficha: x.ficha, motivo: id.motivo, titulo: id.titulo });
+      } else {
+        naoConfirmados.push({ mlb: x.mlb, ficha: x.ficha, motivo: id.motivo, titulo: id.titulo });
       }
     }
     const andamento = fichasConta.find((f) => !MLB(f.publicacao?.mlb_id) && !PUBLICADOS.includes(f.status_fluxo));
     let estado;
     if (anuncios.length) estado = ESTADO_QUADRO.ANUNCIADA;
+    // MLB da ficha sem confirmação (sem SKU, não lido): confira antes — nunca "disponível" (não duplica).
+    else if (naoConfirmados.length) estado = ESTADO_QUADRO.CONFERIR;
     else if (rc?.estado === ESTADO_RECONHECIMENTO.INCOMPLETA || (reconhecimento && !rc)) estado = ESTADO_QUADRO.INCOMPLETA;
     else if (andamento) estado = ESTADO_QUADRO.EM_ANDAMENTO;
     else if (possiveis.length) estado = ESTADO_QUADRO.CONFERIR;
     else if (!reconhecimento) estado = ESTADO_QUADRO.INCOMPLETA; // sem a leitura do ML não se afirma "disponível"
     else estado = ESTADO_QUADRO.DISPONIVEL;
     return {
-      conta, nome, estado, anuncios, outraPeca, possiveis,
+      conta, nome, estado, anuncios, outraPeca, possiveis, naoConfirmados, historico,
       fichaAndamento: andamento ? txt(andamento.id) : "",
       motivo: estado === ESTADO_QUADRO.INCOMPLETA ? (txt(rc?.motivo) || (reconhecimento ? "conta não conferida" : "anúncios do Mercado Livre ainda não lidos")) : "",
     };
