@@ -3,7 +3,7 @@ import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
 import AutorizacaoUnicaPublicacao from "./AutorizacaoUnicaPublicacao";
-import { nomeContaPublicacao, CONTAS_PUBLICACAO_ML } from "../services/contasPublicacaoML";
+import { nomeContaPublicacao, CONTAS_PUBLICACAO_ML, autorizacaoTemContaEscolhida } from "../services/contasPublicacaoML";
 import FilaContasPublicacao from "./FilaContasPublicacao";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
@@ -1610,6 +1610,26 @@ function moverFoto(
   const [anuncioIdPAIIA, setAnuncioIdPAIIA] = useState(() =>
     String(fichaSalva?.campos?.anuncioIdPAIIA || fichaIdDoAnuncio || "")
   );
+  // (16/11) ERRO 1 — nº de autorização da URL (?auto=) só vale se a conta foi ESCOLHIDA no painel das três
+  // contas desta ficha. Sem a escolha (PAIIA Voz, conta ativa, endereço antigo): não publica, tira o ?auto=
+  // e mostra LOJA ONLINE, CIEBR e REVELAÇÃO para escolher. Nada é publicado enquanto isso.
+  const [autoConferido, setAutoConferido] = useState("");
+  const [semEscolhaDeConta, setSemEscolhaDeConta] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    if (!autoPiloto) { setAutoConferido(""); return undefined; }
+    if (!anuncioIdPAIIA) return undefined;
+    (async () => {
+      const r = await obterAnuncio(anuncioIdPAIIA).catch(() => null);
+      if (!vivo) return;
+      if (r?.ok && autorizacaoTemContaEscolhida(r.anuncio?.dados_conferencia?.contas_publicacao)) { setAutoConferido(autoPiloto); return; }
+      setAutoConferido("");
+      setAutoPiloto("");
+      setSemEscolhaDeConta(true);
+      try { const u = new URL(window.location.href); u.searchParams.delete("auto"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch { /* sem URL */ }
+    })();
+    return () => { vivo = false; };
+  }, [autoPiloto, anuncioIdPAIIA]);
   // =====================================================
   // FOTOS POR ID DA FICHA (services/fotosDaFicha). Lê a ficha na base (só
   // LEITURA) para saber as fotos do Novo Anúncio DESTA ficha, a marca e o
@@ -5025,6 +5045,11 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               nomePeca={nomePeca}
             />
             </div>
+            {semEscolhaDeConta && !autoConferido && (
+              <section data-paiia-escolha-conta-obrigatoria style={{ ...bloco, borderColor: "#f59e0b", color: "#fde68a", fontSize: 14 }}>
+                ⚠ A publicação chegou sem a conta escolhida: nada foi publicado. Escolha abaixo LOJA ONLINE, CIEBR ou REVELAÇÃO.
+              </section>
+            )}
             <AutorizacaoUnicaPublicacao
               anuncioId={anuncioIdPAIIA}
               sku={anuncioConferido?.codigo || ""}
@@ -5036,7 +5061,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               contas={contasMLDisponiveis}
               dadosFrete={{ registro: registroFreteConf || null, medida: anuncioConferido?.logistica?.medida || registroFreteConf?.medida || null, categoria: anuncioConferido?.categoriaId || registroFreteConf?.categoria || "", tipoAnuncio: anuncioConferido?.tipoAnuncio || registroFreteConf?.tipoAnuncio || "" }}
               onAutorizar={(contaId, id, plano) => { setPlanoContas(plano || null); setContaDestinoML(contaId); setVersaoRevisaoML((v) => v + 1); setAutoPiloto(id); }}
-              ativo={Boolean(autoPiloto) || publicacaoManual}
+              ativo={Boolean(autoConferido) || publicacaoManual}
               onManual={(contaId, plano) => {
                 // (14/11) Conta confirmada que não é a LOJA ONLINE: Publicação de sempre, já com a conta
                 // gravada na ficha; publicar continua dependendo do seu toque. Sem conta = modo manual (correção).
@@ -5054,7 +5079,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             <PilotoAutomaticoPublicacao
               conta={contaDestinoML || ""}
               sku={anuncioConferido?.codigo || ""}
-              autoId={autoPiloto}
+              autoId={autoConferido}
               anuncioId={anuncioIdPAIIA}
               quantidade={quantidadeEstoque}
               onCorrigir={({ item, etapa }) => {
@@ -5092,7 +5117,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
             <RevisaoPublicacaoML
               key={`revisao-ml-${versaoRevisaoML}`}
               contasPermitidas={planoContas ? [planoContas.conta_desta_ficha] : null}
-              autoPublicacao={autoPiloto}
+              autoPublicacao={autoConferido}
               anuncio={registroFreteConf ? { ...anuncioConferido, freteML: registroFreteConf } : anuncioConferido}
               titulo={anuncioConferido.titulo}
               contaDestino={contaDestinoML}

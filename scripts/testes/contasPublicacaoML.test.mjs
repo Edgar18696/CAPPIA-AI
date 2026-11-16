@@ -226,7 +226,7 @@ test("12) telas: seletor de conta saiu do frete do Novo Anúncio; Publicação e
   assert.ok(a.includes("verificarContasPublicacao({") && a.includes("selecao: todas,"), "as três contas conferidas, cada uma separada");
   assert.ok(a.includes("data-paiia-confirmar-publicacao={l.conta}") && a.includes('l.acao.tipo === "publicar"'), "um botão por conta liberada");
   assert.ok(a.indexOf("onAutorizar?.(") > a.indexOf("async function confirmar(linha)"), "piloto só depois do 2º clique");
-  assert.ok(a.includes("if (ocupado || !valida || linha?.acao?.tipo !== \"publicar\") return;"), "sem conferência válida não há publicação");
+  assert.ok(a.includes("if (ocupado || !valida || linha?.acao?.tipo !== \"publicar\" || linha.conta !== escolhida) return;"), "sem conferência válida da conta ESCOLHIDA não há publicação");
   const efeito = a.slice(a.indexOf("useEffect(() => {"), a.indexOf("}, [anuncioId]);"));
   assert.ok(efeito.includes("obterAnuncio(anuncioId)") && !/conferir\(|confirmar\(|retomar\(|onAutorizar|onManual|registrarContasPublicacao/.test(efeito), "abrir a ficha não confere nem confirma nada sozinho");
   const m = ler("src/components/MercadoLivreTeste.jsx");

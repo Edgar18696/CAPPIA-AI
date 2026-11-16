@@ -80,7 +80,7 @@ test("8200263342 — produto EXCLUÍDO do Bling e nenhum anúncio: as 3 contas P
   for (const l of res.linhas) {
     assert.equal(l.estado, E.PENDENTE, l.nome);
     assert.equal(l.acao.tipo, "publicar");
-    assert.equal(l.acao.texto, `✅ Confirmar Publicação na ${l.nome}`);
+    assert.equal(l.acao.texto, `✅ Autorizar e Publicar na ${l.nome}`);
   }
   assert.equal(res.bling.cadastrar, true);
   assert.match(res.bling.texto, /cadastro protegido: confere o SKU antes e nunca duplica/);
@@ -170,7 +170,7 @@ test("anúncio parecido (mesmo código no título, SKU diferente): CONFERIR — 
   const { linha } = await finalizar({ itens: [parecido] });
   assert.equal(linha(CIEBR).estado, E.CONFERIR);
   assert.equal(linha(CIEBR).acao.conferida, true);
-  assert.match(linha(CIEBR).acao.texto, /Confirmar Publicação na CIEBR \(conferi: não é o mesmo anúncio\)/);
+  assert.match(linha(CIEBR).acao.texto, /Autorizar e Publicar na CIEBR \(conferi: não é o mesmo anúncio\)/);
 });
 
 test("outra ficha do SKU em andamento na CIEBR: IMPEDIDO (continue por ela, não duplica)", async () => {
@@ -231,14 +231,78 @@ test("piloto LOJA ONLINE: continua conferindo o vínculo como antes", async () =
 });
 
 // ---- Tela: exatamente dois toques ----
-test("tela: só dois toques de publicação — 'Conferir e Publicar' e 'Confirmar Publicação na <conta>' — nas três contas", () => {
+test("tela: 1º escolher a conta (confere sozinho), 2º um único botão 'Autorizar e Publicar' só na conta escolhida", () => {
   const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
-  assert.ok(a.includes('"🔎 Conferir e Publicar"'));
-  assert.ok(a.includes("onClick={conferir}") && a.includes("onClick={() => confirmar(l)}"));
+  assert.ok(a.includes("ORDEM_CONTAS_QUADRO.map((conta) => {") && a.includes("onClick={() => conferir(conta)}"), "os 3 botões de conta; tocar confere");
+  assert.ok(a.includes("l.conta === escolhida && l.acao.tipo === \"publicar\"") && a.includes("onClick={() => confirmar(l)}"), "botão de autorização só na conta escolhida");
+  assert.ok(a.includes("|| linha.conta !== escolhida) return;"));
   assert.ok(!a.includes('type="checkbox"'), "sem caixas de marcar nem 'autorizo' separado");
   assert.ok(a.includes("onAutorizar?.(linha.conta, id, plano);") && !a.includes("CONTA_PUBLICACAO_AUTOMATICA"), "piloto para qualquer das 3 contas");
   const pil = ler("src/components/PilotoAutomaticoPublicacao.jsx");
   assert.ok(pil.includes("vinculoAplicavel: () => Boolean(lojaBlingDaConta(dadosRef.current.conta || conta))"));
   const m = ler("src/components/MercadoLivreTeste.jsx");
   assert.ok(m.includes("fotos={Array.isArray(anuncioConferido?.fotos) ? anuncioConferido.fotos.length : 0}"));
+});
+
+// =============================================================
+// (16/11) ERRO 1 — publicação sem a conta escolhida no painel
+// =============================================================
+const { autorizacaoTemContaEscolhida } = await import("../../src/services/contasPublicacaoML.js");
+
+test("ERRO 1: ?auto= só vale com a conta ESCOLHIDA no painel (plano confirmado); o resto mostra as 3 contas", () => {
+  assert.equal(autorizacaoTemContaEscolhida(null), false, "PAIIA Voz / conta ativa: sem plano → não publica");
+  assert.equal(autorizacaoTemContaEscolhida({ pendente: true, sugeridas: [LOJA] }), false, "ficha preparada para outra conta, ainda sem escolha");
+  assert.equal(autorizacaoTemContaEscolhida({ conta_desta_ficha: LOJA }), false, "sem a hora da confirmação");
+  assert.equal(autorizacaoTemContaEscolhida({ conta_desta_ficha: "123", confirmado_em: "2026-11-16T15:00:00Z" }), false, "conta fora das 3");
+  for (const c of [LOJA, CIEBR, REV]) assert.equal(autorizacaoTemContaEscolhida(montarPlanoContas({ selecao: [c], resultados: [liberada(c)] })), true, c);
+});
+
+test("ERRO 1 (tela): piloto e revisão só recebem o nº conferido; sem escolha, tira o ?auto= e avisa", () => {
+  const m = ler("src/components/MercadoLivreTeste.jsx");
+  assert.ok(m.includes("autoId={autoConferido}") && m.includes("autoPublicacao={autoConferido}") && m.includes("ativo={Boolean(autoConferido) || publicacaoManual}"));
+  assert.ok(!m.includes("autoId={autoPiloto}") && !m.includes("autoPublicacao={autoPiloto}"), "o nº cru da URL não chega ao piloto");
+  const ef = m.slice(m.indexOf("const [autoConferido, setAutoConferido]"), m.indexOf("}, [autoPiloto, anuncioIdPAIIA]);"));
+  assert.ok(ef.includes("autorizacaoTemContaEscolhida(r.anuncio?.dados_conferencia?.contas_publicacao)"));
+  assert.ok(ef.includes('u.searchParams.delete("auto")') && ef.includes("setSemEscolhaDeConta(true)"));
+  assert.ok(!/publicar|registrar|salvar|criar/i.test(ef.replace(/\/\/.*$/gm, "")), "a conferência do nº só lê");
+  assert.ok(m.includes("data-paiia-escolha-conta-obrigatoria"));
+});
+
+// =============================================================
+// (16/11) ERRO 2 — SKU fora da busca do Bling com produto registrado (caso 8200263342 / ID 16736249318)
+// =============================================================
+test("ERRO 2: SKU não achado e produto Bling 16736249318 registrado → IMPEDIDO nas 3 contas; explica; não cadastra nem manda excluir", async () => {
+  const { res } = await finalizar({ bling: BLING.excluido });
+  const r2 = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro: { linhas: [], bling: { estado: "nao_encontrado" } }, verificacoes: todasLiberadas(), fotos: 3, blingRegistrados: [{ produto_id: "16736249318" }], sku: SKU });
+  assert.equal(r2.bling.ok, false);
+  assert.deepEqual(r2.bling.foraDaBusca, ["16736249318"]);
+  assert.match(r2.bling.texto, /não é encontrado pela busca do Bling, mas o PAIIA tem o produto Bling 16736249318 registrado/);
+  assert.match(r2.bling.texto, /EXCLUÍDO \(lixeira\), INATIVO ou com o CÓDIGO ALTERADO/);
+  assert.match(r2.bling.texto, /O PAIIA não cria outro produto e não pede para excluir nada/);
+  assert.ok(!/cadastra o produto/.test(r2.bling.texto));
+  for (const l of r2.linhas) { assert.equal(l.estado, E.IMPEDIDO); assert.equal(l.acao.tipo, "nenhuma"); }
+  assert.equal(res.bling.cadastrar, true, "sem produto registrado (nunca existiu): cadastro protegido continua");
+});
+
+test("ERRO 2: busca acha OUTRO ID que o registrado → reaproveita e avisa para conferir duplicidade no Bling", () => {
+  const b = F.situacaoBling({ estado: "encontrado", produto: { id: "16000000999", codigo: SKU } }, { registrados: [{ produto_id: "16736249318" }], sku: SKU });
+  assert.equal(b.ok, true);
+  assert.match(b.texto, /registrava o produto 16736249318; a busca pelo SKU acha o 16000000999/);
+});
+
+test("ERRO 2: o piloto continua parando em 'produto registrado' (não cria) — mesma regra da conferência", async () => {
+  const { decidirCriacaoBling } = await import("../../src/services/estoqueBlingPAIIA.js");
+  const d = decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: [{ produto_id: "16736249318", ficha: "f1" }] });
+  assert.equal(d.acao, "produto_registrado");
+  assert.match(d.motivo, /O PAIIA NÃO cria outro produto/);
+});
+
+test("teste controlado nas 3 contas: escolher cada conta leva ao botão SÓ daquela conta (nada publicado)", async () => {
+  const { res, ml } = await finalizar({ bling: BLING.existe });
+  for (const c of [LOJA, CIEBR, REV]) {
+    const l = res.linhas.find((x) => x.conta === c);
+    assert.equal(l.estado, E.PENDENTE);
+    assert.equal(l.acao.texto, `✅ Autorizar e Publicar na ${l.nome}`);
+  }
+  assert.ok(ml.chamadas.every((x) => !/publicar/.test(x.caminho)), "só leituras");
 });

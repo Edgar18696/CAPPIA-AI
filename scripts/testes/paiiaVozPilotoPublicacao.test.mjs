@@ -34,7 +34,8 @@ test("4) Novo Anúncio: a MESMA autorização única abre o MESMO piloto (nas 3 
   assert.ok(a.includes("sessionStorage.getItem(CHAVE(fichaDaAut))") /* (15/11) nº reaproveitado só para a MESMA ficha com ID */ && a.includes("onAutorizar?.(linha.conta, id, plano);"));
   assert.ok(!a.includes('=== "LOJA ONLINE"'), "(16/11) o piloto não é mais só da LOJA ONLINE");
   const m = ler("src/components/MercadoLivreTeste.jsx");
-  assert.ok(m.includes("<AutorizacaoUnicaPublicacao") && m.includes("autoId={autoPiloto}"));
+  // (16/11) O piloto só recebe o nº depois de conferida a conta ESCOLHIDA no painel (autoConferido).
+  assert.ok(m.includes("<AutorizacaoUnicaPublicacao") && m.includes("autoId={autoConferido}"));
   const p = ler("src/services/pilotoPublicacao.js");
   assert.ok(p.includes('visivel("[data-paiia-confirmar-criar-bling]")'), "cadastro no Bling pelo mesmo botão protegido da Publicação");
 });

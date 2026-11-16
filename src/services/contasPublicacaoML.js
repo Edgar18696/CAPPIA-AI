@@ -41,6 +41,16 @@ export function nomeContaPublicacao(id) {
   return CONTAS_PUBLICACAO_ML.find((c) => c.id === idConta(id))?.nome || `Conta ${idConta(id) || "?"}`;
 }
 
+/**
+ * (16/11) ERRO 1 — a publicação automática só roda com a conta ESCOLHIDA por você no painel das três
+ * contas (2º clique grava contas_publicacao com a conta e a hora). Chegar com ?auto= de outro caminho
+ * (PAIIA Voz, conta ativa, endereço antigo) NÃO publica: a tela mostra as três contas para escolher.
+ */
+export function autorizacaoTemContaEscolhida(plano) {
+  const c = idConta(plano?.conta_desta_ficha);
+  return Boolean(plano && plano.pendente !== true && txt(plano.confirmado_em) && CONTAS_PUBLICACAO_ML.some((x) => x.id === c));
+}
+
 /** Seleção → ids válidos, sem repetição, sempre na ordem LOJA ONLINE, REVELAÇÃO, CIEBR. */
 export function normalizarContasSelecionadas(selecao) {
   const marcadas = new Set();
