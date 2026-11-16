@@ -18,6 +18,7 @@ import { quadroProdutoExistente, ORDEM_CONTAS_QUADRO } from "../services/produto
 import { ESTADO_FINAL, situacaoFinalDasContas } from "../services/finalizacaoPublicacao";
 import { envioPendenteDaFicha, retomarPublicacao } from "../services/publicacaoVerificada";
 import { registroPublicado } from "../services/vinculoBlingPublicacao";
+import { enderecoDaFicha } from "../services/fichasCentral";
 import { produtosBlingRegistradosDoSku, idsBlingDescartados, semBlingDescartados } from "../services/estoqueBlingPAIIA";
 
 const CHAVE = (id) => `paiiaAutorizacaoPublicacao:${id}`;
@@ -206,6 +207,12 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
               <button type="button" data-paiia-confirmar-publicacao={l.conta} onClick={() => confirmar(l)} disabled={Boolean(ocupado)}
                 style={{ ...botao, marginTop: 8, background: ocupado ? "#334155" : "#16a34a", cursor: ocupado ? "wait" : "pointer" }}>
                 {ocupado === l.conta ? "⏳ Gravando a conta na ficha…" : l.acao.texto}
+              </button>
+            )}
+            {l.conta === escolhida && l.acao.outraFicha && (
+              <button type="button" data-paiia-abrir-outra-ficha={l.acao.outraFicha} onClick={() => { try { window.location.assign(enderecoDaFicha(window.location.href, l.acao.outraFicha)); } catch { /* sem navegação */ } }} disabled={Boolean(ocupado)}
+                style={{ marginTop: 6, background: "none", border: "none", color: "#93c5fd", textDecoration: "underline", cursor: "pointer", fontSize: 13 }}>
+                Abrir a outra ficha ({l.acao.outraFicha.slice(0, 8)}) em vez desta
               </button>
             )}
             {l.conta === escolhida && l.acao.tipo === "retomar" && (

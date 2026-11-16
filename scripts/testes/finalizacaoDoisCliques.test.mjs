@@ -173,11 +173,24 @@ test("anúncio parecido (mesmo código no título, SKU diferente): CONFERIR — 
   assert.match(linha(CIEBR).acao.texto, /Autorizar e Publicar na CIEBR \(conferi: não é o mesmo anúncio\)/);
 });
 
-test("outra ficha do SKU em andamento na CIEBR: IMPEDIDO (continue por ela, não duplica)", async () => {
-  const fichas = [fichaAtual(), fichaAtual({ id: "ficha-ciebr-123", conta_destino_ml_user_id: CIEBR })];
-  const { linha } = await finalizar({ fichas });
-  assert.equal(linha(CIEBR).estado, E.IMPEDIDO);
-  assert.match(linha(CIEBR).motivos.join(" "), /Outra ficha deste SKU está em andamento nesta conta \(ficha-ci\)/);
+test("outra ficha do SKU em andamento na conta (caso da tela: e9171391 na LOJA): não impede; publica por esta ou abre a outra", async () => {
+  const fichas = [fichaAtual(), fichaAtual({ id: "e9171391-aaaa-4bbb-8ccc-000000000000", conta_destino_ml_user_id: LOJA })];
+  const { linha } = await finalizar({ fichas, bling: BLING.existe });
+  const l = linha(LOJA);
+  assert.equal(l.estado, E.CONFERIR);
+  assert.equal(l.acao.tipo, "publicar");
+  assert.equal(l.acao.outraFicha, "e9171391-aaaa-4bbb-8ccc-000000000000");
+  assert.equal(l.acao.conferida, false, "não é confirmação de duplicidade no ML");
+  assert.equal(l.acao.texto, "✅ Autorizar e Publicar na LOJA ONLINE · a ficha e9171391 continua salva, sem publicar");
+  assert.match(l.motivos[0], /Outra ficha deste SKU \(e9171391\) está em andamento nesta conta, ainda sem publicar/);
+  // Com o produto Bling antigo fora da busca (a tela do 8200263342): um único botão com as duas informações.
+  const r = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro: { linhas: [{ conta: LOJA, estado: Q.ESTADO_QUADRO.EM_ANDAMENTO, fichaAndamento: "e9171391-x", anuncios: [], outraPeca: [], possiveis: [], naoConfirmados: [], historico: [] }], bling: { estado: "nao_encontrado" } }, verificacoes: todasLiberadas(), fotos: 3, blingRegistrados: [{ produto_id: "16736249318" }], sku: SKU });
+  const lo = r.linhas.find((x) => x.conta === LOJA);
+  assert.equal(lo.estado, E.CONFERIR);
+  assert.deepEqual(lo.acao.descartarBling, ["16736249318"]);
+  assert.equal(lo.acao.texto, "✅ Conferi no Bling: o produto 16736249318 não existe — cadastrar de novo e publicar na LOJA ONLINE · a ficha e9171391 continua salva, sem publicar");
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes("data-paiia-abrir-outra-ficha={l.acao.outraFicha}") && a.includes("enderecoDaFicha(window.location.href, l.acao.outraFicha)"));
 });
 
 test("2º clique: plano com UMA conta (a escolhida); 'conferi' só quando a conta estava em CONFERIR", () => {

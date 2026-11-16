@@ -115,7 +115,12 @@ export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes
     // 5) Leituras que não terminaram / impedimentos.
     const motivos = [...globais];
     if (!q || q.estado === ESTADO_QUADRO.INCOMPLETA) motivos.push(`Mercado Livre não conferido nesta conta (${txt(q?.motivo) || "sem resposta"}).`);
-    if (q?.estado === ESTADO_QUADRO.EM_ANDAMENTO && q.fichaAndamento && q.fichaAndamento !== txt(ficha.id)) motivos.push(`Outra ficha deste SKU está em andamento nesta conta (${q.fichaAndamento.slice(0, 8)}): continue por ela para não duplicar.`);
+    // (16/11) Outra ficha deste SKU em andamento nesta conta (sem MLB): NÃO impede — você publica por
+    // esta ficha (a outra fica salva) ou abre a outra. Um 2º anúncio na mesma conta continua barrado na
+    // hora de publicar (duplicidade lida ao vivo no Mercado Livre + base PAIIA).
+    const outraFicha = q?.estado === ESTADO_QUADRO.EM_ANDAMENTO && q.fichaAndamento && q.fichaAndamento !== txt(ficha.id) ? q.fichaAndamento : "";
+    const msgOutra = outraFicha ? [`Outra ficha deste SKU (${outraFicha.slice(0, 8)}) está em andamento nesta conta, ainda sem publicar. Pode publicar por ESTA ficha (a outra continua salva, nada é apagado) ou abrir a outra.`] : [];
+    const notaOutra = outraFicha ? ` · a ficha ${outraFicha.slice(0, 8)} continua salva, sem publicar` : "";
     if (!v) motivos.push("Exigências da conta não conferidas.");
     else if (v.situacao === SITUACAO_CONTA.IMPEDIDA) motivos.push(...(v.impedimentos || []));
     if (motivos.length) return fim(ESTADO_FINAL.IMPEDIDO, motivos, undefined, []);
@@ -129,9 +134,10 @@ export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes
     // ("não existe mais") e o piloto faz UM cadastro protegido (relê o SKU antes; nunca duplica).
     if (bling.foraDaBusca) {
       const ids = bling.foraDaBusca.join(", ");
-      return fim(ESTADO_FINAL.CONFERIR, [...conferir, bling.texto], { tipo: "publicar", conferida: conferir.length > 0, descartarBling: bling.foraDaBusca, texto: `✅ Conferi no Bling: o produto ${ids} não existe — cadastrar de novo e publicar na ${nome}` }, []);
+      return fim(ESTADO_FINAL.CONFERIR, [...msgOutra, ...conferir, bling.texto], { tipo: "publicar", conferida: conferir.length > 0, descartarBling: bling.foraDaBusca, outraFicha, texto: `✅ Conferi no Bling: o produto ${ids} não existe — cadastrar de novo e publicar na ${nome}${notaOutra}` }, []);
     }
-    if (conferir.length) return fim(ESTADO_FINAL.CONFERIR, conferir, { tipo: "publicar", conferida: true, texto: `✅ Autorizar e Publicar na ${nome} (conferi: não é o mesmo anúncio)` }, []);
+    if (conferir.length) return fim(ESTADO_FINAL.CONFERIR, [...msgOutra, ...conferir], { tipo: "publicar", conferida: true, outraFicha, texto: `✅ Autorizar e Publicar na ${nome} (conferi: não é o mesmo anúncio)${notaOutra}` }, []);
+    if (outraFicha) return fim(ESTADO_FINAL.CONFERIR, msgOutra, { tipo: "publicar", conferida: false, outraFicha, texto: `✅ Autorizar e Publicar na ${nome}${notaOutra}` }, []);
     return fim(ESTADO_FINAL.PENDENTE, ["Pronta para publicar: SKU, conta, duplicidade (com variações), Bling, estoque, preço e frete conferidos."], { tipo: "publicar", conferida: false, texto: `✅ Autorizar e Publicar na ${nome}` }, []);
   });
   return { linhas, bling, global: globais };
