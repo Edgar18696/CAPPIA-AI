@@ -29,9 +29,10 @@ test("3) a autorização vai ao servidor; outros anúncios do SKU não bloqueiam
   assert.equal((v.match(/data-pv-autorizo-bling-cadastro/g) || []).length, 1, "UMA autorização");
 });
 
-test("4) Novo Anúncio: a MESMA autorização única abre o MESMO piloto (só LOJA ONLINE), com nº reaproveitado", () => {
+test("4) Novo Anúncio: a MESMA autorização única abre o MESMO piloto (nas 3 contas desde 16/11), com nº reaproveitado", () => {
   const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
-  assert.ok(a.includes('nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE"') && a.includes("sessionStorage.getItem(CHAVE(fichaDaAut))") /* (15/11) nº reaproveitado só para a MESMA ficha com ID */ && a.includes("disabled={!marcado}"));
+  assert.ok(a.includes("sessionStorage.getItem(CHAVE(fichaDaAut))") /* (15/11) nº reaproveitado só para a MESMA ficha com ID */ && a.includes("onAutorizar?.(linha.conta, id, plano);"));
+  assert.ok(!a.includes('=== "LOJA ONLINE"'), "(16/11) o piloto não é mais só da LOJA ONLINE");
   const m = ler("src/components/MercadoLivreTeste.jsx");
   assert.ok(m.includes("<AutorizacaoUnicaPublicacao") && m.includes("autoId={autoPiloto}"));
   const p = ler("src/services/pilotoPublicacao.js");

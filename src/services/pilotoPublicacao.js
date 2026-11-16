@@ -243,11 +243,17 @@ export async function executarPiloto(p, { limites = {} } = {}) {
   if (encerrado()) return segundoPlano;
   // 7) Vínculo no Bling (LOJA ONLINE: o Bling traz o anúncio; o PAIIA só confere).
   p.progresso("vinculo", "Conferindo o vínculo do anúncio no Bling…");
+  // (16/11) Conta SEM loja Bling ligada ao PAIIA (CIEBR, REVELAÇÃO): não há vínculo para o PAIIA conferir;
+  // não espera 20 min por nada — avisa que o vínculo é feito na Gestão de Anúncios do Bling.
+  const semLojaBling = typeof p.vinculoAplicavel === "function" && p.vinculoAplicavel() === false;
   // (10/11) Ficha já publicada: uma leitura só (a conferência do vínculo segue em segundo plano pela ficha).
-  const vinc = jaExistia
-    ? (await p.relerIntegracao().catch(() => "")) === "integrado"
-    : await esperarAte(async () => ((await p.relerIntegracao()) === "integrado" ? true : null), L.vinculo, L.intervaloML);
-  if (!vinc) avisos.push(jaExistia ? "vínculo no Bling em conferência: segue sozinho em segundo plano (Central de Publicação)" : "vínculo no Bling ainda não confirmado: confira a Gestão de Anúncios do Bling");
+  const vinc = semLojaBling
+    ? false
+    : jaExistia
+      ? (await p.relerIntegracao().catch(() => "")) === "integrado"
+      : await esperarAte(async () => ((await p.relerIntegracao()) === "integrado" ? true : null), L.vinculo, L.intervaloML);
+  if (semLojaBling) avisos.push("vínculo no Bling desta conta: faça na Gestão de Anúncios do Bling (conta sem loja ligada ao PAIIA; o produto já está no Bling, nada é duplicado)");
+  else if (!vinc) avisos.push(jaExistia ? "vínculo no Bling em conferência: segue sozinho em segundo plano (Central de Publicação)" : "vínculo no Bling ainda não confirmado: confira a Gestão de Anúncios do Bling");
   if (encerrado()) return segundoPlano;
   // 8) Central (a ficha já foi marcada publicada) + pendências da conferência posterior, sem esconder nada.
   p.progresso("central");

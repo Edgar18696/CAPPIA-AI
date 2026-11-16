@@ -9,6 +9,7 @@ import { executarPiloto, ETAPAS_PILOTO, ROTULO_ETAPA, autorizacaoDaUrl, mlbRegis
 const COR_ETAPA = { ok: "#86efac", conferir: "#fde68a", atual: "#67e8f9", pausa: "#fde68a", pendente: "#64748b" };
 import { obterAnuncio, fichaComMLB } from "../services/anuncioPublicacaoService";
 import { conferirMLBDevolvido } from "../services/mlbDevolvido";
+import { lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
 import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
 import { marcarFichaLiberada } from "../modules/paiiaVoz/servicos/limpezaPosPublicacaoVoz";
@@ -37,6 +38,8 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
         const { data } = await supabase.functions.invoke("mercadolivre-publicacao", { body: { acao: "consultar_item", conta_ml: String(conta), item_id: mlb } });
         return data?.ok ? data : null;
       },
+      // (16/11) Só há vínculo para o PAIIA conferir nas contas com loja Bling ligada (hoje LOJA ONLINE).
+      vinculoAplicavel: () => Boolean(lojaBlingDaConta(dadosRef.current.conta || conta)),
       relerIntegracao: async () => {
         const v = document.querySelector("[data-paiia-verificar-bling]");
         if (v && !v.disabled) v.click();

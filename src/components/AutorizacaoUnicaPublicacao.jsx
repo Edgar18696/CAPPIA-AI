@@ -1,39 +1,39 @@
-// (Novo Anúncio) Etapa final da PUBLICAÇÃO — escolha das contas Mercado Livre (14/11/2026).
-// Uma caixa independente por conta (LOJA ONLINE, REVELAÇÃO, CIEBR): 1, 2 ou as 3.
-// Cada conta marcada é conferida SEPARADAMENTE (conexão, estoque, duplicidade, frete oficial
-// DAQUELA conta, preço/margem); impedimento numa conta não bloqueia as outras liberadas.
-// Nada é publicado sem a confirmação final, que mostra exatamente quais contas serão usadas.
-// LOJA ONLINE segue com a autorização única (o mesmo piloto do PAIIA Voz: Bling, validação,
-// publicação travada no servidor, ativo, vínculo, Central); as outras contas seguem a Publicação
-// de sempre, conta por conta, com o seu toque em Publicar.
+// (16/11/2026) FINALIZAÇÃO EM DOIS CLIQUES — as três contas do Mercado Livre funcionam IGUAL.
+//   1º clique "🔎 Conferir e Publicar": lê (somente leitura) o Bling, as três contas do Mercado Livre
+//      (SKU do anúncio e das VARIAÇÕES, fichas e registro de MLBs) e as exigências de cada conta
+//      (conexão, estoque, preço, frete, margem, fotos). Cada conta aparece como PUBLICADO, JÁ EXISTENTE,
+//      PENDENTE, CONFERIR ou IMPEDIDO, com o MLB e o motivo. Nada é apagado nem gravado.
+//   2º clique "✅ Confirmar Publicação na <conta>": grava a conta escolhida na ficha e entrega ao piloto
+//      (Bling sem duplicar, envio ÚNICO travado no servidor, MLB real, vínculo, Central de Publicação).
+// Ficha já publicada: reconhece o MLB e não reenvia. Envio sem resposta: "Retomar com segurança".
 import { useEffect, useMemo, useState } from "react";
-import { nomeDaLoja, verificarDuplicidadeML } from "../services/duplicidadeML";
-import { novaAutorizacaoId } from "../services/pilotoPublicacao";
+import { verificarDuplicidadeML } from "../services/duplicidadeML";
+import { novaAutorizacaoId, mlbRegistradoDaFicha } from "../services/pilotoPublicacao";
 import { consultorML, modalidadesDaConta, FRETE_SIMULADO_PERMITIDO } from "../services/consultaMLLeitura";
-import { conferirDuplicidadeBase, obterAnuncio, registrarContasPublicacao } from "../services/anuncioPublicacaoService";
-import {
-  CONTAS_PUBLICACAO_ML, CONTA_PUBLICACAO_AUTOMATICA, SITUACAO_CONTA, assinaturaVerificacao,
-  montarPlanoContas, nomeContaPublicacao, resumoConfirmacao, verificarContasPublicacao,
-} from "../services/contasPublicacaoML";
+import { conferirDuplicidadeBase, obterAnuncio, registrarContasPublicacao, registrarMLBPublicado, limparEnvioPublicacao } from "../services/anuncioPublicacaoService";
+import { CONTAS_PUBLICACAO_ML, assinaturaVerificacao, montarPlanoContas, nomeContaPublicacao, verificarContasPublicacao } from "../services/contasPublicacaoML";
+import { contasParaConsultar } from "../services/reconhecimentoSKU";
+import { reconhecerProdutoExistente, lerFichasDoCodigo } from "../services/produtoExistenteService";
+import { quadroProdutoExistente, ORDEM_CONTAS_QUADRO } from "../services/produtoExistenteSKU";
+import { ESTADO_FINAL, situacaoFinalDasContas } from "../services/finalizacaoPublicacao";
+import { envioPendenteDaFicha, retomarPublicacao } from "../services/publicacaoVerificada";
+import { registroPublicado } from "../services/vinculoBlingPublicacao";
 
 const CHAVE = (id) => `paiiaAutorizacaoPublicacao:${id}`;
-const COR = { ok: "#86efac", aviso: "#fde68a", conferir: "#fde68a", erro: "#fca5a5" };
-const SELO = {
-  [SITUACAO_CONTA.LIBERADA]: { txt: "✅ Liberada", cor: "#86efac" },
-  [SITUACAO_CONTA.CONFERIR]: { txt: "⚠ Conferir", cor: "#fde68a" },
-  [SITUACAO_CONTA.IMPEDIDA]: { txt: "⛔ Impedida", cor: "#fca5a5" },
+const COR = {
+  [ESTADO_FINAL.PUBLICADO]: "#86efac",
+  [ESTADO_FINAL.JA_EXISTENTE]: "#93c5fd",
+  [ESTADO_FINAL.PENDENTE]: "#e2e8f0",
+  [ESTADO_FINAL.CONFERIR]: "#fde68a",
+  [ESTADO_FINAL.IMPEDIDO]: "#fca5a5",
 };
+const ICONE = { [ESTADO_FINAL.PUBLICADO]: "✅", [ESTADO_FINAL.JA_EXISTENTE]: "📌", [ESTADO_FINAL.PENDENTE]: "⏳", [ESTADO_FINAL.CONFERIR]: "⚠", [ESTADO_FINAL.IMPEDIDO]: "⛔" };
 
-export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", codigo = "", titulo = "", preco = "", quantidade = "", contas = [], dadosFrete = null, onAutorizar, onManual = null, ativo = false }) {
-  const [marcadas, setMarcadas] = useState({});
-  const [verificacao, setVerificacao] = useState(null);
-  const [verificando, setVerificando] = useState(false);
-  const [conferidas, setConferidas] = useState({});
-  const [marcado, setMarcado] = useState(false);
-  const [gravando, setGravando] = useState(false);
-  const [erro, setErro] = useState("");
-  // (Fila de contas) Ficha preparada para a PRÓXIMA conta: só pré-marca as contas que faltam.
-  // Nada é conferido nem confirmado sozinho: "Conferir" e "Confirmar" continuam sendo seus toques.
+export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", codigo = "", titulo = "", preco = "", quantidade = "", fotos = 0, contas = [], dadosFrete = null, onAutorizar, onManual = null, ativo = false }) {
+  const [st, setSt] = useState({ lendo: false, res: null, assinatura: "", erro: "" });
+  const [ocupado, setOcupado] = useState("");
+  const [aviso, setAviso] = useState("");
+  // Ficha retomada / continuação: só AVISA de onde veio. Nada é conferido nem confirmado sozinho.
   const [origemFila, setOrigemFila] = useState(null);
   useEffect(() => {
     let ativoEf = true;
@@ -41,15 +41,12 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
     (async () => {
       const r = await obterAnuncio(anuncioId);
       const p = r?.ok ? r.anuncio?.dados_conferencia?.contas_publicacao : null;
-      if (!ativoEf || !p?.pendente || !Array.isArray(p.sugeridas) || !p.sugeridas.length) return;
+      if (!ativoEf || !p?.pendente) return;
       setOrigemFila(p.origem || null);
-      setMarcadas((m) => (Object.keys(m).length ? m : Object.fromEntries(p.sugeridas.map((id) => [String(id), true]))));
     })();
     return () => { ativoEf = false; };
   }, [anuncioId]);
   const conectadas = useMemo(() => new Set((contas || []).map((c) => String(c.ml_user_id || ""))), [contas]);
-  // Publicação automática (piloto): por enquanto só LOJA ONLINE.
-  const loja = (contas || []).find((c) => nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE");
   const dados = {
     sku, codigo: codigo || sku, preco, quantidade,
     medida: dadosFrete?.medida || null,
@@ -57,154 +54,147 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
     categoria: dadosFrete?.categoria || "",
     tipoAnuncio: dadosFrete?.tipoAnuncio || "",
   };
-  const selecao = CONTAS_PUBLICACAO_ML.filter((c) => marcadas[c.id]).map((c) => c.id);
-  const verificacaoValida = Boolean(verificacao) && verificacao.assinatura === assinaturaVerificacao(selecao, dados);
-  const resumo = verificacaoValida ? resumoConfirmacao(verificacao.resultados, conferidas) : null;
-  // (16/11) As 3 contas aparecem SEMPRE antes da conferência, mesmo sem a lista de contas conectadas
-  // (carregando ou sem conexão): cada uma mostra se está conectada; nada é publicado sem conferir.
+  const todas = CONTAS_PUBLICACAO_ML.map((c) => c.id);
+  const assinatura = `${assinaturaVerificacao(todas, dados)}|${Number(fotos) || 0}`;
+  const valida = Boolean(st.res) && st.assinatura === assinatura;
   if (ativo || !anuncioId) return null;
 
-  function alternar(id, v) {
-    setMarcadas((m) => ({ ...m, [id]: v }));
-    setMarcado(false);
-    setErro("");
-  }
-
-  async function verificar() {
-    if (!selecao.length) return;
-    setVerificando(true);
-    setMarcado(false);
-    setErro("");
-    // Somente leitura: base PAIIA e Mercado Livre (ml_consulta GET) de cada conta marcada.
-    const deps = {
-      conectada: (id) => conectadas.has(String(id)),
-      modalidades: (id) => modalidadesDaConta(id),
-      consultar: (id) => consultorML(id),
-      duplicidadeBase: (a) => conferirDuplicidadeBase(a),
-      duplicidadeML: (a) => verificarDuplicidadeML(a),
-      simulacaoPermitida: FRETE_SIMULADO_PERMITIDO,
-    };
+  // 1º CLIQUE — conferência completa das três contas (somente leitura no ML e no Bling).
+  async function conferir() {
+    if (st.lendo || ocupado) return;
+    setSt({ lendo: true, res: null, assinatura: "", erro: "" });
+    setAviso("");
     try {
-      setVerificacao(await verificarContasPublicacao({ selecao, dados, deps }));
+      const lida = await obterAnuncio(anuncioId);
+      if (!lida?.ok) throw new Error(lida?.erro || "ficha não lida");
+      const f = lida.anuncio;
+      const mlb = mlbRegistradoDaFicha(f);
+      const ficha = { id: anuncioId, mlb, conta: String(f.publicacao?.ml_user_id || (mlb ? f.conta_destino_ml_user_id : "") || ""), envio: envioPendenteDaFicha(f) };
+      const listaContas = contasParaConsultar(contas || [], "");
+      const [rec, fichas, verif] = await Promise.all([
+        reconhecerProdutoExistente({ codigo: String(sku || codigo || "").trim(), contas: listaContas }),
+        lerFichasDoCodigo(String(sku || codigo || "").trim()),
+        verificarContasPublicacao({
+          selecao: todas,
+          dados,
+          deps: {
+            conectada: (id) => conectadas.has(String(id)),
+            modalidades: (id) => modalidadesDaConta(id),
+            consultar: (id) => consultorML(id),
+            duplicidadeBase: (a) => conferirDuplicidadeBase(a),
+            duplicidadeML: (a) => verificarDuplicidadeML(a),
+            simulacaoPermitida: FRETE_SIMULADO_PERMITIDO,
+          },
+        }),
+      ]);
+      const quadro = quadroProdutoExistente({ fichas: fichas?.ok ? fichas.anuncios : [], reconhecimento: rec });
+      const res = situacaoFinalDasContas({ ficha, quadro, verificacoes: verif.resultados, fotos });
+      setSt({ lendo: false, res: { ...res, verif, ficha }, assinatura, erro: "" });
     } catch (e) {
-      setErro(`Não foi possível conferir as contas (${e?.message || e}). Nada foi publicado.`);
-    }
-    setVerificando(false);
-  }
-
-  async function confirmar() {
-    if (!marcado || !resumo?.contas.length || gravando) return;
-    setGravando(true);
-    setErro("");
-    const plano = montarPlanoContas({ selecao, resultados: verificacao.resultados, conferidas });
-    const contaFicha = plano.conta_desta_ficha;
-    const r = await registrarContasPublicacao({ anuncioId, plano, codigo: codigo || sku, titulo, contaNome: nomeContaPublicacao(contaFicha) });
-    setGravando(false);
-    if (!r.ok) { setErro(`${r.erro || "Não foi possível gravar as contas."} Nada foi publicado.`); return; }
-    if (contaFicha === CONTA_PUBLICACAO_AUTOMATICA && loja && String(loja.ml_user_id) === contaFicha) {
-      // Mesmo nº se a autorização desta ficha já foi dada (toque repetido / recarregar): o servidor nunca publica 2x.
-      // (15/11) Só reaproveita o nº guardado para ESTA ficha (com ID). Sem ID: sempre um nº novo e nada é
-      // guardado — antes, "paiiaAutorizacaoPublicacao:" (sem ID) era a mesma chave para fichas diferentes.
-      const fichaDaAut = /^[0-9a-f-]{36}$/i.test(String(anuncioId || "")) ? String(anuncioId) : "";
-      let id = "";
-      if (fichaDaAut) { try { id = sessionStorage.getItem(CHAVE(fichaDaAut)) || ""; } catch { id = ""; } }
-      if (!/^[0-9a-f-]{36}$/i.test(id)) { id = novaAutorizacaoId(); if (fichaDaAut) { try { sessionStorage.setItem(CHAVE(fichaDaAut), id); } catch { /* segue com o nº em memória */ } } }
-      try { const u = new URL(window.location.href); u.searchParams.set("auto", id); u.searchParams.set("ficha", anuncioId); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch { /* sem URL */ }
-      onAutorizar?.(contaFicha, id, plano);
-    } else {
-      onManual?.(contaFicha, plano);
+      setSt({ lendo: false, res: null, assinatura: "", erro: `Não foi possível conferir (${e?.message || e}). Nada foi publicado nem alterado.` });
     }
   }
 
+  // 2º CLIQUE — publicar SÓ na conta escolhida (o piloto faz as etapas internas).
+  async function confirmar(linha) {
+    if (ocupado || !valida || linha?.acao?.tipo !== "publicar") return;
+    setOcupado(linha.conta);
+    setAviso("");
+    const resultado = (st.res.verif.resultados || []).find((r) => String(r.conta) === linha.conta);
+    const plano = montarPlanoContas({ selecao: [linha.conta], resultados: resultado ? [resultado] : [], conferidas: linha.acao.conferida ? { [linha.conta]: true } : {} });
+    if (plano.conta_desta_ficha !== linha.conta) { setOcupado(""); setAviso(`A conferência da ${linha.nome} não liberou a publicação. Confira de novo.`); return; }
+    const r = await registrarContasPublicacao({ anuncioId, plano, codigo: codigo || sku, titulo, contaNome: nomeContaPublicacao(linha.conta) });
+    if (!r.ok) { setOcupado(""); setAviso(`${r.erro || "Não foi possível gravar a conta na ficha."} Nada foi publicado.`); return; }
+    // Mesmo nº se a autorização desta ficha já foi dada (toque repetido / recarregar): o servidor nunca publica 2x.
+    // (15/11) Só reaproveita o nº guardado para ESTA ficha (com ID); sem ID, sempre um nº novo.
+    const fichaDaAut = /^[0-9a-f-]{36}$/i.test(String(anuncioId || "")) ? String(anuncioId) : "";
+    let id = "";
+    if (fichaDaAut) { try { id = sessionStorage.getItem(CHAVE(fichaDaAut)) || ""; } catch { id = ""; } }
+    if (!/^[0-9a-f-]{36}$/i.test(id)) { id = novaAutorizacaoId(); if (fichaDaAut) { try { sessionStorage.setItem(CHAVE(fichaDaAut), id); } catch { /* segue com o nº em memória */ } } }
+    try { const u = new URL(window.location.href); u.searchParams.set("auto", id); u.searchParams.set("ficha", anuncioId); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch { /* sem URL */ }
+    setOcupado("");
+    onAutorizar?.(linha.conta, id, plano);
+  }
+
+  // Envio anterior sem resposta: confere no ML (somente leitura), adota o MLB deste SKU ou libera. Nunca reenvia.
+  async function retomar(linha) {
+    if (ocupado) return;
+    setOcupado(linha.conta);
+    const envio = st.res?.ficha?.envio;
+    const rt = await retomarPublicacao({
+      anuncioId,
+      deps: {
+        obterFicha: (x) => obterAnuncio(x),
+        consultar: (conta) => consultorML(conta),
+        gravarMLB: ({ mlb, link }) => {
+          const reg = registroPublicado({ mlb, contaId: envio?.conta || linha.conta, skuOficial: envio?.sku || sku, codigoPesquisado: codigo || sku, produtoBlingId: "", preco });
+          return registrarMLBPublicado({ anuncioId, contaId: envio?.conta || linha.conta, mlb, link, sku: envio?.sku || sku, registro: reg });
+        },
+        limparEnvio: () => limparEnvioPublicacao({ anuncioId }),
+      },
+    }).catch((e) => ({ acao: "aguardar", texto: `Retomada interrompida (${e?.message || e}). Nada foi reenviado.` }));
+    setOcupado("");
+    setAviso(rt.texto);
+    if (rt.acao === "adotado" || rt.acao === "liberado" || rt.acao === "concluir") conferir();
+  }
+
+  const linhas = valida ? st.res.linhas : ORDEM_CONTAS_QUADRO.map((conta) => ({ conta, nome: nomeContaPublicacao(conta), estado: "", mlbs: [], motivos: [], avisos: [], acao: { tipo: "nenhuma" } }));
+  const botao = { width: "100%", padding: "14px 16px", fontSize: 17, fontWeight: 800, borderRadius: 10, border: "none", color: "#fff" };
   return (
-    <div data-paiia-autorizacao-unica data-paiia-contas-publicacao style={{ border: "2px solid #22c55e", borderRadius: 12, padding: 14, margin: "12px 0", background: "#052e16", color: "#e2e8f0" }}>
-      <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>Publicar no Mercado Livre — em quais contas?</div>
+    <div data-paiia-autorizacao-unica data-paiia-contas-publicacao data-paiia-finalizacao-dois-cliques style={{ border: "2px solid #22c55e", borderRadius: 12, padding: 14, margin: "12px 0", background: "#052e16", color: "#e2e8f0" }}>
+      <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>Publicar no Mercado Livre</div>
       <div style={{ fontSize: 13, color: "#bbf7d0", marginBottom: 8 }}>
-        SKU <b>{sku || "—"}</b>{preco ? <> · preço <b>{preco}</b></> : ""}{quantidade ? <> · quantidade <b>{quantidade}</b></> : ""}. Marque uma, duas ou as três. Cada conta é conferida separadamente; um problema numa conta não trava as outras.
+        SKU <b>{sku || "—"}</b>{preco ? <> · preço <b>{preco}</b></> : ""}{quantidade ? <> · quantidade <b>{quantidade}</b></> : ""}. Dois cliques: <b>Conferir e Publicar</b> mostra onde o anúncio já existe; depois <b>Confirmar Publicação</b> na conta escolhida.
       </div>
       {origemFila?.conta && origemFila.motivo === "republicacao" && (
         <div data-paiia-origem-retomada={origemFila.conta} style={{ fontSize: 13, color: "#fde68a", marginBottom: 8 }}>
-          🔁 Ficha retomada: o anúncio anterior{origemFila.mlb ? <> <b>{origemFila.mlb}</b></> : ""} em <b>{nomeContaPublicacao(origemFila.conta)}</b> foi encerrado/excluído no Mercado Livre e NÃO é reutilizado. Sugerimos a mesma conta; ela é conferida de novo (duplicidade ao vivo) e só publica com a sua confirmação.
+          🔁 Ficha retomada: o anúncio anterior{origemFila.mlb ? <> <b>{origemFila.mlb}</b></> : ""} em <b>{nomeContaPublicacao(origemFila.conta)}</b> foi encerrado/excluído no Mercado Livre e NÃO é reutilizado.
         </div>
       )}
       {origemFila?.conta && origemFila.motivo !== "republicacao" && (
         <div data-paiia-origem-fila={origemFila.conta} style={{ fontSize: 13, color: "#bae6fd", marginBottom: 8 }}>
-          ➡ Continuação da fila: este anúncio já foi publicado em <b>{nomeContaPublicacao(origemFila.conta)}</b>{origemFila.mlb ? <> ({origemFila.mlb})</> : ""}. Marcamos as contas que faltam; confira e confirme.
+          ➡ Este anúncio já foi publicado em <b>{nomeContaPublicacao(origemFila.conta)}</b>{origemFila.mlb ? <> ({origemFila.mlb})</> : ""}. Esta ficha é para outra conta.
         </div>
       )}
       {!(contas || []).length && (
-        <div data-paiia-contas-sem-conexao style={{ fontSize: 13, color: "#fde68a", marginBottom: 8 }}>⚠ Nenhuma conta Mercado Livre conectada foi carregada ainda. As três contas aparecem abaixo; a conferência mostra cada uma como impedida até a conexão (Contas Marketplace).</div>
+        <div data-paiia-contas-sem-conexao style={{ fontSize: 13, color: "#fde68a", marginBottom: 8 }}>⚠ Nenhuma conta Mercado Livre conectada foi carregada ainda. A conferência mostra cada conta como impedida até a conexão (Contas Marketplace).</div>
       )}
-      <div style={{ display: "grid", gap: 6 }} data-paiia-lista-contas-publicacao>
-        {CONTAS_PUBLICACAO_ML.map((c) => {
-          const on = conectadas.has(c.id);
-          return (
-            <label key={c.id} data-paiia-conta-publicacao={c.nome} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 15, color: on ? "#e2e8f0" : "#94a3b8", cursor: "pointer" }}>
-              <input type="checkbox" checked={Boolean(marcadas[c.id])} onChange={(e) => alternar(c.id, e.target.checked)} disabled={verificando || gravando} data-paiia-conta-check={c.id} />
-              <span><b>{c.nome}</b> <span style={{ fontSize: 12, color: "#94a3b8" }}>(ID {c.id}){on ? "" : " — não conectada"}{c.id === CONTA_PUBLICACAO_AUTOMATICA ? " · publicação automática" : " · publicação conferida por você"}</span></span>
-            </label>
-          );
-        })}
-      </div>
-      <button type="button" onClick={verificar} disabled={!selecao.length || verificando || gravando} data-paiia-verificar-contas
-        style={{ marginTop: 10, width: "100%", padding: "10px 14px", fontSize: 15, fontWeight: 700, borderRadius: 10, border: "1px solid #22c55e", background: selecao.length ? "#14532d" : "#334155", color: "#fff", cursor: selecao.length ? "pointer" : "not-allowed" }}>
-        {verificando ? "⏳ Conferindo cada conta (somente leitura)…" : verificacaoValida ? "🔄 Conferir de novo" : "🔎 Conferir as contas marcadas"}
+
+      <button type="button" onClick={conferir} disabled={st.lendo || Boolean(ocupado)} data-paiia-conferir-e-publicar data-paiia-verificar-contas
+        style={{ ...botao, background: st.lendo ? "#334155" : "#15803d", cursor: st.lendo ? "wait" : "pointer" }}>
+        {st.lendo ? "⏳ Conferindo Bling e as três contas (somente leitura)…" : valida ? "🔄 Conferir de novo" : "🔎 Conferir e Publicar"}
       </button>
+      {st.res && !valida && !st.lendo && <p data-paiia-verificacao-desatualizada style={{ color: "#fde68a", fontSize: 13, margin: "8px 0 0" }}>Os dados da ficha mudaram: confira de novo.</p>}
+      {valida && st.res.bling && <p data-paiia-finalizacao-bling style={{ fontSize: 13, margin: "8px 0 0", color: st.res.bling.ok ? "#bbf7d0" : "#fca5a5" }}>{st.res.bling.texto}</p>}
 
-      {verificacao && !verificacaoValida && !verificando && (
-        <p data-paiia-verificacao-desatualizada style={{ color: "#fde68a", fontSize: 13, margin: "8px 0 0" }}>As contas marcadas ou os dados mudaram: confira de novo antes de confirmar.</p>
-      )}
-
-      {verificacaoValida && (
-        <div data-paiia-resultado-contas style={{ marginTop: 10, display: "grid", gap: 8 }}>
-          {verificacao.resultados.map((r) => (
-            <div key={r.conta} data-paiia-resultado-conta={r.conta} data-paiia-situacao-conta={r.situacao} style={{ border: `1px solid ${SELO[r.situacao].cor}`, borderRadius: 10, padding: 10, background: "#020617" }}>
-              <div style={{ fontWeight: 700 }}>{r.nome} <span style={{ color: SELO[r.situacao].cor }}>{SELO[r.situacao].txt}</span></div>
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13 }}>
-                {r.itens.map((i, k) => <li key={k} style={{ color: COR[i.nivel] || "#e2e8f0" }}><b>{i.item}:</b> {i.texto}</li>)}
-              </ul>
-              {r.situacao === SITUACAO_CONTA.CONFERIR && (
-                <label style={{ display: "flex", gap: 8, marginTop: 6, fontSize: 13 }}>
-                  <input type="checkbox" checked={conferidas[r.conta] === true} onChange={(e) => { setConferidas((x) => ({ ...x, [r.conta]: e.target.checked })); setMarcado(false); }} data-paiia-conferi-possivel={r.conta} />
-                  <span>Conferi no Mercado Livre: NÃO é o mesmo produto. Pode publicar em {r.nome}.</span>
-                </label>
-              )}
+      <div data-paiia-lista-contas-publicacao data-paiia-resultado-contas style={{ marginTop: 10, display: "grid", gap: 8 }}>
+        {linhas.map((l) => (
+          <div key={l.conta} data-paiia-conta-publicacao={l.nome} data-paiia-resultado-conta={l.conta} data-paiia-estado-final={l.estado || "nao_conferida"}
+            style={{ border: `1px solid ${COR[l.estado] || "#334155"}`, borderRadius: 10, padding: 10, background: "#020617" }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
+              <b style={{ minWidth: 110 }}>{l.nome}</b>
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>ID {l.conta}{conectadas.has(l.conta) ? "" : " — não conectada"}</span>
+              {l.estado && <span data-paiia-rotulo-final style={{ fontWeight: 800, color: COR[l.estado] }}>{ICONE[l.estado]} {l.rotulo}{l.mlbs.length ? ` · ${l.mlbs.join(", ")}` : ""}</span>}
             </div>
-          ))}
-
-          <div data-paiia-confirmacao-contas style={{ border: "2px solid #22c55e", borderRadius: 10, padding: 10 }}>
-            <div data-paiia-contas-confirmadas={resumo.contas.join(",")} style={{ fontWeight: 700 }}>{resumo.texto}</div>
-            {resumo.fora.length > 0 && (
-              <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12, color: "#fca5a5" }}>
-                {resumo.fora.map((f) => <li key={f.conta}><b>{f.nome}</b> fica de fora: {f.motivo}</li>)}
-              </ul>
+            {l.motivos.length > 0 && <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13, color: COR[l.estado] }}>{l.motivos.map((m, k) => <li key={k}>{m}</li>)}</ul>}
+            {l.avisos.filter((a) => !/^Bling/.test(a)).length > 0 && <ul style={{ margin: "4px 0 0", paddingLeft: 18, fontSize: 12, color: "#94a3b8" }}>{l.avisos.filter((a) => !/^Bling/.test(a)).map((m, k) => <li key={k}>{m}</li>)}</ul>}
+            {l.acao.tipo === "publicar" && (
+              <button type="button" data-paiia-confirmar-publicacao={l.conta} onClick={() => confirmar(l)} disabled={Boolean(ocupado)}
+                style={{ ...botao, marginTop: 8, background: ocupado ? "#334155" : "#16a34a", cursor: ocupado ? "wait" : "pointer" }}>
+                {ocupado === l.conta ? "⏳ Gravando a conta na ficha…" : l.acao.texto}
+              </button>
             )}
-            {resumo.contas.length > 1 && (
-              <p style={{ fontSize: 12, color: "#bbf7d0", margin: "6px 0 0" }}>
-                Ordem: primeiro <b>{resumo.nomes[0]}</b> (esta ficha); depois {resumo.nomes.slice(1).join(" e ")}, uma conta de cada vez. Cada conta tem o seu próprio anúncio (MLB).
-              </p>
-            )}
-            {resumo.contas.length > 0 && (
-              <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14, marginTop: 8 }}>
-                <input type="checkbox" checked={marcado} onChange={(e) => setMarcado(e.target.checked)} disabled={gravando} data-paiia-autorizacao-unica-check />
-                <span>
-                  <b>Autorizo publicar SOMENTE em: {resumo.nomes.join(", ")}.</b>
-                  {resumo.contas[0] === CONTA_PUBLICACAO_AUTOMATICA && loja
-                    ? <> Na LOJA ONLINE o PAIIA usa o Bling (cadastra só se o SKU não existir, com o estoque da ficha) e conclui sozinho o vínculo e a Central. É uma única autorização: nada é publicado duas vezes.</>
-                    : <> Na Publicação de {resumo.nomes[0]} você ainda confere e toca em Publicar.</>}
-                </span>
-              </label>
-            )}
-            {resumo.contas.length > 0 && (
-              <button type="button" disabled={!marcado} onClick={confirmar} data-paiia-autorizacao-unica-botao
-                style={{ marginTop: 10, width: "100%", padding: "14px 16px", fontSize: 17, fontWeight: 800, borderRadius: 10, border: "none", background: marcado && !gravando ? "#16a34a" : "#334155", color: "#fff", cursor: marcado && !gravando ? "pointer" : "not-allowed" }}>
-                {gravando ? "⏳ Gravando as contas na ficha…" : `✅ Confirmar e Enviar (${resumo.nomes.join(", ")})`}
+            {l.acao.tipo === "retomar" && (
+              <button type="button" data-paiia-retomar-conta={l.conta} onClick={() => retomar(l)} disabled={Boolean(ocupado)}
+                style={{ ...botao, marginTop: 8, background: ocupado ? "#334155" : "#0369a1", cursor: ocupado ? "wait" : "pointer" }}>
+                {ocupado === l.conta ? "⏳ Conferindo no Mercado Livre (somente leitura)…" : l.acao.texto}
               </button>
             )}
           </div>
-        </div>
-      )}
-      {erro && <p data-paiia-erro-contas style={{ color: "#fca5a5", fontSize: 13, margin: "8px 0 0" }}>❌ {erro}</p>}
+        ))}
+      </div>
+      {aviso && <p data-paiia-aviso-finalizacao style={{ color: "#fde68a", fontSize: 13, margin: "8px 0 0" }}>{aviso}</p>}
+      {st.erro && <p data-paiia-erro-contas style={{ color: "#fca5a5", fontSize: 13, margin: "8px 0 0" }}>❌ {st.erro}</p>}
       {onManual && <button type="button" onClick={() => onManual()} data-paiia-publicacao-manual style={{ marginTop: 8, background: "none", border: "none", color: "#94a3b8", textDecoration: "underline", cursor: "pointer", fontSize: 13 }}>Publicar manualmente (correção)</button>}
     </div>
   );

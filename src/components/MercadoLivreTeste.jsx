@@ -3,9 +3,8 @@ import { supabase } from "../supabase";
 import PesoEmbalagemML from "./PesoEmbalagemML";
 import PilotoAutomaticoPublicacao from "./PilotoAutomaticoPublicacao";
 import AutorizacaoUnicaPublicacao from "./AutorizacaoUnicaPublicacao";
-import { nomeContaPublicacao } from "../services/contasPublicacaoML";
+import { nomeContaPublicacao, CONTAS_PUBLICACAO_ML } from "../services/contasPublicacaoML";
 import FilaContasPublicacao from "./FilaContasPublicacao";
-import { nomeDaLoja } from "../services/duplicidadeML";
 import RevisaoPublicacaoML from "./RevisaoPublicacaoML";
 import EscolherCanaisPublicacao from "./EscolherCanaisPublicacao";
 import { normalizarQuantidade } from "../services/estoqueBlingPAIIA";
@@ -1592,10 +1591,11 @@ function moverFoto(
   // depois da confirmação (a conta de destino desta ficha acabou de ser gravada).
   const [planoContas, setPlanoContas] = useState(null);
   const [versaoRevisaoML, setVersaoRevisaoML] = useState(0);
-  const lojaOnlineConectada = contasMLDisponiveis.some((c) => nomeDaLoja(c.ml_user_id, c.nickname) === "LOJA ONLINE");
+  // (16/11) Finalização em dois cliques nas TRÊS contas: o caminho único vale com qualquer uma conectada.
+  const contaPublicacaoConectada = contasMLDisponiveis.some((c) => CONTAS_PUBLICACAO_ML.some((x) => x.id === String(c.ml_user_id || "")));
   const [autoPiloto, setAutoPiloto] = useState(() => { try { const id = new URL(window.location.href).searchParams.get("auto") || ""; return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : ""; } catch { return ""; } });
-  // Caminho único: LOJA ONLINE conectada (ou piloto rodando) e você não pediu o modo manual.
-  const modoAutorizacaoUnica = (Boolean(autoPiloto) || lojaOnlineConectada) && !publicacaoManual;
+  // Caminho único: uma das 3 contas conectada (ou piloto rodando) e você não pediu o modo manual.
+  const modoAutorizacaoUnica = (Boolean(autoPiloto) || contaPublicacaoConectada) && !publicacaoManual;
   const contaMLAtivaConferencia =
     contasMLDisponiveis.find((c) => c.ativa) || null;
 
@@ -5032,6 +5032,7 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
               titulo={anuncioConferido?.titulo || ""}
               preco={anuncioConferido?.preco || ""}
               quantidade={quantidadeEstoque}
+              fotos={Array.isArray(anuncioConferido?.fotos) ? anuncioConferido.fotos.length : 0}
               contas={contasMLDisponiveis}
               dadosFrete={{ registro: registroFreteConf || null, medida: anuncioConferido?.logistica?.medida || registroFreteConf?.medida || null, categoria: anuncioConferido?.categoriaId || registroFreteConf?.categoria || "", tipoAnuncio: anuncioConferido?.tipoAnuncio || registroFreteConf?.tipoAnuncio || "" }}
               onAutorizar={(contaId, id, plano) => { setPlanoContas(plano || null); setContaDestinoML(contaId); setVersaoRevisaoML((v) => v + 1); setAutoPiloto(id); }}

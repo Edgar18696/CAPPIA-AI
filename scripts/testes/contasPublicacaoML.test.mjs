@@ -214,19 +214,21 @@ test("11) plano gravado na ficha (base FALSA) com a conta de destino; ficha publ
   assert.equal(depois.fechada, true);
 });
 
-test("12) telas: seletor de conta saiu do frete do Novo Anúncio; Publicação com as 3 caixas e confirmação final", () => {
+test("12) telas: seletor de conta saiu do frete do Novo Anúncio; Publicação em DOIS cliques nas 3 contas (16/11)", () => {
   const na = ler("src/components/NovoAnuncio.jsx");
   assert.ok(!na.includes("data-paiia-frete-conta"), "sem seletor de conta no frete da preparação");
   assert.ok(na.includes("estimativa de referência"));
   assert.ok(na.includes("const contaAtivaNA = contaReferenciaFrete(contasConectadasNA);"));
   assert.ok(na.includes("calcularFreteEPrecos({ params: paramsFreteNA, base: baseFreteNA"), "cálculo de preço/frete preservado");
   const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
-  assert.ok(a.includes("CONTAS_PUBLICACAO_ML.map((c) =>") && a.includes('type="checkbox" checked={Boolean(marcadas[c.id])}'), "uma caixa independente por conta");
-  assert.ok(a.includes("verificarContasPublicacao({ selecao, dados, deps })"));
-  assert.ok(a.includes("disabled={!marcado}") && a.includes("Autorizo publicar SOMENTE em:"), "confirmação final com as contas exatas");
-  assert.ok(a.indexOf("onAutorizar?.(") > a.indexOf("async function confirmar()"), "piloto só depois da confirmação");
+  // (16/11) 1º clique: "Conferir e Publicar" confere as TRÊS contas; 2º clique: "Confirmar Publicação na <conta>".
+  assert.ok(a.includes("ORDEM_CONTAS_QUADRO.map((conta)") && a.includes("data-paiia-conferir-e-publicar"), "as três contas sempre listadas; um botão de conferência");
+  assert.ok(a.includes("verificarContasPublicacao({") && a.includes("selecao: todas,"), "as três contas conferidas, cada uma separada");
+  assert.ok(a.includes("data-paiia-confirmar-publicacao={l.conta}") && a.includes('l.acao.tipo === "publicar"'), "um botão por conta liberada");
+  assert.ok(a.indexOf("onAutorizar?.(") > a.indexOf("async function confirmar(linha)"), "piloto só depois do 2º clique");
+  assert.ok(a.includes("if (ocupado || !valida || linha?.acao?.tipo !== \"publicar\") return;"), "sem conferência válida não há publicação");
   const efeito = a.slice(a.indexOf("useEffect(() => {"), a.indexOf("}, [anuncioId]);"));
-  assert.ok(efeito.includes("obterAnuncio(anuncioId)") && !/verificar\(|confirmar\(|onAutorizar|onManual|registrarContasPublicacao/.test(efeito), "abrir a ficha só pré-marca contas: nada é conferido ou confirmado sozinho");
+  assert.ok(efeito.includes("obterAnuncio(anuncioId)") && !/conferir\(|confirmar\(|retomar\(|onAutorizar|onManual|registrarContasPublicacao/.test(efeito), "abrir a ficha não confere nem confirma nada sozinho");
   const m = ler("src/components/MercadoLivreTeste.jsx");
   assert.ok(m.includes("contasPermitidas={planoContas ? [planoContas.conta_desta_ficha] : null}"));
   const r = ler("src/components/RevisaoPublicacaoML.jsx");
