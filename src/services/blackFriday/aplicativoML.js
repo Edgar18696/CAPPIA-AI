@@ -147,3 +147,31 @@ export function textoAplicativo(r) {
   for (const c of r.conclusoes) l.push(`  [${c.tipo}] ${c.texto}`);
   return l.join("\n");
 }
+
+/**
+ * (16/11) Teste de promoções de UMA conta, com o token DESTA conta (no servidor,
+ * pela paizinho-bf-leitura). Uma única consulta GET; sem cache de recusa.
+ * Resultado objetivo: "autorizada" ou o motivo técnico exato do bloqueio.
+ */
+export async function testarPromocoesConta({ conta, consultar }) {
+  const c = CONTAS_BLACK_FRIDAY.find((x) => x.id === txt(conta));
+  const caminho = `/seller-promotions/users/${txt(conta)}?app_version=v2`;
+  const r = await consultar(caminho);
+  const base = { conta: c?.nome || txt(conta), id: txt(conta), caminho, status: r?.status || null, via: r?.via || null };
+  if (r?.ok) {
+    const lista = Array.isArray(r.dados?.results) ? r.dados.results : Array.isArray(r.dados) ? r.dados : [];
+    const tipos = [...new Set(lista.map((p) => txt(p?.type)).filter(Boolean))];
+    return { ...base, ok: true, resultado: "autorizada", promocoes: lista.length, tipos, texto: `Consulta de promoções AUTORIZADA para ${base.conta}: ${lista.length} promoção(ões) disponível(is)${tipos.length ? ` (${tipos.join(", ")})` : ""}.` };
+  }
+  const codigo = txt(r?.recusa_ml?.codigo);
+  const msg = txt(r?.recusa_ml?.mensagem || r?.erro);
+  const st = Number(r?.status);
+  let motivo;
+  if (st === 403 && /policy returned UNAUTHORIZED|PA_UNAUTHORIZED/i.test(`${msg} ${codigo} ${(r?.recusa_ml?.causa || []).join(" ")}`)) motivo = "Falta a permissão funcional \"Promoções, cupons e descontos\" no aplicativo Paiia (App ID 1283127548197864). Habilitar no DevCenter da conta dona (CIEBR) e testar de novo, sem reconectar.";
+  else if (st === 401 && /vencido/i.test(msg)) motivo = "Token desta conta vencido no PAIIA (credencial, não permissão). Abra Contas Marketplace no PAIIA para renovar e teste de novo.";
+  else if (st === 401) motivo = "Token desta conta recusado pelo ML (credencial inválida ou revogada), não é permissão do aplicativo.";
+  else if (st === 404 && /não conectada/i.test(msg)) motivo = "Conta não conectada para o seu usuário no PAIIA.";
+  else if (st === 403) motivo = "Recusa do ML diferente da permissão do aplicativo: ver mensagem e código abaixo.";
+  else motivo = "Falha técnica na consulta: ver mensagem abaixo.";
+  return { ...base, ok: false, resultado: "bloqueada", codigo: codigo || null, mensagem: msg, causa: r?.recusa_ml?.causa || [], motivo, texto: `Consulta de promoções BLOQUEADA para ${base.conta} (HTTP ${st || "?"}${codigo ? `, ${codigo}` : ""}): ${motivo}` };
+}

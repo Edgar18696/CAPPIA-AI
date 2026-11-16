@@ -14,7 +14,7 @@ import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
-import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo } from "../services/blackFriday/aplicativoML";
+import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo, testarPromocoesConta } from "../services/blackFriday/aplicativoML";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela
@@ -37,7 +37,9 @@ function lerLeituraGuardada(usuarioId) {
 export default function BlackFridayPaizinho() {
   const [usuarioId, setUsuarioId] = useState("");
   const [erroLogin, setErroLogin] = useState("");
-  const [contas, setContas] = useState(CONTAS_BLACK_FRIDAY.map((c) => c.id));
+  // (16/11) Uma conta por vez: começa só com a 1ª da ordem (LOJA ONLINE).
+  const [contas, setContas] = useState([CONTAS_BLACK_FRIDAY[0].id]);
+  const [testePromo, setTestePromo] = useState(null);
   const [limite, setLimite] = useState("50");
   const [lendo, setLendo] = useState("");
   const [leitura, setLeitura] = useState(null);
@@ -80,6 +82,7 @@ export default function BlackFridayPaizinho() {
   const visiveis = useMemo(() => filtrarLinhas(linhas, filtro), [linhas, filtro]);
   const resumo = useMemo(() => resumirSimulacao(linhas), [linhas]);
   const aprovados = plano?.aprovados || {};
+  const campanhasConta = useMemo(() => registro?.campanhasPorConta() || {}, [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const momento = momentoDaCampanha();
 
   function alternarConta(id) {
@@ -167,6 +170,31 @@ export default function BlackFridayPaizinho() {
     setDiagLendo(false);
   }
 
+  // (16/11) Promoções de UMA conta, com o token dela (uma consulta GET, sem cache de recusa).
+  async function testarPromoConta() {
+    setDiagLendo(true); setTestePromo(null);
+    try {
+      const r = await testarPromocoesConta({ conta: diagConta, consultar: consultorLeituraBF(diagConta, invocar) });
+      setTestePromo(r);
+      registro?.registrar("diagnostico", { teste_promocoes: r.texto });
+    } catch (e) { setAviso(String(e?.message || e)); }
+    setDiagLendo(false);
+  }
+
+  // (16/11) Aprovação da CAMPANHA separada por conta (só registra; nada é ativado).
+  function aprovarCampanha(c) {
+    const qtd = Object.values(aprovados).filter((a) => a.conta === c.id).length;
+    if (!qtd) { setAviso(`Aprove primeiro as ofertas da ${c.nome}.`); return; }
+    if (!window.confirm(`Aprovar a CAMPANHA Black Friday da conta ${c.nome}?\n\n${qtd} oferta(s) aprovada(s).\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nSó registra a decisão desta conta. NENHUMA oferta é ativada e nenhum preço é alterado.`)) return;
+    const r = registro.aprovarCampanhaConta(c.id, { nome: c.nome });
+    setAviso(r.ok ? `Campanha da ${c.nome} aprovada (${r.campanha.ofertas} oferta(s)). Ativação continua bloqueada.` : r.motivo);
+    setVersao((v) => v + 1);
+  }
+  function retirarCampanha(c) {
+    if (!window.confirm(`Retirar a aprovação da campanha da ${c.nome}?`)) return;
+    registro.retirarCampanhaConta(c.id); setVersao((v) => v + 1);
+  }
+
   function decidir(l, decisao) {
     registro.decidir(l.conta, l.id, decisao);
     setVersao((v) => v + 1);
@@ -204,7 +232,7 @@ export default function BlackFridayPaizinho() {
   return (
     <section id="black-friday-paizinho" style={S.caixa} data-paiia-black-friday>
       <h2 style={S.titulo}>🛍️ Black Friday 2026</h2>
-      <p style={S.sub}>Planejar, simular e aprovar as ofertas das contas LOJA ONLINE, REVELAÇÃO e CIEBR.</p>
+      <p style={S.sub}>Planejar, simular e aprovar as ofertas — uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO.</p>
       <div style={S.trava}>🔒 <strong>Fase 1 — somente leitura e simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio ou estoque é alterado. Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · não cumulativos · dúvida vai para revisão.</div>
 
       {/* Programação (calendário obrigatório) */}
@@ -333,6 +361,19 @@ export default function BlackFridayPaizinho() {
       {/* 8. Programação e ativação (bloqueada na Fase 1) */}
       <h3 style={S.h3}>3. Programação e ativação</h3>
       <p style={S.nota}>Ofertas aprovadas: <strong>{totalAprovados}</strong>{totalAprovados ? ` (${Object.entries(aprovadosPorConta).map(([n, q]) => `${n}: ${q}`).join(" · ")})` : ""}. Programação fixa: início {dataHoraBrasilia(CAMPANHA_BF.inicio)} e encerramento automático {dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília), pela data de fim da própria oferta no Mercado Livre — o preço do anúncio não é trocado e alterações manuais feitas durante a campanha são respeitadas.</p>
+      <div style={S.tabelaCaixa}><table style={S.tabela}>
+        <thead><tr><th style={S.th}>Conta (ordem de trabalho)</th><th style={S.th}>Ofertas aprovadas</th><th style={S.th}>Campanha da conta</th><th style={S.th}></th></tr></thead>
+        <tbody>{CONTAS_BLACK_FRIDAY.map((c) => {
+          const qtd = Object.values(aprovados).filter((a) => a.conta === c.id).length;
+          const cp = campanhasConta[c.id];
+          return <tr key={c.id}>
+            <td style={S.td}>{c.nome}</td>
+            <td style={S.td}>{qtd}</td>
+            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{!cp ? "Não aprovada" : cp.valida ? `✅ Aprovada em ${dataHoraBrasilia(cp.aprovado_em)} (${cp.ofertas} oferta(s)) · ativação pendente (Fase 3)` : "⚠️ Desatualizada: as ofertas mudaram depois da aprovação — aprove de novo"}</small></td>
+            <td style={S.td}>{cp ? <button type="button" style={S.mini} onClick={() => retirarCampanha(c)}>Retirar</button> : <button type="button" style={S.mini} disabled={!qtd} onClick={() => aprovarCampanha(c)}>Aprovar campanha</button>}</td>
+          </tr>;
+        })}</tbody>
+      </table></div>
       <div style={S.acoes}>
         <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa">🚀 Ativar ofertas aprovadas</button>
         <small style={S.base}>Bloqueado: a ativação exige validar elegibilidade e modalidades na API (Fase 2) e autorização expressa (Fase 3).</small>
@@ -361,8 +402,13 @@ export default function BlackFridayPaizinho() {
         <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
         <button type="button" style={S.filtro} onClick={diagnosticarTresContas} disabled={diagLendo || !leitura}>{diagLendo ? "🔄 Testando…" : "🩺 Comparar as 3 contas"}</button>
         <button type="button" style={S.filtro} onClick={lerAplicativo} disabled={diagLendo}>{diagLendo ? "🔄 Lendo…" : "🔎 Identificar aplicativo do ML"}</button>
+        <button type="button" style={S.botao} onClick={testarPromoConta} disabled={diagLendo} title="Uma única consulta de promoções da conta escolhida ao lado, com o token dela.">{diagLendo ? "🔄 Testando…" : "🏷️ Testar promoções desta conta"}</button>
         <button type="button" style={S.filtro} onClick={lerDonoApp} disabled={diagLendo} title="O próprio aplicativo lê o seu cadastro. Usa a conta selecionada ao lado só para confirmar o seu acesso.">{diagLendo ? "🔄 Lendo…" : "🔐 Ler cadastro pelo próprio aplicativo"}</button>
       </div>
+      {testePromo && <div style={testePromo.ok ? S.nota : S.aviso}>
+        <strong>{testePromo.ok ? "✅" : "❌"} {testePromo.texto}</strong>
+        {!testePromo.ok && <><br /><small>Mensagem do ML: {testePromo.mensagem || "—"}{testePromo.codigo ? ` · código ${testePromo.codigo}` : ""}{testePromo.causa?.length ? ` · causa ${testePromo.causa.join(", ")}` : ""} · {testePromo.caminho}</small></>}
+      </div>}
       {donoApp && <p style={S.nota}>{donoApp.ok
         ? <>{donoApp.conclusao}{donoApp.nome ? ` Aplicativo: ${donoApp.nome} (final ${donoApp.final_app}).` : ""}<br /><small>{JSON.stringify(donoApp.dados).slice(0, 1500)}</small></>
         : <>❌ {donoApp.status ? `HTTP ${donoApp.status} · ` : ""}{donoApp.erro}{donoApp.recusa_ml ? ` · ML: ${[donoApp.recusa_ml.codigo, donoApp.recusa_ml.mensagem, ...(donoApp.recusa_ml.causa || [])].filter(Boolean).join(", ")}` : ""}</>}</p>}

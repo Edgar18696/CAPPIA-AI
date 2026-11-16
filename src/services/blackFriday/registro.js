@@ -21,7 +21,7 @@ export const chaveHistorico = (usuarioId) => `paiiaBlackFriday:${CAMPANHA_BF.id}
 export const chaveLeitura = (usuarioId) => `paiiaBlackFriday:${CAMPANHA_BF.id}:leitura:${txt(usuarioId) || "sem-usuario"}`;
 
 export function planoVazio(usuarioId) {
-  return { campanha: CAMPANHA_BF.id, usuario: txt(usuarioId), decisoes: {}, aprovados: {}, atualizado_em: null };
+  return { campanha: CAMPANHA_BF.id, usuario: txt(usuarioId), decisoes: {}, aprovados: {}, campanhas_conta: {}, atualizado_em: null };
 }
 
 function ler(storage, chave, padrao) {
@@ -90,6 +90,48 @@ export function criarRegistroBF({ storage, usuarioId, agora = () => new Date().t
     return out;
   }
 
+  // (16/11) Aprovação da CAMPANHA por conta (separada para cada conta).
+  // Só registra a decisão; NÃO ativa nada (ativação só na Fase 3, com autorização).
+  // Vale para as ofertas aprovadas da conta NAQUELE momento: se as ofertas da conta
+  // mudarem (aprovar, retirar, desatualizar, decidir), a aprovação da campanha cai.
+  const assinaturaConta = (p, conta) => Object.values(p.aprovados).filter((a) => txt(a.conta) === txt(conta))
+    .map((a) => `${a.chave}=${a.preco_final}`).sort().join("|");
+
+  function aprovarCampanhaConta(conta, { nome = "" } = {}) {
+    const p = lerPlano();
+    const ofertas = Object.values(p.aprovados).filter((a) => txt(a.conta) === txt(conta));
+    if (!ofertas.length) return { ok: false, motivo: "Nenhuma oferta aprovada nesta conta." };
+    p.campanhas_conta = { ...(p.campanhas_conta || {}) };
+    p.campanhas_conta[txt(conta)] = {
+      conta: txt(conta), nome: txt(nome), campanha: CAMPANHA_BF.id, ofertas: ofertas.length,
+      assinatura: assinaturaConta(p, conta), inicio: CAMPANHA_BF.inicio, fim: CAMPANHA_BF.fim,
+      aprovado_em: agora(), aprovado_por: u, ativacao: "pendente_fase_3",
+    };
+    salvarPlano(p);
+    registrar("campanha_conta_aprovada", { conta: txt(nome) || txt(conta), ofertas: ofertas.length });
+    return { ok: true, campanha: p.campanhas_conta[txt(conta)] };
+  }
+
+  function retirarCampanhaConta(conta, motivo = "retirada pelo usuário") {
+    const p = lerPlano();
+    if (!p.campanhas_conta?.[txt(conta)]) return false;
+    const nome = p.campanhas_conta[txt(conta)].nome;
+    delete p.campanhas_conta[txt(conta)];
+    salvarPlano(p);
+    registrar("campanha_conta_retirada", { conta: nome || txt(conta), motivo });
+    return true;
+  }
+
+  /** Campanhas por conta ainda válidas (ofertas iguais às do momento da aprovação). */
+  function campanhasPorConta() {
+    const p = lerPlano();
+    const out = {};
+    for (const [conta, cp] of Object.entries(p.campanhas_conta || {})) {
+      out[conta] = { ...cp, valida: cp.assinatura === assinaturaConta(p, conta) };
+    }
+    return out;
+  }
+
   function desaprovar(chaves) {
     const p = lerPlano();
     const removidas = (chaves || []).filter((k) => p.aprovados[k]);
@@ -122,5 +164,5 @@ export function criarRegistroBF({ storage, usuarioId, agora = () => new Date().t
     return { plano: p, desatualizadas };
   }
 
-  return { lerPlano, historico, registrar, decidir, aprovar, desaprovar, conferirAprovacoes };
+  return { lerPlano, historico, registrar, decidir, aprovar, desaprovar, conferirAprovacoes, aprovarCampanhaConta, retirarCampanhaConta, campanhasPorConta };
 }

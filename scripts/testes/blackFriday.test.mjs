@@ -508,7 +508,7 @@ test("Central: aba Black Friday montada à parte; Ranqueamento e Regras intactos
   assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.id), [LOJA], "o piloto do Ranqueamento continua só na LOJA ONLINE");
   const tela = fs.readFileSync(path.join(RAIZ, "src/components/BlackFridayPaizinho.jsx"), "utf8");
   assert.doesNotMatch(tela, /paiiaPaizinhoRelatorioTeste|paiiaRegrasMLLeitura|paiiaPaizinhoBlingCache/, "não usa as chaves do Ranqueamento/Regras");
-  assert.deepEqual(R.CONTAS_BLACK_FRIDAY.map((c) => c.id), [LOJA, REV, CIEBR]);
+  assert.deepEqual(R.CONTAS_BLACK_FRIDAY.map((c) => c.id), [LOJA, CIEBR, REV], "ordem de trabalho (16/11): LOJA ONLINE → CIEBR → REVELAÇÃO");
 });
 
 /* ------------- (15/11) recusa "At least one policy returned UNAUTHORIZED" ------------- */
@@ -693,4 +693,33 @@ test("BF caminho B: dono lido pelo próprio aplicativo, resumo seguro, aviso de 
   const bloco = fn.slice(fn.indexOf('conf.tipo === "aplicativo_dono") {'), fn.indexOf("// 5) (15/11)"));
   assert.match(bloco, /grant_type: "client_credentials"/);
   assert.doesNotMatch(bloco, /\.from\(|\.insert\(|\.update\(|access_token:|json\(\{[^}]*tk[,}]/, "acesso do aplicativo não é gravado nem devolvido");
+});
+
+test("uma conta por vez: ordem LOJA ONLINE → CIEBR → REVELAÇÃO e campanha aprovada separada por conta", () => {
+  assert.deepEqual(R.CONTAS_BLACK_FRIDAY.map((c) => c.nome), ["LOJA ONLINE", "CIEBR", "REVELAÇÃO"]);
+  const reg = G.criarRegistroBF({ storage: memoria(), usuarioId: "u1", agora: () => "2026-11-16T12:00:00Z" });
+  const apto = R.simularAnuncio(leituraAnuncio(), { perfil: PERFIL });
+  assert.equal(reg.aprovarCampanhaConta(apto.conta, { nome: "X" }).ok, false, "sem ofertas aprovadas não aprova campanha");
+  reg.aprovar([apto], { modo: "anuncio" });
+  const r = reg.aprovarCampanhaConta(apto.conta, { nome: "LOJA ONLINE" });
+  assert.equal(r.ok, true); assert.equal(r.campanha.ofertas, 1); assert.equal(r.campanha.ativacao, "pendente_fase_3");
+  assert.equal(r.campanha.fim, "2026-11-30T23:59:00-03:00");
+  assert.equal(reg.campanhasPorConta()[apto.conta].valida, true);
+  assert.equal(Object.keys(reg.campanhasPorConta()).length, 1, "outras contas não são aprovadas junto");
+  reg.desaprovar([apto.chave]);
+  assert.equal(reg.campanhasPorConta()[apto.conta].valida, false, "ofertas mudaram → campanha da conta desatualizada");
+  assert.equal(reg.retirarCampanhaConta(apto.conta), true);
+  assert.deepEqual(reg.campanhasPorConta(), {});
+});
+
+test("teste de promoções de uma conta: autorizada ou motivo técnico exato (sem cache, uma consulta)", async () => {
+  const A = await import("../../src/services/blackFriday/aplicativoML.js");
+  const caminhos = [];
+  const ok = await A.testarPromocoesConta({ conta: "1729335019", consultar: async (c) => { caminhos.push(c); return { ok: true, status: 200, dados: { results: [{ type: "DEAL" }, { type: "PRICE_DISCOUNT" }] } }; } });
+  assert.deepEqual(caminhos, ["/seller-promotions/users/1729335019?app_version=v2"]);
+  assert.equal(ok.resultado, "autorizada"); assert.equal(ok.promocoes, 2); assert.match(ok.texto, /AUTORIZADA para LOJA ONLINE/);
+  const neg = await A.testarPromocoesConta({ conta: "1729335019", consultar: async () => ({ ok: false, status: 403, erro: "At least one policy returned UNAUTHORIZED.", recusa_ml: { status: 403, mensagem: "At least one policy returned UNAUTHORIZED.", codigo: "", causa: [] } }) });
+  assert.equal(neg.resultado, "bloqueada"); assert.match(neg.motivo, /Promoções, cupons e descontos/); assert.match(neg.motivo, /CIEBR/);
+  const venc = await A.testarPromocoesConta({ conta: "1729335019", consultar: async () => ({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido: abra Contas Marketplace" }) });
+  assert.match(venc.motivo, /credencial, não permissão/);
 });
