@@ -13,7 +13,7 @@
 //   - se o preço subir, o desconto cai; se estiver em DEAL, só começa quando o DEAL acabar.
 // =============================================================
 import { CAMPANHA_BF } from "./calendario.js";
-import { CLASSES, SITUACOES } from "./regras.js";
+import { CLASSES, SITUACOES, ROTULO_SITUACAO } from "./regras.js";
 
 const txt = (v) => (v === null || v === undefined ? "" : String(v)).trim();
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -49,7 +49,8 @@ export function classificarParaPlanilha(l) {
   if (!(l.preco_final > 0)) pendencias.push("Preço promocional não calculado.");
   else if (real < REGRAS_DESCONTO_INDIVIDUAL.minimoPct) pendencias.push(`Desconto real de ${String(real).replace(".", ",")}% abaixo do mínimo de 5% do ML.`);
   if (l.promocao === "nao_verificada") observacoes.push("Promoções programadas não puderam ser conferidas pela API: confira na tela do ML ao cadastrar.");
-  if (l.custo_motivo) observacoes.push(`Custo: ${l.custo_motivo} (margem não verificável).`);
+  // (16/11) Margem não verificada NÃO vai para PRONTO (regra do Edgar).
+  if (l.custo_motivo || l.margem_pct === null || l.margem_pct === undefined) pendencias.push(`Margem não verificada${l.custo_motivo ? ` (custo: ${l.custo_motivo})` : ""}.`);
   return { lista: pendencias.length ? LISTAS.CONFERIR : LISTAS.PRONTO, pendencias, observacoes, desconto_real_pct: real };
 }
 
@@ -58,7 +59,7 @@ const pct = (v) => String(num(v)).replace(".", ",");
 const celula = (v) => { const t = txt(v).replace(/\r?\n/g, " "); return /[;"\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 const dataBR = (iso) => { const m = txt(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; };
 
-export const COLUNAS_PLANILHA = Object.freeze(["Lista", "Conta", "MLB", "SKU", "Título", "Classe", "Preço atual (R$)", "Desconto (%)", "Preço promocional (R$)", "Desconto real (%)", "Início", "Fim", "Pendências", "Observações", "Link"]);
+export const COLUNAS_PLANILHA = Object.freeze(["Lista", "Conta", "MLB", "SKU", "Título", "Classe", "Situação na simulação", "Preço atual (R$)", "Desconto (%)", "Preço promocional (R$)", "Desconto real (%)", "Início", "Fim", "Pendências", "Observações", "Link"]);
 
 /** Linhas da planilha de UMA conta (ordem: PRONTO, CONFERIR, FORA). */
 export function montarPlanilha(linhas, conta) {
@@ -70,6 +71,7 @@ export function montarPlanilha(linhas, conta) {
     .map(({ l, c }) => ({
       lista: c.lista, conta: l.conta_nome, mlb: l.id, sku: l.sku || "", titulo: l.titulo,
       classe: l.classe === CLASSES.RENAULT ? "Renault comprovada" : l.classe === CLASSES.DEMAIS ? "Demais" : "Revisão",
+      situacao: ROTULO_SITUACAO[l.situacao] || l.situacao || "",
       preco_atual: l.preco_original, desconto_pct: l.desconto_pct, preco_promocional: l.preco_final,
       desconto_real_pct: c.desconto_real_pct ?? descontoReal(l.preco_original, l.preco_final),
       inicio: dataBR(CAMPANHA_BF.inicio), fim: dataBR(CAMPANHA_BF.fim),
@@ -81,7 +83,7 @@ export function montarPlanilha(linhas, conta) {
 export function planilhaCSV(planilha) {
   const linhas = [COLUNAS_PLANILHA.join(";")];
   for (const r of planilha) {
-    linhas.push([r.lista, r.conta, r.mlb, r.sku, r.titulo, r.classe, reais(r.preco_atual), pct(r.desconto_pct), reais(r.preco_promocional), pct(r.desconto_real_pct), r.inicio, r.fim, r.pendencias.join(" | "), r.observacoes.join(" | "), r.link].map(celula).join(";"));
+    linhas.push([r.lista, r.conta, r.mlb, r.sku, r.titulo, r.classe, r.situacao, reais(r.preco_atual), pct(r.desconto_pct), reais(r.preco_promocional), pct(r.desconto_real_pct), r.inicio, r.fim, r.pendencias.join(" | "), r.observacoes.join(" | "), r.link].map(celula).join(";"));
   }
   return `\uFEFF${linhas.join("\r\n")}\r\n`;
 }

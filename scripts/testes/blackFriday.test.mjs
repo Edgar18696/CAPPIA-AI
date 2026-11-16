@@ -750,11 +750,12 @@ test("preço promocional arredonda para BAIXO: desconto real nunca fica abaixo d
 test("planilha da conta: PRONTO só sem pendência; elegibilidade do desconto individual; CSV para Excel; nada é gravado", async () => {
   const PL = await import("../../src/services/blackFriday/planilha.js");
   const base = R.simularAnuncio(leituraAnuncio(), { perfil: PERFIL });
-  const pronto = { ...base, situacao: "apto", motivos: [], alertas: [], bloqueios: [], condicao: "new", tipo_anuncio: "gold_special", promocao: "nao_verificada", promocao_texto: "Promoção não verificada (403). Fica em revisão." };
+  const pronto = { ...base, situacao: "apto", motivos: [], alertas: [], bloqueios: [], custo_motivo: null, margem_pct: 20, condicao: "new", tipo_anuncio: "gold_special", promocao: "nao_verificada", promocao_texto: "Promoção não verificada (403). Fica em revisão." };
   pronto.motivos = [pronto.promocao_texto];
   assert.equal(PL.classificarParaPlanilha(pronto).lista, "PRONTO", "promoção não verificável vira observação no cadastro manual");
   assert.match(PL.classificarParaPlanilha(pronto).observacoes.join(), /confira na tela do ML/);
   assert.equal(PL.classificarParaPlanilha({ ...pronto, condicao: "used" }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, custo_motivo: "custo não lido no Bling", margem_pct: null }).lista, "CONFERIR", "margem não verificada nunca é PRONTO");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, tipo_anuncio: "free" }).lista, "CONFERIR");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, classe: "revisao", decisao: null }).lista, "CONFERIR");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, alertas: ["Margem baixa"] }).lista, "CONFERIR");
