@@ -14,6 +14,7 @@ import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
+import { identificarAplicativo, textoAplicativo } from "../services/blackFriday/aplicativoML";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela
@@ -51,6 +52,7 @@ export default function BlackFridayPaizinho() {
   const [diag, setDiag] = useState(null);
   const [diagLendo, setDiagLendo] = useState(false);
   const [matriz, setMatriz] = useState(null);
+  const [appInfo, setAppInfo] = useState(null);
   const cancelar = useRef(false);
 
   useEffect(() => {
@@ -138,6 +140,17 @@ export default function BlackFridayPaizinho() {
       const m = await diagnosticarContas({ leitura, consultorDaConta: consultorConta });
       setMatriz(m);
       registro?.registrar("diagnostico", { contas: m.contas.map((c) => `${c.nome}: ${c.resultados.filter((r) => !r.ok).length} recusa(s)`).join(" · ") });
+    } catch (e) { setAviso(String(e?.message || e)); }
+    setDiagLendo(false);
+  }
+
+  // (16/11) Qual aplicativo do ML o PAIIA usa: só leitura (não abre autorização, não reconecta).
+  async function lerAplicativo() {
+    setDiagLendo(true); setAppInfo(null);
+    try {
+      const r = await identificarAplicativo({ invocar, consultorDaConta: (c) => consultorLeituraBF(c, invocar) });
+      setAppInfo(r);
+      registro?.registrar("diagnostico", { aplicativo: r.app?.ok ? `final ${r.app.app_id.slice(-4)}` : "não lido", contas: r.porConta.map((p) => `${p.conta}: cadastro ${p.cadastro.ok ? "lido" : "recusado"}`).join(" · ") });
     } catch (e) { setAviso(String(e?.message || e)); }
     setDiagLendo(false);
   }
@@ -335,7 +348,24 @@ export default function BlackFridayPaizinho() {
         <input value={diagItem} onChange={(e) => setDiagItem(e.target.value)} placeholder="MLB do anúncio para testar" style={{ ...S.busca, flex: "0 1 220px" }} />
         <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
         <button type="button" style={S.filtro} onClick={diagnosticarTresContas} disabled={diagLendo || !leitura}>{diagLendo ? "🔄 Testando…" : "🩺 Comparar as 3 contas"}</button>
+        <button type="button" style={S.filtro} onClick={lerAplicativo} disabled={diagLendo}>{diagLendo ? "🔄 Lendo…" : "🔎 Identificar aplicativo do ML"}</button>
       </div>
+      {appInfo && <>
+        <p style={S.nota}>{appInfo.app?.ok ? <>Aplicativo usado pelo PAIIA: <strong>App ID {appInfo.app.app_id}</strong> (retorno {appInfo.app.retorno_host}). O App ID é público; o Client Secret nunca sai do servidor.</> : <>App ID não lido: {appInfo.app?.erro}</>}</p>
+        <div style={S.tabelaCaixa}><table style={S.tabela}>
+          <thead><tr><th style={S.th}>Conta</th><th style={S.th}>Conexão no PAIIA</th><th style={S.th}>Autorização no ML</th><th style={S.th}>Cadastro do aplicativo</th></tr></thead>
+          <tbody>{appInfo.porConta.map((p) => <tr key={p.id}>
+            <td style={S.td}>{p.conta}</td>
+            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{p.conexao ? `${p.conexao.status} · escopos: ${p.conexao.escopos_salvos || "não informados"}` : "não encontrada"}</small></td>
+            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{p.autorizacao.ok ? (p.autorizacao.encontrada ? `✅ final ${p.autorizacao.final_app} · ${(p.autorizacao.escopos || []).join(", ")}` : "❌ não encontrada") : `❌ ${p.autorizacao.status ? `HTTP ${p.autorizacao.status} · ` : ""}${p.autorizacao.erro}`}</small></td>
+            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{p.cadastro.ok ? `✅ ${p.cadastro.nome || "sem nome"} · final ${p.cadastro.final_app}` : `❌ ${p.cadastro.status ? `HTTP ${p.cadastro.status} · ` : ""}${p.cadastro.erro}`}</small></td>
+          </tr>)}</tbody>
+        </table></div>
+        <ul style={S.lista}>{appInfo.conclusoes.map((c, i) => <li key={i}><small><strong>{c.tipo === "comprovado" ? "Comprovado" : c.tipo === "indicio" ? "Indício" : c.tipo === "falha" ? "Falha" : "Inconclusivo"}:</strong> {c.texto}</small></li>)}</ul>
+        <div style={S.acoes}>
+          <button type="button" style={S.filtro} onClick={() => { try { navigator.clipboard.writeText(textoAplicativo(appInfo)); setAviso("Identificação do aplicativo copiada: cole na conversa com o Cláudio."); } catch { setAviso("Não foi possível copiar automaticamente."); } }}>📋 Copiar identificação do aplicativo</button>
+        </div>
+      </>}
       {matriz && <div style={S.tabelaCaixa}><table style={S.tabela}>
         <thead><tr><th style={S.th}>Leitura</th>{matriz.contas.map((c) => <th key={c.nome} style={S.th}>{c.nome}{c.item ? ` (${c.item})` : " (sem anúncio lido)"}</th>)}</tr></thead>
         <tbody>{matriz.etapas.map((et) => <tr key={et}><td style={S.td}>{et}</td>{matriz.contas.map((c) => { const r = c.resultados.find((x) => x.etapa === et); return <td key={c.nome} style={{ ...S.td, whiteSpace: "normal", maxWidth: 280 }} title={r ? (r.ok ? r.resumo : r.erro) : ""}>{!r ? "—" : r.ok ? (/^(Autoriza|Cadastro)/.test(et) ? <>✅ <small>{r.resumo}</small></> : "✅ ok") : <>❌ {r.status ? `HTTP ${r.status} · ` : ""}<small>{r.erro}{explicarErro(r.erro) ? ` → ${explicarErro(r.erro)}` : ""}{r.recusa_ml ? ` · ML: ${[r.recusa_ml.codigo, ...r.recusa_ml.causa].filter(Boolean).join(", ")}` : ""} · via {r.via}</small></>}</td>; })}</tr>)}</tbody>

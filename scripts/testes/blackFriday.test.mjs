@@ -636,3 +636,28 @@ test("recusa de permissão pela função própria: 1 consulta por tipo e conta, 
   await okCat("/products/MLB1"); await okCat("/products/MLB2");
   assert.equal(chamadas, 4, "leitura que funciona não é bloqueada");
 });
+
+test("BF aplicativo ML: só App ID público da URL, conclusões sem adivinhar, nada gravado", async () => {
+  const A = await import("../../src/services/blackFriday/aplicativoML.js");
+  const r = A.aplicativoDaUrl("https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=1234567890127864&redirect_uri=https%3A%2F%2Fwww.paiia.com.br%2Fx&state=s");
+  assert.deepEqual(r, { ok: true, app_id: "1234567890127864", retorno_host: "www.paiia.com.br", autorizacao_host: "auth.mercadolivre.com.br" });
+  assert.equal(A.aplicativoDaUrl("https://x/?client_id=SEU_APP").ok, false);
+  const chamadas = [];
+  const invocar = async (nome, { body }) => {
+    chamadas.push(`${nome}:${body.acao}`);
+    if (body.acao === "url_autorizacao") return { data: { ok: true, url: "https://auth.mercadolivre.com.br/authorization?client_id=1234567890127864&redirect_uri=https%3A%2F%2Fwww.paiia.com.br%2F" } };
+    return { data: { ok: true, contas: [{ ml_user_id: "1729335019", status: "conectada", scopes: "offline_access read write" }] } };
+  };
+  const consultorDaConta = (c) => async (caminho) => caminho.startsWith("/users/")
+    ? { ok: true, dados: { autorizacoes_na_conta: 2, paiia: { app_id: "…7864", scopes: ["read", "write"] } } }
+    : c === "824312524" ? { ok: true, dados: { name: "PAIIA", id: "…7864" } } : { ok: false, status: 403, erro: "forbidden" };
+  const res = await A.identificarAplicativo({ invocar, consultorDaConta });
+  assert.deepEqual(chamadas, ["mercadolivre-oauth:url_autorizacao", "mercadolivre-oauth:status"], "só ações de leitura");
+  assert.equal(res.porConta.length, 3);
+  const ind = res.conclusoes.find((c) => c.tipo === "indicio");
+  assert.match(ind.texto, /Só CIEBR/); assert.match(ind.texto, /não prova/);
+  const t = A.textoAplicativo(res);
+  assert.doesNotMatch(t, /secret|token|refresh/i);
+  const fonte = fs.readFileSync(path.join(process.cwd(), "src/services/blackFriday/aplicativoML.js"), "utf8");
+  assert.doesNotMatch(fonte, /location\.href|window\.open|\.insert\(|\.upsert\(|desconectar|definir_ativa/);
+});
