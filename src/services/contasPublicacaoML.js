@@ -287,7 +287,7 @@ export function contaReferenciaFrete(contasConectadas = []) {
 // ------------------------------------------------------------------
 
 /** Chaves da ficha que pertencem à PUBLICAÇÃO anterior: nunca vão para a ficha da próxima conta. */
-export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas", "republicacao", "mlb_trocado"]);
+export const CHAVES_DA_PUBLICACAO_ANTERIOR = Object.freeze(["integracao_bling", "mlbs_anteriores", "pos_publicacao", "contas_publicacao", "versoes_substituidas", "republicacao", "mlb_trocado", "envio_publicacao"]);
 
 /**
  * Situação da fila numa ficha publicada. A ficha só aponta a PRÓXIMA conta

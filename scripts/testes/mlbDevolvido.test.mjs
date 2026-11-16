@@ -72,7 +72,7 @@ test("5) tela de publicação: confere o MLB ANTES de gravar qualquer coisa; rec
   const mlbPub = t.indexOf("await registrarMLBPublicado(", i);
   assert.ok(i > 0 && conf > i && conf < reg && conf < mlbPub, "conferência antes de gravar o MLB");
   const bloco = t.slice(conf, reg);
-  assert.ok(bloco.includes("if (!conf.ok)") && bloco.includes("return;"), "recusado: não segue");
+  assert.ok(bloco.includes("if (!conf.ok)") && bloco.includes("return falhou;") && bloco.includes("incerto: true"), "recusado: não segue (envio incerto: a retomada procura o anúncio deste SKU)");
   assert.ok(bloco.includes("registrarResultadoPublicacao("), "pendência registrada (aparece na Central)");
   assert.ok(!bloco.includes("registrarMLBPublicado") && !bloco.includes("garantirRegistroIntegracaoBling"), "MLB recusado nunca entra na ficha");
 });

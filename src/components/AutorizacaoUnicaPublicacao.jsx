@@ -60,7 +60,9 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
   const selecao = CONTAS_PUBLICACAO_ML.filter((c) => marcadas[c.id]).map((c) => c.id);
   const verificacaoValida = Boolean(verificacao) && verificacao.assinatura === assinaturaVerificacao(selecao, dados);
   const resumo = verificacaoValida ? resumoConfirmacao(verificacao.resultados, conferidas) : null;
-  if (ativo || !anuncioId || !(contas || []).length) return null;
+  // (16/11) As 3 contas aparecem SEMPRE antes da conferência, mesmo sem a lista de contas conectadas
+  // (carregando ou sem conexão): cada uma mostra se está conectada; nada é publicado sem conferir.
+  if (ativo || !anuncioId) return null;
 
   function alternar(id, v) {
     setMarcadas((m) => ({ ...m, [id]: v }));
@@ -130,7 +132,10 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
           ➡ Continuação da fila: este anúncio já foi publicado em <b>{nomeContaPublicacao(origemFila.conta)}</b>{origemFila.mlb ? <> ({origemFila.mlb})</> : ""}. Marcamos as contas que faltam; confira e confirme.
         </div>
       )}
-      <div style={{ display: "grid", gap: 6 }}>
+      {!(contas || []).length && (
+        <div data-paiia-contas-sem-conexao style={{ fontSize: 13, color: "#fde68a", marginBottom: 8 }}>⚠ Nenhuma conta Mercado Livre conectada foi carregada ainda. As três contas aparecem abaixo; a conferência mostra cada uma como impedida até a conexão (Contas Marketplace).</div>
+      )}
+      <div style={{ display: "grid", gap: 6 }} data-paiia-lista-contas-publicacao>
         {CONTAS_PUBLICACAO_ML.map((c) => {
           const on = conectadas.has(c.id);
           return (
