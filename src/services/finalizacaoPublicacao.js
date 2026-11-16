@@ -61,7 +61,7 @@ export function situacaoBling(bling, { registrados = [], sku = "" } = {}) {
     return {
       ok: false,
       foraDaBusca: ids,
-      texto: `Bling: o SKU ${txt(sku) || "deste anúncio"} não é encontrado pela busca do Bling, mas o PAIIA tem o produto Bling ${ids.join(", ")} registrado. Provável: produto EXCLUÍDO (lixeira), INATIVO ou com o CÓDIGO ALTERADO. No Bling, abra Produtos com Situação “Todos” (e “Excluídos”) e procure pelo ID ${ids[0]}: se estiver excluído, restaure; se inativo, reative; se o código mudou, volte para ${txt(sku) || "o SKU"}. Depois toque em Conferir de novo. O PAIIA não cria outro produto e não pede para excluir nada.`,
+      texto: `Bling: o SKU ${txt(sku) || "deste anúncio"} não é encontrado pela busca do Bling, mas o PAIIA tem o produto Bling ${ids.join(", ")} registrado. Provável: produto EXCLUÍDO (lixeira), INATIVO ou com o CÓDIGO ALTERADO. No Bling, abra Produtos com Situação “Todos” (e “Excluídos”) e procure pelo ID ${ids[0]}: se estiver excluído, restaure; se inativo, reative; se o código mudou, volte para ${txt(sku) || "o SKU"}. Depois toque em Conferir de novo. O PAIIA não cria outro produto sozinho e não pede para excluir nada. Se você já conferiu que ele NÃO existe mais, use o botão da conta: o PAIIA cadastra o produto UMA vez (cadastro protegido, relê o SKU antes e nunca duplica).`,
     };
   }
   if (e === ESTADO_RECONHECIMENTO.NAO_ENCONTRADO) return { ok: true, cadastrar: true, texto: "Bling: o SKU não está no Bling — no 2º clique o PAIIA cadastra o produto com o estoque da ficha (cadastro protegido: confere o SKU antes e nunca duplica)." };
@@ -85,7 +85,8 @@ export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes
   const bling = situacaoBling(quadro?.bling, { registrados: blingRegistrados, sku });
   const globais = [];
   if (!(Number(fotos) > 0)) globais.push("Fotos: a ficha não tem fotos preparadas.");
-  if (!bling.ok) globais.push(bling.texto);
+  // (16/11) Produto registrado fora da busca: não impede — vira decisão SUA no próprio 2º clique.
+  if (!bling.ok && !bling.foraDaBusca) globais.push(bling.texto);
 
   const linhas = ORDEM_CONTAS_QUADRO.map((conta) => {
     const nome = nomeContaPublicacao(conta);
@@ -124,6 +125,12 @@ export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes
       ...(q?.possiveis || []).map((o) => `${o.mlb}: ${o.motivo}`),
       ...(v?.situacao === SITUACAO_CONTA.CONFERIR ? (v.itens || []).filter((i) => i.nivel === "conferir").map((i) => `${i.item}: ${i.texto}`) : []),
     ];
+    // (16/11) Produto Bling registrado que não aparece no Bling: o 2º clique registra a SUA conferência
+    // ("não existe mais") e o piloto faz UM cadastro protegido (relê o SKU antes; nunca duplica).
+    if (bling.foraDaBusca) {
+      const ids = bling.foraDaBusca.join(", ");
+      return fim(ESTADO_FINAL.CONFERIR, [...conferir, bling.texto], { tipo: "publicar", conferida: conferir.length > 0, descartarBling: bling.foraDaBusca, texto: `✅ Conferi no Bling: o produto ${ids} não existe — cadastrar de novo e publicar na ${nome}` }, []);
+    }
     if (conferir.length) return fim(ESTADO_FINAL.CONFERIR, conferir, { tipo: "publicar", conferida: true, texto: `✅ Autorizar e Publicar na ${nome} (conferi: não é o mesmo anúncio)` }, []);
     return fim(ESTADO_FINAL.PENDENTE, ["Pronta para publicar: SKU, conta, duplicidade (com variações), Bling, estoque, preço e frete conferidos."], { tipo: "publicar", conferida: false, texto: `✅ Autorizar e Publicar na ${nome}` }, []);
   });

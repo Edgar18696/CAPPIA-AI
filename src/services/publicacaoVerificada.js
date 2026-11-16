@@ -134,7 +134,9 @@ export async function checarAntesDePublicar({ anuncioId, contaId, sku, usoBling 
   if (usoBling === "sem") add("Bling", "aviso", "Publicação sem Bling (escolhida na ficha): produto e vínculo não conferidos.");
   else if (skuNorm) {
     const b = await seguro(() => deps.lerBling(skuEnvio));
-    const registrado = txt(blingIdDaPublicacao(ficha.publicacao) || dc.integracao_bling?.bling_produto_id);
+    const regBruto = txt(blingIdDaPublicacao(ficha.publicacao) || dc.integracao_bling?.bling_produto_id);
+    const descartados = (Array.isArray(dc.bling_descartados) ? dc.bling_descartados : []).map((x) => txt(x?.produto_id));
+    const registrado = descartados.includes(regBruto) ? "" : regBruto;
     if (!b?.ok) add("Bling", "erro", `O Bling não respondeu à consulta do SKU (${txt(b?.erro || b?.mensagem) || "sem resposta"}). Nada foi criado nem alterado no Bling.`);
     else if (b.ambiguo) add("Bling", "erro", "Mais de um produto no Bling com este SKU: resolva no Bling antes de publicar.");
     else if (!b.encontrado || !txt(b.produto?.id)) add("Bling", "erro", `O SKU ${skuEnvio} não está cadastrado no Bling: cadastre (ou escolha publicar sem Bling) antes.`);

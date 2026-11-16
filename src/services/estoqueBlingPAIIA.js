@@ -169,6 +169,28 @@ export function decidirCriacaoBling(leitura, { registrados = [] } = {}) {
 }
 
 /**
+ * (16/11) Produtos Bling que VOCÊ conferiu no Bling e NÃO existem mais (caso 8200263342 / 16736249318).
+ * Ficam em dados_conferencia.bling_descartados da ficha (nada é apagado: o vínculo antigo continua no
+ * histórico). Só eles deixam de travar o cadastro; qualquer outro registro continua travando.
+ */
+export function idsBlingDescartados(dadosConferencia) {
+  const l = Array.isArray(dadosConferencia?.bling_descartados) ? dadosConferencia.bling_descartados : [];
+  return [...new Set(l.map((x) => String(x?.produto_id ?? "").trim()).filter(Boolean))];
+}
+export function semBlingDescartados(registrados, descartados = []) {
+  const fora = new Set((descartados || []).map(String));
+  return (Array.isArray(registrados) ? registrados : []).filter((r) => !fora.has(String(r?.produto_id ?? "").trim()));
+}
+export function mesclarBlingDescartados(lista, ids, { motivo = "", agora = new Date().toISOString() } = {}) {
+  const out = Array.isArray(lista) ? lista.map((x) => ({ ...x })) : [];
+  const ja = new Set(out.map((x) => String(x?.produto_id ?? "")));
+  for (const id of (ids || []).map((x) => String(x ?? "").trim()).filter(Boolean)) {
+    if (!ja.has(id)) { out.push({ produto_id: id, em: agora, motivo: String(motivo || "produto não encontrado no Bling (conferido pelo usuário)").slice(0, 200) }); ja.add(id); }
+  }
+  return out;
+}
+
+/**
  * (14/11) Produtos Bling já REGISTRADOS por outras fichas deste SKU (publicação
  * ou registro da integração). fichas = listarAnunciosDoCodigo(...).anuncios.
  * Devolve [{ produto_id, ficha, mlb, conta }] sem repetir o mesmo produto.

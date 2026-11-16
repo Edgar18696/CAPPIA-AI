@@ -62,7 +62,7 @@ import {
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados, resumoCompatAprovadas } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
-import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, idsBlingDescartados, semBlingDescartados, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
@@ -364,7 +364,16 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // (14/11) Produtos Bling que OUTRAS fichas deste SKU já registraram (publicação/integração).
   // Vínculo ATUAL (MLB ainda existe ou não confirmado) + SKU fora da busca = NÃO oferece criar.
   // Vínculo ANTIGO (MLB excluído/encerrado no ML, lido agora) = histórico: o anúncio novo segue.
-  const produtosBlingRegistrados = useMemo(() => produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), [ficha.outros, ficha.anuncioId]);
+  // (16/11) Produtos que você conferiu que não existem mais no Bling (gravados nesta ficha): não travam o cadastro.
+  const [blingDescartados, setBlingDescartados] = useState([]);
+  useEffect(() => {
+    let vivo = true;
+    if (!ficha.anuncioId) return undefined;
+    obterAnuncio(ficha.anuncioId).then((r) => { if (vivo && r?.ok) setBlingDescartados(idsBlingDescartados(r.anuncio?.dados_conferencia)); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [ficha.anuncioId]);
+  const chaveDescartados = blingDescartados.join(",");
+  const produtosBlingRegistrados = useMemo(() => semBlingDescartados(produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), blingDescartados), [ficha.outros, ficha.anuncioId, chaveDescartados]); // eslint-disable-line react-hooks/exhaustive-deps
   const chaveVinculos = produtosBlingRegistrados.map((r) => `${r.produto_id}:${r.mlb}:${r.conta}`).join("|");
   const [vinculosBling, setVinculosBling] = useState({ chave: "", carregando: false, atuais: [], antigos: [] });
   useEffect(() => {
@@ -867,7 +876,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // (09/11) Produto que ESTA ficha já cadastrou/vinculou no Bling: se a busca pelo SKU ainda não o
   // devolve (cadastro recente), usa o registro da ficha e nunca oferece criar de novo.
   const blingRegistradoRef = useRef(null);
-  const comRegistroBling = (leitura) => leituraComCadastroRegistrado(leitura, { blingProdutoId: blingRegistradoRef.current || blingIdDaPublicacao(ficha.publicacao), sku: anuncio?.codigo || "" });
+  const idRegistradoValido = (id) => (id && !blingDescartados.includes(String(id)) ? id : "");
+  const comRegistroBling = (leitura) => leituraComCadastroRegistrado(leitura, { blingProdutoId: blingRegistradoRef.current || idRegistradoValido(blingIdDaPublicacao(ficha.publicacao)), sku: anuncio?.codigo || "" });
   async function lerBling(skuBling = "") {
     const sku = String(skuBling || anuncio?.codigo || "").trim();
     if (!sku) return { ok: false, encontrado: false };
@@ -1234,7 +1244,7 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     // marca do envio na ficha ANTES de enviar; UM envio; o MLB é gravado (só a gravação é repetida).
     // Resposta perdida = a marca fica e a retomada confere no ML (nunca reenvia às cegas).
     let registroBling = null;
-    const blingRegistradoFicha = blingRegistradoRef.current || blingIdDaPublicacao(ficha.publicacao);
+    const blingRegistradoFicha = blingRegistradoRef.current || idRegistradoValido(blingIdDaPublicacao(ficha.publicacao));
     const pv = await publicarVerificado({
       conta: contaEscolhida,
       sku: skuEnvio,

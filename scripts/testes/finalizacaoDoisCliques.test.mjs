@@ -271,16 +271,19 @@ test("ERRO 1 (tela): piloto e revisão só recebem o nº conferido; sem escolha,
 // =============================================================
 // (16/11) ERRO 2 — SKU fora da busca do Bling com produto registrado (caso 8200263342 / ID 16736249318)
 // =============================================================
-test("ERRO 2: SKU não achado e produto Bling 16736249318 registrado → IMPEDIDO nas 3 contas; explica; não cadastra nem manda excluir", async () => {
+test("ERRO 2: SKU não achado e produto Bling 16736249318 registrado → explica; nada sozinho; o 2º clique registra a SUA conferência", async () => {
   const { res } = await finalizar({ bling: BLING.excluido });
-  const r2 = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro: { linhas: [], bling: { estado: "nao_encontrado" } }, verificacoes: todasLiberadas(), fotos: 3, blingRegistrados: [{ produto_id: "16736249318" }], sku: SKU });
+  const r2 = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro: { linhas: [LOJA, CIEBR, REV].map((c) => ({ conta: c, estado: Q.ESTADO_QUADRO.DISPONIVEL, anuncios: [], outraPeca: [], possiveis: [], naoConfirmados: [], historico: [] })), bling: { estado: "nao_encontrado" } }, verificacoes: todasLiberadas(), fotos: 3, blingRegistrados: [{ produto_id: "16736249318" }], sku: SKU });
   assert.equal(r2.bling.ok, false);
   assert.deepEqual(r2.bling.foraDaBusca, ["16736249318"]);
   assert.match(r2.bling.texto, /não é encontrado pela busca do Bling, mas o PAIIA tem o produto Bling 16736249318 registrado/);
   assert.match(r2.bling.texto, /EXCLUÍDO \(lixeira\), INATIVO ou com o CÓDIGO ALTERADO/);
-  assert.match(r2.bling.texto, /O PAIIA não cria outro produto e não pede para excluir nada/);
-  assert.ok(!/cadastra o produto/.test(r2.bling.texto));
-  for (const l of r2.linhas) { assert.equal(l.estado, E.IMPEDIDO); assert.equal(l.acao.tipo, "nenhuma"); }
+  assert.match(r2.bling.texto, /O PAIIA não cria outro produto sozinho e não pede para excluir nada/);
+  for (const l of r2.linhas) {
+    assert.equal(l.estado, E.CONFERIR);
+    assert.deepEqual(l.acao.descartarBling, ["16736249318"]);
+    assert.equal(l.acao.texto, `✅ Conferi no Bling: o produto 16736249318 não existe — cadastrar de novo e publicar na ${l.nome}`);
+  }
   assert.equal(res.bling.cadastrar, true, "sem produto registrado (nunca existiu): cadastro protegido continua");
 });
 
@@ -305,4 +308,86 @@ test("teste controlado nas 3 contas: escolher cada conta leva ao botão SÓ daqu
     assert.equal(l.acao.texto, `✅ Autorizar e Publicar na ${l.nome}`);
   }
   assert.ok(ml.chamadas.every((x) => !/publicar/.test(x.caminho)), "só leituras");
+});
+
+// =============================================================
+// (16/11) 8200263342 — produto 16736249318 não existe mais no Bling: UM cadastro, sem duplicar
+// =============================================================
+const { zerarBanco, banco } = await import("./simulacao/supabaseFalso.mjs");
+const S = await import("../../src/services/anuncioPublicacaoService.js");
+const EB = await import("../../src/services/estoqueBlingPAIIA.js");
+const { checarAntesDePublicar } = await import("../../src/services/publicacaoVerificada.js");
+const ANTIGO = "16736249318";
+const NOVO = "16900000001";
+
+async function fichaComIdAntigo() {
+  zerarBanco();
+  const ap = await S.salvarFichaAprovada({ anuncioId: "", codigo: SKU, titulo: "Peça", dadosConferencia: { versao: 2, anuncio: { codigo: SKU, sku: SKU } } });
+  await S.salvarContaDestino({ anuncioId: ap.anuncioId, codigo: SKU, titulo: "Peça", contaId: CIEBR, contaNome: "CIEBR" });
+  await S.registrarProdutoBlingCriado({ anuncioId: ap.anuncioId, blingProdutoId: ANTIGO });
+  return ap.anuncioId;
+}
+
+test("registrar a conferência: acrescenta o ID descartado (sem apagar o vínculo antigo; sem repetir)", async () => {
+  const id = await fichaComIdAntigo();
+  const r1 = await S.registrarBlingDescartado({ anuncioId: id, produtoIds: [ANTIGO] });
+  const r2 = await S.registrarBlingDescartado({ anuncioId: id, produtoIds: [ANTIGO] });
+  assert.equal(r1.ok && r2.ok, true);
+  const f = (await S.obterAnuncio(id)).anuncio;
+  assert.deepEqual(EB.idsBlingDescartados(f.dados_conferencia), [ANTIGO]);
+  assert.equal(f.dados_conferencia.bling_descartados.length, 1);
+  assert.equal(f.publicacao.bling_produto_id, ANTIGO, "o registro antigo continua (histórico); nada apagado");
+  assert.equal(banco.funcoes.length, 0, "nada no Bling");
+  assert.ok(S.CHAVES_PRESERVADAS_FICHA.includes("bling_descartados"));
+});
+
+test("depois da conferência: o cadastro é liberado UMA vez; criado o produto novo, nunca cria de novo", () => {
+  const registrados = [{ produto_id: ANTIGO, ficha: "outra" }];
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados }).acao, "produto_registrado", "sem a conferência: trava");
+  const filtrados = EB.semBlingDescartados(registrados, [ANTIGO]);
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: filtrados }).acao, "criar", "com a conferência: cadastro protegido");
+  // Depois de criado, o Bling acha o SKU: nunca cria outro.
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: true, produto: { id: NOVO, codigo: SKU } }, { registrados: filtrados }).acao, "ja_existe");
+  // Outro produto registrado (não conferido por você) continua travando.
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: EB.semBlingDescartados([{ produto_id: "999" }], [ANTIGO]) }).acao, "produto_registrado");
+});
+
+test("checagem antes do envio: ID antigo descartado não acusa 'outro produto' quando o Bling acha o NOVO", async () => {
+  const id = await fichaComIdAntigo();
+  const deps = (bling) => ({
+    obterFicha: (x) => S.obterAnuncio(x),
+    contaConectada: () => true,
+    duplicidadeBase: async () => ({ ok: true, registros: [] }),
+    duplicidadeML: async () => ({ verificado: true, duplicados: [], possiveis: [] }),
+    lerBling: async () => bling,
+    anunciosBling: async () => ({ ok: true, anuncios: [] }),
+  });
+  const novo = { ok: true, encontrado: true, produto: { id: NOVO, codigo: SKU } };
+  const antes = await checarAntesDePublicar({ anuncioId: id, contaId: CIEBR, sku: SKU, deps: deps(novo) });
+  assert.match(antes.bloqueios.join(" "), /registra o produto Bling 16736249318, mas o SKU aponta o produto 16900000001/);
+  await S.registrarBlingDescartado({ anuncioId: id, produtoIds: [ANTIGO] });
+  const depois = await checarAntesDePublicar({ anuncioId: id, contaId: CIEBR, sku: SKU, deps: deps(novo) });
+  assert.equal(depois.ok, true, depois.bloqueios.join(" | "));
+  assert.equal(depois.blingProdutoId, NOVO);
+});
+
+test("tela: o 2º clique grava a conferência ANTES de autorizar; a revisão ignora só os IDs descartados", () => {
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  const i = a.indexOf("registrarBlingDescartado({ anuncioId, produtoIds: linha.acao.descartarBling");
+  assert.ok(i > 0 && i < a.indexOf("onAutorizar?.(linha.conta, id, plano);"));
+  assert.ok(a.includes("Nada foi publicado."));
+  const r = ler("src/components/RevisaoPublicacaoML.jsx");
+  assert.ok(r.includes("semBlingDescartados(produtosBlingRegistradosDoSku(ficha.outros"));
+  assert.ok(r.includes("idRegistradoValido(blingIdDaPublicacao(ficha.publicacao))"));
+});
+
+test("painel 8200263342 nas 3 contas com o ID antigo: cada conta escolhida tem o botão da conferência; conta com outro impedimento segue impedida", () => {
+  const verificacoes = [liberada(LOJA), liberada(CIEBR), { conta: REV, situacao: SITUACAO_CONTA.IMPEDIDA, impedimentos: ["Conexão: REVELAÇÃO não está conectada ao PAIIA."], itens: [] }];
+  const quadro = { linhas: [LOJA, CIEBR, REV].map((c) => ({ conta: c, estado: Q.ESTADO_QUADRO.DISPONIVEL, anuncios: [], outraPeca: [], possiveis: [], naoConfirmados: [], historico: [] })), bling: { estado: "nao_encontrado" } };
+  const r = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro, verificacoes, fotos: 3, blingRegistrados: [{ produto_id: ANTIGO }], sku: SKU });
+  const l = (c) => r.linhas.find((x) => x.conta === c);
+  assert.equal(l(LOJA).acao.descartarBling[0], ANTIGO);
+  assert.equal(l(CIEBR).acao.descartarBling[0], ANTIGO);
+  assert.equal(l(REV).estado, E.IMPEDIDO);
+  assert.equal(l(REV).acao.tipo, "nenhuma");
 });

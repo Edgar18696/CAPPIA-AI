@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { verificarDuplicidadeML } from "../services/duplicidadeML";
 import { novaAutorizacaoId, mlbRegistradoDaFicha } from "../services/pilotoPublicacao";
 import { consultorML, modalidadesDaConta, FRETE_SIMULADO_PERMITIDO } from "../services/consultaMLLeitura";
-import { conferirDuplicidadeBase, obterAnuncio, registrarContasPublicacao, registrarMLBPublicado, limparEnvioPublicacao } from "../services/anuncioPublicacaoService";
+import { conferirDuplicidadeBase, obterAnuncio, registrarContasPublicacao, registrarMLBPublicado, limparEnvioPublicacao, registrarBlingDescartado } from "../services/anuncioPublicacaoService";
 import { CONTAS_PUBLICACAO_ML, assinaturaVerificacao, montarPlanoContas, nomeContaPublicacao, verificarContasPublicacao } from "../services/contasPublicacaoML";
 import { contasParaConsultar } from "../services/reconhecimentoSKU";
 import { reconhecerProdutoExistente, lerFichasDoCodigo } from "../services/produtoExistenteService";
@@ -18,7 +18,7 @@ import { quadroProdutoExistente, ORDEM_CONTAS_QUADRO } from "../services/produto
 import { ESTADO_FINAL, situacaoFinalDasContas } from "../services/finalizacaoPublicacao";
 import { envioPendenteDaFicha, retomarPublicacao } from "../services/publicacaoVerificada";
 import { registroPublicado } from "../services/vinculoBlingPublicacao";
-import { produtosBlingRegistradosDoSku } from "../services/estoqueBlingPAIIA";
+import { produtosBlingRegistradosDoSku, idsBlingDescartados, semBlingDescartados } from "../services/estoqueBlingPAIIA";
 
 const CHAVE = (id) => `paiiaAutorizacaoPublicacao:${id}`;
 const COR = {
@@ -95,7 +95,7 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
       ]);
       const quadro = quadroProdutoExistente({ fichas: fichas?.ok ? fichas.anuncios : [], reconhecimento: rec });
       // Produtos Bling já registrados nas fichas deste SKU (inclusive esta): nunca cadastra outro por cima.
-      const blingRegistrados = produtosBlingRegistradosDoSku([...(fichas?.ok ? fichas.anuncios : []), { id: "esta-ficha", publicacao: f.publicacao, integracao_bling: f.dados_conferencia?.integracao_bling }]);
+      const blingRegistrados = semBlingDescartados(produtosBlingRegistradosDoSku([...(fichas?.ok ? fichas.anuncios : []), { id: "esta-ficha", publicacao: f.publicacao, integracao_bling: f.dados_conferencia?.integracao_bling }]), idsBlingDescartados(f.dados_conferencia));
       const res = situacaoFinalDasContas({ ficha, quadro, verificacoes: verif.resultados, fotos, blingRegistrados, sku: String(sku || codigo || "").trim() });
       setSt({ lendo: false, res: { ...res, verif, ficha }, assinatura: assinaturaDaConta, erro: "" });
     } catch (e) {
@@ -111,6 +111,11 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
     const resultado = (st.res.verif.resultados || []).find((r) => String(r.conta) === linha.conta);
     const plano = montarPlanoContas({ selecao: [linha.conta], resultados: resultado ? [resultado] : [], conferidas: linha.acao.conferida ? { [linha.conta]: true } : {} });
     if (plano.conta_desta_ficha !== linha.conta) { setOcupado(""); setAviso(`A conferência da ${linha.nome} não liberou a publicação. Confira de novo.`); return; }
+    // (16/11) Você conferiu no Bling que o produto registrado não existe: registra na ficha (sem apagar nada).
+    if (linha.acao.descartarBling?.length) {
+      const d = await registrarBlingDescartado({ anuncioId, produtoIds: linha.acao.descartarBling, motivo: "não encontrado no Bling (conferido pelo usuário no 2º clique)" });
+      if (!d.ok) { setOcupado(""); setAviso(`${d.erro || "Não foi possível registrar a conferência do Bling."} Nada foi publicado.`); return; }
+    }
     const r = await registrarContasPublicacao({ anuncioId, plano, codigo: codigo || sku, titulo, contaNome: nomeContaPublicacao(linha.conta) });
     if (!r.ok) { setOcupado(""); setAviso(`${r.erro || "Não foi possível gravar a conta na ficha."} Nada foi publicado.`); return; }
     // Mesmo nº se a autorização desta ficha já foi dada (toque repetido / recarregar): o servidor nunca publica 2x.
