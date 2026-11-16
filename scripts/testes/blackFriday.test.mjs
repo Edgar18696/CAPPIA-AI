@@ -723,3 +723,16 @@ test("teste de promoções de uma conta: autorizada ou motivo técnico exato (se
   const venc = await A.testarPromocoesConta({ conta: "1729335019", consultar: async () => ({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido: abra Contas Marketplace" }) });
   assert.match(venc.motivo, /credencial, não permissão/);
 });
+
+test("renovar acesso: usa a renovação oficial (validar_conexao) da conta, sem reconectar e sem devolver e-mail/token", async () => {
+  const A = await import("../../src/services/blackFriday/aplicativoML.js");
+  const chamadas = [];
+  const invocar = async (nome, { body }) => { chamadas.push({ nome, ...body }); return { data: { ok: true, conectado: true, pertence_ao_usuario: true, renovado: true, token_valido_ate: "2026-11-16T22:00:00Z", email: "x@y", nome: "Fulano" } }; };
+  const r = await A.renovarAcessoConta({ conta: "824312524", invocar });
+  assert.deepEqual(chamadas, [{ nome: "mercadolivre-publicacao", acao: "validar_conexao", conta_ml: "824312524" }], "sem forcar_renovacao, sem outra ação");
+  assert.deepEqual(r, { ok: true, conta: "CIEBR", renovado: true, valido_ate: "2026-11-16T22:00:00Z", pertence: true, erro: null });
+  const revog = await A.renovarAcessoConta({ conta: "824312524", invocar: async () => ({ data: { ok: false, erro: "A autorização do Mercado Livre venceu ou foi revogada. Clique em Reconectar em Contas Marketplace." } }) });
+  assert.equal(revog.precisa_reconectar, true);
+  const venc = await A.testarPromocoesConta({ conta: "824312524", consultar: async () => ({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido" }) });
+  assert.match(venc.motivo, /Renovar acesso desta conta/);
+});

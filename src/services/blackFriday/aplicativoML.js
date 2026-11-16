@@ -168,10 +168,34 @@ export async function testarPromocoesConta({ conta, consultar }) {
   const st = Number(r?.status);
   let motivo;
   if (st === 403 && /policy returned UNAUTHORIZED|PA_UNAUTHORIZED/i.test(`${msg} ${codigo} ${(r?.recusa_ml?.causa || []).join(" ")}`)) motivo = "Falta a permissão funcional \"Promoções, cupons e descontos\" no aplicativo Paiia (App ID 1283127548197864). Habilitar no DevCenter da conta dona (CIEBR) e testar de novo, sem reconectar.";
-  else if (st === 401 && /vencido/i.test(msg)) motivo = "Token desta conta vencido no PAIIA (credencial, não permissão). Abra Contas Marketplace no PAIIA para renovar e teste de novo.";
+  else if (st === 401 && /vencido/i.test(msg)) motivo = "Acesso desta conta vencido no PAIIA (credencial, não permissão). Clique em \"🔑 Renovar acesso desta conta\" (renovação normal, sem reconectar) e teste de novo.";
   else if (st === 401) motivo = "Token desta conta recusado pelo ML (credencial inválida ou revogada), não é permissão do aplicativo.";
   else if (st === 404 && /não conectada/i.test(msg)) motivo = "Conta não conectada para o seu usuário no PAIIA.";
   else if (st === 403) motivo = "Recusa do ML diferente da permissão do aplicativo: ver mensagem e código abaixo.";
   else motivo = "Falha técnica na consulta: ver mensagem abaixo.";
   return { ...base, ok: false, resultado: "bloqueada", codigo: codigo || null, mensagem: msg, causa: r?.recusa_ml?.causa || [], motivo, texto: `Consulta de promoções BLOQUEADA para ${base.conta} (HTTP ${st || "?"}${codigo ? `, ${codigo}` : ""}): ${motivo}` };
+}
+
+/**
+ * (16/11) Renovar o acesso de UMA conta pelo mecanismo OFICIAL que o PAIIA já usa
+ * (mercadolivre-publicacao, ação "validar_conexao" — a mesma da Revisão da Publicação):
+ *   - usa o refresh token que já está guardado (NÃO é reconexão, não abre o ML);
+ *   - só renova se o acesso estiver vencido ou perto de vencer;
+ *   - confere que o acesso é mesmo DESTA conta (/users/me);
+ *   - a tela só recebe validade e confirmação; e-mail, nome e tokens são descartados aqui.
+ */
+export async function renovarAcessoConta({ conta, invocar }) {
+  const c = CONTAS_BLACK_FRIDAY.find((x) => x.id === txt(conta));
+  const r = await chamar(invocar, "mercadolivre-publicacao", { acao: "validar_conexao", conta_ml: txt(conta) });
+  const nome = c?.nome || txt(conta);
+  if (!r?.ok) return { ok: false, conta: nome, erro: txt(r?.erro) || "Falha ao renovar.", codigo: txt(r?.codigo) || null, precisa_reconectar: /Reconectar|revogada|sem refresh/i.test(txt(r?.erro)) };
+  if (!r.conectado) return { ok: false, conta: nome, erro: "Conta não conectada no PAIIA.", precisa_reconectar: true };
+  return {
+    ok: r.pertence_ao_usuario === true,
+    conta: nome,
+    renovado: r.renovado === true,
+    valido_ate: r.token_valido_ate || null,
+    pertence: r.pertence_ao_usuario === true,
+    erro: r.pertence_ao_usuario === true ? null : "O acesso gravado não corresponde a esta conta do ML.",
+  };
 }

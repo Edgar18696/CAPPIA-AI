@@ -14,7 +14,7 @@ import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
-import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo, testarPromocoesConta } from "../services/blackFriday/aplicativoML";
+import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo, testarPromocoesConta, renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela
@@ -40,6 +40,7 @@ export default function BlackFridayPaizinho() {
   // (16/11) Uma conta por vez: começa só com a 1ª da ordem (LOJA ONLINE).
   const [contas, setContas] = useState([CONTAS_BLACK_FRIDAY[0].id]);
   const [testePromo, setTestePromo] = useState(null);
+  const [renovacao, setRenovacao] = useState(null);
   const [limite, setLimite] = useState("50");
   const [lendo, setLendo] = useState("");
   const [leitura, setLeitura] = useState(null);
@@ -177,6 +178,19 @@ export default function BlackFridayPaizinho() {
       const r = await testarPromocoesConta({ conta: diagConta, consultar: consultorLeituraBF(diagConta, invocar) });
       setTestePromo(r);
       registro?.registrar("diagnostico", { teste_promocoes: r.texto });
+    } catch (e) { setAviso(String(e?.message || e)); }
+    setDiagLendo(false);
+  }
+
+  // (16/11) Renovar o acesso da conta pelo mecanismo oficial (refresh guardado; não é reconexão).
+  async function renovarConta() {
+    const nome = CONTAS_BLACK_FRIDAY.find((c) => c.id === diagConta)?.nome || diagConta;
+    if (!window.confirm(`Renovar o acesso da conta ${nome} ao Mercado Livre?\n\nUsa a renovação normal do PAIIA (a mesma da publicação), com a autorização que já existe. Não reconecta, não desconecta e não muda anúncios, preços ou estoque.`)) return;
+    setDiagLendo(true); setRenovacao(null);
+    try {
+      const r = await renovarAcessoConta({ conta: diagConta, invocar });
+      setRenovacao(r);
+      registro?.registrar("diagnostico", { renovacao: `${r.conta}: ${r.ok ? (r.renovado ? "renovado" : "já válido") : r.erro}` });
     } catch (e) { setAviso(String(e?.message || e)); }
     setDiagLendo(false);
   }
@@ -402,9 +416,14 @@ export default function BlackFridayPaizinho() {
         <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
         <button type="button" style={S.filtro} onClick={diagnosticarTresContas} disabled={diagLendo || !leitura}>{diagLendo ? "🔄 Testando…" : "🩺 Comparar as 3 contas"}</button>
         <button type="button" style={S.filtro} onClick={lerAplicativo} disabled={diagLendo}>{diagLendo ? "🔄 Lendo…" : "🔎 Identificar aplicativo do ML"}</button>
+        <button type="button" style={S.filtro} onClick={renovarConta} disabled={diagLendo} title="Renovação normal do acesso, com a autorização que já existe (não é reconexão).">{diagLendo ? "🔄 …" : "🔑 Renovar acesso desta conta"}</button>
         <button type="button" style={S.botao} onClick={testarPromoConta} disabled={diagLendo} title="Uma única consulta de promoções da conta escolhida ao lado, com o token dela.">{diagLendo ? "🔄 Testando…" : "🏷️ Testar promoções desta conta"}</button>
         <button type="button" style={S.filtro} onClick={lerDonoApp} disabled={diagLendo} title="O próprio aplicativo lê o seu cadastro. Usa a conta selecionada ao lado só para confirmar o seu acesso.">{diagLendo ? "🔄 Lendo…" : "🔐 Ler cadastro pelo próprio aplicativo"}</button>
       </div>
+      {renovacao && <div style={renovacao.ok ? S.nota : S.aviso}>
+        <strong>{renovacao.ok ? `✅ Acesso da ${renovacao.conta} ${renovacao.renovado ? "renovado" : "já estava válido"}${renovacao.valido_ate ? ` até ${dataHoraBrasilia(renovacao.valido_ate)}` : ""}.` : `❌ ${renovacao.conta}: ${renovacao.erro}`}</strong>
+        {!renovacao.ok && renovacao.precisa_reconectar && <><br /><small>O ML recusou a autorização guardada: aí sim é preciso reconectar esta conta — pelo site oficial (www.paiia.com.br → Contas Marketplace), não pelo endereço local.</small></>}
+      </div>}
       {testePromo && <div style={testePromo.ok ? S.nota : S.aviso}>
         <strong>{testePromo.ok ? "✅" : "❌"} {testePromo.texto}</strong>
         {!testePromo.ok && <><br /><small>Mensagem do ML: {testePromo.mensagem || "—"}{testePromo.codigo ? ` · código ${testePromo.codigo}` : ""}{testePromo.causa?.length ? ` · causa ${testePromo.causa.join(", ")}` : ""} · {testePromo.caminho}</small></>}
