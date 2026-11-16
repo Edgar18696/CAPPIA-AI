@@ -1,32 +1,37 @@
 // =============================================================
-// PAIIA — Central do Paizinho: aba "Black Friday 2026" (FASE 1).
-// Uma tela só: contas → Consultar Anúncios → classificação Renault/Demais/
-// Revisão → Simular → tabela, filtros e alertas → aprovação (registro) →
-// programação → acompanhamento → histórico.
-// FASE 1 = SOMENTE LEITURA E SIMULAÇÃO: nenhuma oferta é ativada, nenhum
-// preço, anúncio ou estoque é alterado. A ativação fica bloqueada (Fase 3).
+// PAIIA — Central do Paizinho: aba "Black Friday 2026".
+// Uma tela só, UMA CONTA POR VEZ, com as etapas separadas:
+//   1. Consultar (todos os anúncios ativos, com progresso e retomada)
+//   2. Simular (10% Renault comprovada · 5% demais · nunca cumulativo)
+//   3. Conferir (PRONTO · CONFERIR · BLOQUEADO, com o motivo)
+//   4. Aprovar (só PRONTO, com margem verificada e não negativa)
+//   5. Ativar: automático só quando a API do ML autorizar (hoje: bloqueado);
+//      manual assistido pela planilha na Central de Promoções do ML.
+//   6. Encerramento (30/11 23:59) e conferência dos preços normais em 01/12.
+// Nada aqui altera preço, anúncio, estoque, Bling ou contas conectadas.
 // Não mexe no Ranqueamento nem nas outras funções da Central.
 // =============================================================
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
-import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha } from "../services/blackFriday/calendario";
-import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO, custosDoPerfil, filtrarLinhas, resumirSimulacao, podeAprovar, contarMotivos } from "../services/blackFriday/regras";
-import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
+import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha, conferirEncerramento, ofertasConfirmadasNoML } from "../services/blackFriday/calendario";
+import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, custosDoPerfil, filtrarLinhas, resumirSimulacao } from "../services/blackFriday/regras";
+import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
-import { montarPlanilha, planilhaCSV, resumirPlanilha } from "../services/blackFriday/planilha";
-import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo, testarPromocoesConta, renovarAcessoConta } from "../services/blackFriday/aplicativoML";
+import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, LISTAS, aprovavel } from "../services/blackFriday/planilha";
+import { renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
-// (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela
-// ml_consulta. Enquanto a função própria não estiver publicada, tudo segue pela ml_consulta.
+// (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela ml_consulta.
 const consultorConta = (id) => roteadorBF({ principal: consultorBF(id, invocar), bf: consultorLeituraBF(id, invocar) });
 const real = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const pctTxt = (v) => (v === null || v === undefined ? "—" : `${String(v).replace(".", ",")}%`);
-const COR_SITUACAO = { apto: "#4ade80", atencao: "#fbbf24", revisao: "#fb923c", bloqueado: "#f87171", excluido: "#94a3b8" };
+const COR_LISTA = { PRONTO: "#4ade80", CONFERIR: "#fbbf24", BLOQUEADO: "#f87171" };
 const COR_CLASSE = { renault: "#facc15", demais: "#67e8f9", revisao: "#fb923c" };
-const LIMITES = [["50", "50 por conta (teste)"], ["200", "200 por conta"], ["5000", "Todos os ativos"]];
+// (16/11) Padrão: TODOS os anúncios ativos da conta (sem limite de 50).
+const LIMITES = [["20000", "Todos os anúncios ativos"], ["200", "200 (teste)"], ["50", "50 (teste)"]];
 const POR_PAGINA = 50;
+const RE_403 = /policy returned UNAUTHORIZED|HTTP 403|\b403\b/i;
 
 function lerPerfil() {
   try { return custosDoPerfil(JSON.parse(localStorage.getItem("paiiaPerfilCustos") || "null")); } catch { return custosDoPerfil(null); }
@@ -40,25 +45,20 @@ export default function BlackFridayPaizinho() {
   const [erroLogin, setErroLogin] = useState("");
   // (16/11) Uma conta por vez: começa só com a 1ª da ordem (LOJA ONLINE).
   const [contas, setContas] = useState([CONTAS_BLACK_FRIDAY[0].id]);
-  const [testePromo, setTestePromo] = useState(null);
   const [renovacao, setRenovacao] = useState(null);
   const [planilhaInfo, setPlanilhaInfo] = useState(null);
-  const [limite, setLimite] = useState("50");
+  const [custosForm, setCustosForm] = useState(null); // { imposto, pedido } em edição
+  const [limite, setLimite] = useState("20000");
+  const [progresso, setProgresso] = useState(null);
   const [lendo, setLendo] = useState("");
   const [leitura, setLeitura] = useState(null);
   const [simulado, setSimulado] = useState(false);
   const [versao, setVersao] = useState(0); // força reler plano/histórico
   const [aviso, setAviso] = useState("");
-  const [filtro, setFiltro] = useState({ classe: "", situacao: "", contas: [], busca: "", margemAbaixo: "", soAlertas: false });
+  const [filtro, setFiltro] = useState({ lista: "", classe: "", busca: "" });
   const [marcados, setMarcados] = useState(() => new Set());
   const [mostrar, setMostrar] = useState(POR_PAGINA);
-  const [diagConta, setDiagConta] = useState(CONTAS_BLACK_FRIDAY[0].id);
-  const [diagItem, setDiagItem] = useState("");
-  const [diag, setDiag] = useState(null);
-  const [diagLendo, setDiagLendo] = useState(false);
-  const [matriz, setMatriz] = useState(null);
-  const [appInfo, setAppInfo] = useState(null);
-  const [donoApp, setDonoApp] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
   const cancelar = useRef(false);
 
   useEffect(() => {
@@ -81,37 +81,56 @@ export default function BlackFridayPaizinho() {
   const historico = useMemo(() => registro?.historico() || [], [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const perfil = useMemo(() => lerPerfil(), [versao]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const linhas = useMemo(() => (simulado && leitura ? montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil }) : []), [simulado, leitura, plano, perfil]);
-  const visiveis = useMemo(() => filtrarLinhas(linhas, filtro), [linhas, filtro]);
+  // (16/11) Uma conta por vez: tudo abaixo é só da conta escolhida (nunca mistura).
+  const contaAtual = contas[0] || "";
+  const nomeConta = CONTAS_BLACK_FRIDAY.find((c) => c.id === contaAtual)?.nome || "";
+  const leituraConta = leitura?.contas?.[contaAtual] || null;
+  const podeRetomar = !!(leituraConta && leituraConta.completa === false);
+
+  const linhas = useMemo(() => (simulado && leitura ? montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil }).filter((l) => l.conta === contaAtual) : []), [simulado, leitura, plano, perfil, contaAtual]);
+  const listaDe = useMemo(() => new Map(linhas.map((l) => [l.chave, classificarParaPlanilha(l)])), [linhas]);
+  const visiveis = useMemo(() => filtrarLinhas(linhas, { busca: filtro.busca, classe: filtro.classe }).filter((l) => !filtro.lista || listaDe.get(l.chave)?.lista === filtro.lista), [linhas, filtro, listaDe]);
   const resumo = useMemo(() => resumirSimulacao(linhas), [linhas]);
-  const aprovados = plano?.aprovados || {};
-  const campanhasConta = useMemo(() => registro?.campanhasPorConta() || {}, [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  const resumoListas = useMemo(() => resumirPlanilha(montarPlanilha(linhas, contaAtual)), [linhas, contaAtual]);
+  const aprovados = useMemo(() => plano?.aprovados || {}, [plano]);
+  const aprovadosConta = Object.values(aprovados).filter((a) => a.conta === contaAtual);
+  const campanhaConta = useMemo(() => registro?.campanhasPorConta()?.[contaAtual] || null, [registro, versao, contaAtual]); // eslint-disable-line react-hooks/exhaustive-deps
   const momento = momentoDaCampanha();
 
+  // (16/11) Caminho automático: só quando a API do ML autorizar. A própria leitura já mostra
+  // (uma tentativa por consulta; 403 não é repetido).
+  const promoBloqueada = !!leitura?.falhas?.some((f) => f.conta === nomeConta && f.etapa === "promoções" && RE_403.test(f.erro));
+  const promoLiberada = !!leituraConta?.itens?.some((x) => x.promocoes?.lido);
+  const confirmacao = useMemo(() => ofertasConfirmadasNoML({ aprovados, itens: leituraConta?.itens, conta: contaAtual }), [aprovados, leituraConta, contaAtual]);
+  const encerramento = useMemo(() => (momento === "encerrada" && leituraConta ? conferirEncerramento({ aprovados, itens: leituraConta.itens, conta: contaAtual, lidoEm: leituraConta.lido_em || leitura?.lido_em }) : null), [momento, leituraConta, leitura, aprovados, contaAtual]);
+
   function alternarConta(id) {
-    setContas((atual) => (atual.includes(id) ? atual.filter((x) => x !== id) : [...atual, id]));
+    setContas([id]); setMarcados(new Set()); setPlanilhaInfo(null); setRenovacao(null); setAviso("");
   }
 
-  async function consultar() {
+  async function consultar(retomar = false) {
     if (!registro) return;
-    if (!contas.length) { setAviso("Escolha pelo menos uma conta."); return; }
+    if (contas.length !== 1) { setAviso("Escolha uma conta."); return; }
     setAviso(""); setSimulado(false); setMarcados(new Set()); cancelar.current = false;
-    setLendo("Começando…");
-    const nomes = CONTAS_BLACK_FRIDAY.filter((c) => contas.includes(c.id)).map((c) => c.nome).join(", ");
-    registro.registrar("consulta_iniciada", { contas: nomes, limite: Number(limite) });
+    setLendo(retomar ? "Retomando…" : "Começando…"); setProgresso(null);
+    // (16/11) Guarda o parcial a cada 50 anúncios: se a página fechar, dá para retomar.
+    const guardar = (r) => { try { localStorage.setItem(chaveLeitura(usuarioId), JSON.stringify(r)); return true; } catch { return false; } };
+    registro.registrar(retomar ? "consulta_retomada" : "consulta_iniciada", { contas: nomeConta, limite: Number(limite) });
     try {
       const r = await lerContasBF({
         contas, limite: Number(limite),
         consultorDaConta: consultorConta,
         consultarCusto: consultorCustoBF(invocar),
-        aoProgredir: setLendo,
+        aoProgredir: (t, e) => { setLendo(t); if (e) setProgresso(e); },
         cancelado: () => cancelar.current,
+        anterior: retomar ? leitura : null,
+        aoParcial: (p) => { p.parcial = true; guardar(p); },
       });
       setLeitura(r);
-      try { localStorage.setItem(chaveLeitura(usuarioId), JSON.stringify(r)); } catch { setAviso("Leitura grande demais para guardar neste navegador: fica só nesta tela."); }
+      if (!guardar(r)) setAviso("Leitura grande demais para guardar neste navegador: fica só nesta tela (não dá para retomar se fechar).");
       const lidos = Object.values(r.contas).reduce((s, c) => s + c.lidos, 0);
-      registro.registrar("consulta_concluida", { contas: nomes, anuncios: lidos, falhas: r.falhas.length, interrompida: cancelar.current });
-      // (15/11) Um registro por conta + etapa (com a quantidade), em vez de 1 por anúncio cortado em 100.
+      registro.registrar("consulta_concluida", { contas: nomeConta, anuncios: lidos, falhas: r.falhas.length, interrompida: cancelar.current });
+      // (15/11) Um registro por conta + etapa (com a quantidade), em vez de 1 por anúncio.
       for (const g of agruparFalhas(r.falhas)) registro.registrar("erro", { conta: g.conta, etapa: g.etapa, quantidade: g.quantidade, erro: g.erros.map((e) => `${e.erro} (${e.n})`).join(" | "), exemplo: r.falhas.find((f) => f.conta === g.conta && f.etapa === g.etapa)?.id || null });
     } catch (e) {
       setAviso(String(e?.message || e));
@@ -123,108 +142,71 @@ export default function BlackFridayPaizinho() {
   function simular() {
     if (!leitura || !registro) return;
     setSimulado(true); setMostrar(POR_PAGINA); setVersao((v) => v + 1);
-    const l = montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil: lerPerfil() });
+    const l = montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil: lerPerfil() }).filter((x) => x.conta === contaAtual);
     const r = resumirSimulacao(l);
-    registro.registrar("simulacao", { anuncios: r.total, renault: r.renault, demais: r.demais, revisao: r.revisao, prejuizo: r.prejuizo, sem_margem: r.sem_margem });
+    registro.registrar("simulacao", { conta: nomeConta, anuncios: r.total, renault: r.renault, demais: r.demais, revisao: r.revisao, prejuizo: r.prejuizo, sem_margem: r.sem_margem });
     // Aprovação cujo preço ou situação mudou desde então sai do plano (nunca usa preço antigo).
     const { desatualizadas } = registro.conferirAprovacoes(l);
-    setAviso(desatualizadas.length ? `${desatualizadas.length} aprovação(ões) ficaram desatualizadas (preço ou situação mudou) e saíram do plano.` : "");
-  }
-
-  async function diagnosticar() {
-    setDiagLendo(true); setDiag(null);
-    try {
-      const r = await diagnosticarAnuncio({ conta: diagConta, itemId: diagItem, consultar: consultorConta(diagConta) });
-      setDiag(r);
-      registro?.registrar("diagnostico", { conta: CONTAS_BLACK_FRIDAY.find((c) => c.id === diagConta)?.nome, item: diagItem.trim().toUpperCase(), falhas: r.filter((x) => !x.ok).length });
-    } catch (e) { setDiag([{ etapa: "Diagnóstico", ok: false, erro: String(e?.message || e) }]); }
-    setDiagLendo(false);
-  }
-
-  async function diagnosticarTresContas() {
-    setDiagLendo(true); setMatriz(null);
-    try {
-      const m = await diagnosticarContas({ leitura, consultorDaConta: consultorConta });
-      setMatriz(m);
-      registro?.registrar("diagnostico", { contas: m.contas.map((c) => `${c.nome}: ${c.resultados.filter((r) => !r.ok).length} recusa(s)`).join(" · ") });
-    } catch (e) { setAviso(String(e?.message || e)); }
-    setDiagLendo(false);
-  }
-
-  // (16/11) Qual aplicativo do ML o PAIIA usa: só leitura (não abre autorização, não reconecta).
-  async function lerAplicativo() {
-    setDiagLendo(true); setAppInfo(null);
-    try {
-      const r = await identificarAplicativo({ invocar, consultorDaConta: (c) => consultorLeituraBF(c, invocar) });
-      setAppInfo(r);
-      registro?.registrar("diagnostico", { aplicativo: r.app?.ok ? `final ${r.app.app_id.slice(-4)}` : "não lido", contas: r.porConta.map((p) => `${p.conta}: cadastro ${p.cadastro.ok ? "lido" : "recusado"}`).join(" · ") });
-    } catch (e) { setAviso(String(e?.message || e)); }
-    setDiagLendo(false);
-  }
-
-  // (16/11) Caminho B: o próprio aplicativo lê o seu cadastro (dono e permissões). Só leitura.
-  async function lerDonoApp() {
-    setDiagLendo(true); setDonoApp(null);
-    try {
-      const r = await lerDonoPeloAplicativo({ consultar: consultorLeituraBF(diagConta, invocar) });
-      setDonoApp(r);
-      registro?.registrar("diagnostico", { caminho_b: r.ok ? (r.dono ? `dono ${r.dono.conta || "fora das 3 contas"}` : "sem campo de dono") : r.erro });
-    } catch (e) { setAviso(String(e?.message || e)); }
-    setDiagLendo(false);
-  }
-
-  // (16/11) Promoções de UMA conta, com o token dela (uma consulta GET, sem cache de recusa).
-  async function testarPromoConta() {
-    setDiagLendo(true); setTestePromo(null);
-    try {
-      const r = await testarPromocoesConta({ conta: diagConta, consultar: consultorLeituraBF(diagConta, invocar) });
-      setTestePromo(r);
-      registro?.registrar("diagnostico", { teste_promocoes: r.texto });
-    } catch (e) { setAviso(String(e?.message || e)); }
-    setDiagLendo(false);
+    setAviso(desatualizadas.length ? `${desatualizadas.length} aprovação(ões) ficaram desatualizadas (preço ou pendência mudou) e saíram do plano.` : "");
   }
 
   // (16/11) Renovar o acesso da conta pelo mecanismo oficial (refresh guardado; não é reconexão).
   async function renovarConta() {
-    const nome = CONTAS_BLACK_FRIDAY.find((c) => c.id === diagConta)?.nome || diagConta;
-    if (!window.confirm(`Renovar o acesso da conta ${nome} ao Mercado Livre?\n\nUsa a renovação normal do PAIIA (a mesma da publicação), com a autorização que já existe. Não reconecta, não desconecta e não muda anúncios, preços ou estoque.`)) return;
-    setDiagLendo(true); setRenovacao(null);
+    if (!window.confirm(`Renovar o acesso da conta ${nomeConta} ao Mercado Livre?\n\nUsa a renovação normal do PAIIA (a mesma da publicação), com a autorização que já existe. Não reconecta, não desconecta e não muda anúncios, preços ou estoque.`)) return;
+    setOcupado(true); setRenovacao(null);
     try {
-      const r = await renovarAcessoConta({ conta: diagConta, invocar });
+      const r = await renovarAcessoConta({ conta: contaAtual, invocar });
       setRenovacao(r);
       registro?.registrar("diagnostico", { renovacao: `${r.conta}: ${r.ok ? (r.renovado ? "renovado" : "já válido") : r.erro}` });
     } catch (e) { setAviso(String(e?.message || e)); }
-    setDiagLendo(false);
+    setOcupado(false);
+  }
+
+  // (16/11) Imposto e custo por pedido: o cadastro "Preços, Custos e Lucro" fica no
+  // navegador, separado por endereço (o site oficial e o local não se enxergam). Aqui
+  // grava SÓ neste navegador/endereço, no mesmo cadastro (paiiaPerfilCustos), sem apagar
+  // os outros campos e sem tocar na produção.
+  function salvarCustos() {
+    const imposto = String(custosForm?.imposto ?? "").replace(",", ".").trim();
+    const pedido = String(custosForm?.pedido ?? "").replace(",", ".").trim();
+    if (imposto === "" || !Number.isFinite(Number(imposto)) || Number(imposto) < 0 || Number(imposto) > 50) { setAviso("Informe o imposto em % (entre 0 e 50), igual ao cadastrado no PAIIA oficial."); return; }
+    if (pedido !== "" && (!Number.isFinite(Number(pedido)) || Number(pedido) < 0)) { setAviso("Custo por pedido inválido."); return; }
+    let atual;
+    try { atual = JSON.parse(localStorage.getItem("paiiaPerfilCustos") || "null") || {}; } catch { atual = {}; }
+    try {
+      localStorage.setItem("paiiaPerfilCustos", JSON.stringify({ ...atual, impostoPercentual: imposto, ...(pedido !== "" ? { custoOperacionalPedido: pedido } : {}) }));
+      registro?.registrar("custos_locais", { imposto_pct: Number(imposto), custo_pedido: pedido === "" ? null : Number(pedido) });
+      setCustosForm(null); setAviso(simulado ? "Imposto gravado neste navegador. Simulação atualizada." : "Imposto gravado neste navegador."); setVersao((v) => v + 1);
+    } catch { setAviso("Não foi possível gravar neste navegador."); }
   }
 
   // (16/11) Planilha para cadastro MANUAL na Central de Promoções do ML (só gera arquivo).
-  function baixarPlanilha(c) {
-    const planilha = montarPlanilha(linhas, c.id);
-    if (!planilha.length) { setAviso(`Consulte e simule a ${c.nome} antes de gerar a planilha.`); return; }
-    const resumo = resumirPlanilha(planilha);
+  function baixarPlanilha() {
+    const planilha = montarPlanilha(linhas, contaAtual);
+    if (!planilha.length) { setAviso(`Consulte e simule a ${nomeConta} antes de gerar a planilha.`); return; }
+    const r = resumirPlanilha(planilha);
     try {
       const url = URL.createObjectURL(new Blob([planilhaCSV(planilha)], { type: "text/csv;charset=utf-8" }));
       const a = document.createElement("a");
-      a.href = url; a.download = `black-friday-2026-${c.nome.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`;
+      a.href = url; a.download = `black-friday-2026-${nomeConta.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-")}.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e) { setAviso(`Não foi possível gerar o arquivo: ${e?.message || e}`); }
-    setPlanilhaInfo({ conta: c.nome, resumo });
-    registro?.registrar("planilha", { conta: c.nome, total: resumo.total, pronto: resumo.pronto, conferir: resumo.conferir });
+    setPlanilhaInfo({ conta: nomeConta, resumo: r });
+    registro?.registrar("planilha", { conta: nomeConta, total: r.total, pronto: r.pronto, conferir: r.conferir, bloqueado: r.bloqueado });
   }
 
-  // (16/11) Aprovação da CAMPANHA separada por conta (só registra; nada é ativado).
-  function aprovarCampanha(c) {
-    const qtd = Object.values(aprovados).filter((a) => a.conta === c.id).length;
-    if (!qtd) { setAviso(`Aprove primeiro as ofertas da ${c.nome}.`); return; }
-    if (!window.confirm(`Aprovar a CAMPANHA Black Friday da conta ${c.nome}?\n\n${qtd} oferta(s) aprovada(s).\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nSó registra a decisão desta conta. NENHUMA oferta é ativada e nenhum preço é alterado.`)) return;
-    const r = registro.aprovarCampanhaConta(c.id, { nome: c.nome });
-    setAviso(r.ok ? `Campanha da ${c.nome} aprovada (${r.campanha.ofertas} oferta(s)). Ativação continua bloqueada.` : r.motivo);
+  // (16/11) Aprovação da CAMPANHA da conta (só registra; nada é ativado).
+  function aprovarCampanha() {
+    if (!aprovadosConta.length) { setAviso(`Aprove primeiro as ofertas da ${nomeConta}.`); return; }
+    if (!window.confirm(`Aprovar a CAMPANHA Black Friday da conta ${nomeConta}?\n\n${aprovadosConta.length} oferta(s) aprovada(s).\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nSó registra a decisão desta conta. NENHUMA oferta é ativada e nenhum preço é alterado.`)) return;
+    const r = registro.aprovarCampanhaConta(contaAtual, { nome: nomeConta });
+    setAviso(r.ok ? `Campanha da ${nomeConta} aprovada (${r.campanha.ofertas} oferta(s)). Nada foi ativado.` : r.motivo);
     setVersao((v) => v + 1);
   }
-  function retirarCampanha(c) {
-    if (!window.confirm(`Retirar a aprovação da campanha da ${c.nome}?`)) return;
-    registro.retirarCampanhaConta(c.id); setVersao((v) => v + 1);
+  function retirarCampanha() {
+    if (!window.confirm(`Retirar a aprovação da campanha da ${nomeConta}?`)) return;
+    registro.retirarCampanhaConta(contaAtual); setVersao((v) => v + 1);
   }
 
   function decidir(l, decisao) {
@@ -232,17 +214,12 @@ export default function BlackFridayPaizinho() {
     setVersao((v) => v + 1);
   }
 
+  // (16/11) Aprovação SÓ de anúncios PRONTO, com margem verificada e não negativa. Sem exceção.
   function aprovar(lista, modo) {
-    const aptas = lista.filter(podeAprovar);
-    if (!aptas.length) { setAviso("Nenhum anúncio pronto para aprovar nesta seleção (Revisão e Bloqueado não podem ser aprovados)."); return; }
-    const atencao = aptas.filter((l) => l.situacao === SITUACOES.ATENCAO);
-    const porConta = {};
-    for (const l of aptas) porConta[l.conta_nome] = (porConta[l.conta_nome] || 0) + 1;
-    const texto = `Registrar a APROVAÇÃO de ${aptas.length} anúncio(s) para a Black Friday?\n\n${Object.entries(porConta).map(([n, q]) => `${n}: ${q}`).join("\n")}\n\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nFase 1: só registra o plano. NENHUMA oferta é ativada e nenhum preço é alterado.`;
-    if (!window.confirm(texto)) return;
-    let confirmarAtencao = false;
-    if (atencao.length) confirmarAtencao = window.confirm(`${atencao.length} anúncio(s) estão em ATENÇÃO (ex.: margem abaixo do mínimo ou preço abaixo de R$ 79). Aprovar também esses?`);
-    const r = registro.aprovar(aptas, { modo, confirmarAtencao });
+    const aptas = lista.filter((l) => aprovavel(l));
+    if (!aptas.length) { setAviso("Só anúncios PRONTO (sem pendência, com margem verificada e não negativa) podem ser aprovados."); return; }
+    if (!window.confirm(`Registrar a APROVAÇÃO de ${aptas.length} anúncio(s) PRONTO da ${nomeConta}?\n\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nSó registra o plano. NENHUMA oferta é ativada e nenhum preço é alterado.`)) return;
+    const r = registro.aprovar(aptas, { modo });
     setAviso(`Aprovação registrada: ${r.aprovados.length} novo(s), ${r.ja_aprovados.length} já aprovado(s), ${r.recusados.length} não aprovado(s).`);
     setMarcados(new Set()); setVersao((v) => v + 1);
   }
@@ -254,98 +231,109 @@ export default function BlackFridayPaizinho() {
 
   const marcar = (k) => setMarcados((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const selecionadas = linhas.filter((l) => marcados.has(l.chave));
-  const totalAprovados = Object.keys(aprovados).length;
-  const aprovadosPorConta = Object.values(aprovados).reduce((m, a) => { const n = CONTAS_BLACK_FRIDAY.find((c) => c.id === a.conta)?.nome || a.conta; m[n] = (m[n] || 0) + 1; return m; }, {});
-  const promosExistentes = linhas.filter((l) => l.promocoes_ativas.length);
   const erros = historico.filter((h) => h.tipo === "erro");
+  const falhasConta = (leitura?.falhas || []).filter((f) => f.conta === nomeConta);
 
   if (erroLogin) return <section style={S.caixa}><h2 style={S.titulo}>🛍️ Black Friday 2026</h2><div style={S.aviso}>{erroLogin}</div></section>;
 
   return (
     <section id="black-friday-paizinho" style={S.caixa} data-paiia-black-friday>
       <h2 style={S.titulo}>🛍️ Black Friday 2026</h2>
-      <p style={S.sub}>Planejar, simular e aprovar as ofertas — uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO.</p>
-      <div style={S.trava}>🔒 <strong>Fase 1 — somente leitura e simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio ou estoque é alterado. Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · não cumulativos · dúvida vai para revisão.</div>
+      <p style={S.sub}>Uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO. Consultar → Simular → Conferir → Aprovar → Ativar.</p>
+      <div style={S.trava}>🔒 <strong>Simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio, estoque ou Bling é alterado. Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · nunca cumulativos · calculados sobre o preço original confirmado.</div>
 
-      {/* Programação (calendário obrigatório) */}
       <div style={S.calendario}>
-        <Kpi rotulo="Início (ativação)" valor={dataHoraBrasilia(CAMPANHA_BF.inicio)} />
-        <Kpi rotulo="Encerramento automático" valor={dataHoraBrasilia(CAMPANHA_BF.fim)} />
+        <Kpi rotulo="Início" valor={dataHoraBrasilia(CAMPANHA_BF.inicio)} />
+        <Kpi rotulo="Encerramento" valor={dataHoraBrasilia(CAMPANHA_BF.fim)} />
         <Kpi rotulo="Conferência dos preços normais" valor="01/12/2026" />
         <Kpi rotulo={momento === "preparacao" ? "Faltam" : "Situação"} valor={momento === "preparacao" ? `${diasParaInicio()} dia(s)` : momento === "em_andamento" ? "Em andamento" : "Encerrada"} />
       </div>
 
-      {/* 1-2. Contas e consulta */}
-      <h3 style={S.h3}>1. Contas e consulta</h3>
+      {/* 1. Conta e consulta */}
+      <h3 style={S.h3}>1. Conta e consulta</h3>
       <div style={S.acoes}>
         {CONTAS_BLACK_FRIDAY.map((c) => (
           <label key={c.id} style={{ ...S.filtro, ...(contas.includes(c.id) ? S.filtroAtivo : {}) }}>
-            <input type="checkbox" checked={contas.includes(c.id)} onChange={() => alternarConta(c.id)} disabled={!!lendo} /> {c.nome}
+            <input type="radio" name="bf-conta" checked={contas.includes(c.id)} onChange={() => alternarConta(c.id)} disabled={!!lendo} /> {c.nome}
           </label>
         ))}
-        <button type="button" style={S.filtro} disabled={!!lendo} onClick={() => setContas(contas.length === 3 ? [] : CONTAS_BLACK_FRIDAY.map((c) => c.id))}>{contas.length === 3 ? "Desmarcar todas" : "Todas as contas"}</button>
-        <select value={limite} onChange={(e) => setLimite(e.target.value)} style={S.busca} disabled={!!lendo} aria-label="Quantidade de anúncios">
+        <select value={limite} onChange={(e) => setLimite(e.target.value)} style={{ ...S.busca, flex: "0 1 220px" }} disabled={!!lendo} aria-label="Quantidade de anúncios">
           {LIMITES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
         </select>
       </div>
       <div style={S.acoes}>
-        <button type="button" style={S.botao} onClick={consultar} disabled={!!lendo || !contas.length} data-paiia-bf="consultar">{lendo ? `🔄 ${lendo}` : "🔎 Consultar Anúncios"}</button>
+        <button type="button" style={S.botao} onClick={() => consultar(false)} disabled={!!lendo || !contas.length} data-paiia-bf="consultar">{lendo ? `🔄 ${lendo}` : `🔎 Consultar ${nomeConta}`}</button>
+        {!lendo && podeRetomar && <button type="button" style={S.botao} onClick={() => consultar(true)}>⏯️ Retomar consulta ({leituraConta.lidos} já lidos)</button>}
         {lendo && <button type="button" style={S.filtro} onClick={() => { cancelar.current = true; }}>Parar leitura</button>}
-        <button type="button" style={S.botao} onClick={simular} disabled={!!lendo || !leitura} data-paiia-bf="simular">🧮 Simular Black Friday</button>
       </div>
-      <small style={S.base}>Só consultas de leitura no Mercado Livre e no Bling. Mantenha a página aberta durante a leitura e não use "Sair".</small>
-      {leitura && <p style={S.nota}>Leitura de {new Date(leitura.lido_em).toLocaleString("pt-BR")} · {Object.values(leitura.contas || {}).map((c) => `${c.nome}: ${c.lidos}${c.total_ativos ? ` de ${c.total_ativos}` : ""}`).join(" · ")} anúncios · {leitura.falhas?.length || 0} leitura(s) com falha{leitura.bling_parou ? " · Bling parou de responder (custos incompletos)" : ""}.</p>}
-      {perfil.impostoPct === null && <div style={S.aviso}>Imposto não cadastrado em <strong>Preços, Custos e Lucro</strong>: sem ele a margem não é verificável e os anúncios vão para revisão.</div>}
+      <small style={S.base}>Só leitura no Mercado Livre e no Bling. Mantenha a página aberta durante a leitura e não use "Sair".</small>
+      {progresso && <div style={S.kpis}>
+        <Kpi rotulo="Encontrados" valor={progresso.total ?? "…"} />
+        <Kpi rotulo="Na consulta" valor={progresso.alvo || "…"} />
+        <Kpi rotulo="Consultados" valor={progresso.consultados} />
+        <Kpi rotulo="Com sucesso" valor={progresso.sucesso} cor="#4ade80" />
+        <Kpi rotulo="Com erro" valor={progresso.erros} cor="#f87171" />
+        {progresso.reaproveitados > 0 && <Kpi rotulo="Reaproveitados" valor={progresso.reaproveitados} />}
+      </div>}
+      {leituraConta?.erros_anuncio?.length > 0 && <details style={S.nota}><summary>{leituraConta.erros_anuncio.length} anúncio(s) com erro na leitura — ver motivos (use "Retomar" para tentar só esses)</summary><ul style={S.lista}>{leituraConta.erros_anuncio.slice(0, 50).map((e) => <li key={e.id}><small>{e.id}: {e.erro}</small></li>)}</ul></details>}
+      {leituraConta
+        ? <p style={S.nota}>Última leitura da {nomeConta}: {new Date(leituraConta.lido_em || leitura.lido_em).toLocaleString("pt-BR")} · {leituraConta.lidos}{leituraConta.total_ativos ? ` de ${leituraConta.total_ativos}` : ""} anúncios ativos{leituraConta.completa === false ? " · INCOMPLETA (retome)" : ""}{leitura.bling_parou ? " · Bling parou de responder (custos incompletos)" : ""}.</p>
+        : leitura && <p style={S.nota}>A última leitura guardada é de outra conta. Consulte a {nomeConta}.</p>}
+      <div style={perfil.impostoPct === null ? S.aviso : S.nota}>
+        <strong>Custos da venda usados na margem:</strong> imposto {perfil.impostoPct === null ? <strong>NÃO cadastrado neste endereço</strong> : <strong>{String(perfil.impostoPct).replace(".", ",")}%</strong>} · custo por pedido R$ {String(perfil.custoPedido.toFixed(2)).replace(".", ",")} · comissão e frete: lidos do Mercado Livre · custo da peça: Bling (nunca inventado).
+        {perfil.impostoPct === null && <><br /><small>O cadastro "Preços, Custos e Lucro" fica no navegador e é separado por endereço: o do PAIIA oficial não aparece aqui. Sem imposto, a margem não é verificável e nenhum anúncio fica PRONTO.</small></>}
+        {!custosForm ? <> <button type="button" style={S.mini} onClick={() => setCustosForm({ imposto: perfil.impostoPct ?? "", pedido: perfil.custoPedido || "" })}>{perfil.impostoPct === null ? "Informar imposto" : "Alterar"}</button></>
+          : <div style={S.acoes}>
+            <input value={custosForm.imposto} onChange={(e) => setCustosForm({ ...custosForm, imposto: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="Imposto % (igual ao oficial)" style={{ ...S.busca, flex: "0 1 200px" }} aria-label="Imposto em %" />
+            <input value={custosForm.pedido} onChange={(e) => setCustosForm({ ...custosForm, pedido: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="Custo por pedido R$ (opcional)" style={{ ...S.busca, flex: "0 1 220px" }} aria-label="Custo por pedido" />
+            <button type="button" style={S.botao} onClick={salvarCustos}>Gravar neste navegador</button>
+            <button type="button" style={S.filtro} onClick={() => setCustosForm(null)}>Cancelar</button>
+            <small style={S.base}>Copie os valores de Preços, Custos e Lucro do PAIIA oficial. Não altera a produção.</small>
+          </div>}
+      </div>
       {aviso && <div style={S.aviso}>{aviso}</div>}
 
-      {simulado && <>
-        {/* 3-6. Resultado da simulação */}
-        <h3 style={S.h3}>2. Simulação</h3>
-        <div style={S.kpis}>
-          <Kpi rotulo="Anúncios" valor={resumo.total} />
-          <Kpi rotulo="Renault (10%)" valor={resumo.renault} cor={COR_CLASSE.renault} />
-          <Kpi rotulo="Demais (5%)" valor={resumo.demais} cor={COR_CLASSE.demais} />
-          <Kpi rotulo="Revisão Renault" valor={resumo.revisao} cor={COR_CLASSE.revisao} />
-          <Kpi rotulo="Prontos" valor={resumo.apto} cor={COR_SITUACAO.apto} />
-          <Kpi rotulo="Atenção" valor={resumo.atencao} cor={COR_SITUACAO.atencao} />
-          <Kpi rotulo="Em revisão" valor={resumo.revisao_sit} cor={COR_SITUACAO.revisao} />
-          <Kpi rotulo="Prejuízo" valor={resumo.prejuizo} cor="#f87171" />
-          <Kpi rotulo="Margem não verificável" valor={resumo.sem_margem} cor="#fb923c" />
-        </div>
+      {/* 2. Simulação */}
+      <h3 style={S.h3}>2. Simulação</h3>
+      <div style={S.acoes}>
+        <button type="button" style={S.botao} onClick={simular} disabled={!!lendo || !leituraConta} data-paiia-bf="simular">🧮 Simular {nomeConta}</button>
+      </div>
+      {simulado && <div style={S.kpis}>
+        <Kpi rotulo="Anúncios" valor={resumo.total} />
+        <Kpi rotulo="PRONTO" valor={resumoListas.pronto} cor={COR_LISTA.PRONTO} />
+        <Kpi rotulo="CONFERIR" valor={resumoListas.conferir} cor={COR_LISTA.CONFERIR} />
+        <Kpi rotulo="BLOQUEADO" valor={resumoListas.bloqueado} cor={COR_LISTA.BLOQUEADO} />
+        <Kpi rotulo="Renault (10%)" valor={resumo.renault} cor={COR_CLASSE.renault} />
+        <Kpi rotulo="Demais (5%)" valor={resumo.demais} cor={COR_CLASSE.demais} />
+        <Kpi rotulo="Dúvida Renault" valor={resumo.revisao} cor={COR_CLASSE.revisao} />
+        <Kpi rotulo="Prejuízo" valor={resumo.prejuizo} cor="#f87171" />
+        <Kpi rotulo="Margem não verificável" valor={resumo.sem_margem} cor="#fb923c" />
+      </div>}
 
+      {/* 3. Conferir */}
+      {simulado && <>
+        <h3 style={S.h3}>3. Conferir</h3>
+        {resumoListas.pendencias.length > 0 && <details style={S.nota}><summary>Pendências mais comuns</summary><ul style={S.lista}>{resumoListas.pendencias.slice(0, 10).map((p) => <li key={p.motivo}><small><strong>{p.quantidade}</strong> · {p.motivo}</small></li>)}</ul></details>}
         <div style={S.acoes}>
-          <select value={filtro.classe} onChange={(e) => { setFiltro({ ...filtro, classe: e.target.value }); setMostrar(POR_PAGINA); }} style={S.busca} aria-label="Classe">
+          <select value={filtro.lista} onChange={(e) => { setFiltro({ ...filtro, lista: e.target.value }); setMostrar(POR_PAGINA); }} style={{ ...S.busca, flex: "0 1 170px" }} aria-label="Lista">
+            <option value="">PRONTO, CONFERIR e BLOQUEADO</option>{Object.values(LISTAS).map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <select value={filtro.classe} onChange={(e) => { setFiltro({ ...filtro, classe: e.target.value }); setMostrar(POR_PAGINA); }} style={{ ...S.busca, flex: "0 1 170px" }} aria-label="Classe">
             <option value="">Todas as classes</option>{Object.values(CLASSES).map((c) => <option key={c} value={c}>{ROTULO_CLASSE[c]}</option>)}
           </select>
-          <select value={filtro.situacao} onChange={(e) => { setFiltro({ ...filtro, situacao: e.target.value }); setMostrar(POR_PAGINA); }} style={S.busca} aria-label="Situação">
-            <option value="">Todas as situações</option>{Object.values(SITUACOES).map((s) => <option key={s} value={s}>{ROTULO_SITUACAO[s]}</option>)}
-          </select>
-          <select value={filtro.contas[0] || ""} onChange={(e) => { setFiltro({ ...filtro, contas: e.target.value ? [e.target.value] : [] }); setMostrar(POR_PAGINA); }} style={S.busca} aria-label="Conta">
-            <option value="">Todas as contas</option>{CONTAS_BLACK_FRIDAY.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-          </select>
-          <input value={filtro.margemAbaixo} onChange={(e) => setFiltro({ ...filtro, margemAbaixo: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="Margem abaixo de %" style={{ ...S.busca, flex: "0 1 150px" }} />
-          <label style={S.base}><input type="checkbox" checked={filtro.soAlertas} onChange={(e) => setFiltro({ ...filtro, soAlertas: e.target.checked })} /> Só com alerta</label>
           <input value={filtro.busca} onChange={(e) => { setFiltro({ ...filtro, busca: e.target.value }); setMostrar(POR_PAGINA); }} placeholder="Buscar MLB, SKU ou título" style={S.busca} />
-        </div>
-
-        {/* 7. Aprovação */}
-        <div style={S.acoes}>
-          <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selecionadas.length} marcado(s)</span>
-          <button type="button" style={S.filtro} onClick={() => setMarcados(new Set(visiveis.filter(podeAprovar).map((l) => l.chave)))}>Marcar prontos do filtro</button>
-          <button type="button" style={S.botao} disabled={!selecionadas.length} onClick={() => aprovar(selecionadas, "selecao")}>✅ Aprovar selecionados</button>
-          <button type="button" style={S.botao} disabled={!visiveis.some(podeAprovar)} onClick={() => aprovar(visiveis, "lote")}>✅ Aprovar lote (filtro)</button>
         </div>
 
         <div style={S.tabelaCaixa}>
           <table style={S.tabela}>
-            <thead><tr>{["", "Conta", "Anúncio", "Classe", "Preço original", "Desc.", "Preço final", "Margem", "Situação", "Ação"].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{["", "Anúncio", "Classe", "Preço original", "Desc.", "Preço promocional", "Comissão · imposto · frete", "Lucro (margem)", "Lista e motivo", "Ação"].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>
               {visiveis.slice(0, mostrar).map((l) => {
                 const aprovado = !!aprovados[l.chave];
+                const cl = listaDe.get(l.chave) || { lista: "", pendencias: [], observacoes: [] };
                 return (
                   <tr key={l.chave} style={aprovado ? S.aprovado : undefined}>
-                    <td style={S.td}><input type="checkbox" checked={marcados.has(l.chave)} disabled={!podeAprovar(l)} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></td>
-                    <td style={S.td}>{l.conta_nome}</td>
+                    <td style={S.td}><input type="checkbox" checked={marcados.has(l.chave)} disabled={!aprovavel(l) || aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></td>
                     <td style={{ ...S.td, whiteSpace: "normal", minWidth: 220 }}>
                       <a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? ` · ${l.sku}` : ""}<br /><small style={S.base}>{l.titulo}</small>
                     </td>
@@ -354,25 +342,23 @@ export default function BlackFridayPaizinho() {
                       {l.decisao && l.decisao !== "excluir" && <small style={S.base}> (manual)</small>}
                     </td>
                     <td style={S.td}>{real(l.preco_original)}</td>
-                    <td style={S.td}>{l.classe === CLASSES.REVISAO ? "a decidir" : `${l.desconto_pct}%`}</td>
+                    <td style={S.td}>{l.classe === CLASSES.REVISAO && !l.decisao ? "a decidir" : `${l.desconto_pct}%`}</td>
                     <td style={S.td}>{real(l.preco_final)}</td>
-                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 150, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={`Preço ${real(l.preco_final)} − tarifa ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo/pedido ${real(l.custo_pedido)}${l.custo !== null ? ` − custo ${real(l.custo)} = ${real(l.lucro)}` : ` = sobra ${real(l.repasse)} para a peça`}`}>
-                      {l.margem_pct !== null
-                        ? `${pctTxt(l.margem_pct)} (${real(l.lucro)})`
-                        : l.custo === null
-                          ? <><span>Custo não informado — margem não verificável</span>{l.repasse !== null && <><br /><small style={S.base}>Sobra p/ peça: {real(l.repasse)} ({pctTxt(l.repasse_pct)})</small></>}</>
-                          : "não verificável"}
+                    <td style={{ ...S.td, whiteSpace: "normal" }}><small>{real(l.tarifa)} · {real(l.imposto)} · {real(l.frete)}</small></td>
+                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 130, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={`Preço ${real(l.preco_final)} − comissão ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo/pedido ${real(l.custo_pedido)}${l.custo !== null ? ` − custo ${real(l.custo)} = ${real(l.lucro)}` : ` = sobra ${real(l.repasse)} para a peça`}`}>
+                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span>custo não confirmado</span>{l.repasse !== null && <><br /><small style={S.base}>Sobra p/ peça: {real(l.repasse)}</small></>}</>}
                     </td>
-                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 200 }}>
-                      <span style={{ ...S.selo, color: COR_SITUACAO[l.situacao], borderColor: COR_SITUACAO[l.situacao] }}>{aprovado ? "Aprovado (plano)" : ROTULO_SITUACAO[l.situacao]}</span>
-                      {[...l.bloqueios, ...l.motivos, ...l.alertas].map((m, i) => <div key={i}><small style={S.base}>• {m}</small></div>)}
+                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 220 }}>
+                      <span style={{ ...S.selo, color: COR_LISTA[cl.lista], borderColor: COR_LISTA[cl.lista] }}>{aprovado ? "Aprovado (plano)" : cl.lista}</span>
+                      {cl.pendencias.map((m, i) => <div key={i}><small style={S.base}>• {m}</small></div>)}
+                      {cl.observacoes.map((m, i) => <div key={`o${i}`}><small style={{ ...S.base, opacity: 0.7 }}>ℹ {m}</small></div>)}
                     </td>
                     <td style={{ ...S.td, whiteSpace: "normal" }}>
                       {aprovado
                         ? <button type="button" style={S.mini} onClick={() => desaprovar([l.chave])}>Retirar</button>
-                        : podeAprovar(l) && <button type="button" style={S.mini} onClick={() => aprovar([l], "anuncio")}>Aprovar</button>}
-                      {(l.classe === CLASSES.REVISAO || l.decisao) && l.situacao !== SITUACOES.BLOQUEADO && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                        <button type="button" style={S.mini} onClick={() => decidir(l, "renault")}>Renault 10%</button>
+                        : aprovavel(l) && <button type="button" style={S.mini} onClick={() => aprovar([l], "anuncio")}>Aprovar</button>}
+                      {(l.classe === CLASSES.REVISAO || l.decisao) && l.situacao !== SITUACOES.BLOQUEADO && l.decisao !== "excluir" && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                        <button type="button" style={S.mini} onClick={() => decidir(l, "renault")} title="Só se a aplicação Renault estiver comprovada">Renault 10%</button>
                         <button type="button" style={S.mini} onClick={() => decidir(l, "demais")}>Demais 5%</button>
                       </div>}
                       <div style={{ marginTop: 4 }}>
@@ -388,121 +374,59 @@ export default function BlackFridayPaizinho() {
           </table>
         </div>
         {visiveis.length > mostrar && <button type="button" style={S.filtro} onClick={() => setMostrar(mostrar + POR_PAGINA)}>Mostrar mais ({visiveis.length - mostrar} restantes)</button>}
-      </>}
 
-      {/* 8. Programação e ativação (bloqueada na Fase 1) */}
-      <h3 style={S.h3}>3. Programação e ativação</h3>
-      <p style={S.nota}>Ofertas aprovadas: <strong>{totalAprovados}</strong>{totalAprovados ? ` (${Object.entries(aprovadosPorConta).map(([n, q]) => `${n}: ${q}`).join(" · ")})` : ""}. Programação fixa: início {dataHoraBrasilia(CAMPANHA_BF.inicio)} e encerramento automático {dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília), pela data de fim da própria oferta no Mercado Livre — o preço do anúncio não é trocado e alterações manuais feitas durante a campanha são respeitadas.</p>
-      <div style={S.tabelaCaixa}><table style={S.tabela}>
-        <thead><tr><th style={S.th}>Conta (ordem de trabalho)</th><th style={S.th}>Ofertas aprovadas</th><th style={S.th}>Campanha da conta</th><th style={S.th}></th></tr></thead>
-        <tbody>{CONTAS_BLACK_FRIDAY.map((c) => {
-          const qtd = Object.values(aprovados).filter((a) => a.conta === c.id).length;
-          const cp = campanhasConta[c.id];
-          return <tr key={c.id}>
-            <td style={S.td}>{c.nome}</td>
-            <td style={S.td}>{qtd}</td>
-            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{!cp ? "Não aprovada" : cp.valida ? `✅ Aprovada em ${dataHoraBrasilia(cp.aprovado_em)} (${cp.ofertas} oferta(s)) · ativação pendente (Fase 3)` : "⚠️ Desatualizada: as ofertas mudaram depois da aprovação — aprove de novo"}</small></td>
-            <td style={S.td}>{cp ? <button type="button" style={S.mini} onClick={() => retirarCampanha(c)}>Retirar</button> : <button type="button" style={S.mini} disabled={!qtd} onClick={() => aprovarCampanha(c)}>Aprovar campanha</button>}</td>
-          </tr>;
-        })}</tbody>
-      </table></div>
-      <p style={S.nota}><strong>Cadastro manual no Mercado Livre:</strong> a planilha separa <strong>PRONTO</strong> (sem pendência) de <strong>CONFERIR</strong> (dúvida de aplicação, dado incompleto ou elegibilidade). Regras do desconto individual do ML: produto novo, anúncio pago, desconto entre 5% e 80%, até 14 dias; o início vale às 00:00 de {CAMPANHA_BF.inicio.slice(8, 10)}/11 e o fim às 23:59 de {CAMPANHA_BF.fim.slice(8, 10)}/11. Só gera o arquivo: nada é alterado no ML.</p>
-      <div style={S.acoes}>
-        {CONTAS_BLACK_FRIDAY.map((c) => <button key={c.id} type="button" style={S.filtro} disabled={!simulado || !linhas.some((l) => l.conta === c.id)} onClick={() => baixarPlanilha(c)}>📥 Planilha {c.nome}</button>)}
-      </div>
-      {planilhaInfo && <div style={S.nota}>
-        <strong>Planilha {planilhaInfo.conta}:</strong> {planilhaInfo.resumo.total} anúncio(s) · <strong>{planilhaInfo.resumo.pronto} PRONTO</strong> · {planilhaInfo.resumo.conferir} CONFERIR{planilhaInfo.resumo.fora ? ` · ${planilhaInfo.resumo.fora} fora` : ""} · Renault 10%: {planilhaInfo.resumo.renault10} · Demais 5%: {planilhaInfo.resumo.demais5} · Revisão: {planilhaInfo.resumo.revisao}. Prontos: de {real(planilhaInfo.resumo.soma_atual)} para {real(planilhaInfo.resumo.soma_promocional)} (soma dos preços).
-        {planilhaInfo.resumo.pendencias.length > 0 && <ul style={S.lista}>{planilhaInfo.resumo.pendencias.slice(0, 10).map((p) => <li key={p.motivo}><small><strong>{p.quantidade}</strong> · {p.motivo}</small></li>)}</ul>}
-      </div>}
-      <div style={S.acoes}>
-        <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa">🚀 Ativar ofertas aprovadas</button>
-        <small style={S.base}>Bloqueado: a ativação exige validar elegibilidade e modalidades na API (Fase 2) e autorização expressa (Fase 3).</small>
-      </div>
-
-      {/* 9. Acompanhamento */}
-      <h3 style={S.h3}>4. Acompanhamento</h3>
-      <p style={S.nota}>Ofertas desta campanha ativas no Mercado Livre: <strong>0</strong> (nada foi ativado). {simulado ? `${promosExistentes.length} anúncio(s) já participam de outra promoção (conflito, vão para revisão).` : "Simule para ver as promoções já existentes."}</p>
-      {simulado && promosExistentes.length > 0 && <ul style={S.lista}>{promosExistentes.slice(0, 20).map((l) => <li key={l.chave}>{l.conta_nome} · {l.id}: {l.promocoes_ativas.map((p) => `${p.tipo || "?"} (${p.status}${p.preco ? `, ${real(p.preco)}` : ""})`).join(", ")}</li>)}</ul>}
-
-      {/* (15/11) Diagnóstico das leituras: o que falhou e por quê (respostas reais da API). */}
-      <h3 style={S.h3}>Diagnóstico das leituras</h3>
-      {simulado && linhas.length > 0 && <>
-        <p style={S.nota}>O que mais segura os anúncios em revisão ou atenção:</p>
-        <ul style={S.lista}>{contarMotivos(linhas).slice(0, 8).map((m) => <li key={m.motivo}><small><strong>{m.quantidade}</strong> · {m.motivo}</small></li>)}</ul>
-      </>}
-      {leitura?.falhas?.length > 0 ? <>
-        <p style={S.nota}>Leituras com falha na última consulta, por etapa (mensagem real do servidor/ML):</p>
-        <ul style={S.lista}>{agruparFalhas(leitura.falhas).slice(0, 15).map((g) => <li key={`${g.conta}-${g.etapa}`}><small><strong>{g.conta} · {g.etapa}: {g.quantidade}</strong>{g.erros.map((e) => ` — "${e.erro}" (${e.n})${explicarErro(e.erro) ? ` → ${explicarErro(e.erro)}` : ""}`).join("")}</small></li>)}</ul>
-      </> : leitura && <p style={S.nota}>Nenhuma leitura com falha na última consulta.</p>}
-      <div style={S.acoes}>
-        <select value={diagConta} onChange={(e) => setDiagConta(e.target.value)} style={{ ...S.busca, flex: "0 1 170px" }} aria-label="Conta do diagnóstico">
-          {CONTAS_BLACK_FRIDAY.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-        </select>
-        <input value={diagItem} onChange={(e) => setDiagItem(e.target.value)} placeholder="MLB do anúncio para testar" style={{ ...S.busca, flex: "0 1 220px" }} />
-        <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
-        <button type="button" style={S.filtro} onClick={diagnosticarTresContas} disabled={diagLendo || !leitura}>{diagLendo ? "🔄 Testando…" : "🩺 Comparar as 3 contas"}</button>
-        <button type="button" style={S.filtro} onClick={lerAplicativo} disabled={diagLendo}>{diagLendo ? "🔄 Lendo…" : "🔎 Identificar aplicativo do ML"}</button>
-        <button type="button" style={S.filtro} onClick={renovarConta} disabled={diagLendo} title="Renovação normal do acesso, com a autorização que já existe (não é reconexão).">{diagLendo ? "🔄 …" : "🔑 Renovar acesso desta conta"}</button>
-        <button type="button" style={S.botao} onClick={testarPromoConta} disabled={diagLendo} title="Uma única consulta de promoções da conta escolhida ao lado, com o token dela.">{diagLendo ? "🔄 Testando…" : "🏷️ Testar promoções desta conta"}</button>
-        <button type="button" style={S.filtro} onClick={lerDonoApp} disabled={diagLendo} title="O próprio aplicativo lê o seu cadastro. Usa a conta selecionada ao lado só para confirmar o seu acesso.">{diagLendo ? "🔄 Lendo…" : "🔐 Ler cadastro pelo próprio aplicativo"}</button>
-      </div>
-      {renovacao && <div style={renovacao.ok ? S.nota : S.aviso}>
-        <strong>{renovacao.ok ? `✅ Acesso da ${renovacao.conta} ${renovacao.renovado ? "renovado" : "já estava válido"}${renovacao.valido_ate ? ` até ${dataHoraBrasilia(renovacao.valido_ate)}` : ""}.` : `❌ ${renovacao.conta}: ${renovacao.erro}`}</strong>
-        {renovacao.identidade && <><br /><small>Identidade no ML do acesso desta conta: ID <strong>{renovacao.identidade.ml_user_id}</strong> · apelido <strong>{renovacao.identidade.apelido || "—"}</strong> · e-mail <strong>{renovacao.identidade.email || "—"}</strong>{renovacao.identidade.empresa ? ` · empresa ${renovacao.identidade.empresa}` : ""}</small></>}
-        {!renovacao.ok && renovacao.precisa_reconectar && <><br /><small>O ML recusou a autorização guardada: aí sim é preciso reconectar esta conta — pelo site oficial (www.paiia.com.br → Contas Marketplace), não pelo endereço local.</small></>}
-      </div>}
-      {testePromo && <div style={testePromo.ok ? S.nota : S.aviso}>
-        <strong>{testePromo.ok ? "✅" : "❌"} {testePromo.texto}</strong>
-        {!testePromo.ok && <><br /><small>Mensagem do ML: {testePromo.mensagem || "—"}{testePromo.codigo ? ` · código ${testePromo.codigo}` : ""}{testePromo.causa?.length ? ` · causa ${testePromo.causa.join(", ")}` : ""} · {testePromo.caminho}</small></>}
-      </div>}
-      {donoApp && <p style={S.nota}>{donoApp.ok
-        ? <>{donoApp.conclusao}{donoApp.nome ? ` Aplicativo: ${donoApp.nome} (final ${donoApp.final_app}).` : ""}<br /><small>{JSON.stringify(donoApp.dados).slice(0, 1500)}</small></>
-        : <>❌ {donoApp.status ? `HTTP ${donoApp.status} · ` : ""}{donoApp.erro}{donoApp.recusa_ml ? ` · ML: ${[donoApp.recusa_ml.codigo, donoApp.recusa_ml.mensagem, ...(donoApp.recusa_ml.causa || [])].filter(Boolean).join(", ")}` : ""}</>}</p>}
-      {appInfo && <>
-        <p style={S.nota}>{appInfo.app?.ok ? <>Aplicativo usado pelo PAIIA: <strong>App ID {appInfo.app.app_id}</strong> (retorno {appInfo.app.retorno_host}). O App ID é público; o Client Secret nunca sai do servidor.</> : <>App ID não lido: {appInfo.app?.erro}</>}</p>
-        <div style={S.tabelaCaixa}><table style={S.tabela}>
-          <thead><tr><th style={S.th}>Conta</th><th style={S.th}>Conexão no PAIIA</th><th style={S.th}>Autorização no ML</th><th style={S.th}>Cadastro do aplicativo</th></tr></thead>
-          <tbody>{appInfo.porConta.map((p) => <tr key={p.id}>
-            <td style={S.td}>{p.conta}</td>
-            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{p.conexao ? `${p.conexao.status} · escopos: ${p.conexao.escopos_salvos || "não informados"}` : "não encontrada"}</small></td>
-            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{p.autorizacao.ok ? (p.autorizacao.encontrada ? `✅ final ${p.autorizacao.final_app} · ${(p.autorizacao.escopos || []).join(", ")}` : "❌ não encontrada") : `❌ ${p.autorizacao.status ? `HTTP ${p.autorizacao.status} · ` : ""}${p.autorizacao.erro}`}</small></td>
-            <td style={{ ...S.td, whiteSpace: "normal" }}><small>{p.cadastro.ok ? `✅ ${p.cadastro.nome || "sem nome"} · final ${p.cadastro.final_app}` : `❌ ${p.cadastro.status ? `HTTP ${p.cadastro.status} · ` : ""}${p.cadastro.erro}`}</small></td>
-          </tr>)}</tbody>
-        </table></div>
-        <ul style={S.lista}>{appInfo.conclusoes.map((c, i) => <li key={i}><small><strong>{c.tipo === "comprovado" ? "Comprovado" : c.tipo === "indicio" ? "Indício" : c.tipo === "falha" ? "Falha" : "Inconclusivo"}:</strong> {c.texto}</small></li>)}</ul>
+        {/* 4. Aprovar */}
+        <h3 style={S.h3}>4. Aprovar</h3>
+        <p style={S.nota}>Só anúncios <strong>PRONTO</strong> (sem pendência, margem verificada e não negativa). CONFERIR precisa ser resolvido antes; BLOQUEADO não entra.</p>
         <div style={S.acoes}>
-          <button type="button" style={S.filtro} onClick={() => { try { navigator.clipboard.writeText(textoAplicativo(appInfo)); setAviso("Identificação do aplicativo copiada: cole na conversa com o Cláudio."); } catch { setAviso("Não foi possível copiar automaticamente."); } }}>📋 Copiar identificação do aplicativo</button>
+          <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selecionadas.length} marcado(s)</span>
+          <button type="button" style={S.botao} disabled={!selecionadas.length} onClick={() => aprovar(selecionadas, "selecao")}>✅ Aprovar marcados</button>
+          <button type="button" style={S.botao} disabled={!visiveis.some((l) => aprovavel(l) && !aprovados[l.chave])} onClick={() => aprovar(visiveis, "lote")}>✅ Aprovar todos os PRONTO do filtro</button>
         </div>
+        <p style={S.nota}>Ofertas aprovadas da {nomeConta}: <strong>{aprovadosConta.length}</strong> · Campanha da conta: {!campanhaConta ? "não aprovada" : campanhaConta.valida ? `✅ aprovada em ${dataHoraBrasilia(campanhaConta.aprovado_em)} (${campanhaConta.ofertas} oferta(s))` : "⚠️ desatualizada (as ofertas mudaram depois) — aprove de novo"}
+          {" "}{campanhaConta ? <button type="button" style={S.mini} onClick={retirarCampanha}>Retirar</button> : <button type="button" style={S.mini} disabled={!aprovadosConta.length} onClick={aprovarCampanha}>Aprovar campanha da {nomeConta}</button>}</p>
       </>}
-      {matriz && <div style={S.tabelaCaixa}><table style={S.tabela}>
-        <thead><tr><th style={S.th}>Leitura</th>{matriz.contas.map((c) => <th key={c.nome} style={S.th}>{c.nome}{c.item ? ` (${c.item})` : " (sem anúncio lido)"}</th>)}</tr></thead>
-        <tbody>{matriz.etapas.map((et) => <tr key={et}><td style={S.td}>{et}</td>{matriz.contas.map((c) => { const r = c.resultados.find((x) => x.etapa === et); return <td key={c.nome} style={{ ...S.td, whiteSpace: "normal", maxWidth: 280 }} title={r ? (r.ok ? r.resumo : r.erro) : ""}>{!r ? "—" : r.ok ? (/^(Autoriza|Cadastro)/.test(et) ? <>✅ <small>{r.resumo}</small></> : "✅ ok") : <>❌ {r.status ? `HTTP ${r.status} · ` : ""}<small>{r.erro}{explicarErro(r.erro) ? ` → ${explicarErro(r.erro)}` : ""}{r.recusa_ml ? ` · ML: ${[r.recusa_ml.codigo, ...r.recusa_ml.causa].filter(Boolean).join(", ")}` : ""} · via {r.via}</small></>}</td>; })}</tr>)}</tbody>
-      </table></div>}
-      {matriz && <>
-        <h4 style={{ ...S.h3, fontSize: 15 }}>Permissões de promoções — conclusão por conta</h4>
-        <ul style={S.lista}>{concluirPermissoes(matriz).map((p) => (
-          <li key={p.conta}><small><strong>{p.conta}:</strong> {p.conclusao}
-            {p.escopos && <> Escopos: {p.escopos.join(", ")}.</>}
-            {p.promocoes_anuncio && <> Promoções do anúncio: {p.promocoes_anuncio}; da conta: {p.promocoes_conta}.</>}
-            {p.falta && <><br />Falta: {p.falta}.</>}
-            {p.procedimento && <><br />Procedimento: {p.procedimento}</>}
-          </small></li>
-        ))}</ul>
-        <div style={S.acoes}>
-          <button type="button" style={S.filtro} onClick={() => { try { navigator.clipboard.writeText(textoDiagnostico(matriz)); setAviso("Diagnóstico completo copiado: cole na conversa com o Cláudio."); } catch { setAviso("Não foi possível copiar automaticamente."); } }}>📋 Copiar diagnóstico completo</button>
-          <small style={S.base}>O texto não tem chaves: o servidor já devolve tudo resumido e mascarado.</small>
-        </div>
-      </>}
-      {diag && <div style={S.tabelaCaixa}><table style={S.tabela}><tbody>{diag.map((d, i) => (
-        <tr key={i}><td style={S.td}>{d.ok ? "✅" : "❌"} {d.etapa}</td><td style={{ ...S.td, whiteSpace: "normal" }}><small style={S.base}>{d.caminho}{d.status ? ` · HTTP ${d.status}` : ""}</small><br /><small>{d.ok ? d.resumo : d.erro}</small></td></tr>
-      ))}</tbody></table></div>}
 
-      {/* 10. Histórico */}
-      <h3 style={S.h3}>5. Histórico de operações e erros</h3>
-      {!historico.length ? <p style={S.nota}>Nenhuma operação registrada ainda.</p> : <>
-        <p style={S.nota}>{historico.length} registro(s) · {erros.length} erro(s). Guardado só neste navegador, para o seu usuário.</p>
-        <ul style={S.lista}>{historico.slice(0, 30).map((h) => <li key={h.id}><small>{new Date(h.quando).toLocaleString("pt-BR")} · <strong>{h.tipo}</strong>{h.conta ? ` · ${h.conta}` : h.contas ? ` · ${h.contas}` : ""}{h.etapa ? ` · ${h.etapa}` : ""}{h.quantidade ? ` · ${h.quantidade} anúncio(s)` : ""}{h.item ? ` · ${h.item}` : h.exemplo ? ` · ex.: ${h.exemplo}` : ""}{h.erro ? ` · ${h.erro}` : ""}{h.erro && explicarErro(h.erro) ? ` → ${explicarErro(h.erro)}` : ""}{h.anuncios !== undefined ? ` · ${h.anuncios} anúncios` : ""}{h.aprovados !== undefined ? ` · ${h.aprovados} aprovado(s)` : ""}{h.decisao ? ` · ${h.decisao}` : ""}</small></li>)}</ul>
-      </>}
+      {/* 5. Ativar */}
+      <h3 style={S.h3}>5. Ativar</h3>
+      <p style={S.nota}><strong>Automático (API do Mercado Livre):</strong> {promoLiberada ? "o ML respondeu às promoções nesta leitura. A ativação automática ainda depende da sua autorização expressa." : promoBloqueada ? <>bloqueado — o ML recusou as promoções desta conta (HTTP 403: o aplicativo não tem a permissão "Promoções, cupons e descontos"). A tentativa não é repetida; a próxima consulta mostra se foi liberado.</> : "consulte a conta para saber se o ML libera as promoções."}</p>
+      <div style={S.acoes}>
+        <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa e permissão de promoções no ML">🚀 Ativar ofertas aprovadas</button>
+      </div>
+      <p style={S.nota}><strong>Manual assistido:</strong> baixe a planilha da {nomeConta} (PRONTO, CONFERIR e BLOQUEADO, com custos, comissão, imposto, frete, lucro, margem e motivo) e cadastre as ofertas PRONTO como "Desconto individual" na Central de Promoções do ML, de {dataHoraBrasilia(CAMPANHA_BF.inicio)} a {dataHoraBrasilia(CAMPANHA_BF.fim)}. Regras do ML: produto novo, anúncio pago, desconto de 5% a 80%, até 14 dias.</p>
+      <div style={S.acoes}>
+        <button type="button" style={S.botao} disabled={!linhas.length} onClick={baixarPlanilha}>📥 Planilha {nomeConta}</button>
+      </div>
+      {planilhaInfo && planilhaInfo.conta === nomeConta && <p style={S.nota}>
+        <strong>Planilha {planilhaInfo.conta}:</strong> {planilhaInfo.resumo.total} anúncio(s) · <strong>{planilhaInfo.resumo.pronto} PRONTO</strong> · {planilhaInfo.resumo.conferir} CONFERIR · {planilhaInfo.resumo.bloqueado} BLOQUEADO · Renault 10%: {planilhaInfo.resumo.renault10} · Demais 5%: {planilhaInfo.resumo.demais5} · Dúvida: {planilhaInfo.resumo.revisao}. PRONTO: de {real(planilhaInfo.resumo.soma_atual)} para {real(planilhaInfo.resumo.soma_promocional)} (soma dos preços).
+      </p>}
+      <p style={S.nota}>Confirmadas no Mercado Livre: <strong>{confirmacao.confirmadas.length}</strong> de {confirmacao.aprovadas} aprovada(s). Só conta como ativa a oferta cujo preço com desconto foi LIDO no ML numa consulta (a partir de {dataHoraBrasilia(CAMPANHA_BF.inicio)}); nada é marcado como publicado sem essa confirmação.</p>
+
+      {/* 6. Encerramento */}
+      <h3 style={S.h3}>6. Encerramento</h3>
+      <p style={S.nota}>As ofertas terminam em {dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília) pela data de fim da própria oferta no ML; o PAIIA não troca preços. Em 01/12, consulte a {nomeConta} de novo: a conferência compara cada oferta aprovada com o preço original confirmado e só aponta diferenças — nunca sobrescreve preços.</p>
+      {momento !== "encerrada" && <small style={S.base}>Disponível depois de {dataHoraBrasilia(CAMPANHA_BF.fim)}.</small>}
+      {encerramento && (!encerramento.valida ? <p style={S.nota}>{encerramento.motivo}</p> : <>
+        <p style={S.nota}>Conferência da {nomeConta}: {encerramento.resumo.normal} no preço normal · {encerramento.resumo.com_desconto} ainda com desconto · {encerramento.resumo.diferente} com preço diferente · {encerramento.resumo.nao_lido} não lido(s).</p>
+        <ul style={S.lista}>{encerramento.linhas.filter((x) => x.estado !== "normal").slice(0, 100).map((x) => <li key={x.item}><small>{x.item}: {x.texto}</small></li>)}</ul>
+      </>)}
+
+      {/* Diagnóstico (só se algo falhar) */}
+      <details style={{ ...S.nota, marginTop: 22 }}>
+        <summary>Diagnóstico e histórico ({falhasConta.length} leitura(s) com falha · {erros.length} erro(s) registrados)</summary>
+        {falhasConta.length > 0 && <ul style={S.lista}>{agruparFalhas(falhasConta).slice(0, 15).map((g) => <li key={`${g.conta}-${g.etapa}`}><small><strong>{g.etapa}: {g.quantidade}</strong>{g.erros.map((e) => ` — "${e.erro}" (${e.n})${explicarErro(e.erro) ? ` → ${explicarErro(e.erro)}` : ""}`).join("")}</small></li>)}</ul>}
+        <div style={S.acoes}>
+          <button type="button" style={S.filtro} onClick={renovarConta} disabled={ocupado || !!lendo} title="Só se a leitura disser que o acesso venceu (401). Renovação normal, com a autorização que já existe (não é reconexão).">{ocupado ? "🔄 …" : `🔑 Renovar acesso da ${nomeConta}`}</button>
+        </div>
+        {renovacao && <div style={renovacao.ok ? S.nota : S.aviso}>
+          <strong>{renovacao.ok ? `✅ Acesso da ${renovacao.conta} ${renovacao.renovado ? "renovado" : "já estava válido"}${renovacao.valido_ate ? ` até ${dataHoraBrasilia(renovacao.valido_ate)}` : ""}.` : `❌ ${renovacao.conta}: ${renovacao.erro}`}</strong>
+          {!renovacao.ok && renovacao.precisa_reconectar && <><br /><small>O ML recusou a autorização guardada: é preciso reconectar esta conta pelo site oficial (www.paiia.com.br → Contas Marketplace), com a sua autorização.</small></>}
+        </div>}
+        {!historico.length ? <p style={S.nota}>Nenhuma operação registrada ainda.</p> : <>
+          <p style={S.nota}>{historico.length} registro(s). Guardado só neste navegador, para o seu usuário.</p>
+          <ul style={S.lista}>{historico.slice(0, 30).map((h) => <li key={h.id}><small>{new Date(h.quando).toLocaleString("pt-BR")} · <strong>{h.tipo}</strong>{h.conta ? ` · ${h.conta}` : h.contas ? ` · ${h.contas}` : ""}{h.etapa ? ` · ${h.etapa}` : ""}{h.quantidade ? ` · ${h.quantidade} anúncio(s)` : ""}{h.item ? ` · ${h.item}` : h.exemplo ? ` · ex.: ${h.exemplo}` : ""}{h.erro ? ` · ${h.erro}` : ""}{h.anuncios !== undefined ? ` · ${h.anuncios} anúncios` : ""}{h.aprovados !== undefined ? ` · ${h.aprovados} aprovado(s)` : ""}{h.decisao ? ` · ${h.decisao}` : ""}</small></li>)}</ul>
+        </>}
+      </details>
     </section>
   );
 }

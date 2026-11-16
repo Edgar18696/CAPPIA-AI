@@ -45,12 +45,17 @@ export function precosFinaisPossiveis(preco, classe) {
  * Lê UMA conta. `consultar(caminho)` já está presa à conta e só faz GET.
  * @returns {Promise<{ conta, nome, lido_em, total_ativos, itens, tarifas, fretes, falhas, descartados_outra_conta }>}
  */
-export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.limitePorConta, paralelo = PADROES_LEITURA.paralelo, agora = () => new Date().toISOString(), aoProgredir = () => {}, cancelado = () => false }) {
+export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.limitePorConta, paralelo = PADROES_LEITURA.paralelo, agora = () => new Date().toISOString(), aoProgredir = () => {}, cancelado = () => false, anterior = null, aoParcial = null }) {
   const c = contaBF(conta);
   if (!c) throw new Error(`Conta ${conta} não faz parte da Black Friday (só LOJA ONLINE, REVELAÇÃO e CIEBR).`);
   const falhas = [];
   const falha = (etapa, id, r) => falhas.push({ conta: c.nome, etapa, id: id || null, erro: txt(r?.erro) || `HTTP ${r?.status || "?"}` });
-  const passo = (t) => { try { aoProgredir(`${c.nome}: ${t}`); } catch { /* ignora */ } };
+  // (16/11) Progresso com números (total, alvo, consultados, sucesso, erros, reaproveitados).
+  const estado = { conta: c.nome, total: null, alvo: 0, consultados: 0, sucesso: 0, erros: 0, reaproveitados: 0, etapa: "" };
+  const passo = (t) => { estado.etapa = t; try { aoProgredir(`${c.nome}: ${t}`, { ...estado }); } catch { /* ignora */ } };
+  // (16/11) Retomada: anúncios já lidos numa consulta anterior DESTA conta não são lidos de novo.
+  const jaLidos = new Map();
+  if (anterior && txt(anterior.conta) === c.id) for (const x of anterior.itens || []) if (x?.item?.id) jaLidos.set(x.item.id, x);
 
   // 1) Anúncios ativos (scan)
   passo("lendo a lista de anúncios ativos");
@@ -60,7 +65,7 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
   for (let volta = 0; volta < 200 && ids.length < limite && !cancelado(); volta++) {
     const r = await consultar(`/users/${c.id}/items/search?status=active&search_type=scan&limit=100${scroll ? `&scroll_id=${encodeURIComponent(scroll)}` : ""}`);
     if (!r?.ok) { falha("lista de anúncios", null, r); break; }
-    if (total === null) total = num(r.dados?.paging?.total) || null;
+    if (total === null) { total = num(r.dados?.paging?.total) || null; estado.total = total; }
     const lote = Array.isArray(r.dados?.results) ? r.dados.results : [];
     if (!lote.length) break;
     for (const id of lote) if (!ids.includes(id)) ids.push(id);
@@ -68,18 +73,26 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
     if (!scroll) break;
   }
   const alvo = ids.slice(0, limite);
+  estado.alvo = alvo.length;
 
   // 2) Cada anúncio: detalhes (dono conferido), compatibilidades, promoções, frete atual
   const itens = [];
-  const fretes = {};
+  const fretes = { ...(anterior && txt(anterior.conta) === c.id ? anterior.fretes || {} : {}) };
+  const errosAnuncio = [];
+  const parcial = () => ({ conta: c.id, nome: c.nome, lido_em: agora(), total_ativos: total, lidos: itens.length, itens: [...itens], tarifas: {}, fretes: { ...fretes }, falhas: [...falhas], descartados_outra_conta: descartados, interrompida: true, completa: false, ids_alvo: alvo.length, erros_anuncio: [...errosAnuncio] });
   const marcaVeiculo = {}; // memória: id do veículo no catálogo → marca
   let descartados = 0;
   let feitos = 0;
   await comLimite(alvo, paralelo, async (id) => {
     if (cancelado()) return;
+    if (jaLidos.has(id)) {
+      itens.push(jaLidos.get(id)); estado.reaproveitados++; estado.sucesso++; estado.consultados++;
+      return;
+    }
     const r = await consultar(`/items/${id}`);
-    if (++feitos % 10 === 0) passo(`${feitos} de ${alvo.length} anúncios`);
-    if (!r?.ok) { falha("anúncio", id, r); return; }
+    estado.consultados++;
+    if (++feitos % 10 === 0) passo(`${estado.consultados} de ${alvo.length} anúncios`);
+    if (!r?.ok) { falha("anúncio", id, r); estado.erros++; errosAnuncio.push({ id, erro: txt(r?.erro) || `HTTP ${r?.status || "?"}` }); return; }
     if (String(r.dados?.seller_id) !== c.id) { descartados++; return; } // NUNCA mistura contas
     const item = resumirItem(r.dados);
     const compatResp = await consultar(`/items/${id}/compatibilities`);
@@ -135,14 +148,16 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
       }
     }
     itens.push({ item, compat, promocoes, precoVenda });
+    estado.sucesso++;
+    if (aoParcial && itens.length % 50 === 0) { try { aoParcial(parcial()); } catch { /* ignora */ } }
   });
 
   // 3) Tarifa de venda no PREÇO FINAL (com memória por preço+tipo+categoria)
   passo("conferindo a tarifa de venda no preço final");
-  const tarifas = {};
+  const tarifas = { ...(anterior && txt(anterior.conta) === c.id ? anterior.tarifas || {} : {}) };
   const chaves = [...new Set(itens.flatMap(({ item, compat }) => precosFinaisPossiveis(item.price, classificarRenault(item, compat).classe).map((pf) => chaveTarifa(pf, item.listing_type_id, item.category_id))))];
   await comLimite(chaves, paralelo, async (k) => {
-    if (cancelado()) return;
+    if (cancelado() || tarifas[k]) return;
     const [preco, tipo, cat] = k.split("|");
     const r = await consultar(`/sites/MLB/listing_prices?price=${preco}&listing_type_id=${tipo}&category_id=${cat}`);
     const d = Array.isArray(r?.dados) ? r.dados[0] : r?.dados;
@@ -151,7 +166,9 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
   });
 
   itens.sort((a, b) => String(a.item.id).localeCompare(String(b.item.id)));
-  return { conta: c.id, nome: c.nome, lido_em: agora(), total_ativos: total, lidos: itens.length, itens, tarifas, fretes, falhas, descartados_outra_conta: descartados, interrompida: cancelado() };
+  passo(cancelado() ? "leitura interrompida (pode retomar)" : "leitura concluída");
+  const interrompida = cancelado();
+  return { conta: c.id, nome: c.nome, lido_em: agora(), total_ativos: total, lidos: itens.length, itens, tarifas, fretes, falhas, descartados_outra_conta: descartados, interrompida, completa: !interrompida && itens.length + errosAnuncio.length + descartados >= alvo.length, ids_alvo: alvo.length, erros_anuncio: errosAnuncio, reaproveitados: estado.reaproveitados };
 }
 
 /** Custo no Bling (custo_por_sku, só leitura) dos SKUs lidos. Para depois de 5 falhas seguidas. */
@@ -173,14 +190,14 @@ export async function lerCustosBF({ skus, consultarCusto, paralelo = PADROES_LEI
  * Lê as contas escolhidas, uma de cada vez. Falha numa conta não para as outras.
  * `consultorDaConta(contaId)` devolve consultar(caminho) só GET naquela conta.
  */
-export async function lerContasBF({ contas, consultorDaConta, consultarCusto = null, limite, aoProgredir = () => {}, cancelado = () => false, agora }) {
+export async function lerContasBF({ contas, consultorDaConta, consultarCusto = null, limite, aoProgredir = () => {}, cancelado = () => false, agora, anterior = null, aoParcial = null }) {
   const escolhidas = CONTAS_BLACK_FRIDAY.filter((c) => (contas || []).includes(c.id));
   if (!escolhidas.length) throw new Error("Escolha pelo menos uma conta.");
   const resultado = { lido_em: (agora || (() => new Date().toISOString()))(), contas: {}, custos: {}, falhas: [] };
   for (const c of escolhidas) {
     if (cancelado()) break;
     try {
-      const r = await lerContaBF({ conta: c.id, consultar: consultorDaConta(c.id), limite, aoProgredir, cancelado, agora });
+      const r = await lerContaBF({ conta: c.id, consultar: consultorDaConta(c.id), limite, aoProgredir, cancelado, agora, anterior: anterior?.contas?.[c.id] || null, aoParcial: aoParcial ? (p) => aoParcial({ ...resultado, contas: { ...resultado.contas, [c.id]: p } }) : null });
       resultado.contas[c.id] = r;
       resultado.falhas.push(...r.falhas);
     } catch (e) {
@@ -189,8 +206,10 @@ export async function lerContasBF({ contas, consultorDaConta, consultarCusto = n
   }
   if (typeof consultarCusto === "function") {
     const skus = Object.values(resultado.contas).flatMap((r) => r.itens.map(({ item }) => skuDoItem(item)));
-    const r = await lerCustosBF({ skus, consultarCusto, aoProgredir, cancelado });
-    resultado.custos = r.custos;
+    // (16/11) Retomada: custos já lidos não são pedidos de novo ao Bling.
+    const custosAntes = anterior?.custos || {};
+    const r = await lerCustosBF({ skus: skus.filter((k) => !custosAntes[k]), consultarCusto, aoProgredir, cancelado });
+    resultado.custos = { ...custosAntes, ...r.custos };
     resultado.falhas.push(...r.falhas);
     resultado.bling_parou = r.parou;
   }

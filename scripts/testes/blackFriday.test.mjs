@@ -24,7 +24,7 @@ const CIEBR = "824312524";
 const PERFIL = { impostoPct: 6, custoPedido: 0 };
 
 const item = (x = {}) => ({
-  id: "MLB1", seller_id: Number(LOJA), title: "Sensor Rotação Bosch 0261210170", price: 200, status: "active",
+  id: "MLB1", seller_id: Number(LOJA), title: "Sensor Rotação Bosch 0261210170", price: 200, status: "active", condition: "new",
   listing_type_id: "gold_special", category_id: "MLB1", available_quantity: 3, seller_custom_field: "SKU1",
   shipping: { free_shipping: true, logistic_type: "xd_drop_off" },
   attributes: [{ id: "BRAND", value_name: "Bosch" }, { id: "PART_NUMBER", value_name: "0261210170" }],
@@ -167,10 +167,10 @@ test("Renault de lote sem custo: mantém 10%, mostra 'Custo não informado' e va
   assert.equal(l.situacao, "atencao");
   assert.match(l.alertas[0], /^Custo não informado — margem não verificável/);
   assert.equal(R.podeAprovar(l), true);
-  // Aprovação de Atenção exige a confirmação extra.
+  // (16/11) Margem não verificável: nunca aprovada, nem com confirmação.
   const reg = G.criarRegistroBF({ storage: memoria(), usuarioId: "u1" });
   assert.equal(reg.aprovar([l]).aprovados.length, 0);
-  assert.equal(reg.aprovar([l], { confirmarAtencao: true }).aprovados.length, 1);
+  assert.equal(reg.aprovar([l], { confirmarAtencao: true }).aprovados.length, 0);
 });
 
 test("Renault de lote sem custo com RISCO (despesas > 40% do preço final) ou despesas desconhecidas → revisão", () => {
@@ -437,7 +437,7 @@ function memoria() {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), mapa: m };
 }
 
-test("aprovação: só Pronto/Atenção; Atenção pede confirmação; idempotente; guarda preço original", () => {
+test("aprovação: só PRONTO; idempotente; guarda preço original", () => {
   const st = memoria();
   const reg = G.criarRegistroBF({ storage: st, usuarioId: "u1", agora: () => "2026-11-15T12:00:00Z" });
   const apto = R.simularAnuncio(leituraAnuncio(), { perfil: PERFIL });
@@ -445,12 +445,13 @@ test("aprovação: só Pronto/Atenção; Atenção pede confirmação; idempoten
   const revisao = R.simularAnuncio(leituraAnuncio({ item: item({ id: "MLB3" }), custo: custoOk(170) }), { perfil: PERFIL });
   const r1 = reg.aprovar([apto, atencao, revisao], { modo: "lote" });
   assert.deepEqual(r1.aprovados, [apto.chave]);
-  assert.deepEqual(r1.recusados.map((x) => x.motivo), ["alerta não confirmado", "situação: revisao"]);
+  assert.equal(r1.recusados.length, 2, "atenção e revisão não estão PRONTO");
+  assert.match(r1.recusados[0].motivo, /não está PRONTO/);
   const r2 = reg.aprovar([apto, atencao], { modo: "lote", confirmarAtencao: true });
   assert.deepEqual(r2.ja_aprovados, [apto.chave], "não duplica");
-  assert.deepEqual(r2.aprovados, [atencao.chave]);
+  assert.deepEqual(r2.aprovados, [], "atenção nunca entra, nem confirmada");
   const plano = reg.lerPlano();
-  assert.equal(Object.keys(plano.aprovados).length, 2);
+  assert.equal(Object.keys(plano.aprovados).length, 1);
   assert.equal(plano.aprovados[apto.chave].preco_original, 200);
   assert.equal(plano.aprovados[apto.chave].preco_final, 190);
   assert.equal(plano.aprovados[apto.chave].fim, "2026-11-30T23:59:00-03:00");
@@ -754,21 +755,97 @@ test("planilha da conta: PRONTO só sem pendência; elegibilidade do desconto in
   pronto.motivos = [pronto.promocao_texto];
   assert.equal(PL.classificarParaPlanilha(pronto).lista, "PRONTO", "promoção não verificável vira observação no cadastro manual");
   assert.match(PL.classificarParaPlanilha(pronto).observacoes.join(), /confira na tela do ML/);
-  assert.equal(PL.classificarParaPlanilha({ ...pronto, condicao: "used" }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, condicao: "used" }).lista, "BLOQUEADO", "usado é inelegível");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, lucro: -3, margem_pct: -2, motivos: ["PREJUÍZO de R$ 3,00 por venda no preço final."] }).lista, "BLOQUEADO", "prejuízo nunca é CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, situacao: "excluido" }).lista, "BLOQUEADO");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, condicao: null }).lista, "CONFERIR", "condição não lida = falta dado");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, custo_motivo: "custo não lido no Bling", margem_pct: null }).lista, "CONFERIR", "margem não verificada nunca é PRONTO");
-  assert.equal(PL.classificarParaPlanilha({ ...pronto, tipo_anuncio: "free" }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, tipo_anuncio: "free" }).lista, "BLOQUEADO");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, classe: "revisao", decisao: null }).lista, "CONFERIR");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, alertas: ["Margem baixa"] }).lista, "CONFERIR");
   assert.equal(PL.classificarParaPlanilha({ ...pronto, promocao: "conflito", motivos: ["Já participa de promoção"] }).lista, "CONFERIR");
   const pl = PL.montarPlanilha([pronto, { ...pronto, id: "MLB9", chave: "x", condicao: "used" }, { ...pronto, conta: "outra" }], pronto.conta);
   assert.equal(pl.length, 2, "só a conta pedida");
-  assert.deepEqual(pl.map((r) => r.lista), ["PRONTO", "CONFERIR"]);
+  assert.deepEqual(pl.map((r) => r.lista), ["PRONTO", "BLOQUEADO"]);
   assert.equal(pl[0].inicio, "27/11/2026"); assert.equal(pl[0].fim, "30/11/2026");
   const csv = PL.planilhaCSV(pl);
   assert.ok(csv.startsWith("﻿Lista;Conta;MLB;SKU;"));
-  assert.match(csv, /;200,00;5;190,00;5;27\/11\/2026;30\/11\/2026;/);
+  assert.match(csv, /;200,00;5;190,00;5;/);
+  assert.match(csv, /Custo da peça \(R\$\);Comissão ML \(R\$\);Imposto \(R\$\);Frete \(R\$\);Custo por pedido \(R\$\);Lucro \(R\$\);Margem \(%\)/);
+  assert.match(csv, /;27\/11\/2026;30\/11\/2026;/);
+  const semCusto = PL.planilhaCSV(PL.montarPlanilha([{ ...pronto, custo: null, lucro: null, margem_pct: null, custo_motivo: "lote sem custo" }], pronto.conta));
+  assert.match(semCusto, /;não confirmado;/, "custo nunca inventado");
   const res = PL.resumirPlanilha(pl);
-  assert.equal(res.pronto, 1); assert.equal(res.conferir, 1); assert.equal(res.soma_promocional, 190);
+  assert.equal(res.pronto, 1); assert.equal(res.bloqueado, 1); assert.equal(res.soma_promocional, 190);
   const fonte = fs.readFileSync(path.join(RAIZ, "src/services/blackFriday/planilha.js"), "utf8");
   assert.doesNotMatch(fonte, /invoke\(|fetch\(|method:|\.insert\(|\.update\(/);
+});
+
+test("leitura: progresso com números, falha isolada não para, retomada não relê o que já foi lido", async () => {
+  const Lx = await import("../../src/services/blackFriday/leitura.js");
+  const pedidos = [];
+  const consultar = async (c) => {
+    pedidos.push(c);
+    if (c.startsWith("/users/1729335019/items/search")) return { ok: true, dados: { paging: { total: 3 }, results: ["MLB1", "MLB2", "MLB3"] } };
+    if (c === "/items/MLB2") return { ok: false, status: 500, erro: "falhou" };
+    const m = c.match(/^\/items\/(MLB\d)$/);
+    if (m) return { ok: true, dados: { id: m[1], seller_id: 1729335019, title: "Peça", price: 100, status: "active", condition: "new", listing_type_id: "gold_special", shipping: { free_shipping: false }, attributes: [] } };
+    return { ok: false, status: 403, erro: "At least one policy returned UNAUTHORIZED." };
+  };
+  const estados = [];
+  const r1 = await Lx.lerContaBF({ conta: "1729335019", consultar, limite: 20000, paralelo: 1, aoProgredir: (_t, e) => e && estados.push(e) });
+  assert.equal(r1.lidos, 2); assert.equal(r1.erros_anuncio.length, 1); assert.equal(r1.erros_anuncio[0].id, "MLB2");
+  assert.equal(r1.itens[0].item.condition, "new");
+  const fim = estados.at(-1);
+  assert.equal(fim.total, 3); assert.equal(fim.alvo, 3); assert.equal(fim.consultados, 3); assert.equal(fim.sucesso, 2); assert.equal(fim.erros, 1);
+  pedidos.length = 0;
+  const r2 = await Lx.lerContaBF({ conta: "1729335019", consultar, limite: 20000, paralelo: 1, anterior: r1 });
+  assert.ok(!pedidos.includes("/items/MLB1") && !pedidos.includes("/items/MLB3"), "já lidos não são pedidos de novo");
+  assert.ok(pedidos.includes("/items/MLB2"), "só o que faltou é relido");
+  assert.equal(r2.reaproveitados, 2);
+});
+
+test("margem negativa ou não verificável nunca é aprovável; lote só PRONTO (tela)", async () => {
+  const PL = await import("../../src/services/blackFriday/planilha.js");
+  assert.equal(PL.margemComProblema({ custo_motivo: "anúncio sem SKU", margem_pct: null }), true);
+  assert.equal(PL.margemComProblema({ custo_motivo: null, margem_pct: -3, lucro: -2 }), true);
+  assert.equal(PL.margemComProblema({ custo_motivo: null, margem_pct: 18, lucro: 20 }), false);
+  const tela = fs.readFileSync(path.join(RAIZ, "src/components/BlackFridayPaizinho.jsx"), "utf8");
+  assert.match(tela, /const aptas = lista\.filter\(\(l\) => aprovavel\(l\)\)/, "aprovação só PRONTO com margem verificada");
+  assert.doesNotMatch(tela, /Aprovar \(conferido\)|confirmarAtencao/, "sem exceção manual para CONFERIR");
+  assert.match(tela, /ofertasConfirmadasNoML/, "ativa só com confirmação lida no ML");
+  assert.doesNotMatch(tela, /testarPromocoesConta|diagnosticarContas|lerDonoPeloAplicativo/, "não repete chamadas que já deram 403");
+  const negativa = { ...R.simularAnuncio(leituraAnuncio(), { perfil: PERFIL }), lucro: -1, margem_pct: -1 };
+  assert.equal(PL.aprovavel(negativa), false);
+});
+
+test("encerramento 01/12 e confirmação no ML: só lê, nunca marca sem leitura, nunca sobrescreve preço", async () => {
+  const C = await import("../../src/services/blackFriday/calendario.js");
+  const aprovados = {
+    a: { conta: LOJA, item: "MLB1", preco_original: 200, preco_final: 190 },
+    b: { conta: LOJA, item: "MLB2", preco_original: 100, preco_final: 95 },
+    c: { conta: LOJA, item: "MLB3", preco_original: 50, preco_final: 47.5 },
+    d: { conta: LOJA, item: "MLB4", preco_original: 80, preco_final: 76 },
+    e: { conta: "824312524", item: "MLB9", preco_original: 10, preco_final: 9.5 },
+  };
+  const itens = [
+    { item: { id: "MLB1", price: 200 } },
+    { item: { id: "MLB2", price: 95 }, precoVenda: { lido: true, ativa: true, preco: 95 } },
+    { item: { id: "MLB3", price: 55 } },
+  ];
+  const antes = C.conferirEncerramento({ aprovados, itens, conta: LOJA, lidoEm: "2026-11-30T20:00:00-03:00" });
+  assert.equal(antes.valida, false, "leitura antes do fim não vale");
+  const r = C.conferirEncerramento({ aprovados, itens, conta: LOJA, lidoEm: "2026-12-01T08:00:00-03:00" });
+  assert.deepEqual(r.resumo, { total: 4, normal: 1, com_desconto: 1, diferente: 1, nao_lido: 1 }, "só a conta escolhida");
+  assert.match(r.linhas.find((x) => x.item === "MLB3").texto, /não muda o preço/);
+  const conf = C.ofertasConfirmadasNoML({ aprovados, itens, conta: LOJA });
+  assert.equal(conf.aprovadas, 4);
+  assert.deepEqual(conf.confirmadas, ["MLB2"], "só a lida com desconto igual ao aprovado");
+  const fonte = fs.readFileSync(path.join(RAIZ, "src/services/blackFriday/calendario.js"), "utf8");
+  assert.doesNotMatch(fonte, /invoke\(|fetch\(|method:|\.insert\(|\.update\(/);
+  const tela = fs.readFileSync(path.join(RAIZ, "src/components/BlackFridayPaizinho.jsx"), "utf8");
+  assert.match(tela, /type="radio" name="bf-conta"/, "uma conta por vez");
+  assert.match(tela, /useState\("20000"\)/, "padrão: todos os anúncios");
+  assert.match(tela, /localStorage\.setItem\("paiiaPerfilCustos"/, "imposto gravado só no navegador");
+  assert.doesNotMatch(tela, /from\("perfil|\.upsert\(/, "não grava custos na produção");
 });

@@ -11,7 +11,8 @@
 // - Histórico de operações e erros (consulta, simulação, decisão, aprovação…).
 // =============================================================
 import { CAMPANHA_BF } from "./calendario.js";
-import { podeAprovar, chaveOperacao } from "./regras.js";
+import { chaveOperacao } from "./regras.js";
+import { aprovavel } from "./planilha.js";
 
 export const LIMITE_HISTORICO = 1000;
 const txt = (v) => String(v ?? "").trim();
@@ -65,16 +66,16 @@ export function criarRegistroBF({ storage, usuarioId, agora = () => new Date().t
   }
 
   /**
-   * Aprova (registra) linhas simuladas. Só aprova o que podeAprovar() aceita.
-   * Linha em "atenção" exige `confirmarAtencao`. Idempotente.
+   * Aprova (registra) linhas simuladas. Só aprova PRONTO com margem verificada (aprovavel).
+   * Idempotente.
    * @returns {{ aprovados: string[], ja_aprovados: string[], recusados: {chave, motivo}[] }}
    */
-  function aprovar(linhas, { modo = "anuncio", confirmarAtencao = false } = {}) {
+  function aprovar(linhas, { modo = "anuncio" } = {}) {
     const p = lerPlano();
     const out = { aprovados: [], ja_aprovados: [], recusados: [] };
     for (const l of linhas || []) {
-      if (!podeAprovar(l)) { out.recusados.push({ chave: l.chave, motivo: `situação: ${l.situacao}` }); continue; }
-      if (l.situacao === "atencao" && !confirmarAtencao) { out.recusados.push({ chave: l.chave, motivo: "alerta não confirmado" }); continue; }
+      // (16/11) Só PRONTO, com margem verificada e não negativa. Sem exceção manual.
+      if (!aprovavel(l)) { out.recusados.push({ chave: l.chave, motivo: "não está PRONTO (pendência ou margem não verificada/negativa)" }); continue; }
       const atual = p.aprovados[l.chave];
       if (atual && atual.preco_original === l.preco_original && atual.preco_final === l.preco_final) { out.ja_aprovados.push(l.chave); continue; }
       p.aprovados[l.chave] = {
@@ -152,7 +153,7 @@ export function criarRegistroBF({ storage, usuarioId, agora = () => new Date().t
     for (const [k, a] of Object.entries(p.aprovados)) {
       const l = porChave.get(k);
       if (!l) continue; // anúncio não lido nesta simulação: mantém
-      if (l.preco_original !== a.preco_original || l.preco_final !== a.preco_final || !podeAprovar(l)) {
+      if (l.preco_original !== a.preco_original || l.preco_final !== a.preco_final || !aprovavel(l)) {
         desatualizadas.push({ chave: k, antes: a.preco_original, agora: l.preco_original, situacao: l.situacao });
         delete p.aprovados[k];
       }
