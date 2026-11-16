@@ -730,7 +730,8 @@ test("renovar acesso: usa a renovação oficial (validar_conexao) da conta, sem 
   const invocar = async (nome, { body }) => { chamadas.push({ nome, ...body }); return { data: { ok: true, conectado: true, pertence_ao_usuario: true, renovado: true, token_valido_ate: "2026-11-16T22:00:00Z", email: "x@y", nome: "Fulano" } }; };
   const r = await A.renovarAcessoConta({ conta: "824312524", invocar });
   assert.deepEqual(chamadas, [{ nome: "mercadolivre-publicacao", acao: "validar_conexao", conta_ml: "824312524" }], "sem forcar_renovacao, sem outra ação");
-  assert.deepEqual(r, { ok: true, conta: "CIEBR", renovado: true, valido_ate: "2026-11-16T22:00:00Z", pertence: true, erro: null });
+  assert.deepEqual(r, { ok: true, conta: "CIEBR", renovado: true, valido_ate: "2026-11-16T22:00:00Z", pertence: true, identidade: { ml_user_id: "824312524", apelido: null, email: "x@y", empresa: null, nome: "Fulano" }, erro: null });
+  assert.doesNotMatch(JSON.stringify(r), /token/i);
   const revog = await A.renovarAcessoConta({ conta: "824312524", invocar: async () => ({ data: { ok: false, erro: "A autorização do Mercado Livre venceu ou foi revogada. Clique em Reconectar em Contas Marketplace." } }) });
   assert.equal(revog.precisa_reconectar, true);
   const venc = await A.testarPromocoesConta({ conta: "824312524", consultar: async () => ({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido" }) });

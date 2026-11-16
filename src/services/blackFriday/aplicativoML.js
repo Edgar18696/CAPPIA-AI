@@ -182,7 +182,9 @@ export async function testarPromocoesConta({ conta, consultar }) {
  *   - usa o refresh token que já está guardado (NÃO é reconexão, não abre o ML);
  *   - só renova se o acesso estiver vencido ou perto de vencer;
  *   - confere que o acesso é mesmo DESTA conta (/users/me);
- *   - a tela só recebe validade e confirmação; e-mail, nome e tokens são descartados aqui.
+ *   - a tela recebe validade, confirmação e a IDENTIDADE da conta no ML (apelido,
+ *     e-mail e empresa do próprio vendedor, para o dono conferir qual conta é qual);
+ *     tokens nunca.
  */
 export async function renovarAcessoConta({ conta, invocar }) {
   const c = CONTAS_BLACK_FRIDAY.find((x) => x.id === txt(conta));
@@ -196,6 +198,7 @@ export async function renovarAcessoConta({ conta, invocar }) {
     renovado: r.renovado === true,
     valido_ate: r.token_valido_ate || null,
     pertence: r.pertence_ao_usuario === true,
+    identidade: { ml_user_id: txt(r.ml_user_id) || txt(conta), apelido: txt(r.nickname) || null, email: txt(r.email) || null, empresa: txt(r.empresa) || null, nome: txt(r.nome) || null },
     erro: r.pertence_ao_usuario === true ? null : "O acesso gravado não corresponde a esta conta do ML.",
   };
 }

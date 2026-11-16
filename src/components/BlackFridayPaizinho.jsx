@@ -422,6 +422,7 @@ export default function BlackFridayPaizinho() {
       </div>
       {renovacao && <div style={renovacao.ok ? S.nota : S.aviso}>
         <strong>{renovacao.ok ? `✅ Acesso da ${renovacao.conta} ${renovacao.renovado ? "renovado" : "já estava válido"}${renovacao.valido_ate ? ` até ${dataHoraBrasilia(renovacao.valido_ate)}` : ""}.` : `❌ ${renovacao.conta}: ${renovacao.erro}`}</strong>
+        {renovacao.identidade && <><br /><small>Identidade no ML do acesso desta conta: ID <strong>{renovacao.identidade.ml_user_id}</strong> · apelido <strong>{renovacao.identidade.apelido || "—"}</strong> · e-mail <strong>{renovacao.identidade.email || "—"}</strong>{renovacao.identidade.empresa ? ` · empresa ${renovacao.identidade.empresa}` : ""}</small></>}
         {!renovacao.ok && renovacao.precisa_reconectar && <><br /><small>O ML recusou a autorização guardada: aí sim é preciso reconectar esta conta — pelo site oficial (www.paiia.com.br → Contas Marketplace), não pelo endereço local.</small></>}
       </div>}
       {testePromo && <div style={testePromo.ok ? S.nota : S.aviso}>
