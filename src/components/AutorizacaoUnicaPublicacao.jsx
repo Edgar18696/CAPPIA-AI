@@ -95,8 +95,12 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
         }),
       ]);
       const quadro = quadroProdutoExistente({ fichas: fichas?.ok ? fichas.anuncios : [], reconhecimento: rec });
-      // Produtos Bling já registrados nas fichas deste SKU (inclusive esta): nunca cadastra outro por cima.
-      const blingRegistrados = semBlingDescartados(produtosBlingRegistradosDoSku([...(fichas?.ok ? fichas.anuncios : []), { id: "esta-ficha", publicacao: f.publicacao, integracao_bling: f.dados_conferencia?.integracao_bling }]), idsBlingDescartados(f.dados_conferencia));
+      // Produtos Bling já registrados: os desta ficha + os de outras fichas que PUBLICARAM (com MLB).
+      // (16/11) Ficha que nunca publicou (tentativa anterior) não trava — mesma regra de classificarVinculosBling.
+      const blingRegistrados = semBlingDescartados([
+        ...produtosBlingRegistradosDoSku(fichas?.ok ? fichas.anuncios : [], { excetoFicha: anuncioId }).filter((r) => r.mlb),
+        ...produtosBlingRegistradosDoSku([{ id: anuncioId, publicacao: f.publicacao, integracao_bling: f.dados_conferencia?.integracao_bling }]),
+      ], idsBlingDescartados(f.dados_conferencia));
       const res = situacaoFinalDasContas({ ficha, quadro, verificacoes: verif.resultados, fotos, blingRegistrados, sku: String(sku || codigo || "").trim() });
       setSt({ lendo: false, res: { ...res, verif, ficha }, assinatura: assinaturaDaConta, erro: "" });
     } catch (e) {

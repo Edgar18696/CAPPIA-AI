@@ -259,6 +259,10 @@ export async function classificarVinculosBling({ registrados = [], consultarML }
     if (!r?.produto_id) continue;
     const mlb = texto(r.mlb).toUpperCase();
     const conta = texto(r.conta);
+    // (16/11) Ficha que NUNCA publicou (sem MLB): o produto Bling dela é de uma tentativa anterior (caso
+    // 8200263342 / 16736249318, refeito várias vezes). Não prova que o produto existe: vira histórico e
+    // não trava o cadastro. O cadastro continua protegido (o Bling relê o SKU antes e não duplica).
+    if (!mlb) { antigos.push({ ...r, situacao: "sem_mlb", rotulo: "vínculo de uma ficha que nunca publicou (tentativa anterior)" }); continue; }
     if (!/^MLB\d+$/.test(mlb) || !conta || typeof consultarML !== "function") { atuais.push(r); continue; }
     let resp;
     try { resp = await consultarML(conta, `/items/${mlb}`); } catch (e) { resp = { ok: false, erro: texto(e?.message || e) }; }

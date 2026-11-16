@@ -404,3 +404,33 @@ test("painel 8200263342 nas 3 contas com o ID antigo: cada conta escolhida tem o
   assert.equal(l(REV).estado, E.IMPEDIDO);
   assert.equal(l(REV).acao.tipo, "nenhuma");
 });
+
+// =============================================================
+// (16/11) Fichas refeitas que NUNCA publicaram não travam o Bling (8200263342 / 16736249318)
+// =============================================================
+test("vínculo de ficha que nunca publicou (sem MLB) vira histórico; com MLB ativo continua travando", async () => {
+  const chamadas = [];
+  const consultarML = async (conta, caminho) => { chamadas.push(caminho); return { ok: true, dados: { id: "MLB8100000001", seller_id: Number(conta), status: "active" } }; };
+  const r = await EB.classificarVinculosBling({ registrados: [{ produto_id: "16736249318", ficha: "e9171391", mlb: "", conta: LOJA }, { produto_id: "16000000555", ficha: "x", mlb: "MLB8100000001", conta: LOJA }], consultarML });
+  assert.deepEqual(r.antigos.map((x) => [x.produto_id, x.situacao]), [["16736249318", "sem_mlb"]]);
+  assert.deepEqual(r.atuais.map((x) => x.produto_id), ["16000000555"]);
+  assert.deepEqual(chamadas, ["/items/MLB8100000001"], "o registro sem MLB nem consulta o ML");
+  // Só fichas que nunca publicaram: o cadastro protegido é liberado (uma vez).
+  const so = await EB.classificarVinculosBling({ registrados: [{ produto_id: "16736249318", mlb: "" }], consultarML });
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: so.atuais }).acao, "criar");
+});
+
+test("PAIIA Voz: com só fichas que nunca publicaram, o cadastro no Bling segue UMA vez (não para em 'produto registrado')", async () => {
+  const { cadastrarNoBlingVoz } = await import("../../src/modules/paiiaVoz/servicos/blingCadastroVoz.js");
+  const src = ler("src/modules/paiiaVoz/servicos/finalizarDepsReais.js");
+  assert.ok(src.includes("const { atuais } = await classificarVinculosBling("), "o Voz usa só os vínculos ATUAIS");
+  const row = { id: "f", codigo: SKU, dados_conferencia: {} };
+  const r = await cadastrarNoBlingVoz(row, { chamarBling: async () => { throw new Error("não deve chegar aqui sem dados"); }, produtosRegistrados: async () => [] });
+  assert.notEqual(r.tipo, "produto_registrado");
+});
+
+test("painel: ID desta ficha passa pela sua conferência; fichas que nunca publicaram não contam", () => {
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes("produtosBlingRegistradosDoSku(fichas?.ok ? fichas.anuncios : [], { excetoFicha: anuncioId }).filter((r) => r.mlb)"));
+  assert.ok(a.includes("produtosBlingRegistradosDoSku([{ id: anuncioId, publicacao: f.publicacao"));
+});
