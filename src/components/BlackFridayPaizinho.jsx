@@ -14,7 +14,7 @@ import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
-import { identificarAplicativo, textoAplicativo } from "../services/blackFriday/aplicativoML";
+import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo } from "../services/blackFriday/aplicativoML";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela
@@ -53,6 +53,7 @@ export default function BlackFridayPaizinho() {
   const [diagLendo, setDiagLendo] = useState(false);
   const [matriz, setMatriz] = useState(null);
   const [appInfo, setAppInfo] = useState(null);
+  const [donoApp, setDonoApp] = useState(null);
   const cancelar = useRef(false);
 
   useEffect(() => {
@@ -151,6 +152,17 @@ export default function BlackFridayPaizinho() {
       const r = await identificarAplicativo({ invocar, consultorDaConta: (c) => consultorLeituraBF(c, invocar) });
       setAppInfo(r);
       registro?.registrar("diagnostico", { aplicativo: r.app?.ok ? `final ${r.app.app_id.slice(-4)}` : "não lido", contas: r.porConta.map((p) => `${p.conta}: cadastro ${p.cadastro.ok ? "lido" : "recusado"}`).join(" · ") });
+    } catch (e) { setAviso(String(e?.message || e)); }
+    setDiagLendo(false);
+  }
+
+  // (16/11) Caminho B: o próprio aplicativo lê o seu cadastro (dono e permissões). Só leitura.
+  async function lerDonoApp() {
+    setDiagLendo(true); setDonoApp(null);
+    try {
+      const r = await lerDonoPeloAplicativo({ consultar: consultorLeituraBF(diagConta, invocar) });
+      setDonoApp(r);
+      registro?.registrar("diagnostico", { caminho_b: r.ok ? (r.dono ? `dono ${r.dono.conta || "fora das 3 contas"}` : "sem campo de dono") : r.erro });
     } catch (e) { setAviso(String(e?.message || e)); }
     setDiagLendo(false);
   }
@@ -349,7 +361,11 @@ export default function BlackFridayPaizinho() {
         <button type="button" style={S.filtro} onClick={diagnosticar} disabled={diagLendo || !diagItem.trim()}>{diagLendo ? "🔄 Testando…" : "🩺 Testar leituras deste anúncio"}</button>
         <button type="button" style={S.filtro} onClick={diagnosticarTresContas} disabled={diagLendo || !leitura}>{diagLendo ? "🔄 Testando…" : "🩺 Comparar as 3 contas"}</button>
         <button type="button" style={S.filtro} onClick={lerAplicativo} disabled={diagLendo}>{diagLendo ? "🔄 Lendo…" : "🔎 Identificar aplicativo do ML"}</button>
+        <button type="button" style={S.filtro} onClick={lerDonoApp} disabled={diagLendo} title="O próprio aplicativo lê o seu cadastro. Usa a conta selecionada ao lado só para confirmar o seu acesso.">{diagLendo ? "🔄 Lendo…" : "🔐 Ler cadastro pelo próprio aplicativo"}</button>
       </div>
+      {donoApp && <p style={S.nota}>{donoApp.ok
+        ? <>{donoApp.conclusao}{donoApp.nome ? ` Aplicativo: ${donoApp.nome} (final ${donoApp.final_app}).` : ""}<br /><small>{JSON.stringify(donoApp.dados).slice(0, 1500)}</small></>
+        : <>❌ {donoApp.status ? `HTTP ${donoApp.status} · ` : ""}{donoApp.erro}{donoApp.recusa_ml ? ` · ML: ${[donoApp.recusa_ml.codigo, donoApp.recusa_ml.mensagem, ...(donoApp.recusa_ml.causa || [])].filter(Boolean).join(", ")}` : ""}</>}</p>}
       {appInfo && <>
         <p style={S.nota}>{appInfo.app?.ok ? <>Aplicativo usado pelo PAIIA: <strong>App ID {appInfo.app.app_id}</strong> (retorno {appInfo.app.retorno_host}). O App ID é público; o Client Secret nunca sai do servidor.</> : <>App ID não lido: {appInfo.app?.erro}</>}</p>
         <div style={S.tabelaCaixa}><table style={S.tabela}>

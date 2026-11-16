@@ -79,6 +79,38 @@ export async function identificarAplicativo({ invocar, consultorDaConta, contas 
   return { app, porConta, conclusoes: concluirAplicativo(app, porConta) };
 }
 
+/**
+ * (16/11) Caminho B: o próprio aplicativo lê o seu cadastro (pela paizinho-bf-leitura).
+ * Enquanto a versão nova da função não estiver publicada, o servidor recusa o endereço
+ * ("Leitura não permitida") e a tela avisa isso, sem tentar outro caminho.
+ */
+export async function lerDonoPeloAplicativo({ consultar }) {
+  const r = await consultar("/applications/paiia/dono");
+  if (r?.ok) {
+    const d = r.dados || {};
+    const dono = (d.donos || [])[0] || null;
+    return {
+      ok: true,
+      nome: txt(d.name) || null,
+      final_app: ultimos4(d.id),
+      dono,
+      donos: d.donos || [],
+      dados: d,
+      conclusao: dono
+        ? `COMPROVADO pelo próprio ML: o dono do aplicativo é ${dono.conta ? `a conta ${dono.conta}` : "uma conta FORA das 3 da campanha"} (usuário ML ${dono.id}). Entre no painel de desenvolvedores com ${dono.conta || "essa conta"}.`
+        : `O ML devolveu o cadastro, mas sem campo de dono (campos: ${(d.campos_recebidos || []).join(", ") || "nenhum"}). Seguir pelo painel ou pelo e-mail de criação.`,
+    };
+  }
+  const naoPublicado = /Leitura não permitida/i.test(txt(r?.erro));
+  return {
+    ok: false,
+    status: r?.status || null,
+    erro: naoPublicado ? "Caminho B ainda não publicado na função paizinho-bf-leitura (precisa da sua autorização)." : txt(r?.erro),
+    recusa_ml: r?.recusa_ml || null,
+    nao_publicado: naoPublicado,
+  };
+}
+
 /** Conclusões em linguagem simples, separando o que é COMPROVADO do que é só INDÍCIO. */
 export function concluirAplicativo(app, porConta) {
   const out = [];

@@ -572,9 +572,20 @@ test("roteador: promoções/catálogo pela função própria; sem ela publicada 
   assert.deepEqual(corpos, [{ nome: "paizinho-bf-leitura", conta: LOJA, caminho: "/seller-promotions/items/MLB1?app_version=v2" }]);
 });
 
+
+// (16/11) Caminho B: a ÚNICA exceção (POST no /oauth/token do ML e uso do segredo
+// do aplicativo) fica isolada no bloco "aplicativo_dono"; o resto da função segue só GET.
+const fonteBF = () => fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-bf-leitura/index.ts"), "utf8");
+const blocoB = (src) => src.slice(src.indexOf('if (conf.tipo === "aplicativo_dono") {'), src.indexOf("// 5) (15/11)"));
+const semBlocoB = (src) => src.replace(blocoB(src), "");
+
 test("função paizinho-bf-leitura: só GET, confere usuário, conta do usuário e dono do anúncio; não grava nada", () => {
-  const src = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-bf-leitura/index.ts"), "utf8");
+  const src = semBlocoB(fonteBF());
   assert.match(src, /conferirLeituraBF\(caminho, conta\)/);
+  const b = blocoB(fonteBF());
+  assert.equal((b.match(/method: "POST"/g) || []).length, 1, "caminho B: um único POST");
+  assert.match(b, /fetch\(`\$\{ML\}\/oauth\/token`, \{\s*method: "POST"/, "e só no /oauth/token");
+  assert.doesNotMatch(b, /\.from\(|\.insert\(|\.update\(|refresh_token|json\(\{[^}]*access_token/, "caminho B não grava nem devolve acesso");
   assert.match(src, /sb\.auth\.getUser\(jwt\)/);
   assert.match(src, /\.eq\("usuario_id", usuarioId\)\.eq\("marketplace", "mercado_livre"\)\.eq\("ml_user_id", conta\)/);
   assert.match(src, /anuncioEhDaConta\(dono\.dados, conta\)/);
@@ -593,7 +604,7 @@ test("diagnóstico de escopos: só a própria conta, só resumos seguros (sem ch
   const aut = P.resumirAutorizacoes([{ app_id: "111", scopes: ["read"] }, { app_id: "1234567890", scopes: ["read", "write"], date_created: "2026-05-01" }], "1234567890");
   assert.deepEqual(aut, { autorizacoes_na_conta: 2, paiia: { app_id: "…7890", scopes: ["read", "write"], data: "2026-05-01", campos: ["app_id", "scopes", "date_created"] } });
   assert.equal(P.resumirAutorizacoes([], "1").paiia, null);
-  const src = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-bf-leitura/index.ts"), "utf8");
+  const src = semBlocoB(fonteBF());
   assert.match(src, /resumirAplicativo\(r\.dados\)/);
   assert.match(src, /resumirAutorizacoes\(r\.dados, appId\)/);
   assert.doesNotMatch(src, /ML_CLIENT_SECRET/);
@@ -660,4 +671,26 @@ test("BF aplicativo ML: só App ID público da URL, conclusões sem adivinhar, n
   assert.doesNotMatch(t, /secret|token|refresh/i);
   const fonte = fs.readFileSync(path.join(process.cwd(), "src/services/blackFriday/aplicativoML.js"), "utf8");
   assert.doesNotMatch(fonte, /location\.href|window\.open|\.insert\(|\.upsert\(|desconectar|definir_ativa/);
+});
+
+test("BF caminho B: dono lido pelo próprio aplicativo, resumo seguro, aviso de não publicado", async () => {
+  const P = await import("../../src/services/blackFriday/leituraPermitida.js");
+  const A = await import("../../src/services/blackFriday/aplicativoML.js");
+  assert.equal(P.conferirLeituraBF("/applications/paiia/dono", "824312524").ok, true);
+  assert.equal(P.conferirLeituraBF("/applications/1283127548197864", "824312524").ok, false, "id nunca vem do navegador");
+  const res = P.resumirDonoAplicativo({ id: 1283127548197864, name: "PAIIA", owner_id: 824312524, secret_key: "S", redirect_uri: "https://x", email: "a@b", scopes: ["read"] });
+  assert.deepEqual(res.donos, [{ campo: "owner_id", id: "824312524", conta: "CIEBR" }]);
+  assert.equal(res.id, "…7864");
+  assert.doesNotMatch(JSON.stringify(res).replace(/"campos_recebidos":\[[^\]]*\]/, ""), /"S"|https:\/\/x|a@b/);
+  assert.ok(!res.campos_recebidos.some((k) => /secret|redirect|email/.test(k)));
+  const ok = await A.lerDonoPeloAplicativo({ consultar: async () => ({ ok: true, dados: res }) });
+  assert.match(ok.conclusao, /COMPROVADO.*CIEBR/);
+  const fora = await A.lerDonoPeloAplicativo({ consultar: async () => ({ ok: true, dados: P.resumirDonoAplicativo({ id: 1, owner_id: 555 }) }) });
+  assert.match(fora.conclusao, /FORA das 3/);
+  const np = await A.lerDonoPeloAplicativo({ consultar: async () => ({ ok: false, status: 403, erro: "Leitura não permitida na Black Friday (só promoções e catálogo)." }) });
+  assert.equal(np.nao_publicado, true);
+  const fn = fs.readFileSync(path.join(process.cwd(), "supabase/functions/paizinho-bf-leitura/index.ts"), "utf8");
+  const bloco = fn.slice(fn.indexOf('conf.tipo === "aplicativo_dono") {'), fn.indexOf("// 5) (15/11)"));
+  assert.match(bloco, /grant_type: "client_credentials"/);
+  assert.doesNotMatch(bloco, /\.from\(|\.insert\(|\.update\(|access_token:|json\(\{[^}]*tk[,}]/, "acesso do aplicativo não é gravado nem devolvido");
 });

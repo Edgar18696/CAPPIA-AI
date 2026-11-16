@@ -36,6 +36,10 @@ const PADROES = Object.freeze([
   // cadastro do aplicativo PAIIA (o id real vem do segredo do servidor; nada de chave).
   { tipo: "autorizacoes_conta", re: /^\/users\/(\d+)\/applications$/ },
   { tipo: "aplicativo", re: /^\/applications\/paiia$/ },
+  // (16/11) Caminho B: o PRÓPRIO aplicativo se identifica ao ML (client_credentials,
+  // credenciais que já estão no servidor) e lê o próprio cadastro. O token do
+  // aplicativo é temporário, fica só na memória da função e nunca volta nem é gravado.
+  { tipo: "aplicativo_dono", re: /^\/applications\/paiia\/dono$/ },
 ]);
 
 /** É uma leitura da Black Friday? */
@@ -87,6 +91,29 @@ export function resumirAplicativo(dados) {
   }
   out.id = mascarar(dados?.id);
   return out;
+}
+
+const CAMPOS_DONO = /^(owner_id|owner|user_id|seller_id|created_by|creator_id|admin_id)$/i;
+
+/**
+ * (16/11) Caminho B: resumo SEGURO do cadastro lido pelo próprio aplicativo.
+ * Mostra quem é o dono (id de usuário do ML é público; quando é uma das 3 contas,
+ * mostra o nome) e os campos de permissão. Nunca segredo, chave, endereço ou e-mail.
+ */
+export function resumirDonoAplicativo(dados, contas = CONTAS_BLACK_FRIDAY) {
+  const base = resumirAplicativo(dados);
+  const donos = [];
+  for (const [k, v] of Object.entries(dados || {})) {
+    if (!CAMPOS_DONO.test(k)) continue;
+    const id = txt(typeof v === "object" && v ? v.id : v).replace(/\D/g, "");
+    if (!id) continue;
+    donos.push({ campo: k, id, conta: contas.find((c) => c.id === id)?.nome || null });
+  }
+  return {
+    ...base,
+    donos,
+    campos_recebidos: Object.keys(dados || {}).filter((k) => !CAMPOS_SECRETOS.test(k)),
+  };
 }
 
 /**

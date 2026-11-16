@@ -23,7 +23,7 @@
 // =============================================================
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js";
-import { conferirLeituraBF, caminhoDono, anuncioEhDaConta, detalheRecusaML, resumirAplicativo, resumirAutorizacoes } from "../../../src/services/blackFriday/leituraPermitida.js";
+import { conferirLeituraBF, caminhoDono, anuncioEhDaConta, detalheRecusaML, resumirAplicativo, resumirAutorizacoes, resumirDonoAplicativo } from "../../../src/services/blackFriday/leituraPermitida.js";
 
 const ML = "https://api.mercadolibre.com";
 const cors = {
@@ -59,7 +59,8 @@ Deno.serve(async (req) => {
     .eq("usuario_id", usuarioId).eq("marketplace", "mercado_livre").eq("ml_user_id", conta)
     .maybeSingle();
   if (error || !c?.access_token) return json({ ok: false, status: 404, erro: "Conta Mercado Livre não conectada para este usuário." });
-  if (c.expires_at && new Date(c.expires_at).getTime() <= Date.now()) {
+  // (16/11) O caminho B não usa o token da conta: basta a conta estar conectada.
+  if (conf.tipo !== "aplicativo_dono" && c.expires_at && new Date(c.expires_at).getTime() <= Date.now()) {
     return json({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido: abra Contas Marketplace no PAIIA para renovar e rode de novo." });
   }
   const get = getML(c.access_token);
@@ -69,6 +70,29 @@ Deno.serve(async (req) => {
     const dono = await get(caminhoDono(conf.anuncio));
     if (!dono.ok) return json({ ok: false, status: dono.status, erro: `Não foi possível conferir o dono do anúncio: ${dono.erro}` });
     if (!anuncioEhDaConta(dono.dados, conta)) return json({ ok: false, status: 403, erro: "Promoções só de anúncios da conta informada." });
+  }
+
+  // 5b) (16/11) Caminho B (PREPARADO — só publicar com autorização): o PRÓPRIO
+  // aplicativo lê o seu cadastro (dono e permissões).
+  //   - acesso do aplicativo (client_credentials) com as credenciais que JÁ estão no servidor;
+  //   - fica só na memória desta chamada: não volta para a tela, não é gravado, não
+  //     usa nem altera os tokens das contas e não altera nada no ML;
+  //   - só GET /applications/{id} com ele.
+  if (conf.tipo === "aplicativo_dono") {
+    const appId = env("ML_CLIENT_ID");
+    const segredo = env("ML_CLIENT_SECRET");
+    if (!appId || !segredo) return json({ ok: false, status: 500, erro: "Aplicativo do ML não configurado no servidor." });
+    const t = await fetch(`${ML}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({ grant_type: "client_credentials", client_id: appId, client_secret: segredo }),
+    });
+    const tk = await t.json().catch(() => null);
+    if (!t.ok || !tk?.access_token) {
+      return json({ ok: false, status: t.status, erro: `O ML não emitiu o acesso do aplicativo: ${tk?.message || tk?.error || `HTTP ${t.status}`}`, recusa_ml: detalheRecusaML(t.status, tk) });
+    }
+    const r = await getML(String(tk.access_token))(`/applications/${appId}`);
+    return json(r.ok ? { ok: true, status: r.status, dados: resumirDonoAplicativo(r.dados) } : r);
   }
 
   // 5) (15/11) Diagnóstico de permissões: só resumos seguros (nunca chave/segredo; id mascarado).
