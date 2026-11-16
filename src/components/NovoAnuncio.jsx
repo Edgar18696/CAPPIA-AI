@@ -128,6 +128,9 @@ import {
 } from "../services/copilotoEspecialista";
 
 import CopilotoChat from "./CopilotoChat";
+import ProdutoExistenteSKU from "./ProdutoExistenteSKU";
+import { lerFichasDoCodigo } from "../services/produtoExistenteService";
+import { fichasExistentes } from "../services/produtoExistenteSKU";
 
 import {
   motorCopilotoIA,
@@ -3030,6 +3033,28 @@ if (!precosComparaveis.length) {
   }
 }
 
+// (16/11) Código JÁ trabalhado (caso SKU 7527362): antes de pesquisar, lê as fichas deste código na
+// base PAIIA (leitura interna, nada externo). Havendo ficha, NADA é apagado nem pesquisado como peça
+// nova: aparece o quadro do produto existente (fichas, Bling e as 3 contas). Pesquisar como nova só
+// pelo seu toque em "É outra peça".
+const [produtoExistente, setProdutoExistente] = useState(null);
+async function buscarComReconhecimento() {
+  const cod = String(codigo || oem || "").trim();
+  if (!cod || processando) return buscarEMontarAnuncio();
+  const r = await lerFichasDoCodigo(cod).catch(() => null);
+  const outras = r?.ok ? fichasExistentes(r.anuncios, fichaNovo.fichaId) : [];
+  if (outras.length) {
+    setProdutoExistente({ codigo: cod, fichas: outras });
+    return;
+  }
+  setProdutoExistente(null);
+  return buscarEMontarAnuncio();
+}
+function pesquisarComoNova() {
+  setProdutoExistente(null);
+  buscarEMontarAnuncio();
+}
+
 async function buscarEMontarAnuncio() {
   const codigoFinal = String(
     codigo || oem || ""
@@ -5323,7 +5348,7 @@ marcarAnuncioPronto({
   tipoAnuncio={tipoAnuncio}
   setTipoAnuncio={setTipoAnuncio}
   pecaEncontrada={pecaEncontrada}
-  buscarEMontarAnuncio={buscarEMontarAnuncio}
+  buscarEMontarAnuncio={buscarComReconhecimento}
   fichaPaiiaVoz={Boolean(origemPaiiaVoz)}
   processando={processando}
   etapaProcessamento={etapaProcessamento}
@@ -5334,6 +5359,14 @@ marcarAnuncioPronto({
       : ""
   }
 />
+        {produtoExistente && (
+          <ProdutoExistenteSKU
+            codigo={produtoExistente.codigo}
+            fichas={produtoExistente.fichas}
+            onPesquisarMesmoAssim={pesquisarComoNova}
+            onFechar={() => setProdutoExistente(null)}
+          />
+        )}
         </div>
 
 <section
