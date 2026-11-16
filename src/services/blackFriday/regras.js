@@ -140,7 +140,9 @@ export function descontoDaClasse(classe) {
   return DESCONTOS.renault;
 }
 
-export const precoComDesconto = (preco, pctDesconto) => centavos(num(preco) * (1 - num(pctDesconto) / 100));
+// (16/11) Arredonda PARA BAIXO no centavo: o ML recusa desconto individual abaixo de 5%
+// ("buyer_discount_not_in_range"); arredondar para cima podia dar 4,99%.
+export const precoComDesconto = (preco, pctDesconto) => Math.floor(num(preco) * (1 - num(pctDesconto) / 100) * 100 + 1e-6) / 100;
 
 const ATIVAS = new Set(["started", "active", "pending", "programmed", "scheduled"]);
 
@@ -300,6 +302,7 @@ export function simularAnuncio(a, op = {}) {
     chave: chaveOperacao(conta, id),
     conta, conta_nome: contaBF(conta)?.nome || conta,
     id, sku, titulo: txt(item.title), link: txt(item.permalink),
+    condicao: txt(item.condition) || null, tipo_anuncio: txt(item.listing_type_id) || null,
     estoque: num(item.available_quantity),
     classe: cls.classe, evidencias: cls.evidencias, duvida: cls.duvida, decisao,
     desconto_pct: desconto,

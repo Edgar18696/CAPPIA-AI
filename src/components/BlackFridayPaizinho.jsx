@@ -14,6 +14,7 @@ import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_SITUACAO
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, diagnosticarAnuncio, diagnosticarContas, agruparFalhas, explicarErro, concluirPermissoes, textoDiagnostico } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
+import { montarPlanilha, planilhaCSV, resumirPlanilha } from "../services/blackFriday/planilha";
 import { identificarAplicativo, textoAplicativo, lerDonoPeloAplicativo, testarPromocoesConta, renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
@@ -41,6 +42,7 @@ export default function BlackFridayPaizinho() {
   const [contas, setContas] = useState([CONTAS_BLACK_FRIDAY[0].id]);
   const [testePromo, setTestePromo] = useState(null);
   const [renovacao, setRenovacao] = useState(null);
+  const [planilhaInfo, setPlanilhaInfo] = useState(null);
   const [limite, setLimite] = useState("50");
   const [lendo, setLendo] = useState("");
   const [leitura, setLeitura] = useState(null);
@@ -193,6 +195,22 @@ export default function BlackFridayPaizinho() {
       registro?.registrar("diagnostico", { renovacao: `${r.conta}: ${r.ok ? (r.renovado ? "renovado" : "já válido") : r.erro}` });
     } catch (e) { setAviso(String(e?.message || e)); }
     setDiagLendo(false);
+  }
+
+  // (16/11) Planilha para cadastro MANUAL na Central de Promoções do ML (só gera arquivo).
+  function baixarPlanilha(c) {
+    const planilha = montarPlanilha(linhas, c.id);
+    if (!planilha.length) { setAviso(`Consulte e simule a ${c.nome} antes de gerar a planilha.`); return; }
+    const resumo = resumirPlanilha(planilha);
+    try {
+      const url = URL.createObjectURL(new Blob([planilhaCSV(planilha)], { type: "text/csv;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `black-friday-2026-${c.nome.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) { setAviso(`Não foi possível gerar o arquivo: ${e?.message || e}`); }
+    setPlanilhaInfo({ conta: c.nome, resumo });
+    registro?.registrar("planilha", { conta: c.nome, total: resumo.total, pronto: resumo.pronto, conferir: resumo.conferir });
   }
 
   // (16/11) Aprovação da CAMPANHA separada por conta (só registra; nada é ativado).
@@ -388,6 +406,14 @@ export default function BlackFridayPaizinho() {
           </tr>;
         })}</tbody>
       </table></div>
+      <p style={S.nota}><strong>Cadastro manual no Mercado Livre:</strong> a planilha separa <strong>PRONTO</strong> (sem pendência) de <strong>CONFERIR</strong> (dúvida de aplicação, dado incompleto ou elegibilidade). Regras do desconto individual do ML: produto novo, anúncio pago, desconto entre 5% e 80%, até 14 dias; o início vale às 00:00 de {CAMPANHA_BF.inicio.slice(8, 10)}/11 e o fim às 23:59 de {CAMPANHA_BF.fim.slice(8, 10)}/11. Só gera o arquivo: nada é alterado no ML.</p>
+      <div style={S.acoes}>
+        {CONTAS_BLACK_FRIDAY.map((c) => <button key={c.id} type="button" style={S.filtro} disabled={!simulado || !linhas.some((l) => l.conta === c.id)} onClick={() => baixarPlanilha(c)}>📥 Planilha {c.nome}</button>)}
+      </div>
+      {planilhaInfo && <div style={S.nota}>
+        <strong>Planilha {planilhaInfo.conta}:</strong> {planilhaInfo.resumo.total} anúncio(s) · <strong>{planilhaInfo.resumo.pronto} PRONTO</strong> · {planilhaInfo.resumo.conferir} CONFERIR{planilhaInfo.resumo.fora ? ` · ${planilhaInfo.resumo.fora} fora` : ""} · Renault 10%: {planilhaInfo.resumo.renault10} · Demais 5%: {planilhaInfo.resumo.demais5} · Revisão: {planilhaInfo.resumo.revisao}. Prontos: de {real(planilhaInfo.resumo.soma_atual)} para {real(planilhaInfo.resumo.soma_promocional)} (soma dos preços).
+        {planilhaInfo.resumo.pendencias.length > 0 && <ul style={S.lista}>{planilhaInfo.resumo.pendencias.slice(0, 10).map((p) => <li key={p.motivo}><small><strong>{p.quantidade}</strong> · {p.motivo}</small></li>)}</ul>}
+      </div>}
       <div style={S.acoes}>
         <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa">🚀 Ativar ofertas aprovadas</button>
         <small style={S.base}>Bloqueado: a ativação exige validar elegibilidade e modalidades na API (Fase 2) e autorização expressa (Fase 3).</small>

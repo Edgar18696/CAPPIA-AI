@@ -737,3 +737,37 @@ test("renovar acesso: usa a renovação oficial (validar_conexao) da conta, sem 
   const venc = await A.testarPromocoesConta({ conta: "824312524", consultar: async () => ({ ok: false, status: 401, erro: "Token da conta Mercado Livre vencido" }) });
   assert.match(venc.motivo, /Renovar acesso desta conta/);
 });
+
+test("preço promocional arredonda para BAIXO: desconto real nunca fica abaixo do percentual (mínimo 5% do ML)", async () => {
+  const PL = await import("../../src/services/blackFriday/planilha.js");
+  assert.equal(R.precoComDesconto(200, 5), 190);
+  assert.equal(R.precoComDesconto(10.01, 5), 9.5, "9,5095 → 9,50 (antes 9,51 = 4,99%)");
+  for (const p of [10.01, 19.99, 33.33, 79.9, 129.9, 1234.57, 0.99]) {
+    for (const d of [5, 10]) assert.ok(PL.descontoReal(p, R.precoComDesconto(p, d)) >= d, `${p} a ${d}%`);
+  }
+});
+
+test("planilha da conta: PRONTO só sem pendência; elegibilidade do desconto individual; CSV para Excel; nada é gravado", async () => {
+  const PL = await import("../../src/services/blackFriday/planilha.js");
+  const base = R.simularAnuncio(leituraAnuncio(), { perfil: PERFIL });
+  const pronto = { ...base, situacao: "apto", motivos: [], alertas: [], bloqueios: [], condicao: "new", tipo_anuncio: "gold_special", promocao: "nao_verificada", promocao_texto: "Promoção não verificada (403). Fica em revisão." };
+  pronto.motivos = [pronto.promocao_texto];
+  assert.equal(PL.classificarParaPlanilha(pronto).lista, "PRONTO", "promoção não verificável vira observação no cadastro manual");
+  assert.match(PL.classificarParaPlanilha(pronto).observacoes.join(), /confira na tela do ML/);
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, condicao: "used" }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, tipo_anuncio: "free" }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, classe: "revisao", decisao: null }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, alertas: ["Margem baixa"] }).lista, "CONFERIR");
+  assert.equal(PL.classificarParaPlanilha({ ...pronto, promocao: "conflito", motivos: ["Já participa de promoção"] }).lista, "CONFERIR");
+  const pl = PL.montarPlanilha([pronto, { ...pronto, id: "MLB9", chave: "x", condicao: "used" }, { ...pronto, conta: "outra" }], pronto.conta);
+  assert.equal(pl.length, 2, "só a conta pedida");
+  assert.deepEqual(pl.map((r) => r.lista), ["PRONTO", "CONFERIR"]);
+  assert.equal(pl[0].inicio, "27/11/2026"); assert.equal(pl[0].fim, "30/11/2026");
+  const csv = PL.planilhaCSV(pl);
+  assert.ok(csv.startsWith("﻿Lista;Conta;MLB;SKU;"));
+  assert.match(csv, /;200,00;5;190,00;5;27\/11\/2026;30\/11\/2026;/);
+  const res = PL.resumirPlanilha(pl);
+  assert.equal(res.pronto, 1); assert.equal(res.conferir, 1); assert.equal(res.soma_promocional, 190);
+  const fonte = fs.readFileSync(path.join(RAIZ, "src/services/blackFriday/planilha.js"), "utf8");
+  assert.doesNotMatch(fonte, /invoke\(|fetch\(|method:|\.insert\(|\.update\(/);
+});
