@@ -26,6 +26,19 @@ export async function consultarML(conta, caminho) {
   return data || { ok: false, erro: "resposta vazia do Mercado Livre" };
 }
 
+// (17/11) Bling conectado? Lido uma vez e guardado por 5 min (só leitura; sem Bling, nada é consultado).
+let statusBling = null;
+export async function blingEstaConectado() {
+  if (statusBling && Date.now() - statusBling.em < 5 * 60 * 1000) return statusBling.valor;
+  let valor = null; // desconhecido: a consulta tenta e, se falhar, diz "não foi possível verificar"
+  try {
+    const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "status" } });
+    if (!error && data?.ok) valor = Boolean(data.conectado);
+  } catch { /* desconhecido */ }
+  if (valor !== null) statusBling = { em: Date.now(), valor };
+  return valor;
+}
+
 /** Só as fichas PAIIA do código (base interna; nada externo). */
 export function lerFichasDoCodigo(codigo) {
   return listarAnunciosDoCodigo(codigo);

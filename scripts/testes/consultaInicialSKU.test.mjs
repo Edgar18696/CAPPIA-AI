@@ -198,7 +198,7 @@ test("12. Publicação: disponível 0 no Bling → mensagem de estoque (não de 
 });
 
 test("13. telas novas: nenhuma escrita no Bling ou no ML, nada publicado, estoque nunca alterado", () => {
-  const fontes = ["src/components/ConsultaInicialSKU.jsx", "src/services/consultaInicialSKU.js"].map((f) => fs.readFileSync(path.join(raiz, f), "utf8"));
+  const fontes = ["src/components/AvisoSKU.jsx", "src/services/consultaInicialSKU.js"].map((f) => fs.readFileSync(path.join(raiz, f), "utf8"));
   for (const s of fontes) {
     for (const proibido of ["criar_produto", "lancar_estoque", "estoque_inicial", "acao: \"publicar", "definirContaMLAtiva", "metodo: \"POST\"", "metodo: \"PUT\"", "registrarProdutoBling", "aplicarGravacoesRegistro"]) {
       assert.ok(!s.includes(proibido), `não pode conter ${proibido}`);
@@ -209,7 +209,12 @@ test("13. telas novas: nenhuma escrita no Bling ou no ML, nada publicado, estoqu
   assert.match(tela, /Verificar estoque novamente e continuar/);
   assert.match(tela, /Abrir anúncio existente/);
   const na = fs.readFileSync(path.join(raiz, "src/components/NovoAnuncio.jsx"), "utf8");
-  assert.match(na, /<ConsultaInicialSKU pedido=\{consultaSKU\} \/>/);
+  assert.match(na, /avisoCodigo=\{<AvisoSKU codigo=\{codigo\}/);
+  assert.ok(!na.includes("data-paiia-conferir-sku"), "sem botão Conferir: a consulta é automática");
+  assert.ok(!na.includes("data-paiia-consulta-inicial"), "sem o painel grande");
+  const dp = fs.readFileSync(path.join(raiz, "src/components/DadosPrincipaisAnuncio.jsx"), "utf8");
+  assert.match(dp, /placeholder="Código da peça"[\s\S]{0,80}\{avisoCodigo\}/, "aviso logo abaixo do campo Código");
+  assert.match(tela, /ESPERA_DIGITACAO_SKU_MS/, "consulta sozinha depois de uma pausa na digitação");
   const rev = fs.readFileSync(path.join(raiz, "src/components/RevisaoPublicacaoML.jsx"), "utf8");
   assert.match(rev, /data-paiia-bling-estoque-zero/);
   assert.match(rev, /onClick=\{relerBling\}[^>]*>Verificar estoque novamente e continuar/);
@@ -220,4 +225,103 @@ test("14. links: só MLB válido e só endereço do Mercado Livre", () => {
   assert.equal(C.linkAnuncioML("MLB1234567", "https://golpe.example/x"), "https://produto.mercadolivre.com.br/MLB-1234567");
   assert.equal(C.linkAnuncioML("xyz"), "");
   assert.equal(C.linkProdutoBling(""), "");
+});
+
+// ---------------- versão rápida: aviso ao lado do SKU ----------------
+const FICHA_RASCUNHO = { id: "f-rasc", codigo: SKU, titulo: "Válvula", status_fluxo: "rascunho", updated_at: "2026-11-17T10:00:00Z", publicacao: null };
+const FICHA_PUBLICADA_LOJA = { id: "f-pub", codigo: SKU, titulo: "Válvula", status_fluxo: "publicado", updated_at: "2026-11-16T10:00:00Z", publicacao: { ml_user_id: LOJA, mlb_id: "MLB9000000001" } };
+const ITEM_LOJA = { id: "MLB9000000001", seller_id: LOJA, status: "active", title: "Válvula Ar Quente", attributes: [{ id: "SELLER_SKU", value_name: "087100" }] };
+const fichasSimuladas = (lista, chamadas = []) => async (cod) => { chamadas.push(cod); return { ok: true, anuncios: lista }; };
+
+test("15. com Bling e ML: consulta tudo em paralelo; aviso 'Já existe' com pendência de estoque", async () => {
+  const b = blingSimulado(PRODUTO_087100);
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA] } });
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }, { id: CIEBR, nome: "CIEBR" }], blingConectado: true, lerBling: b.lerBling, consultarML: m.consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  assert.equal(r.resumo.tipo, "existe");
+  assert.equal(r.resumo.texto, "Já existe");
+  assert.equal(r.resumo.alerta, true);
+  assert.equal(r.bling.pendencia, P.ESTOQUE_ZERO);
+  assert.deepEqual(r.ml.map((x) => [x.conta, x.estado]), [[LOJA, E.ENCONTRADO], [CIEBR, E.NAO_ENCONTRADO]]);
+  // anunciado na LOJA (MLB confirmado com este SKU) e livre na CIEBR → aproveitar para a CIEBR
+  assert.deepEqual(r.oportunidades.aproveitar, [{ ficha: "f-pub", conta: CIEBR, nome: "CIEBR" }]);
+  assert.equal(r.oportunidades.continuar, null);
+  assert.ok(m.chamadas.every((c) => c.metodo === "GET"));
+});
+
+test("16. só Mercado Livre (Bling não conectado): o Bling NÃO é consultado nem exigido", async () => {
+  const b = blingSimulado(PRODUTO_087100);
+  const m = mlSimulado();
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }], blingConectado: false, lerBling: b.lerBling, consultarML: m.consultarML, lerFichas: fichasSimuladas([]) });
+  assert.equal(b.chamadas.length, 0);
+  assert.equal(r.bling.estado, E.SEM_INTEGRACAO);
+  assert.equal(r.bling.pendencia, "");
+  assert.equal(r.resumo.tipo, "nao_encontrado");
+  assert.equal(r.resumo.texto, "Não encontrado");
+});
+
+test("17. só Bling (nenhuma conta ML conectada): o ML não é consultado", async () => {
+  const b = blingSimulado({ ok: true, encontrado: false });
+  const m = mlSimulado();
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: [], blingConectado: true, lerBling: b.lerBling, consultarML: m.consultarML, lerFichas: fichasSimuladas([]) });
+  assert.equal(m.chamadas.length, 0);
+  assert.deepEqual(r.ml, []);
+  assert.equal(r.resumo.tipo, "nao_encontrado");
+});
+
+test("18. falha em qualquer parte e nada encontrado → 'Consulta indisponível' (nunca 'Não encontrado')", async () => {
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }], blingConectado: true, lerBling: blingSimulado(new Error("rede")).lerBling, consultarML: mlSimulado().consultarML, lerFichas: fichasSimuladas([]) });
+  assert.equal(r.resumo.tipo, "indisponivel");
+  assert.equal(r.resumo.texto, "Consulta indisponível");
+  const r2 = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }], blingConectado: false, consultarML: mlSimulado({ falha: "403" }).consultarML, lerFichas: fichasSimuladas([]) });
+  assert.equal(r2.resumo.tipo, "indisponivel");
+  const r3 = await C.consultarSKURapido({ codigo: SKU, contas: [], blingConectado: false, lerFichas: async () => ({ ok: false, erro: "base fora" }) });
+  assert.equal(r3.resumo.tipo, "indisponivel");
+});
+
+test("19. integração lenta não segura o usuário: tempo máximo por parte", async () => {
+  const inicio = Date.now();
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }], blingConectado: true, lerBling: () => new Promise(() => {}), consultarML: () => new Promise(() => {}), lerFichas: () => new Promise(() => {}), tempoMaximoMs: 30 });
+  assert.ok(Date.now() - inicio < 1000);
+  assert.equal(r.resumo.tipo, "indisponivel");
+});
+
+test("20. ficha preparada do mesmo SKU → 'Continuar ficha' (a ficha aberta agora não conta)", async () => {
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: [], blingConectado: false, lerFichas: fichasSimuladas([FICHA_RASCUNHO, { ...FICHA_RASCUNHO, id: "f-atual" }]), fichaAtualId: "f-atual" });
+  assert.equal(r.resumo.tipo, "existe");
+  assert.deepEqual(r.oportunidades.continuar, { ficha: "f-rasc", titulo: "Válvula" });
+  assert.deepEqual(r.fichas.lista.map((f) => f.id), ["f-rasc"]);
+});
+
+test("21. aproveitar só com MLB CONFIRMADO deste SKU e conta destino VERIFICADA livre", async () => {
+  // MLB da ficha é de outro SKU no ML → nada a aproveitar
+  const outro = { ...ITEM_LOJA, attributes: [{ id: "SELLER_SKU", value_name: "999999" }], title: "Outra peça" };
+  const r1 = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }, { id: CIEBR, nome: "CIEBR" }], blingConectado: false, consultarML: mlSimulado({ itens: { [LOJA]: [outro] } }).consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  assert.deepEqual(r1.oportunidades.aproveitar, []);
+  // conta destino não verificada (falha) → nada a aproveitar
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA] } });
+  const consultarML = (conta, caminho) => (conta === CIEBR ? Promise.resolve({ ok: false, erro: "403" }) : m.consultarML(conta, caminho));
+  const r2 = await C.consultarSKURapido({ codigo: SKU, contas: [{ id: LOJA, nome: "LOJA ONLINE" }, { id: CIEBR, nome: "CIEBR" }], blingConectado: false, consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  assert.deepEqual(r2.oportunidades.aproveitar, []);
+  assert.equal(r2.resumo.tipo, "existe");
+  assert.equal(r2.resumo.incompleto, true);
+});
+
+test("22. cache: mesmo SKU não é consultado de novo; falha não fica guardada; pedidos simultâneos viram um", async () => {
+  let agora = 0;
+  const cache = C.criarCacheConsulta({ validadeMs: 1000, relogio: () => agora });
+  let n = 0;
+  const consulta = async () => { n++; return { resumo: { tipo: "existe", incompleto: false } }; };
+  const chave = C.chaveConsulta({ codigo: "087-100", contas: [{ id: CIEBR }, { id: LOJA }], blingConectado: true });
+  assert.equal(chave, C.chaveConsulta({ codigo: "087100", contas: [{ id: LOJA }, { id: CIEBR }], blingConectado: true }));
+  await Promise.all([cache.obter(chave, consulta), cache.obter(chave, consulta)]);
+  await cache.obter(chave, consulta);
+  assert.equal(n, 1);
+  agora = 2000;
+  await cache.obter(chave, consulta);
+  assert.equal(n, 2, "vencido → consulta de novo");
+  let f = 0;
+  const falha = async () => { f++; return { resumo: { tipo: "indisponivel", incompleto: true } }; };
+  await cache.obter("x", falha);
+  await cache.obter("x", falha);
+  assert.equal(f, 2, "resultado incompleto não é reaproveitado");
 });

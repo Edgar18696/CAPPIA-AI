@@ -30,6 +30,7 @@ export const ESTADO_CONSULTA = Object.freeze({
   OUTRO_CODIGO: "outro_codigo",
   POSSIVEL: "possivel",
   NAO_VERIFICADO: "nao_verificado",
+  SEM_INTEGRACAO: "sem_integracao",
 });
 
 export const PENDENCIA = Object.freeze({
@@ -44,7 +45,11 @@ export const PENDENCIA = Object.freeze({
 });
 
 export const TEXTO_ESTOQUE_ZERO = "Produto encontrado no Bling. Estoque disponível: 0. Regularizar estoque para publicar.";
-export const TEMPO_MAXIMO_CONSULTA_MS = 45 * 1000;
+export const TEMPO_MAXIMO_CONSULTA_MS = 20 * 1000;
+/** Espera depois da última tecla antes de consultar sozinho. */
+export const ESPERA_DIGITACAO_SKU_MS = 900;
+/** Resultado completo reaproveitado (mesmo SKU, mesmas integrações) por este tempo. */
+export const VALIDADE_CONSULTA_MS = 5 * 60 * 1000;
 
 const txt = (v) => String(v ?? "").trim();
 const idConta = (v) => txt(v).replace(/\D/g, "");
@@ -210,4 +215,128 @@ export function textoEstoque(bling) {
   if (!bling || bling.estado !== ESTADO_CONSULTA.ENCONTRADO) return "";
   const deps = (bling.depositos || []).map((d) => d.nome).filter(Boolean);
   return `físico ${bling.fisico ?? "—"} · disponível ${bling.disponivel ?? "—"} · depósito ${deps.length ? deps.join(", ") : "não informado pelo Bling"}`;
+}
+
+// =============================================================
+// (17/11, versão rápida) CONSULTA AUTOMÁTICA + AVISO PEQUENO AO LADO DO SKU.
+// O usuário digita o SKU e continua; a consulta roda em segundo plano:
+//  - só nas integrações que o usuário USA (Bling conectado? contas ML conectadas);
+//    serviço não conectado não é consultado nem exigido;
+//  - fichas PAIIA do código (base interna) → "Continuar ficha";
+//  - anunciado numa conta e livre em outra (verificada) → "Aproveitar para <conta>"
+//    (a ficha nova tem publicação independente e a própria checagem de duplicidade);
+//  - cada parte com tempo máximo; resultado completo reaproveitado por alguns minutos.
+// Tudo somente leitura. Nada é criado, alterado, vinculado ou publicado aqui.
+// =============================================================
+const PUBLICADOS_FICHA = ["publicado", "publicado_com_pendencia", "publicando"];
+const MLB_OK = (v) => (/^MLB\d{6,}$/.test(txt(v).toUpperCase()) ? txt(v).toUpperCase() : "");
+
+/** Fichas PAIIA deste código (listarAnunciosDoCodigo), sem a ficha aberta agora. */
+export function avaliarFichasInicial(resp, fichaAtualId = "") {
+  if (!resp || resp.ok !== true) return { estado: ESTADO_CONSULTA.NAO_VERIFICADO, lista: [], texto: `Não foi possível verificar as fichas do PAIIA (${txt(resp?.erro) || "sem resposta"}).` };
+  const lista = (Array.isArray(resp.anuncios) ? resp.anuncios : [])
+    .filter((a) => a && a.status_fluxo !== "cancelado" && txt(a.id) && txt(a.id) !== txt(fichaAtualId))
+    .map((a) => {
+      const mlb = MLB_OK(a.publicacao?.mlb_id);
+      return { id: txt(a.id), titulo: txt(a.titulo), status: txt(a.status_fluxo), conta: idConta(a.publicacao?.ml_user_id || a.conta_destino_ml_user_id), mlb, publicada: Boolean(mlb) || PUBLICADOS_FICHA.includes(txt(a.status_fluxo)), atualizada: txt(a.updated_at) };
+    })
+    .sort((x, y) => y.atualizada.localeCompare(x.atualizada));
+  return { estado: lista.length ? ESTADO_CONSULTA.ENCONTRADO : ESTADO_CONSULTA.NAO_ENCONTRADO, lista, texto: lista.length ? `${lista.length} ficha(s) deste código no PAIIA.` : "Nenhuma outra ficha deste código no PAIIA." };
+}
+
+/**
+ * Consulta rápida (tudo em paralelo, cada parte com tempo máximo). Nunca lança.
+ * contas: [{ id, nome }] SÓ as conectadas; blingConectado: true | false | null (desconhecido → tenta).
+ */
+export async function consultarSKURapido({ codigo, contas = [], blingConectado = null, lerBling, consultarML, lerFichas, fichaAtualId = "", tempoMaximoMs = TEMPO_MAXIMO_CONSULTA_MS, agora = () => new Date().toISOString() }) {
+  const sku = txt(codigo);
+  if (normalizarCodigoComparacao(sku).length < 4) return null;
+  const parteBling = blingConectado === false || typeof lerBling !== "function"
+    ? Promise.resolve({ estado: ESTADO_CONSULTA.SEM_INTEGRACAO, produto: null, fisico: null, disponivel: null, depositos: [], pendencia: "", texto: "Bling não conectado: não consultado." })
+    : consultarBlingInicial({ codigo: sku, lerBling, tempoMaximoMs });
+  const parteFichas = (async () => {
+    if (typeof lerFichas !== "function") return avaliarFichasInicial(null);
+    try { return avaliarFichasInicial(await comTempo(lerFichas(sku), tempoMaximoMs, "tempo esgotado na base PAIIA"), fichaAtualId); }
+    catch (e) { return avaliarFichasInicial({ ok: false, erro: txt(e?.message || e) }); }
+  })();
+  const partesML = (Array.isArray(contas) ? contas : []).filter((c) => idConta(c?.id)).map((c) =>
+    consultarMLInicial({ codigo: sku, conta: c.id, nome: c.nome, conectada: true, consultarML, tempoMaximoMs }));
+  const [bling, fichas, ...ml] = await Promise.all([parteBling, parteFichas, ...partesML]);
+  const r = { codigo: sku, bling, fichas, ml, lido_em: agora() };
+  return { ...r, resumo: resumoIndicador(r), oportunidades: oportunidadesSKU(r) };
+}
+
+/** O aviso pequeno ao lado do SKU. tipo: existe | conferir | nao_encontrado | indisponivel. */
+export function resumoIndicador(r) {
+  if (!r) return { tipo: "", texto: "" };
+  const ml = Array.isArray(r.ml) ? r.ml : [];
+  const partes = [r.bling, r.fichas, ...ml].filter(Boolean);
+  const existe = r.bling?.estado === ESTADO_CONSULTA.ENCONTRADO || r.bling?.estado === ESTADO_CONSULTA.AMBIGUO || r.fichas?.lista?.length > 0 || ml.some((m) => m.estado === ESTADO_CONSULTA.ENCONTRADO);
+  const falhou = partes.some((p) => p.estado === ESTADO_CONSULTA.NAO_VERIFICADO);
+  const duvida = r.bling?.estado === ESTADO_CONSULTA.OUTRO_CODIGO || ml.some((m) => m.estado === ESTADO_CONSULTA.POSSIVEL);
+  const alerta = [r.bling?.pendencia, ...ml.map((m) => m.pendencia)].some((p) => [PENDENCIA.ESTOQUE_ZERO, PENDENCIA.BLING_AMBIGUO, PENDENCIA.ML_DUPLICADO].includes(p));
+  if (existe) return { tipo: "existe", texto: "Já existe", alerta, incompleto: falhou };
+  // Falha NUNCA vira "não encontrado".
+  if (falhou) return { tipo: "indisponivel", texto: "Consulta indisponível", alerta: false, incompleto: true };
+  if (duvida) return { tipo: "conferir", texto: "Parecido — confira", alerta: true, incompleto: false };
+  return { tipo: "nao_encontrado", texto: "Não encontrado", alerta: false, incompleto: false };
+}
+
+/**
+ * Atalhos para não refazer trabalho (nada é executado aqui):
+ *  - continuar: ficha deste código ainda não publicada (a mais recente);
+ *  - aproveitar: ficha publicada cujo MLB o ML CONFIRMOU com este SKU na conta dela →
+ *    para cada outra conta conectada VERIFICADA sem anúncio deste SKU.
+ */
+export function oportunidadesSKU(r) {
+  const fichas = r?.fichas?.lista || [];
+  const ml = Array.isArray(r?.ml) ? r.ml : [];
+  const continuar = fichas.find((f) => !f.publicada) || null;
+  const confirmados = new Set(ml.flatMap((m) => (m.anuncios || []).map((a) => `${m.conta}:${a.mlb}`)));
+  const fonte = fichas.find((f) => f.publicada && f.mlb && confirmados.has(`${f.conta}:${f.mlb}`)) || null;
+  const aproveitar = fonte
+    ? ml.filter((m) => m.conta !== fonte.conta && m.estado === ESTADO_CONSULTA.NAO_ENCONTRADO && !fichas.some((f) => f.conta === m.conta && !f.publicada)).map((m) => ({ ficha: fonte.id, conta: m.conta, nome: m.nome }))
+    : [];
+  return { continuar: continuar ? { ficha: continuar.id, titulo: continuar.titulo } : null, aproveitar };
+}
+
+/** Chave do cache: SKU normalizado + integrações consultadas + ficha aberta. */
+export function chaveConsulta({ codigo, contas = [], blingConectado = null, fichaAtualId = "" }) {
+  const sku = normalizarCodigoComparacao(codigo);
+  if (!sku) return "";
+  return [sku, (contas || []).map((c) => idConta(c?.id)).filter(Boolean).sort().join(","), String(blingConectado), txt(fichaAtualId)].join("|");
+}
+
+/**
+ * Cache: o mesmo SKU não é consultado de novo enquanto o resultado completo vale;
+ * dois pedidos iguais ao mesmo tempo viram uma consulta. Resultado com falha não fica guardado.
+ */
+export function criarCacheConsulta({ validadeMs = VALIDADE_CONSULTA_MS, relogio = () => Date.now() } = {}) {
+  const guardados = new Map();
+  const emAndamento = new Map();
+  return {
+    olhar(chave) {
+      const g = guardados.get(chave);
+      return g && relogio() - g.em < validadeMs ? g.valor : null;
+    },
+    async obter(chave, consultar, { forcar = false } = {}) {
+      if (!chave) return null;
+      const g = guardados.get(chave);
+      if (!forcar && g && relogio() - g.em < validadeMs) return g.valor;
+      if (emAndamento.has(chave)) return emAndamento.get(chave);
+      const p = (async () => {
+        try {
+          const valor = await consultar();
+          if (valor && !valor.resumo?.incompleto) guardados.set(chave, { em: relogio(), valor });
+          else guardados.delete(chave);
+          return valor;
+        } finally {
+          emAndamento.delete(chave);
+        }
+      })();
+      emAndamento.set(chave, p);
+      return p;
+    },
+    esquecer(chave) { guardados.delete(chave); },
+  };
 }

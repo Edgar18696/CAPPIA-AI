@@ -13,6 +13,8 @@ export default function DadosPrincipaisAnuncio({
   pecaEncontrada,
   buscarEMontarAnuncio,
   processando,
+  // (17/11) Aviso pequeno do SKU (Já existe / Não encontrado / Consulta indisponível).
+  avisoCodigo = null,
 }) {
   return (
     <div style={{ marginTop: "20px" }}>
@@ -48,6 +50,7 @@ export default function DadosPrincipaisAnuncio({
         placeholder="Código da peça"
         style={inputStyle}
       />
+      {avisoCodigo}
 
       {pecaEncontrada && (
         <div

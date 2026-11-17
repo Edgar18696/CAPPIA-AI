@@ -129,7 +129,7 @@ import {
 
 import CopilotoChat from "./CopilotoChat";
 import ProdutoExistenteSKU from "./ProdutoExistenteSKU";
-import ConsultaInicialSKU from "./ConsultaInicialSKU";
+import AvisoSKU from "./AvisoSKU";
 import { lerFichasDoCodigo } from "../services/produtoExistenteService";
 import { fichasExistentes } from "../services/produtoExistenteSKU";
 
@@ -3039,12 +3039,8 @@ if (!precosComparaveis.length) {
 // nova: aparece o quadro do produto existente (fichas, Bling e as 3 contas). Pesquisar como nova só
 // pelo seu toque em "É outra peça".
 const [produtoExistente, setProdutoExistente] = useState(null);
-// (17/11) Consulta inicial pelo SKU (caso 087100): Bling (produto, estoque, depósito) e o ML da conta
-// selecionada, em paralelo e só leitura. Não interrompe a preparação; pendência aparece logo no início.
-const [consultaSKU, setConsultaSKU] = useState(null);
 async function buscarComReconhecimento() {
   const cod = String(codigo || oem || "").trim();
-  if (cod && !processando) setConsultaSKU((x) => ({ codigo: cod, n: (x?.n || 0) + 1 }));
   if (!cod || processando) return buscarEMontarAnuncio();
   const r = await lerFichasDoCodigo(cod).catch(() => null);
   const outras = r?.ok ? fichasExistentes(r.anuncios, fichaNovo.fichaId) : [];
@@ -5354,6 +5350,8 @@ marcarAnuncioPronto({
   setTipoAnuncio={setTipoAnuncio}
   pecaEncontrada={pecaEncontrada}
   buscarEMontarAnuncio={buscarComReconhecimento}
+  // (17/11) Consulta automática do SKU em segundo plano (caso 087100): aviso pequeno ao lado do código.
+  avisoCodigo={<AvisoSKU codigo={codigo} fichaAtualId={fichaNovo.fichaId || ""} />}
   fichaPaiiaVoz={Boolean(origemPaiiaVoz)}
   processando={processando}
   etapaProcessamento={etapaProcessamento}
@@ -5372,14 +5370,6 @@ marcarAnuncioPronto({
             onFechar={() => setProdutoExistente(null)}
           />
         )}
-        {/* Só o SKU que está no campo agora (trocou o código → consulta antiga some). Ficha reaberta: conferir sem refazer a busca. */}
-        {consultaSKU && consultaSKU.codigo === String(codigo || oem || "").trim() ? (
-          <ConsultaInicialSKU pedido={consultaSKU} />
-        ) : String(codigo || oem || "").trim().length >= 4 && !processando ? (
-          <button type="button" data-paiia-conferir-sku onClick={() => setConsultaSKU((x) => ({ codigo: String(codigo || oem || "").trim(), n: (x?.n || 0) + 1 }))} style={{ margin: "8px 0", padding: "7px 12px", borderRadius: 8, border: "1px solid #6366f1", background: "#111827", color: "#c7d2fe", fontWeight: 700, cursor: "pointer" }}>
-            🔎 Conferir este SKU no Bling e no Mercado Livre (só leitura)
-          </button>
-        ) : null}
         </div>
 
 <section
