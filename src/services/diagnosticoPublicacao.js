@@ -7,7 +7,7 @@
 // NUNCA grava: as consultas são injetadas e só aceitam leitura (ver LEITURAS_*).
 // Não mostra token, chave ou dado de acesso: só os campos do anúncio/ficha.
 // =============================================================
-import { verificarDuplicidadeML, nomeDaLoja, situacaoMLBRegistrado } from "./duplicidadeML.js";
+import { verificarDuplicidadeML, nomeDaLoja, situacaoMLBRegistrado, skusDoAnuncio } from "./duplicidadeML.js";
 import { produtosBlingRegistradosDoSku, situacaoProdutoBling } from "./estoqueBlingPAIIA.js";
 import { lojaBlingDaConta, avaliarPorProduto, normalizarMLB, ACAO_LEITURA, ACAO_BUSCA_MLB, ESTADO, TEXTO_ESTADO } from "./vinculoBlingPublicacao.js";
 
@@ -110,10 +110,10 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
     const ri = await q.ml(x.conta, `/items/${x.mlb}`);
     const s = situacaoMLBRegistrado({ mlb: x.mlb, conta: x.conta, resp: ri });
     const it = ri?.ok ? ri.dados : null;
-    const linha = { ...x, conta_nome: nomeDaLoja(x.conta), situacao: s.situacao, rotulo: s.rotulo || s.motivo, status: s.status, sub_status: s.sub_status, preco: s.preco, sku: it ? [attr(it, "SELLER_SKU"), txt(it.seller_custom_field)].filter(Boolean).join(" / ") : "" };
+    const linha = { ...x, conta_nome: nomeDaLoja(x.conta), situacao: s.situacao, rotulo: s.rotulo || s.motivo, status: s.status, sub_status: s.sub_status, preco: s.preco, sku: it ? [...new Set(skusDoAnuncio(it))].join(" / ") : "", variacoes: it && Array.isArray(it.variations) ? it.variations.length : 0, titulo: it ? txt(it.title).slice(0, 90) : "", vendedor: it ? txt(it.seller_id) : "" };
     out.mlbs.push(linha);
     const nivelMLB = s.situacao === "ativo" ? "ok" : s.situacao === "nao_confirmada" ? "erro" : "alerta";
-    ponto(pontos, nivelMLB, "MLBs do SKU", `${x.mlb} (${linha.conta_nome}): ${linha.rotulo}${linha.preco !== null && linha.preco !== undefined ? ` · preço ${linha.preco}` : ""}${linha.sku ? ` · SKU ${linha.sku}` : ""}${x.bling_produto_id ? ` · produto Bling ${x.bling_produto_id}` : ""}.`);
+    ponto(pontos, nivelMLB, "MLBs do SKU", `${x.mlb} (${linha.conta_nome}): ${linha.rotulo}${linha.preco !== null && linha.preco !== undefined ? ` · preço ${linha.preco}` : ""}${linha.sku ? ` · SKU ${linha.sku}${linha.variacoes ? ` (anúncio + ${linha.variacoes} variações)` : ""}` : it ? ` · SEM SKU no anúncio${linha.variacoes ? ` e nas ${linha.variacoes} variações` : ""}` : ""}${linha.titulo ? ` · “${linha.titulo}”` : ""}${x.bling_produto_id ? ` · produto Bling ${x.bling_produto_id}` : ""}.`);
   }
   // (15/11) MLB de OUTRO produto registrado na ficha (caso 7527362 × MLB5560614343): a publicação da
   // ficha está sem MLB, mas o registro do Bling/pós-publicação aponta um MLB cujo SKU não é o desta ficha.
@@ -141,11 +141,19 @@ export async function diagnosticarPublicacao({ sku, mlb = "" }, deps) {
     out.ml = { id: it.id, vendedor: txt(it.seller_id), conta_nome: nomeDaLoja(it.seller_id), status: txt(it.status), sub_status: it.sub_status || [], sku_atributo: attr(it, "SELLER_SKU"), seller_custom_field: txt(it.seller_custom_field), user_product: txt(it.user_product_id), preco: it.price ?? null, quantidade: it.available_quantity ?? null, vendidos: it.sold_quantity ?? null, condicao: txt(it.condition), tipo: txt(it.listing_type_id), titulo: txt(it.title), criado: txt(it.date_created), atualizado: txt(it.last_updated), link: txt(it.permalink) };
     ponto(pontos, txt(it.seller_id) === out.conta ? "ok" : "erro", "Conta vendedora", `${out.mlb} pertence ao vendedor ${it.seller_id} (${nomeDaLoja(it.seller_id)})${txt(it.seller_id) === out.conta ? ", a mesma conta da ficha" : `, DIFERENTE da conta da ficha (${out.conta})`}.`);
     ponto(pontos, it.status === "active" ? "ok" : "alerta", "Status no ML", `Status: ${it.status}${(it.sub_status || []).length ? ` (${it.sub_status.join(", ")})` : ""}; preço ${it.price}; quantidade ${it.available_quantity}; condição ${it.condition}.`);
-    const skus = [out.ml.sku_atributo, out.ml.seller_custom_field].filter(Boolean);
-    if (!skus.length) ponto(pontos, "erro", "SKU no ML", "O anúncio não tem SKU gravado (nem atributo SKU, nem seller_custom_field): a busca por SKU no painel não o encontra.");
+    // (16/11) SKU do anúncio E das variações (antes só o do anúncio: variação com o SKU parecia "sem SKU").
+    out.ml.skus_variacoes = (Array.isArray(it.variations) ? it.variations : []).map((v) => ({ id: txt(v?.id), skus: skusDoAnuncio({ variations: [v] }) }));
+    const skus = [...new Set(skusDoAnuncio(it))];
+    if (!skus.length) ponto(pontos, "erro", "SKU no ML", `O anúncio não tem SKU gravado (nem atributo SKU, nem seller_custom_field${out.ml.skus_variacoes.length ? `, nem nas ${out.ml.skus_variacoes.length} variações` : ""}): a busca por SKU no painel não o encontra.`);
     else ponto(pontos, skus.some((s) => normSku(s) === normSku(SKU)) ? "ok" : "erro", "SKU no ML", `SKU gravado no anúncio: ${skus.join(" / ")}${skus.some((s) => normSku(s) === normSku(SKU)) ? "" : ` (diferente de ${SKU})`}.`);
   }
 
+  // (15/11) SKU corrigido no ML (e no Bling) e a ficha ainda com o antigo: oferece corrigir a ficha.
+  if (out.ml) {
+    const skuML = out.ml.sku_atributo || out.ml.seller_custom_field;
+    const dona = out.fichas.find((f) => normalizarMLB(f.publicacao?.mlb) === out.mlb);
+    if (dona && skuML && normSku(skuML) !== normSku(SKU)) out.skuDivergente = { ficha: dona.id, mlb: out.mlb, skuAntigo: SKU, skuNovo: skuML };
+  }
   // 5) A busca do SKU na conta (é o que o painel usa) e duplicidade.
   const b = await q.ml(out.conta, `/users/${out.conta}/items/search?seller_sku=${encodeURIComponent(SKU)}`);
   out.buscaSku = b?.ok ? { resultados: Array.isArray(b.dados?.results) ? b.dados.results : [], total: b.dados?.paging?.total ?? null } : { erro: txt(b?.erro || "sem resposta") };

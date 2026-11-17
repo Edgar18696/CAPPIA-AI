@@ -288,7 +288,15 @@ test("Novo Anúncio + PAIIA Voz: sem o botão 'Buscar e Montar' e sem busca pelo
   assert.match(dp, /<DadosPrincipaisAnuncio[^]*buscarEMontarAnuncio=\{buscar\}/);
   const na = lerNA("src/components/NovoAnuncio.jsx");
   assert.match(na, /fichaPaiiaVoz=\{Boolean\(origemPaiiaVoz\)\}/);
-  assert.equal((na.match(/(?<!function )buscarEMontarAnuncio\(/g) || []).length, 0, "a busca nunca é chamada sozinha pela tela");
+  // (16/11) Única exceção: os handlers do TOQUE em Buscar (buscarComReconhecimento: lê antes as fichas do
+  // código) e "É outra peça: pesquisar como nova" (pesquisarComoNova). Nenhum deles roda sozinho.
+  const iToque = na.indexOf("async function buscarComReconhecimento()");
+  const fToque = na.indexOf("async function buscarEMontarAnuncio()");
+  assert.ok(iToque > 0 && fToque > iToque);
+  const foraDoToque = na.slice(0, iToque) + na.slice(fToque);
+  assert.equal((foraDoToque.match(/(?<!function )buscarEMontarAnuncio\(/g) || []).length, 0, "a busca nunca é chamada sozinha pela tela");
+  assert.equal((na.match(/(?<!function )buscarComReconhecimento\(/g) || []).length, 0, "o toque em Buscar só chega pelo botão/Enter");
+  assert.equal((na.match(/(?<!function )pesquisarComoNova\(/g) || []).length, 0, "pesquisar como nova só pelo botão");
   assert.match(na, /async function buscarEMontarAnuncio\(\)/, "a pesquisa por código continua existindo para os outros fluxos");
 });
 

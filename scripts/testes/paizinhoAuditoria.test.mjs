@@ -22,9 +22,12 @@ async function rodar(extra = {}) {
 }
 const achadosDe = (rel, id) => rel.secoes.flatMap((s) => s.achados).filter((a) => a.item_id === id);
 
-test("piloto: só a conta LOJA ONLINE está liberada; outra conta é recusada", async () => {
-  assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.id), [CONTA]);
+test("contas: LOJA ONLINE (padrão), CIEBR e REVELAÇÃO liberadas; outra conta é recusada", async () => {
+  // (17/11) As 3 contas, escolhidas uma por vez na Central.
+  assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.id), [CONTA, "824312524", "2412238242"]);
   assert.equal(contaLiberada("1729335019")?.nome, "LOJA ONLINE");
+  assert.equal(contaLiberada("824312524")?.nome, "CIEBR");
+  assert.equal(contaLiberada("2412238242")?.nome, "REVELAÇÃO");
   await assert.rejects(() => executarAuditoria({ conta: "123", consultar: mlFalso().consultar }), /não liberada/);
   await assert.rejects(() => executarAuditoria({ conta: "", consultar: mlFalso().consultar }), /não liberada/);
 });
@@ -365,6 +368,33 @@ test("leitura comercial (paizinho-leitura-ml): só visitas, vendas e custo de en
   assert.match(fonte, /conferirLeituraComercial/);
   assert.match(fonte, /method: "GET"/);
   assert.ok(!/method: "(POST|PUT|DELETE|PATCH)"[^]*api\.mercadolibre|\.update\(|\.insert\(|\.delete\(|oauth\/token/.test(fonte), "não grava, não renova token, não escreve no ML");
+});
+
+test("leitura comercial (17/11): CIEBR e REVELAÇÃO liberadas, cada uma só com os próprios pedidos; identidade conferida antes", async () => {
+  const L = await import("../../src/services/paizinhoAuditoria/leituraComercial.js");
+  for (const conta of ["824312524", "2412238242"]) {
+    assert.ok(L.conferirLeituraComercial("/items/MLB1/visits?date_from=2026-10-12&date_to=2026-11-11", conta).ok);
+    assert.ok(L.conferirLeituraComercial(`/orders/search?seller=${conta}&limit=50&offset=0`, conta).ok);
+    // pedidos de OUTRA das 3 contas com o token desta: recusado (nunca mistura)
+    assert.equal(L.conferirLeituraComercial(`/orders/search?seller=${CONTA}&limit=50`, conta).ok, false);
+  }
+  assert.equal(L.conferirLeituraComercial(`/orders/search?seller=824312524&limit=50`, CONTA).ok, false);
+  // identidade: token tem que ser da conta pedida
+  assert.equal(L.CAMINHO_IDENTIDADE, "/users/me");
+  assert.deepEqual(L.conferirIdentidadeConta({ ok: true, dados: { id: 824312524 } }, "824312524"), { ok: true, id: "824312524" });
+  const outra = L.conferirIdentidadeConta({ ok: true, dados: { id: 1729335019 } }, "2412238242");
+  assert.equal(outra.ok, false);
+  assert.match(outra.erro, /REVELAÇÃO pertence a outra conta/);
+  assert.match(L.conferirIdentidadeConta({ ok: false, erro: "invalid access token" }, "824312524").erro, /CIEBR.*invalid access token/);
+  assert.equal(L.conferirIdentidadeConta({ ok: true, dados: {} }, "824312524").ok, false);
+  assert.equal(L.conferirIdentidadeConta(null, "824312524").ok, false);
+  // a função confere a identidade ANTES das visitas e da leitura pedida
+  const fonte = fs.readFileSync(path.join(RAIZ, "supabase/functions/paizinho-leitura-ml/index.ts"), "utf8");
+  const pIdent = fonte.indexOf("conferirIdentidadeConta(await get(CAMINHO_IDENTIDADE), conta)");
+  assert.ok(pIdent > 0);
+  assert.ok(pIdent < fonte.indexOf('if (conf.tipo === "visitas")'));
+  assert.ok(pIdent < fonte.indexOf("return json(await get(caminho))"));
+  assert.ok(fonte.indexOf('.eq("usuario_id", usuarioId)') < pIdent, "conta conectada a ESTE usuário antes");
 });
 
 test("teste local: vendas e visitas pela função nova; sem ela publicada, o motivo aparece e não insiste", async () => {

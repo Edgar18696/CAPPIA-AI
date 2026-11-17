@@ -1,0 +1,436 @@
+// =============================================================
+// PAIIA — TESTES: finalização em DOIS cliques nas três contas (16/11/2026).
+// Caso de diagnóstico: SKU 8200263342 (último anúncio com problema; o produto
+// chegou a ser excluído do Bling para tentar refazer).
+// Tudo SIMULADO: Mercado Livre e Bling falsos. Nada é publicado nem gravado.
+//   node --test scripts/testes/finalizacaoDoisCliques.test.mjs
+// =============================================================
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { register } from "node:module";
+
+register("./simulacao/ganchoSupabaseFalso.mjs", import.meta.url);
+const { reconhecerSKU, contasParaConsultar } = await import("../../src/services/reconhecimentoSKU.js");
+const Q = await import("../../src/services/produtoExistenteSKU.js");
+const F = await import("../../src/services/finalizacaoPublicacao.js");
+const { SITUACAO_CONTA, montarPlanoContas } = await import("../../src/services/contasPublicacaoML.js");
+const { executarPiloto } = await import("../../src/services/pilotoPublicacao.js");
+const ler = (p) => fs.readFileSync(new URL(`../../${p}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+
+const SKU = "8200263342";
+const LOJA = "1729335019";
+const CIEBR = "824312524";
+const REV = "2412238242";
+const FICHA = "ficha-8200263342";
+const E = F.ESTADO_FINAL;
+
+// ---- Mercado Livre simulado (somente leitura) ----
+function mlFalso({ itens = [], falhar = [] } = {}) {
+  const chamadas = [];
+  const consultarML = async (conta, caminho) => {
+    chamadas.push({ conta: String(conta), caminho });
+    if (falhar.includes(String(conta))) return { ok: false, erro: "ML fora do ar (simulado)" };
+    const daConta = itens.filter((i) => String(i.seller_id) === String(conta));
+    const skusDe = (i) => [i.seller_custom_field, ...(i.attributes || []).filter((a) => a.id === "SELLER_SKU").map((a) => a.value_name), ...(i.variations || []).flatMap((v) => (v.attributes || []).filter((a) => a.id === "SELLER_SKU").map((a) => a.value_name))].filter(Boolean);
+    const s = caminho.match(/\/items\/search\?seller_sku=([^&]+)/);
+    if (s) return { ok: true, dados: { results: daConta.filter((i) => skusDe(i).includes(decodeURIComponent(s[1]))).map((i) => i.id) } };
+    const q = caminho.match(/\/items\/search\?q=([^&]+)/);
+    if (q) return { ok: true, dados: { results: daConta.filter((i) => i.title.includes(decodeURIComponent(q[1]))).map((i) => i.id), paging: { total: 0 } } };
+    const it = caminho.match(/^\/items\/(MLB\d+)$/);
+    if (it) { const x = itens.find((i) => i.id === it[1]); return x ? { ok: true, dados: x } : { ok: false, status: 404, erro: "not_found" }; }
+    return { ok: false, erro: `rota não simulada ${caminho}` };
+  };
+  return { consultarML, chamadas };
+}
+const item = (id, conta, extra = {}) => ({ id, seller_id: Number(conta), status: "active", title: "Peça teste", attributes: [], ...extra });
+
+// ---- Bling simulado ----
+const BLING = {
+  excluido: async () => ({ ok: true, encontrado: false }),
+  existe: async () => ({ ok: true, encontrado: true, produto: { id: "16000000777", codigo: SKU, nome: "Peça" } }),
+  ambiguo: async () => ({ ok: true, ambiguo: true, candidatos: [{ id: "1", codigo: SKU }, { id: "2", codigo: `${SKU} ` }] }),
+  fora: async () => ({ ok: false, erro: "Bling 503 (simulado)" }),
+};
+
+const fichaAtual = (extra = {}) => ({ id: FICHA, codigo: SKU, titulo: "Peça", status_fluxo: "conferencia_aprovada", conta_destino_ml_user_id: "", updated_at: "2026-11-16T10:00:00Z", publicacao: null, ...extra });
+const liberada = (conta) => ({ conta, situacao: SITUACAO_CONTA.LIBERADA, impedimentos: [], itens: [{ item: "Duplicidade", nivel: "ok", texto: "ok" }] });
+const todasLiberadas = () => [LOJA, CIEBR, REV].map(liberada);
+
+async function finalizar({ itens = [], falhar = [], bling = BLING.excluido, fichas = [fichaAtual()], ficha = { id: FICHA }, verificacoes = todasLiberadas(), fotos = 4, registros = [] } = {}) {
+  const ml = mlFalso({ itens, falhar });
+  const contas = contasParaConsultar([{ ml_user_id: LOJA }, { ml_user_id: CIEBR }, { ml_user_id: REV }]);
+  const rec = await reconhecerSKU({ codigo: SKU, contas, lerBling: bling, lerBase: async () => ({ ok: true, anuncios: fichas }), consultarML: ml.consultarML, lerRegistro: async () => ({ ok: true, registros }) });
+  rec.identidades = await Q.identidadesDasFichas({ codigo: SKU, fichas, reconhecimento: rec, consultarML: ml.consultarML });
+  const quadro = Q.quadroProdutoExistente({ fichas, reconhecimento: rec });
+  const res = F.situacaoFinalDasContas({ ficha, quadro, verificacoes, fotos });
+  return { res, ml, linha: (c) => res.linhas.find((l) => l.conta === c) };
+}
+
+test("ordem e nomes: LOJA ONLINE, CIEBR, REVELAÇÃO; rótulos PUBLICADO / JÁ EXISTENTE / PENDENTE", async () => {
+  const { res } = await finalizar();
+  assert.deepEqual(res.linhas.map((l) => l.nome), ["LOJA ONLINE", "CIEBR", "REVELAÇÃO"]);
+  assert.equal(F.ROTULO_FINAL[E.PUBLICADO], "PUBLICADO");
+  assert.equal(F.ROTULO_FINAL[E.JA_EXISTENTE], "JÁ EXISTENTE");
+  assert.equal(F.ROTULO_FINAL[E.PENDENTE], "PENDENTE");
+});
+
+test("8200263342 — produto EXCLUÍDO do Bling e nenhum anúncio: as 3 contas PENDENTES com o 2º clique; Bling cadastrado sem duplicar", async () => {
+  const { res, ml } = await finalizar();
+  for (const l of res.linhas) {
+    assert.equal(l.estado, E.PENDENTE, l.nome);
+    assert.equal(l.acao.tipo, "publicar");
+    assert.equal(l.acao.texto, `✅ Autorizar e Publicar na ${l.nome}`);
+  }
+  assert.equal(res.bling.cadastrar, true);
+  assert.match(res.bling.texto, /cadastro protegido: confere o SKU antes e nunca duplica/);
+  assert.ok(["1729335019", "824312524", "2412238242"].every((c) => ml.chamadas.some((x) => x.conta === c)), "as três contas lidas");
+  assert.ok(ml.chamadas.every((x) => x.caminho.startsWith("/users/") || x.caminho.startsWith("/items/")), "só leitura");
+});
+
+test("produto JÁ no Bling: reaproveitado (nada é cadastrado de novo)", async () => {
+  const { res } = await finalizar({ bling: BLING.existe });
+  assert.equal(res.bling.ok, true);
+  assert.equal(res.bling.cadastrar, undefined);
+  assert.match(res.bling.texto, /produto 16000000777 .* reaproveitado, nada é cadastrado de novo/);
+});
+
+test("anúncio já existe na LOJA ONLINE com o SKU só na VARIAÇÃO: JÁ EXISTENTE + MLB, sem botão; CIEBR/REVELAÇÃO pendentes", async () => {
+  const loja = item("MLB8000000001", LOJA, { variations: [{ id: 5, attributes: [{ id: "SELLER_SKU", value_name: SKU }] }] });
+  const { linha } = await finalizar({ itens: [loja] });
+  assert.equal(linha(LOJA).estado, E.JA_EXISTENTE);
+  assert.deepEqual(linha(LOJA).mlbs, ["MLB8000000001"]);
+  assert.equal(linha(LOJA).acao.tipo, "nenhuma", "nunca duplica na mesma conta");
+  assert.equal(linha(CIEBR).estado, E.PENDENTE);
+  assert.equal(linha(REV).estado, E.PENDENTE);
+});
+
+test("esta ficha JÁ publicou na CIEBR (MLB real): PUBLICADO, nada reenviado; LOJA aponta 'outra conta'", async () => {
+  const mlb = "MLB8000000002";
+  const fichas = [fichaAtual({ status_fluxo: "publicado", conta_destino_ml_user_id: CIEBR, publicacao: { ml_user_id: CIEBR, mlb_id: mlb } })];
+  const { linha } = await finalizar({ itens: [item(mlb, CIEBR, { seller_custom_field: SKU })], fichas, ficha: { id: FICHA, mlb, conta: CIEBR } });
+  assert.equal(linha(CIEBR).estado, E.PUBLICADO);
+  assert.deepEqual(linha(CIEBR).mlbs, [mlb]);
+  assert.equal(linha(CIEBR).acao.tipo, "nenhuma");
+  assert.equal(linha(LOJA).estado, E.IMPEDIDO);
+  assert.match(linha(LOJA).motivos[0], /use "Publicar em outra conta"/);
+});
+
+test("MLB de OUTRO SKU gravado na ficha (caso do parafuso): ficha não conta como publicada; conta bloqueada até corrigir", async () => {
+  const outro = "MLB8000000003";
+  const fichas = [fichaAtual({ status_fluxo: "publicado", conta_destino_ml_user_id: LOJA, publicacao: { ml_user_id: LOJA, mlb_id: outro } })];
+  const { linha } = await finalizar({ itens: [item(outro, LOJA, { seller_custom_field: "8200642489" })], fichas, ficha: { id: FICHA, mlb: outro, conta: LOJA } });
+  assert.equal(linha(LOJA).estado, E.IMPEDIDO);
+  assert.match(linha(LOJA).motivos[0], /é de outro produto\/conta no Mercado Livre: corrija pelo Diagnóstico/);
+  assert.deepEqual(linha(LOJA).mlbs, [], "o MLB de outro SKU nunca é mostrado como desta peça");
+});
+
+test("MLB de outro SKU numa ficha ANTIGA (não a aberta): ignorado com aviso; a conta segue pendente", async () => {
+  const outro = "MLB8000000004";
+  const fichas = [fichaAtual(), fichaAtual({ id: "ficha-antiga", status_fluxo: "publicado", conta_destino_ml_user_id: LOJA, publicacao: { ml_user_id: LOJA, mlb_id: outro } })];
+  const { linha } = await finalizar({ itens: [item(outro, LOJA, { seller_custom_field: "8200642489" })], fichas });
+  assert.equal(linha(LOJA).estado, E.PENDENTE);
+  assert.ok(linha(LOJA).avisos.some((a) => /MLB8000000004 não é desta peça e é ignorado/.test(a)));
+});
+
+test("envio anterior sem resposta na REVELAÇÃO: PENDENTE com 'Retomar com segurança' (nunca reenvia às cegas)", async () => {
+  const { linha } = await finalizar({ ficha: { id: FICHA, envio: { conta: REV, sku: SKU, iniciado_em: "2026-11-16T12:00:00Z" } } });
+  assert.equal(linha(REV).estado, E.PENDENTE);
+  assert.equal(linha(REV).acao.tipo, "retomar");
+  assert.match(linha(REV).acao.texto, /Retomar com segurança na REVELAÇÃO/);
+});
+
+test("ML fora do ar numa conta: só ela fica IMPEDIDA (motivo claro); as outras seguem", async () => {
+  const { linha } = await finalizar({ falhar: [REV] });
+  assert.equal(linha(REV).estado, E.IMPEDIDO);
+  assert.match(linha(REV).motivos.join(" "), /Mercado Livre não conferido nesta conta/);
+  assert.equal(linha(LOJA).estado, E.PENDENTE);
+});
+
+test("sem fotos / Bling ambíguo / Bling fora: IMPEDIDO nas três, com o motivo", async () => {
+  for (const [cfg, re] of [[{ fotos: 0 }, /a ficha não tem fotos/], [{ bling: BLING.ambiguo }, /mais de um produto com este SKU/], [{ bling: BLING.fora }, /Bling não conferido/]]) {
+    const { res } = await finalizar(cfg);
+    for (const l of res.linhas) {
+      assert.equal(l.estado, E.IMPEDIDO, `${l.nome} ${re}`);
+      assert.match(l.motivos.join(" "), re);
+      assert.equal(l.acao.tipo, "nenhuma");
+    }
+  }
+});
+
+test("exigência da conta não cumprida (frete/estoque): IMPEDIDO com o motivo da conta", async () => {
+  const verificacoes = [liberada(LOJA), { conta: CIEBR, situacao: SITUACAO_CONTA.IMPEDIDA, impedimentos: ["Frete: O Mercado Livre não cotou o frete nesta conta (sem resposta)."], itens: [] }, liberada(REV)];
+  const { linha } = await finalizar({ verificacoes });
+  assert.equal(linha(CIEBR).estado, E.IMPEDIDO);
+  assert.match(linha(CIEBR).motivos[0], /Frete: O Mercado Livre não cotou/);
+});
+
+test("anúncio parecido (mesmo código no título, SKU diferente): CONFERIR — o 2º clique já diz 'conferi'", async () => {
+  const parecido = item("MLB8000000005", CIEBR, { title: `Peça ${SKU} kit`, seller_custom_field: "OUTRO-1" });
+  const { linha } = await finalizar({ itens: [parecido] });
+  assert.equal(linha(CIEBR).estado, E.CONFERIR);
+  assert.equal(linha(CIEBR).acao.conferida, true);
+  assert.match(linha(CIEBR).acao.texto, /Autorizar e Publicar na CIEBR \(conferi: não é o mesmo anúncio\)/);
+});
+
+test("outra ficha do SKU em andamento na conta (caso da tela: e9171391 na LOJA): não impede; publica por esta ou abre a outra", async () => {
+  const fichas = [fichaAtual(), fichaAtual({ id: "e9171391-aaaa-4bbb-8ccc-000000000000", conta_destino_ml_user_id: LOJA })];
+  const { linha } = await finalizar({ fichas, bling: BLING.existe });
+  const l = linha(LOJA);
+  assert.equal(l.estado, E.CONFERIR);
+  assert.equal(l.acao.tipo, "publicar");
+  assert.equal(l.acao.outraFicha, "e9171391-aaaa-4bbb-8ccc-000000000000");
+  assert.equal(l.acao.conferida, false, "não é confirmação de duplicidade no ML");
+  assert.equal(l.acao.texto, "✅ Autorizar e Publicar na LOJA ONLINE · a ficha e9171391 continua salva, sem publicar");
+  assert.match(l.motivos[0], /Outra ficha deste SKU \(e9171391\) está em andamento nesta conta, ainda sem publicar/);
+  // Com o produto Bling antigo fora da busca (a tela do 8200263342): um único botão com as duas informações.
+  const r = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro: { linhas: [{ conta: LOJA, estado: Q.ESTADO_QUADRO.EM_ANDAMENTO, fichaAndamento: "e9171391-x", anuncios: [], outraPeca: [], possiveis: [], naoConfirmados: [], historico: [] }], bling: { estado: "nao_encontrado" } }, verificacoes: todasLiberadas(), fotos: 3, blingRegistrados: [{ produto_id: "16736249318" }], sku: SKU });
+  const lo = r.linhas.find((x) => x.conta === LOJA);
+  assert.equal(lo.estado, E.CONFERIR);
+  assert.deepEqual(lo.acao.descartarBling, ["16736249318"]);
+  assert.equal(lo.acao.texto, "✅ Conferi no Bling: o produto 16736249318 não existe — cadastrar de novo e publicar na LOJA ONLINE · a ficha e9171391 continua salva, sem publicar");
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes("data-paiia-abrir-outra-ficha={l.acao.outraFicha}") && a.includes("enderecoDaFicha(window.location.href, l.acao.outraFicha)"));
+});
+
+test("2º clique: plano com UMA conta (a escolhida); 'conferi' só quando a conta estava em CONFERIR", () => {
+  const verifConferir = { conta: CIEBR, nome: "CIEBR", situacao: SITUACAO_CONTA.CONFERIR, impedimentos: [], itens: [] };
+  const p1 = montarPlanoContas({ selecao: [CIEBR], resultados: [verifConferir], conferidas: { [CIEBR]: true } });
+  assert.deepEqual([p1.conta_desta_ficha, p1.fila], [CIEBR, []]);
+  const p2 = montarPlanoContas({ selecao: [CIEBR], resultados: [verifConferir], conferidas: {} });
+  assert.equal(p2.conta_desta_ficha, "", "sem o 2º clique 'conferi', nada é liberado");
+  const p3 = montarPlanoContas({ selecao: [REV], resultados: [liberada(REV)] });
+  assert.equal(p3.conta_desta_ficha, REV);
+});
+
+// ---- Piloto nas 3 contas ----
+function telaPiloto({ conta = CIEBR } = {}) {
+  const s = { leiturasVinculo: 0, cliques: [] };
+  const el = (attrs = {}) => ({ disabled: false, checked: false, attrs, hasAttribute: (a) => a in attrs, getAttribute: (a) => attrs[a] ?? null });
+  const p = {
+    mlbJaPublicado: async () => ({ mlb: "MLB8000000009" }),
+    achar: () => el(),
+    clicar: (e) => s.cliques.push(e),
+    texto: () => "",
+    esperar: (ms) => new Promise((ok) => setTimeout(ok, ms)),
+    progresso: () => {},
+    consultarItem: async () => ({ status: "active" }),
+    relerIntegracao: async () => { s.leiturasVinculo += 1; return "aguardando"; },
+    vinculoAplicavel: () => conta === LOJA,
+    publicado: async () => {},
+  };
+  return { p, s };
+}
+const L = { passo: 100, intervalo: 5, estavel: 3, ativo: 60, vinculo: 5000, intervaloML: 5 };
+
+test("piloto CIEBR/REVELAÇÃO: sem loja Bling ligada não espera vínculo; avisa onde fazer; nada reenviado", async () => {
+  for (const conta of [CIEBR, REV]) {
+    const { p, s } = telaPiloto({ conta });
+    const ini = Date.now();
+    const r = await executarPiloto(p, { limites: L });
+    assert.equal(r.ok, true);
+    assert.equal(r.vinculo, false);
+    assert.equal(s.leiturasVinculo, 0, "não lê o vínculo de uma loja que não existe");
+    assert.ok(Date.now() - ini < 2000, "não espera o tempo do vínculo");
+    assert.match(r.pendencia, /vínculo no Bling desta conta: faça na Gestão de Anúncios do Bling/);
+    assert.equal(s.cliques.length, 0, "ficha já publicada: nenhum toque em Publicar");
+  }
+});
+
+test("piloto LOJA ONLINE: continua conferindo o vínculo como antes", async () => {
+  const { p, s } = telaPiloto({ conta: LOJA });
+  await executarPiloto(p, { limites: { ...L, vinculo: 60 } });
+  assert.ok(s.leiturasVinculo >= 1);
+});
+
+// ---- Tela: exatamente dois toques ----
+test("tela: 1º escolher a conta (confere sozinho), 2º um único botão 'Autorizar e Publicar' só na conta escolhida", () => {
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes("ORDEM_CONTAS_QUADRO.map((conta) => {") && a.includes("onClick={() => conferir(conta)}"), "os 3 botões de conta; tocar confere");
+  assert.ok(a.includes("l.conta === escolhida && l.acao.tipo === \"publicar\"") && a.includes("onClick={() => confirmar(l)}"), "botão de autorização só na conta escolhida");
+  assert.ok(a.includes("|| linha.conta !== escolhida) return;"));
+  assert.ok(!a.includes('type="checkbox"'), "sem caixas de marcar nem 'autorizo' separado");
+  assert.ok(a.includes("onAutorizar?.(linha.conta, id, plano);") && !a.includes("CONTA_PUBLICACAO_AUTOMATICA"), "piloto para qualquer das 3 contas");
+  const pil = ler("src/components/PilotoAutomaticoPublicacao.jsx");
+  assert.ok(pil.includes("vinculoAplicavel: () => Boolean(lojaBlingDaConta(dadosRef.current.conta || conta))"));
+  const m = ler("src/components/MercadoLivreTeste.jsx");
+  assert.ok(m.includes("fotos={Array.isArray(anuncioConferido?.fotos) ? anuncioConferido.fotos.length : 0}"));
+});
+
+// =============================================================
+// (16/11) ERRO 1 — publicação sem a conta escolhida no painel
+// =============================================================
+const { autorizacaoTemContaEscolhida } = await import("../../src/services/contasPublicacaoML.js");
+
+test("ERRO 1: ?auto= só vale com a conta ESCOLHIDA no painel (plano confirmado); o resto mostra as 3 contas", () => {
+  assert.equal(autorizacaoTemContaEscolhida(null), false, "PAIIA Voz / conta ativa: sem plano → não publica");
+  assert.equal(autorizacaoTemContaEscolhida({ pendente: true, sugeridas: [LOJA] }), false, "ficha preparada para outra conta, ainda sem escolha");
+  assert.equal(autorizacaoTemContaEscolhida({ conta_desta_ficha: LOJA }), false, "sem a hora da confirmação");
+  assert.equal(autorizacaoTemContaEscolhida({ conta_desta_ficha: "123", confirmado_em: "2026-11-16T15:00:00Z" }), false, "conta fora das 3");
+  for (const c of [LOJA, CIEBR, REV]) assert.equal(autorizacaoTemContaEscolhida(montarPlanoContas({ selecao: [c], resultados: [liberada(c)] })), true, c);
+});
+
+test("ERRO 1 (tela): piloto e revisão só recebem o nº conferido; sem escolha, tira o ?auto= e avisa", () => {
+  const m = ler("src/components/MercadoLivreTeste.jsx");
+  assert.ok(m.includes("autoId={autoConferido}") && m.includes("autoPublicacao={autoConferido}") && m.includes("ativo={Boolean(autoConferido) || publicacaoManual}"));
+  assert.ok(!m.includes("autoId={autoPiloto}") && !m.includes("autoPublicacao={autoPiloto}"), "o nº cru da URL não chega ao piloto");
+  const ef = m.slice(m.indexOf("const [autoConferido, setAutoConferido]"), m.indexOf("}, [autoPiloto, anuncioIdPAIIA]);"));
+  assert.ok(ef.includes("autorizacaoTemContaEscolhida(r.anuncio?.dados_conferencia?.contas_publicacao)"));
+  assert.ok(ef.includes('u.searchParams.delete("auto")') && ef.includes("setSemEscolhaDeConta(true)"));
+  assert.ok(!/publicar|registrar|salvar|criar/i.test(ef.replace(/\/\/.*$/gm, "")), "a conferência do nº só lê");
+  assert.ok(m.includes("data-paiia-escolha-conta-obrigatoria"));
+});
+
+// =============================================================
+// (16/11) ERRO 2 — SKU fora da busca do Bling com produto registrado (caso 8200263342 / ID 16736249318)
+// =============================================================
+test("ERRO 2: SKU não achado e produto Bling 16736249318 registrado → explica; nada sozinho; o 2º clique registra a SUA conferência", async () => {
+  const { res } = await finalizar({ bling: BLING.excluido });
+  const r2 = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro: { linhas: [LOJA, CIEBR, REV].map((c) => ({ conta: c, estado: Q.ESTADO_QUADRO.DISPONIVEL, anuncios: [], outraPeca: [], possiveis: [], naoConfirmados: [], historico: [] })), bling: { estado: "nao_encontrado" } }, verificacoes: todasLiberadas(), fotos: 3, blingRegistrados: [{ produto_id: "16736249318" }], sku: SKU });
+  assert.equal(r2.bling.ok, false);
+  assert.deepEqual(r2.bling.foraDaBusca, ["16736249318"]);
+  assert.match(r2.bling.texto, /não é encontrado pela busca do Bling, mas o PAIIA tem o produto Bling 16736249318 registrado/);
+  assert.match(r2.bling.texto, /EXCLUÍDO \(lixeira\), INATIVO ou com o CÓDIGO ALTERADO/);
+  assert.match(r2.bling.texto, /O PAIIA não cria outro produto sozinho e não pede para excluir nada/);
+  for (const l of r2.linhas) {
+    assert.equal(l.estado, E.CONFERIR);
+    assert.deepEqual(l.acao.descartarBling, ["16736249318"]);
+    assert.equal(l.acao.texto, `✅ Conferi no Bling: o produto 16736249318 não existe — cadastrar de novo e publicar na ${l.nome}`);
+  }
+  assert.equal(res.bling.cadastrar, true, "sem produto registrado (nunca existiu): cadastro protegido continua");
+});
+
+test("ERRO 2: busca acha OUTRO ID que o registrado → reaproveita e avisa para conferir duplicidade no Bling", () => {
+  const b = F.situacaoBling({ estado: "encontrado", produto: { id: "16000000999", codigo: SKU } }, { registrados: [{ produto_id: "16736249318" }], sku: SKU });
+  assert.equal(b.ok, true);
+  assert.match(b.texto, /registrava o produto 16736249318; a busca pelo SKU acha o 16000000999/);
+});
+
+test("ERRO 2: o piloto continua parando em 'produto registrado' (não cria) — mesma regra da conferência", async () => {
+  const { decidirCriacaoBling } = await import("../../src/services/estoqueBlingPAIIA.js");
+  const d = decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: [{ produto_id: "16736249318", ficha: "f1" }] });
+  assert.equal(d.acao, "produto_registrado");
+  assert.match(d.motivo, /O PAIIA NÃO cria outro produto/);
+});
+
+test("teste controlado nas 3 contas: escolher cada conta leva ao botão SÓ daquela conta (nada publicado)", async () => {
+  const { res, ml } = await finalizar({ bling: BLING.existe });
+  for (const c of [LOJA, CIEBR, REV]) {
+    const l = res.linhas.find((x) => x.conta === c);
+    assert.equal(l.estado, E.PENDENTE);
+    assert.equal(l.acao.texto, `✅ Autorizar e Publicar na ${l.nome}`);
+  }
+  assert.ok(ml.chamadas.every((x) => !/publicar/.test(x.caminho)), "só leituras");
+});
+
+// =============================================================
+// (16/11) 8200263342 — produto 16736249318 não existe mais no Bling: UM cadastro, sem duplicar
+// =============================================================
+const { zerarBanco, banco } = await import("./simulacao/supabaseFalso.mjs");
+const S = await import("../../src/services/anuncioPublicacaoService.js");
+const EB = await import("../../src/services/estoqueBlingPAIIA.js");
+const { checarAntesDePublicar } = await import("../../src/services/publicacaoVerificada.js");
+const ANTIGO = "16736249318";
+const NOVO = "16900000001";
+
+async function fichaComIdAntigo() {
+  zerarBanco();
+  const ap = await S.salvarFichaAprovada({ anuncioId: "", codigo: SKU, titulo: "Peça", dadosConferencia: { versao: 2, anuncio: { codigo: SKU, sku: SKU } } });
+  await S.salvarContaDestino({ anuncioId: ap.anuncioId, codigo: SKU, titulo: "Peça", contaId: CIEBR, contaNome: "CIEBR" });
+  await S.registrarProdutoBlingCriado({ anuncioId: ap.anuncioId, blingProdutoId: ANTIGO });
+  return ap.anuncioId;
+}
+
+test("registrar a conferência: acrescenta o ID descartado (sem apagar o vínculo antigo; sem repetir)", async () => {
+  const id = await fichaComIdAntigo();
+  const r1 = await S.registrarBlingDescartado({ anuncioId: id, produtoIds: [ANTIGO] });
+  const r2 = await S.registrarBlingDescartado({ anuncioId: id, produtoIds: [ANTIGO] });
+  assert.equal(r1.ok && r2.ok, true);
+  const f = (await S.obterAnuncio(id)).anuncio;
+  assert.deepEqual(EB.idsBlingDescartados(f.dados_conferencia), [ANTIGO]);
+  assert.equal(f.dados_conferencia.bling_descartados.length, 1);
+  assert.equal(f.publicacao.bling_produto_id, ANTIGO, "o registro antigo continua (histórico); nada apagado");
+  assert.equal(banco.funcoes.length, 0, "nada no Bling");
+  assert.ok(S.CHAVES_PRESERVADAS_FICHA.includes("bling_descartados"));
+});
+
+test("depois da conferência: o cadastro é liberado UMA vez; criado o produto novo, nunca cria de novo", () => {
+  const registrados = [{ produto_id: ANTIGO, ficha: "outra" }];
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados }).acao, "produto_registrado", "sem a conferência: trava");
+  const filtrados = EB.semBlingDescartados(registrados, [ANTIGO]);
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: filtrados }).acao, "criar", "com a conferência: cadastro protegido");
+  // Depois de criado, o Bling acha o SKU: nunca cria outro.
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: true, produto: { id: NOVO, codigo: SKU } }, { registrados: filtrados }).acao, "ja_existe");
+  // Outro produto registrado (não conferido por você) continua travando.
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: EB.semBlingDescartados([{ produto_id: "999" }], [ANTIGO]) }).acao, "produto_registrado");
+});
+
+test("checagem antes do envio: ID antigo descartado não acusa 'outro produto' quando o Bling acha o NOVO", async () => {
+  const id = await fichaComIdAntigo();
+  const deps = (bling) => ({
+    obterFicha: (x) => S.obterAnuncio(x),
+    contaConectada: () => true,
+    duplicidadeBase: async () => ({ ok: true, registros: [] }),
+    duplicidadeML: async () => ({ verificado: true, duplicados: [], possiveis: [] }),
+    lerBling: async () => bling,
+    anunciosBling: async () => ({ ok: true, anuncios: [] }),
+  });
+  const novo = { ok: true, encontrado: true, produto: { id: NOVO, codigo: SKU } };
+  const antes = await checarAntesDePublicar({ anuncioId: id, contaId: CIEBR, sku: SKU, deps: deps(novo) });
+  assert.match(antes.bloqueios.join(" "), /registra o produto Bling 16736249318, mas o SKU aponta o produto 16900000001/);
+  await S.registrarBlingDescartado({ anuncioId: id, produtoIds: [ANTIGO] });
+  const depois = await checarAntesDePublicar({ anuncioId: id, contaId: CIEBR, sku: SKU, deps: deps(novo) });
+  assert.equal(depois.ok, true, depois.bloqueios.join(" | "));
+  assert.equal(depois.blingProdutoId, NOVO);
+});
+
+test("tela: o 2º clique grava a conferência ANTES de autorizar; a revisão ignora só os IDs descartados", () => {
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  const i = a.indexOf("registrarBlingDescartado({ anuncioId, produtoIds: linha.acao.descartarBling");
+  assert.ok(i > 0 && i < a.indexOf("onAutorizar?.(linha.conta, id, plano);"));
+  assert.ok(a.includes("Nada foi publicado."));
+  const r = ler("src/components/RevisaoPublicacaoML.jsx");
+  assert.ok(r.includes("semBlingDescartados(produtosBlingRegistradosDoSku(ficha.outros"));
+  assert.ok(r.includes("idRegistradoValido(blingIdDaPublicacao(ficha.publicacao))"));
+});
+
+test("painel 8200263342 nas 3 contas com o ID antigo: cada conta escolhida tem o botão da conferência; conta com outro impedimento segue impedida", () => {
+  const verificacoes = [liberada(LOJA), liberada(CIEBR), { conta: REV, situacao: SITUACAO_CONTA.IMPEDIDA, impedimentos: ["Conexão: REVELAÇÃO não está conectada ao PAIIA."], itens: [] }];
+  const quadro = { linhas: [LOJA, CIEBR, REV].map((c) => ({ conta: c, estado: Q.ESTADO_QUADRO.DISPONIVEL, anuncios: [], outraPeca: [], possiveis: [], naoConfirmados: [], historico: [] })), bling: { estado: "nao_encontrado" } };
+  const r = F.situacaoFinalDasContas({ ficha: { id: FICHA }, quadro, verificacoes, fotos: 3, blingRegistrados: [{ produto_id: ANTIGO }], sku: SKU });
+  const l = (c) => r.linhas.find((x) => x.conta === c);
+  assert.equal(l(LOJA).acao.descartarBling[0], ANTIGO);
+  assert.equal(l(CIEBR).acao.descartarBling[0], ANTIGO);
+  assert.equal(l(REV).estado, E.IMPEDIDO);
+  assert.equal(l(REV).acao.tipo, "nenhuma");
+});
+
+// =============================================================
+// (16/11) Fichas refeitas que NUNCA publicaram não travam o Bling (8200263342 / 16736249318)
+// =============================================================
+test("vínculo de ficha que nunca publicou (sem MLB) vira histórico; com MLB ativo continua travando", async () => {
+  const chamadas = [];
+  const consultarML = async (conta, caminho) => { chamadas.push(caminho); return { ok: true, dados: { id: "MLB8100000001", seller_id: Number(conta), status: "active" } }; };
+  const r = await EB.classificarVinculosBling({ registrados: [{ produto_id: "16736249318", ficha: "e9171391", mlb: "", conta: LOJA }, { produto_id: "16000000555", ficha: "x", mlb: "MLB8100000001", conta: LOJA }], consultarML });
+  assert.deepEqual(r.antigos.map((x) => [x.produto_id, x.situacao]), [["16736249318", "sem_mlb"]]);
+  assert.deepEqual(r.atuais.map((x) => x.produto_id), ["16000000555"]);
+  assert.deepEqual(chamadas, ["/items/MLB8100000001"], "o registro sem MLB nem consulta o ML");
+  // Só fichas que nunca publicaram: o cadastro protegido é liberado (uma vez).
+  const so = await EB.classificarVinculosBling({ registrados: [{ produto_id: "16736249318", mlb: "" }], consultarML });
+  assert.equal(EB.decidirCriacaoBling({ ok: true, encontrado: false }, { registrados: so.atuais }).acao, "criar");
+});
+
+test("PAIIA Voz: com só fichas que nunca publicaram, o cadastro no Bling segue UMA vez (não para em 'produto registrado')", async () => {
+  const { cadastrarNoBlingVoz } = await import("../../src/modules/paiiaVoz/servicos/blingCadastroVoz.js");
+  const src = ler("src/modules/paiiaVoz/servicos/finalizarDepsReais.js");
+  assert.ok(src.includes("const { atuais } = await classificarVinculosBling("), "o Voz usa só os vínculos ATUAIS");
+  const row = { id: "f", codigo: SKU, dados_conferencia: {} };
+  const r = await cadastrarNoBlingVoz(row, { chamarBling: async () => { throw new Error("não deve chegar aqui sem dados"); }, produtosRegistrados: async () => [] });
+  assert.notEqual(r.tipo, "produto_registrado");
+});
+
+test("painel: ID desta ficha passa pela sua conferência; fichas que nunca publicaram não contam", () => {
+  const a = ler("src/components/AutorizacaoUnicaPublicacao.jsx");
+  assert.ok(a.includes("produtosBlingRegistradosDoSku(fichas?.ok ? fichas.anuncios : [], { excetoFicha: anuncioId }).filter((r) => r.mlb)"));
+  assert.ok(a.includes("produtosBlingRegistradosDoSku([{ id: anuncioId, publicacao: f.publicacao"));
+});

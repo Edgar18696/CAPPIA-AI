@@ -34,7 +34,7 @@ export function ehLeituraComercial(caminho) {
 export function conferirLeituraComercial(caminho, conta) {
   const c = txt(caminho);
   const id = txt(conta).replace(/\D/g, "");
-  if (!CONTAS_AUDITORIA.some((x) => x.id === id)) return { ok: false, erro: "Conta não liberada para a leitura comercial (piloto: LOJA ONLINE)." };
+  if (!CONTAS_AUDITORIA.some((x) => x.id === id)) return { ok: false, erro: "Conta não liberada para a leitura comercial." };
   if (/[\s\\]|\.\.|\/\//.test(c)) return { ok: false, erro: "Endereço inválido." };
   const p = PADROES.find((x) => x.re.test(c));
   if (!p) return { ok: false, erro: "Leitura não permitida (só visitas, vendas e custo de envio)." };
@@ -44,6 +44,21 @@ export function conferirLeituraComercial(caminho, conta) {
     if (seller !== id || (c.match(/seller[=.]/g) || []).length !== 1) return { ok: false, erro: "Pedidos só da conta informada." };
   }
   return { ok: true, tipo: p.tipo };
+}
+
+/**
+ * (17/11) Identidade da conta ANTES de qualquer leitura: o token guardado para a conta
+ * tem que ser DELA (GET /users/me devolve o mesmo id). Token de outra conta, resposta
+ * estranha ou falha → nada é lido.
+ */
+export const CAMINHO_IDENTIDADE = "/users/me";
+export function conferirIdentidadeConta(resp, conta) {
+  const id = txt(conta).replace(/\D/g, "");
+  const nome = CONTAS_AUDITORIA.find((x) => x.id === id)?.nome || id;
+  if (!resp || resp.ok !== true) return { ok: false, erro: `Não foi possível confirmar a identidade da conta ${nome} no Mercado Livre (${txt(resp?.erro) || "sem resposta"}).` };
+  const doToken = txt(resp.dados?.id).replace(/\D/g, "");
+  if (!doToken || doToken !== id) return { ok: false, erro: `O token guardado para a conta ${nome} pertence a outra conta do Mercado Livre: leitura bloqueada (reconecte a conta em Contas Marketplace).` };
+  return { ok: true, id };
 }
 
 /** Anúncios citados numa leitura de visitas (para conferir o dono antes de ler). */

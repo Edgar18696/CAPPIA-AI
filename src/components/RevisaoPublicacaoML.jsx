@@ -27,6 +27,8 @@ import {
   registrarMLBsAnteriores,
   registrarCategoriasRejeitadas,
   fichaComMLB,
+  marcarEnvioPublicacao,
+  limparEnvioPublicacao,
 } from "../services/anuncioPublicacaoService";
 import { conferirMLBDevolvido } from "../services/mlbDevolvido";
 import { conferirCategoriaParaPublicar } from "../services/categoriaML";
@@ -34,7 +36,8 @@ import { lerDetalheCategoria, lerRejeicoesDoSKU } from "../services/categoriaMLB
 import { extrasDaDecisao } from "../services/atributosCategoriaML";
 import { blingIdDaPublicacao, lerAteEncontrar, leituraComCadastroRegistrado } from "../services/blingRegistrado";
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
-import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta } from "../services/vinculoBlingPublicacao";
+import { registroPublicado, conferirIntegracao, precisaConferir, skuOficialBling, registroDaFicha, ESTADO as ESTADO_BLING, lojaBlingDaConta, ACAO_LEITURA as ACAO_LEITURA_BLING } from "../services/vinculoBlingPublicacao";
+import { checarAntesDePublicar, publicarVerificado, retomarPublicacao } from "../services/publicacaoVerificada";
 import PainelIntegracaoBling from "./PainelIntegracaoBling";
 import { registrarPublicadoNoRegistro, confirmarSkuPublicado } from "../services/registroMLBService";
 import { situacaoFrete, conferirCotacao, cotarNoPreco, parametrosCotacao, ORIGEM_FRETE, reais as reaisFrete } from "../services/fretePrecificacao";
@@ -59,7 +62,7 @@ import {
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados, resumoCompatAprovadas } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
-import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
+import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, idsBlingDescartados, semBlingDescartados, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
 /*
@@ -361,7 +364,16 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // (14/11) Produtos Bling que OUTRAS fichas deste SKU já registraram (publicação/integração).
   // Vínculo ATUAL (MLB ainda existe ou não confirmado) + SKU fora da busca = NÃO oferece criar.
   // Vínculo ANTIGO (MLB excluído/encerrado no ML, lido agora) = histórico: o anúncio novo segue.
-  const produtosBlingRegistrados = useMemo(() => produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), [ficha.outros, ficha.anuncioId]);
+  // (16/11) Produtos que você conferiu que não existem mais no Bling (gravados nesta ficha): não travam o cadastro.
+  const [blingDescartados, setBlingDescartados] = useState([]);
+  useEffect(() => {
+    let vivo = true;
+    if (!ficha.anuncioId) return undefined;
+    obterAnuncio(ficha.anuncioId).then((r) => { if (vivo && r?.ok) setBlingDescartados(idsBlingDescartados(r.anuncio?.dados_conferencia)); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [ficha.anuncioId]);
+  const chaveDescartados = blingDescartados.join(",");
+  const produtosBlingRegistrados = useMemo(() => semBlingDescartados(produtosBlingRegistradosDoSku(ficha.outros, { excetoFicha: ficha.anuncioId }), blingDescartados), [ficha.outros, ficha.anuncioId, chaveDescartados]); // eslint-disable-line react-hooks/exhaustive-deps
   const chaveVinculos = produtosBlingRegistrados.map((r) => `${r.produto_id}:${r.mlb}:${r.conta}`).join("|");
   const [vinculosBling, setVinculosBling] = useState({ chave: "", carregando: false, atuais: [], antigos: [] });
   useEffect(() => {
@@ -864,7 +876,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   // (09/11) Produto que ESTA ficha já cadastrou/vinculou no Bling: se a busca pelo SKU ainda não o
   // devolve (cadastro recente), usa o registro da ficha e nunca oferece criar de novo.
   const blingRegistradoRef = useRef(null);
-  const comRegistroBling = (leitura) => leituraComCadastroRegistrado(leitura, { blingProdutoId: blingRegistradoRef.current || blingIdDaPublicacao(ficha.publicacao), sku: anuncio?.codigo || "" });
+  const idRegistradoValido = (id) => (id && !blingDescartados.includes(String(id)) ? id : "");
+  const comRegistroBling = (leitura) => leituraComCadastroRegistrado(leitura, { blingProdutoId: blingRegistradoRef.current || idRegistradoValido(blingIdDaPublicacao(ficha.publicacao)), sku: anuncio?.codigo || "" });
   async function lerBling(skuBling = "") {
     const sku = String(skuBling || anuncio?.codigo || "").trim();
     if (!sku) return { ok: false, encontrado: false };
@@ -1112,6 +1125,29 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
   }, [integracao?.anuncioId, integracao?.registro?.estado]);
 
   const autoPublicacao = autoPublicacaoProp || autoPublicacaoDaUrl();
+  // (16/11) Retomada de um envio sem resposta: confere no ML (somente leitura) se o anúncio foi
+  // criado; 1 achado = grava o MLB na ficha; nenhum = libera nova tentativa; nunca reenvia.
+  const [retomada, setRetomada] = useState(null);
+  async function retomarEnvio() {
+    if (!ficha.anuncioId || retomada?.ocupado) return;
+    setRetomada({ ocupado: true });
+    const rt = await retomarPublicacao({
+      anuncioId: ficha.anuncioId,
+      deps: {
+        obterFicha: (id) => obterAnuncio(id),
+        consultar: (conta) => (caminho) => chamar("ml_consulta", { metodo: "GET", caminho }, conta),
+        gravarMLB: ({ mlb, link }) => {
+          const reg = registroPublicado({ mlb, contaId: contaEscolhida, contaNome: contaInfo?.nickname || "", skuOficial: skuEnvio, codigoPesquisado, produtoBlingId: estoque?.encontrado && !estoque?.ambiguo ? estoque?.produto?.id : "", preco: campos.preco });
+          setIntegracao({ anuncioId: ficha.anuncioId, registro: reg });
+          return registrarMLBPublicado({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, mlb, link, sku: skuEnvio, blingProdutoId: reg.bling_produto_id, registro: reg });
+        },
+        limparEnvio: () => limparEnvioPublicacao({ anuncioId: ficha.anuncioId }),
+      },
+    }).catch((e) => ({ acao: "aguardar", texto: `Retomada interrompida (${e?.message || e}). Nada foi reenviado.` }));
+    setRetomada(rt);
+    if (rt.acao === "liberado") setResultado(null);
+    if (rt.acao === "adotado") onPublicado?.(ficha.anuncioId);
+  }
   async function publicar() {
     if (!autorizado || (!autoPublicacao && !validacao?.valido) || bloqueios.length > 0) return;
     if (!armado) {
@@ -1204,52 +1240,88 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
       setOcupado("");
       return;
     }
-    const r = await chamar("publicar", {
-      anuncio: dadosAnuncio,
-      confirmado: true,
-      confirmacao: "PUBLICAR",
-      // (PAIIA Voz, publicação automática) nº ÚNICO da autorização: o servidor recusa repetição.
-      ...(autoPublicacao ? { autorizacao_id: autoPublicacao } : {}),
-    }, contaEscolhida);
-    // (15/11) O MLB devolvido é MESMO deste anúncio? Relido no ML: SKU desta ficha e nenhuma outra ficha
-    // com ele. Caso real: o servidor devolveu o MLB de OUTRO produto e ele foi gravado nesta ficha.
-    if (r?.ok && r.publicado && r.item_id) {
-      const conf = await conferirMLBDevolvido({ mlb: r.item_id, sku: skuEnvio, anuncioId: ficha.anuncioId }, {
-        lerItem: async (m) => { const x = await chamar("ml_consulta", { metodo: "GET", caminho: `/items/${m}` }, contaEscolhida); return x?.ok && x.dados?.id ? x.dados : null; },
-        fichaComMLB: (m, atual) => fichaComMLB(m, atual),
-      });
-      if (!conf.ok) {
-        const falhou = { ok: false, erro: `Publicação NÃO confirmada: ${conf.texto}`, mlb_devolvido: String(r.item_id), motivo_mlb: conf.motivo };
-        setResultado(falhou);
-        setArmado(false);
-        setOcupado("");
-        // Pendência visível na Central (status "erro" com o motivo); o MLB devolvido NÃO entra na ficha.
-        if (ficha.anuncioId) await registrarResultadoPublicacao({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, resultado: falhou, bling: estoque, sku: skuEnvio, verificacao: null }).catch(() => null);
-        return;
-      }
-    }
-    let verificacao = null;
+    // (16/11) Publicação VERIFICADA: SKU, conta, MLB e vínculo no Bling conferidos de novo AGORA;
+    // marca do envio na ficha ANTES de enviar; UM envio; o MLB é gravado (só a gravação é repetida).
+    // Resposta perdida = a marca fica e a retomada confere no ML (nunca reenvia às cegas).
     let registroBling = null;
+    const blingRegistradoFicha = blingRegistradoRef.current || idRegistradoValido(blingIdDaPublicacao(ficha.publicacao));
+    const pv = await publicarVerificado({
+      conta: contaEscolhida,
+      sku: skuEnvio,
+      autorizacaoId: autoPublicacao,
+      deps: {
+        checar: () => checarAntesDePublicar({
+          anuncioId: ficha.anuncioId, contaId: contaEscolhida, sku: skuEnvio, usoBling,
+          automatico: Boolean(autoPublicacao), conferirDuplicidade: !autoPublicacao,
+          deps: {
+            obterFicha: (id) => obterAnuncio(id),
+            contaConectada: (id) => contasConectadas.some((c) => String(c.ml_user_id) === String(id)),
+            // Mesmas leituras feitas logo acima (nada é consultado duas vezes).
+            duplicidadeBase: async () => (base.erro ? { ok: false, erro: base.erro } : { ok: true, registros: base.registros || [] }),
+            duplicidadeML: async () => noML || { erro: "não consultado" },
+            lerBling: async (s) => leituraComCadastroRegistrado(await lerBling(s), { blingProdutoId: blingRegistradoFicha, sku: s }),
+            anunciosBling: ({ id_loja, id_produto }) => chamarBling({ acao: ACAO_LEITURA_BLING, id_loja: String(id_loja), id_produto: String(id_produto) }),
+          },
+        }),
+        marcarEnvio: (marca) => marcarEnvioPublicacao({ anuncioId: ficha.anuncioId, marca }),
+        enviar: async () => {
+          const r = await chamar("publicar", {
+            anuncio: dadosAnuncio,
+            confirmado: true,
+            confirmacao: "PUBLICAR",
+            // (PAIIA Voz, publicação automática) nº ÚNICO da autorização: o servidor recusa repetição.
+            ...(autoPublicacao ? { autorizacao_id: autoPublicacao } : {}),
+          }, contaEscolhida);
+          // (15/11) O MLB devolvido é MESMO deste anúncio? Relido no ML: SKU desta ficha e nenhuma outra ficha
+          // com ele. Caso real: o servidor devolveu o MLB de OUTRO produto e ele foi gravado nesta ficha.
+          if (r?.ok && r.publicado && r.item_id) {
+            const conf = await conferirMLBDevolvido({ mlb: r.item_id, sku: skuEnvio, anuncioId: ficha.anuncioId }, {
+              lerItem: async (m) => { const x = await chamar("ml_consulta", { metodo: "GET", caminho: `/items/${m}` }, contaEscolhida); return x?.ok && x.dados?.id ? x.dados : null; },
+              fichaComMLB: (m, atual) => fichaComMLB(m, atual),
+            });
+            if (!conf.ok) {
+              // (16/11) Recusado = envio INCERTO: o MLB devolvido NÃO entra na ficha, a marca do envio fica e a
+              // retomada procura no ML o anúncio DESTE SKU (nunca reenvia; nunca usa o MLB de outra peça).
+              const falhou = { ok: false, incerto: true, erro: `Publicação NÃO confirmada: ${conf.texto}`, mlb_devolvido: String(r.item_id), motivo_mlb: conf.motivo };
+              // Pendência visível na Central (status "erro" com o motivo).
+              if (ficha.anuncioId) await registrarResultadoPublicacao({ anuncioId: ficha.anuncioId, contaId: contaEscolhida, resultado: falhou, bling: estoque, sku: skuEnvio, verificacao: null }).catch(() => null);
+              return falhou;
+            }
+          }
+          return r;
+        },
+        // 1º: salva NA HORA (antes de qualquer outra etapa; resiste a F5/erro):
+        // MLB, SKU oficial, código pesquisado, produto Bling, conta, loja Bling,
+        // preço e data/hora. Estado: aguardando_importacao.
+        gravarMLB: async ({ mlb, link }) => {
+          registroBling = registroPublicado({
+            mlb,
+            contaId: contaEscolhida,
+            contaNome: contaInfo?.nickname || "",
+            skuOficial: skuEnvio,
+            codigoPesquisado,
+            produtoBlingId: estoque?.encontrado && !estoque?.ambiguo ? estoque?.produto?.id : "",
+            preco: campos.preco,
+          });
+          setIntegracao({ anuncioId: ficha.anuncioId, registro: registroBling });
+          return await registrarMLBPublicado({
+            anuncioId: ficha.anuncioId, contaId: contaEscolhida, mlb, link, sku: skuEnvio,
+            blingProdutoId: registroBling.bling_produto_id, registro: registroBling,
+          });
+        },
+        limparEnvio: () => limparEnvioPublicacao({ anuncioId: ficha.anuncioId }),
+      },
+    });
+    if (pv.fase === "checagem" || pv.fase === "marca") {
+      setResultado({ ok: false, erro: `Publicação BLOQUEADA: ${pv.fase === "checagem" ? pv.bloqueios.join(" · ") : pv.erro}`, checagemPublicacao: pv.checagem || null });
+      setArmado(false);
+      setOcupado("");
+      return;
+    }
+    // Envio sem resposta clara: nada é reenviado; a tela oferece a retomada.
+    const r = pv.fase === "envio" ? { ...(pv.resposta || {}), ok: false, publicado: false, erro: pv.resposta?.mlb_devolvido ? `${pv.resposta.erro} Nada foi reenviado: confira o envio anterior.` : pv.erro, envioIncerto: true } : pv.resposta;
+    let verificacao = null;
     if (r?.ok && r.publicado && r.item_id) {
-      // 1º: salva NA HORA (antes de qualquer outra etapa; resiste a F5/erro):
-      // MLB, SKU oficial, código pesquisado, produto Bling, conta, loja Bling,
-      // preço e data/hora. Estado: aguardando_importacao.
-      registroBling = registroPublicado({
-        mlb: r.item_id,
-        contaId: contaEscolhida,
-        contaNome: contaInfo?.nickname || "",
-        skuOficial: skuEnvio,
-        codigoPesquisado,
-        produtoBlingId: estoque?.encontrado && !estoque?.ambiguo ? estoque?.produto?.id : "",
-        preco: campos.preco,
-      });
-      if (ficha.anuncioId) {
-        setIntegracao({ anuncioId: ficha.anuncioId, registro: registroBling });
-        await registrarMLBPublicado({
-          anuncioId: ficha.anuncioId, contaId: contaEscolhida, mlb: r.item_id, link: r.link, sku: skuEnvio,
-          blingProdutoId: registroBling.bling_produto_id, registro: registroBling,
-        });
-      }
       // Registro interno permanente (SKU + conta + MLB). Falhar aqui NÃO
       // desfaz nada: o MLB já está na ficha/publicação, que bloqueiam nova
       // publicação deste SKU nesta conta; a próxima consulta do SKU registra.
@@ -1301,6 +1373,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
         item,
         compat,
       });
+      // MLB criado, mas a ficha não o gravou: pendência visível (a retomada grava sem publicar de novo).
+      if (pv.gravado === false && pv.pendencia) verificacao.pendencias.push(pv.pendencia);
       const presentes = idsCompatibilidadesLidas(compat);
       const resultadoCompat = resultadoCompatibilidades({ enviados: idsCompat, lidos: compat ? presentes : null, aplicacoesInformadas: aplicacoes.length + modelosSemDetalhes.length });
       const motivoEnvio = envioCompat && !envioCompat.ok
@@ -2253,6 +2327,12 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               );
             })()}
             {resultado && !resultado.ok && <p style={erro} data-paiia-resultado-publicacao="erro">❌ {resultado.erro}{autoPublicacao && (resultado.causas || []).length ? ` Motivo do Mercado Livre: ${resultado.causas.map((c) => c.mensagem || c.message || c.codigo || c.code).filter(Boolean).join("; ")}.` : ""}</p>}
+            {resultado && !resultado.ok && (resultado.envioIncerto || resultado.checagemPublicacao?.envioPendente) && (
+              <button type="button" data-paiia-retomar-envio onClick={retomarEnvio} disabled={retomada?.ocupado} style={{ ...botaoAzul, marginTop: 8 }}>
+                {retomada?.ocupado ? "⏳ Conferindo no Mercado Livre (somente leitura)…" : "🔎 Conferir o envio anterior no Mercado Livre (nada é reenviado)"}
+              </button>
+            )}
+            {retomada?.texto && <p data-paiia-retomada={retomada.acao} style={{ ...info, color: retomada.acao === "adotado" || retomada.acao === "liberado" || retomada.acao === "concluir" ? "#86efac" : "#fde68a" }}>{retomada.texto}</p>}
             {resultado && ficha.resultadoGravado && <p style={{ ...info, color: "#86efac" }}>💾 Resultado salvo na ficha do anúncio (MLB, data/hora, Bling e estoque).</p>}
             {resultado?.ok && resultado.publicado && ficha.anuncioId && (
               <button type="button" data-paiia-navegacao data-paiia-abrir-tela-final onClick={() => onAbrirTelaFinal?.(ficha.anuncioId)} style={{ ...botaoVerde, marginTop: 8 }}>

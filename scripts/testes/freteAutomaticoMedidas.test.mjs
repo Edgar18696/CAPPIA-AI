@@ -30,7 +30,9 @@ test("2) só no modo automático e só com cotação oficial (estimar:false); a 
 
 test("3) caminho único: fluxo antigo montado mas OCULTO com a autorização única; manual só se pedido", () => {
   const m = fs.readFileSync(new URL("../../src/components/MercadoLivreTeste.jsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  assert.ok(m.includes('const modoAutorizacaoUnica = (Boolean(autoPiloto) || lojaOnlineConectada) && !publicacaoManual;'));
+  // (16/11) Caminho único com qualquer uma das 3 contas conectada (antes só LOJA ONLINE).
+  assert.ok(m.includes('const modoAutorizacaoUnica = (Boolean(autoPiloto) || contaPublicacaoConectada) && !publicacaoManual;'));
+  assert.ok(m.includes("CONTAS_PUBLICACAO_ML.some((x) => x.id === String(c.ml_user_id || \"\"))"));
   assert.ok(m.includes('data-paiia-fluxo-antigo={modoAutorizacaoUnica ? "oculto" : "visivel"}') && m.includes("data-paiia-fluxo-antigo-base"));
   assert.ok(fs.readFileSync(new URL("../../src/components/AutorizacaoUnicaPublicacao.jsx", import.meta.url), "utf8").includes("data-paiia-publicacao-manual"));
 });

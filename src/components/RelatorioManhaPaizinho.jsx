@@ -6,7 +6,8 @@
 // resultado só nele. Antes existia apenas no ambiente local (npm run dev).
 // =============================================================
 import { useEffect, useState } from "react";
-import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTA_PILOTO } from "../services/paizinhoAuditoria/relatorioService";
+import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO } from "../services/paizinhoAuditoria/relatorioService";
+import PrioridadesPaizinho from "./PrioridadesPaizinho";
 
 const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
@@ -17,27 +18,44 @@ const hora = (iso) => { try { return new Date(iso).toLocaleString("pt-BR", { dat
 const COR = { alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
 const ROTULO = { alta: "Urgente", media: "Importante", baixa: "Acompanhar" };
 
+// (17/11) Seletor das 3 contas (LOJA ONLINE é a padrão). Cada conta tem o seu relatório,
+// o seu histórico e os seus caches: ao trocar, nada da conta anterior continua na tela.
+const idDe = (c) => String(c?.id ?? c ?? "").replace(/\D/g, "");
+const daConta = (rel, conta) => (rel && idDe(rel.conta) === conta ? rel : null);
+
 export default function RelatorioManhaPaizinho() {
+  const [conta, setConta] = useState(CONTA_PADRAO.id);
   const [servidor, setServidor] = useState({ estado: "carregando" });
-  const [teste, setTeste] = useState(() => (LOCAL ? lerRelatorioTesteLocal() : null));
+  const [teste, setTeste] = useState(() => (LOCAL ? lerRelatorioTesteLocal(CONTA_PADRAO.id) : null));
   const [rodando, setRodando] = useState("");
   const [erroTeste, setErroTeste] = useState("");
   const [limite, setLimite] = useState(100);
   const [concorrencia, setConcorrencia] = useState(0);
   const [verTeste, setVerTeste] = useState(LOCAL);
+  const contaAtual = CONTAS_AUDITORIA.find((c) => c.id === conta) || CONTA_PADRAO;
 
   useEffect(() => {
     let vivo = true;
-    lerUltimoRelatorio().then((r) => { if (vivo) setServidor(r); });
+    lerUltimoRelatorio(conta).then((r) => { if (vivo) setServidor({ ...r, conta }); });
     return () => { vivo = false; };
-  }, []);
+  }, [conta]);
+
+  function escolherConta(id) {
+    if (rodando || id === conta) return;
+    setConta(id);
+    setServidor({ estado: "carregando" });
+    setTeste(LOCAL ? lerRelatorioTesteLocal(id) : null);
+    setErroTeste("");
+    setVerTeste(LOCAL);
+  }
 
   async function rodar() {
     setErroTeste("");
     setRodando("Começando…");
+    const alvo = conta;
     try {
-      const rel = await rodarTesteLocal({ limiteItens: limite, concorrencia, aoProgredir: setRodando });
-      setTeste(rel);
+      const rel = await rodarTesteLocal({ conta: alvo, limiteItens: limite, concorrencia, aoProgredir: setRodando });
+      setTeste(daConta(rel, alvo));
       setVerTeste(true);
     } catch (e) {
       setErroTeste(String(e?.message || e));
@@ -45,17 +63,18 @@ export default function RelatorioManhaPaizinho() {
     setRodando("");
   }
 
-  const doServidor = servidor.estado === "ok" && servidor.registro?.status === "concluido" ? servidor.registro.relatorio : null;
-  const rel = verTeste && teste ? teste : doServidor || (LOCAL ? teste : null);
+  const doServidor = servidor.conta === conta && servidor.estado === "ok" && servidor.registro?.status === "concluido" ? daConta(servidor.registro.relatorio, conta) : null;
+  const testeDaConta = daConta(teste, conta);
+  const rel = verTeste && testeDaConta ? testeDaConta : doServidor || (LOCAL ? testeDaConta : null);
 
   return (
-    <section style={S.caixa} data-paizinho-relatorio-manha>
+    <section style={S.caixa} data-paizinho-relatorio-manha data-paizinho-conta={conta}>
       <div style={S.topo}>
         <div>
-          <h2 style={S.titulo}>☀️ Relatório da manhã — {CONTA_PILOTO.nome}</h2>
-          <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR (fica só nele)" : "rotina automática das 03h"}` : textoEstado(servidor)}</p>
+          <h2 style={S.titulo}>☀️ Relatório da manhã — {contaAtual.nome}</h2>
+          <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR (fica só nele)" : "rotina automática das 03h"}` : `${textoEstado(servidor)}${LOCAL ? ` Nenhuma análise da ${contaAtual.nome} feita neste navegador ainda.` : ""}`}</p>
         </div>
-        {LOCAL && doServidor && teste && (
+        {LOCAL && doServidor && testeDaConta && (
           <div style={S.linha}>
             <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Neste navegador</button>
             <button type="button" style={!verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(false)}>Servidor 03h</button>
@@ -66,7 +85,22 @@ export default function RelatorioManhaPaizinho() {
       {LOCAL && (
         <div style={S.teste} data-paizinho-teste-local>
           <strong>🔍 Análise com dados reais (somente leitura)</strong>
-          <span style={S.ajuda}>Lê a conta {CONTA_PILOTO.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. A conta inteira leva cerca de 1 hora; mantenha esta página aberta e não use "Sair" durante a leitura. O resultado fica guardado só neste navegador.</span>
+          <span style={S.ajuda}>Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. A conta inteira leva cerca de 1 hora; mantenha esta página aberta e não use "Sair" durante a leitura. O resultado fica guardado só neste navegador.</span>
+          <div style={S.linha} role="group" aria-label="Conta do Mercado Livre" data-paizinho-seletor-conta>
+            {CONTAS_AUDITORIA.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => escolherConta(c.id)}
+                disabled={Boolean(rodando) && c.id !== conta}
+                aria-pressed={c.id === conta}
+                style={c.id === conta ? S.chipAtivo : S.chip}
+                data-paizinho-conta-botao={c.nome}
+              >
+                {c.id === conta ? "● " : ""}{c.nome}
+              </button>
+            ))}
+          </div>
           <div style={S.linha}>
             <label style={S.rotulo}>Anúncios
               <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
@@ -87,7 +121,8 @@ export default function RelatorioManhaPaizinho() {
       )}
 
       {rel?.leitura_incompleta ? <AvisoLeituraIncompleta info={rel.leitura_incompleta} /> : null}
-      {rel ? <Relatorio rel={rel} /> : null}
+      {rel ? <AvisoLeiturasComerciais rel={rel} /> : null}
+      {rel ? <Relatorio key={`${conta}-${rel.gerado_em}`} rel={rel} /> : null}
     </section>
   );
 }
@@ -102,6 +137,19 @@ function AvisoLeituraIncompleta({ info }) {
       {recotacao ? <div>Frete recotado em {recotacao.feitas} de {recotacao.total} anúncios.</div> : null}
       {custo ? <div>Preço de custo lido em {custo.lidos} de {custo.total} SKUs.</div> : null}
       {sessao ? <div>A sessão do PAIIA expirou durante a leitura. Entre de novo e rode outra vez: o que já foi lido no Bling fica guardado neste computador por 24 h.</div> : null}
+    </div>
+  );
+}
+
+// (17/11) Visitas ou vendas não lidas nesta conta (ex.: leitura comercial ainda não liberada
+// para ela no servidor): o motivo aparece no topo, e nada de outra conta é usado no lugar.
+function AvisoLeiturasComerciais({ rel }) {
+  const linhas = (rel.limitacoes || []).filter((l) => /^(Visitas|Vendas) NÃO lidas/.test(l));
+  if (!linhas.length) return null;
+  return (
+    <div style={{ ...S.erro, marginTop: 12 }} role="alert" data-paizinho-leitura-comercial-ausente>
+      <strong>⚠️ {rel.conta?.nome || "Esta conta"}: leitura comercial incompleta.</strong>
+      {linhas.map((l) => <div key={l}>{l}</div>)}
     </div>
   );
 }
@@ -149,7 +197,8 @@ function Relatorio({ rel }) {
       </div>
 
       <h3 style={S.h3}>🎯 Prioridades de hoje</h3>
-      {rel.prioridades.length ? <ListaAchados lista={rel.prioridades} /> : <p style={S.ajuda}>Nenhum problema prioritário encontrado.</p>}
+      {/* (17/11) Conta ao lado do MLB, Central de Anúncios, Resolvido / Remover da lista (só a lista do PAIIA). */}
+      <PrioridadesPaizinho rel={rel} textoPotencial={textoPotencial} />
 
       {rel.oportunidades.length > 0 && <>
         <h3 style={S.h3}>💡 Oportunidades comerciais</h3>

@@ -55,7 +55,7 @@ export async function executarAuditoria({
   aoProgredir = () => {},
 }) {
   const liberada = contaLiberada(conta);
-  if (!liberada) throw new Error(`Conta ${txt(conta) || "(vazia)"} não liberada para a auditoria. Piloto: somente LOJA ONLINE.`);
+  if (!liberada) throw new Error(`Conta ${txt(conta) || "(vazia)"} não liberada para a auditoria (só LOJA ONLINE, CIEBR e REVELAÇÃO).`);
   const get = somenteLeitura(consultar);
   const dados = await coletarDadosConta({ conta: liberada.id, consultar: get, consultarBling, consultarCusto, buscarConcorrentes, agora, opcoes: opcoesColeta, aoProgredir });
 

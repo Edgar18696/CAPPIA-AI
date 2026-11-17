@@ -7,6 +7,7 @@ import { registrosQueBloqueiam } from "./registroMLB";
 import { TEXTO_FICHA_EXCLUIDA } from "./exclusaoFicha";
 import { dadosParaProximaConta, dadosParaRepublicacao, podeRetomarFicha, nomeContaPublicacao, situacaoFila, situacaoContasDoProduto, podePublicarEmOutraConta } from "./contasPublicacaoML.js";
 import { marcaDasFotos } from "./fotosDaFicha.js";
+import { mesclarBlingDescartados } from "./estoqueBlingPAIIA.js";
 
 /*
  * Ficha persistente do anúncio na base PAIIA (Supabase) — fonte de verdade
@@ -406,7 +407,7 @@ const STATUS_FICHA_FECHADA = ["publicando", "publicado", "publicado_com_pendenci
  * do Novo Anúncio, autorização "sem compatibilidade", compatibilidades
  * persistidas, registro do Bling (MLB) e versões substituídas (restauração).
  */
-export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao", "republicacao", "mlb_trocado"]);
+export const CHAVES_PRESERVADAS_FICHA = Object.freeze(["base_paiia", "novo_anuncio", "publicacao_sem_compatibilidade", "compatibilidades_ml", "integracao_bling", "versoes_substituidas", "mlbs_anteriores", "categorias_rejeitadas", "canais_publicacao", "correspondencias_modelo_ml", "correcoes_compatibilidade", "compat_veiculos_confirmados_ml", "contas_publicacao", "republicacao", "mlb_trocado", "envio_publicacao", "bling_descartados"]);
 export function preservarChavesDaFicha(antigos, novos) {
   const a = antigos && typeof antigos === "object" ? antigos : {};
   const n = novos && typeof novos === "object" ? novos : {};
@@ -1107,4 +1108,47 @@ export async function prepararFichaOutraConta({ anuncioId, conta }) {
     return error ? falha(error) : { ok: false, erro: "A ficha mudou ao mesmo tempo (conferência em segundo plano): nada foi preparado. Tente de novo em alguns segundos." };
   }
   return { ok: true, anuncioId: novoId, conta: id, nova: true };
+}
+
+// ---------------------------------------------------------------
+// (16/11/2026) MARCA DO ENVIO da publicação (dados_conferencia.envio_publicacao):
+// gravada ANTES do envio ao Mercado Livre e retirada quando o MLB fica
+// gravado ou o ML confirma que nada foi criado. Resposta perdida = a marca
+// fica e a retomada confere no ML (services/publicacaoVerificada.js).
+// Só a ficha do PAIIA: nada no Mercado Livre nem no Bling.
+// ---------------------------------------------------------------
+async function mesclarEnvioPublicacao(anuncioId, envio) {
+  if (!anuncioId) return { ok: false, erro: "Sem ficha." };
+  const { data, error: erroLer } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
+  if (erroLer) return falha(erroLer);
+  if (!data) return { ok: false, erro: "Ficha do anúncio não encontrada." };
+  const dados = { ...(data.dados_conferencia || {}) };
+  if (!envio && !dados.envio_publicacao) return { ok: true, gravado: false };
+  dados.envio_publicacao = envio || null;
+  const { error } = await supabase.from(T_ANUNCIOS).update({ dados_conferencia: dados, updated_at: new Date().toISOString() }).eq("id", anuncioId);
+  if (error) return falha(error);
+  return { ok: true, gravado: true };
+}
+/**
+ * (16/11) Registra na ficha que o produto Bling registrado (ex.: 16736249318) NÃO existe mais no Bling,
+ * conferido por você. Só acrescenta (nunca apaga o vínculo antigo). Libera UM cadastro protegido do SKU.
+ */
+export async function registrarBlingDescartado({ anuncioId, produtoIds = [], motivo = "" }) {
+  if (!anuncioId || !(produtoIds || []).length) return { ok: false, erro: "Sem ficha ou sem produto Bling." };
+  const { data, error: erroLer } = await supabase.from(T_ANUNCIOS).select("dados_conferencia").eq("id", anuncioId).maybeSingle();
+  if (erroLer) return falha(erroLer);
+  if (!data) return { ok: false, erro: "Ficha do anúncio não encontrada." };
+  const dados = { ...(data.dados_conferencia || {}) };
+  dados.bling_descartados = mesclarBlingDescartados(dados.bling_descartados, produtoIds, { motivo });
+  const { error } = await supabase.from(T_ANUNCIOS).update({ dados_conferencia: dados, updated_at: new Date().toISOString() }).eq("id", anuncioId);
+  if (error) return falha(error);
+  return { ok: true, descartados: dados.bling_descartados };
+}
+
+export async function marcarEnvioPublicacao({ anuncioId, marca }) {
+  if (!marca?.iniciado_em) return { ok: false, erro: "Marca de envio sem data." };
+  return mesclarEnvioPublicacao(anuncioId, marca);
+}
+export async function limparEnvioPublicacao({ anuncioId }) {
+  return mesclarEnvioPublicacao(anuncioId, null);
 }
