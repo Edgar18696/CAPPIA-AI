@@ -12,13 +12,13 @@ import { reconhecerSKU } from "./reconhecimentoSKU";
 import { lerRegistroDoSKU, aplicarGravacoesRegistro } from "./registroMLBService";
 import { identidadesDasFichas } from "./produtoExistenteSKU";
 
-async function lerBling(sku) {
+export async function lerBling(sku) {
   const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } });
   if (error) return { ok: false, erro: error.message || "falha ao falar com o Bling" };
   return data || { ok: false, erro: "resposta vazia do Bling" };
 }
 
-async function consultarML(conta, caminho) {
+export async function consultarML(conta, caminho) {
   const { data, error } = await supabase.functions.invoke("mercadolivre-publicacao", {
     body: { acao: "ml_consulta", conta_ml: String(conta), metodo: "GET", caminho },
   });
