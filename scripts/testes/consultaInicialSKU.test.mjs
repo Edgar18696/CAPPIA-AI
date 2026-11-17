@@ -325,3 +325,70 @@ test("22. cache: mesmo SKU não é consultado de novo; falha não fica guardada;
   await cache.obter("x", falha);
   assert.equal(f, 2, "resultado incompleto não é reaproveitado");
 });
+
+// ---------------- as 3 contas, cada uma separada ----------------
+const REV = "2412238242";
+const TRES = [{ id: LOJA, nome: "LOJA ONLINE" }, { id: CIEBR, nome: "CIEBR" }, { id: REV, nome: "REVELAÇÃO" }];
+
+test("23. 087100: anunciado na LOJA ONLINE (MLB e link); CIEBR e REVELAÇÃO livres, cada uma com o seu 'Criar em'", async () => {
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA] } });
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: TRES, blingConectado: false, consultarML: m.consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  const L = C.contasDoSKU(r);
+  assert.deepEqual(L.map((l) => [l.nome, l.estado]), [["LOJA ONLINE", "anunciada"], ["CIEBR", "livre"], ["REVELAÇÃO", "livre"]]);
+  assert.deepEqual(L[0].anuncios.map((a) => [a.mlb, a.link]), [["MLB9000000001", "https://produto.mercadolivre.com.br/MLB-9000000001"]]);
+  assert.equal(L[0].acao, null, "conta anunciada: nada de criar outro");
+  assert.deepEqual(L[1].acao, { tipo: "preparar", ficha: "f-pub", conta: CIEBR, rotulo: "Criar em CIEBR" });
+  assert.deepEqual(L[2].acao, { tipo: "preparar", ficha: "f-pub", conta: REV, rotulo: "Criar em REVELAÇÃO" });
+  // o MLB da LOJA nunca aparece nas outras contas
+  assert.equal(L[1].anuncios.length + L[2].anuncios.length, 0);
+  // cada conta lida na própria conta
+  for (const c of [LOJA, CIEBR, REV]) assert.ok(m.chamadas.some((x) => x.conta === c));
+});
+
+test("24. erro ou consulta incompleta numa conta → nunca 'livre' nem 'Criar em'", async () => {
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA] } });
+  const consultarML = (conta, caminho) => (conta === REV ? Promise.resolve({ ok: false, erro: "429" }) : m.consultarML(conta, caminho));
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: TRES, blingConectado: false, consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  const L = C.contasDoSKU(r);
+  assert.equal(L[2].estado, "nao_verificada");
+  assert.equal(L[2].acao, null);
+  assert.equal(L[1].estado, "livre", "CIEBR independe da falha da REVELAÇÃO");
+  // conta não conectada: não consultada e nunca livre
+  const r2 = await C.consultarSKURapido({ codigo: SKU, contas: TRES.slice(0, 2), blingConectado: false, consultarML: m.consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  const L2 = C.contasDoSKU(r2);
+  assert.equal(L2[2].estado, "nao_conectada");
+  assert.equal(L2[2].acao, null);
+  // fichas do PAIIA não lidas: não oferece criar (pode haver ficha da conta)
+  const r3 = await C.consultarSKURapido({ codigo: SKU, contas: TRES, blingConectado: false, consultarML: m.consultarML, lerFichas: async () => ({ ok: false, erro: "fora" }) });
+  assert.ok(C.contasDoSKU(r3).every((l) => !l.acao));
+});
+
+test("25. sem ficha publicada: conta livre usa a ficha preparada; conta com ficha em andamento → Continuar ficha", async () => {
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA] } });
+  const andamentoCiebr = { ...FICHA_RASCUNHO, id: "f-ciebr", conta_destino_ml_user_id: CIEBR, updated_at: "2026-11-15T00:00:00Z" };
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: TRES, blingConectado: false, consultarML: m.consultarML, lerFichas: fichasSimuladas([FICHA_RASCUNHO, andamentoCiebr]) });
+  const L = C.contasDoSKU(r);
+  assert.equal(L[0].estado, "anunciada");
+  assert.deepEqual(L[1].acao, { tipo: "abrir", ficha: "f-ciebr", conta: CIEBR, rotulo: "Continuar ficha" });
+  assert.equal(L[1].estado, "em_andamento", "não cria segunda ficha na mesma conta");
+  assert.deepEqual(L[2].acao, { tipo: "abrir", ficha: "f-rasc", conta: REV, rotulo: "Usar a ficha para REVELAÇÃO" });
+});
+
+test("26. ML funciona sem Bling; anúncio parecido (outro SKU) → 'confira', sem criar", async () => {
+  const parecido = { id: "MLB9000000009", seller_id: CIEBR, status: "active", title: "Válvula 087100 kit", attributes: [{ id: "SELLER_SKU", value_name: "KIT1" }] };
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA], [CIEBR]: [parecido] } });
+  const b = blingSimulado(PRODUTO_087100);
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: TRES, blingConectado: false, lerBling: b.lerBling, consultarML: m.consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  assert.equal(b.chamadas.length, 0);
+  const L = C.contasDoSKU(r);
+  assert.equal(L[1].estado, "conferir");
+  assert.equal(L[1].acao, null);
+  assert.equal(L[2].estado, "livre");
+});
+
+test("27. anúncio em uma conta, Bling com estoque: 'Já existe' sem destaque de pendência", async () => {
+  const m = mlSimulado({ itens: { [LOJA]: [ITEM_LOJA] } });
+  const r = await C.consultarSKURapido({ codigo: SKU, contas: TRES, blingConectado: true, lerBling: blingSimulado({ ...PRODUTO_087100, saldoFisicoTotal: 1, saldoVirtualTotal: 1 }).lerBling, consultarML: m.consultarML, lerFichas: fichasSimuladas([FICHA_PUBLICADA_LOJA]) });
+  assert.equal(r.resumo.tipo, "existe");
+  assert.equal(r.resumo.alerta, false);
+});

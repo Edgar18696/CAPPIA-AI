@@ -14,8 +14,25 @@ import { enderecoDaFicha } from "../services/fichasCentral";
 import { nomeDaLoja } from "../services/duplicidadeML";
 import {
   ESTADO_CONSULTA, PENDENCIA, ESPERA_DIGITACAO_SKU_MS, consultarSKURapido, consultarBlingInicial, chaveConsulta,
-  criarCacheConsulta, resumoIndicador, oportunidadesSKU, linkProdutoBling, textoEstoque,
+  criarCacheConsulta, resumoIndicador, oportunidadesSKU, linkProdutoBling, textoEstoque, contasDoSKU, ESTADO_LINHA,
 } from "../services/consultaInicialSKU";
+
+const TEXTO_LINHA = {
+  [ESTADO_LINHA.ANUNCIADA]: "já anunciado — não crie outro",
+  [ESTADO_LINHA.LIVRE]: "sem anúncio deste SKU",
+  [ESTADO_LINHA.EM_ANDAMENTO]: "ficha em andamento",
+  [ESTADO_LINHA.CONFERIR]: "confira",
+  [ESTADO_LINHA.NAO_VERIFICADA]: "não verificada",
+  [ESTADO_LINHA.NAO_CONECTADA]: "não conectada (não consultada)",
+};
+const COR_LINHA = {
+  [ESTADO_LINHA.ANUNCIADA]: "#fbbf24",
+  [ESTADO_LINHA.LIVRE]: "#86efac",
+  [ESTADO_LINHA.EM_ANDAMENTO]: "#93c5fd",
+  [ESTADO_LINHA.CONFERIR]: "#fde68a",
+  [ESTADO_LINHA.NAO_VERIFICADA]: "#fca5a5",
+  [ESTADO_LINHA.NAO_CONECTADA]: "#64748b",
+};
 
 const cache = criarCacheConsulta();
 const STATUS_FICHA = { publicado: "publicada", publicado_com_pendencia: "publicada", publicando: "publicando", conferencia_aprovada: "aprovada", rascunho: "rascunho", erro_publicacao: "erro na publicação" };
@@ -63,6 +80,11 @@ export default function AvisoSKU({ codigo = "", fichaAtualId = "" }) {
   }
   function abrirFicha(id) {
     try { window.location.assign(enderecoDaFicha(window.location.href, id)); } catch { setAviso(`Abra a ficha ${id} pela Central de Publicação.`); }
+  }
+  function agirNaConta(acao) {
+    if (!acao || ocupado) return;
+    if (acao.tipo === "abrir") { abrirFicha(acao.ficha); return; }
+    if (acao.tipo === "preparar") aproveitar(acao);
   }
   async function aproveitar(o) {
     if (ocupado) return;
@@ -131,30 +153,31 @@ export default function AvisoSKU({ codigo = "", fichaAtualId = "" }) {
             <button type="button" data-paiia-continuar-ficha={op.continuar.ficha} onClick={() => abrirFicha(op.continuar.ficha)} style={{ ...mini, background: "#2563eb", margin: "2px 0 4px" }}>Continuar ficha</button>
           )}
 
-          {/* Mercado Livre: só as contas conectadas */}
-          {(atual.ml || []).length === 0 && <div style={linha}><b>Mercado Livre:</b> nenhuma conta conectada (não consultado).</div>}
-          {(atual.ml || []).map((m) => (
-            <div key={m.conta} data-paiia-detalhe-ml={m.conta} data-estado={m.estado} style={linha}>
-              <b>{m.nome}:</b>{" "}
-              {m.estado === ESTADO_CONSULTA.ENCONTRADO ? "anunciado (possível duplicidade — não crie outro)"
-                : m.estado === ESTADO_CONSULTA.NAO_ENCONTRADO ? "sem anúncio deste SKU"
-                : m.estado === ESTADO_CONSULTA.POSSIVEL ? "anúncio parecido, SKU diferente — confira (não é vinculado)"
-                : "não foi possível verificar"}
-              {(m.anuncios || []).map((a) => (
-                <div key={a.mlb} data-paiia-consulta-anuncio={a.mlb} style={{ color: "#cbd5e1" }}>
-                  {a.mlb} · {a.titulo || "—"} · {a.situacao}{" "}
-                  {a.link && <a href={a.link} target="_blank" rel="noopener noreferrer" data-paiia-abrir-anuncio-existente={a.mlb} style={{ ...link, textDecoration: "underline" }}>Abrir anúncio existente</a>}
-                </div>
-              ))}
-              {(m.possiveis || []).map((a) => (
-                <div key={a.mlb} style={{ color: "#fde68a" }}>{a.mlb} · {a.titulo || "—"} · {a.situacao} {a.link && <a href={a.link} target="_blank" rel="noopener noreferrer" style={link}>Abrir</a>}</div>
-              ))}
+          {/* Mercado Livre: as 3 contas, cada uma lida na própria conta. Livre só quando lida sem erro. */}
+          <div style={{ ...linha, marginTop: 6 }}><b>Mercado Livre</b></div>
+          {contasDoSKU(atual).map((l) => (
+            <div key={l.conta} data-paiia-detalhe-ml={l.conta} data-estado={l.estado} style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", fontSize: 12, lineHeight: 1.45, padding: "4px 0", borderTop: "1px solid #1e293b" }}>
+              <span style={{ flex: "1 1 200px", minWidth: 0 }}>
+              <b>{l.nome}</b>{" · "}
+              <span style={{ color: COR_LINHA[l.estado] || "#cbd5e1" }}>
+                {TEXTO_LINHA[l.estado]}{l.motivo && ![ESTADO_LINHA.LIVRE, ESTADO_LINHA.ANUNCIADA].includes(l.estado) && l.estado !== ESTADO_LINHA.NAO_CONECTADA ? ` (${l.motivo})` : ""}
+                {l.anuncios.map((a) => (
+                  <span key={a.mlb} data-paiia-consulta-anuncio={a.mlb} style={{ display: "block", color: "#cbd5e1" }}>
+                    {a.mlb} · {a.situacao}{" "}
+                    {a.link && <a href={a.link} target="_blank" rel="noopener noreferrer" data-paiia-abrir-anuncio-existente={a.mlb} style={link}>Abrir anúncio existente</a>}
+                  </span>
+                ))}
+                {l.possiveis.map((a) => (
+                  <span key={a.mlb} style={{ display: "block", color: "#fde68a" }}>{a.mlb} · {a.titulo || "—"} {a.link && <a href={a.link} target="_blank" rel="noopener noreferrer" style={link}>Abrir</a>}</span>
+                ))}
+              </span>
+              </span>
+              {l.acao ? (
+                <button type="button" data-paiia-aproveitar-conta={l.conta} data-acao={l.acao.tipo} onClick={() => agirNaConta(l.acao)} disabled={Boolean(ocupado)} style={{ ...mini, width: "auto", flex: "0 0 auto", background: l.acao.tipo === "preparar" ? "#0f766e" : "#2563eb" }}>
+                  {ocupado === l.conta ? "⏳" : l.acao.rotulo}
+                </button>
+              ) : null}
             </div>
-          ))}
-          {op.aproveitar.map((o) => (
-            <button key={o.conta} type="button" data-paiia-aproveitar-conta={o.conta} onClick={() => aproveitar(o)} disabled={Boolean(ocupado)} style={{ ...mini, background: "#0f766e", margin: "2px 6px 2px 0" }}>
-              {ocupado === o.conta ? "⏳ preparando…" : `Aproveitar para ${o.nome}`}
-            </button>
           ))}
           {aviso && <div style={{ ...linha, color: "#fca5a5" }}>{aviso}</div>}
           <div style={{ ...linha, color: "#64748b" }}>Só leitura. Nada foi criado, alterado ou publicado.</div>

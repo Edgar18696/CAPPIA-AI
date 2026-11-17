@@ -274,7 +274,8 @@ export function resumoIndicador(r) {
   const existe = r.bling?.estado === ESTADO_CONSULTA.ENCONTRADO || r.bling?.estado === ESTADO_CONSULTA.AMBIGUO || r.fichas?.lista?.length > 0 || ml.some((m) => m.estado === ESTADO_CONSULTA.ENCONTRADO);
   const falhou = partes.some((p) => p.estado === ESTADO_CONSULTA.NAO_VERIFICADO);
   const duvida = r.bling?.estado === ESTADO_CONSULTA.OUTRO_CODIGO || ml.some((m) => m.estado === ESTADO_CONSULTA.POSSIVEL);
-  const alerta = [r.bling?.pendencia, ...ml.map((m) => m.pendencia)].some((p) => [PENDENCIA.ESTOQUE_ZERO, PENDENCIA.BLING_AMBIGUO, PENDENCIA.ML_DUPLICADO].includes(p));
+  // Anúncio numa conta não é pendência (as outras podem estar livres): destaque só para estoque 0 ou Bling ambíguo.
+  const alerta = [PENDENCIA.ESTOQUE_ZERO, PENDENCIA.BLING_AMBIGUO].includes(r.bling?.pendencia);
   if (existe) return { tipo: "existe", texto: "Já existe", alerta, incompleto: falhou };
   // Falha NUNCA vira "não encontrado".
   if (falhou) return { tipo: "indisponivel", texto: "Consulta indisponível", alerta: false, incompleto: true };
@@ -298,6 +299,54 @@ export function oportunidadesSKU(r) {
     ? ml.filter((m) => m.conta !== fonte.conta && m.estado === ESTADO_CONSULTA.NAO_ENCONTRADO && !fichas.some((f) => f.conta === m.conta && !f.publicada)).map((m) => ({ ficha: fonte.id, conta: m.conta, nome: m.nome }))
     : [];
   return { continuar: continuar ? { ficha: continuar.id, titulo: continuar.titulo } : null, aproveitar };
+}
+
+// -------------------------------------------------------------
+// (17/11) As 3 contas, cada uma separada: LOJA ONLINE, CIEBR, REVELAÇÃO.
+// Conta só é "livre" quando o ML DESTA conta foi lido sem erro e não tem anúncio deste
+// SKU (nem parecido). Erro, consulta incompleta ou conta não conectada → nunca livre.
+// MLB é sempre o da própria conta (lido nela); nunca passa para outra.
+// -------------------------------------------------------------
+export const CONTAS_SKU = Object.freeze([
+  Object.freeze({ id: "1729335019", nome: "LOJA ONLINE" }),
+  Object.freeze({ id: "824312524", nome: "CIEBR" }),
+  Object.freeze({ id: "2412238242", nome: "REVELAÇÃO" }),
+]);
+export const ESTADO_LINHA = Object.freeze({
+  ANUNCIADA: "anunciada",
+  LIVRE: "livre",
+  EM_ANDAMENTO: "em_andamento",
+  CONFERIR: "conferir",
+  NAO_VERIFICADA: "nao_verificada",
+  NAO_CONECTADA: "nao_conectada",
+});
+
+/** → [{ conta, nome, estado, anuncios, possiveis, motivo, acao }] na ordem LOJA ONLINE, CIEBR, REVELAÇÃO. */
+export function contasDoSKU(r) {
+  const fichas = r?.fichas?.lista || [];
+  const ml = Array.isArray(r?.ml) ? r.ml : [];
+  const confirmados = new Set(ml.flatMap((m) => (m.anuncios || []).map((a) => `${m.conta}:${a.mlb}`)));
+  // Fonte publicada: o MLB dela foi lido NA CONTA DELA com este SKU.
+  const fonte = fichas.find((f) => f.publicada && f.mlb && confirmados.has(`${f.conta}:${f.mlb}`)) || null;
+  const preparada = fichas.find((f) => !f.publicada) || null;
+  const fichasOk = r?.fichas?.estado !== ESTADO_CONSULTA.NAO_VERIFICADO;
+  return CONTAS_SKU.map(({ id, nome }) => {
+    const m = ml.find((x) => x.conta === id) || null;
+    const base = { conta: id, nome, anuncios: m?.anuncios || [], possiveis: m?.possiveis || [], motivo: "", acao: null };
+    if (!m) return { ...base, estado: ESTADO_LINHA.NAO_CONECTADA, motivo: "conta não conectada: não consultada" };
+    if (m.estado === ESTADO_CONSULTA.ENCONTRADO) return { ...base, estado: ESTADO_LINHA.ANUNCIADA };
+    if (m.estado === ESTADO_CONSULTA.NAO_VERIFICADO) return { ...base, estado: ESTADO_LINHA.NAO_VERIFICADA, motivo: "não foi possível verificar" };
+    if (m.estado === ESTADO_CONSULTA.POSSIVEL) return { ...base, estado: ESTADO_LINHA.CONFERIR, motivo: "anúncio parecido, SKU diferente — confira" };
+    if (m.estado !== ESTADO_CONSULTA.NAO_ENCONTRADO) return { ...base, estado: ESTADO_LINHA.NAO_VERIFICADA, motivo: "não foi possível verificar" };
+    // Sem as fichas do PAIIA não dá para saber se já há ficha desta conta: não oferece criar.
+    if (!fichasOk) return { ...base, estado: ESTADO_LINHA.NAO_VERIFICADA, motivo: "fichas do PAIIA não verificadas" };
+    const andamento = fichas.find((f) => !f.publicada && f.conta === id);
+    if (andamento) return { ...base, estado: ESTADO_LINHA.EM_ANDAMENTO, acao: { tipo: "abrir", ficha: andamento.id, conta: id, rotulo: "Continuar ficha" } };
+    let acao = null;
+    if (fonte && fonte.conta !== id) acao = { tipo: "preparar", ficha: fonte.id, conta: id, rotulo: `Criar em ${nome}` };
+    else if (preparada) acao = { tipo: "abrir", ficha: preparada.id, conta: id, rotulo: `Usar a ficha para ${nome}` };
+    return { ...base, estado: ESTADO_LINHA.LIVRE, acao };
+  });
 }
 
 /** Chave do cache: SKU normalizado + integrações consultadas + ficha aberta. */
