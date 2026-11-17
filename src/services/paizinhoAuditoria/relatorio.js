@@ -132,7 +132,7 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
   const secoes = SECOES.map((s) => ({ ...s, achados: ordenarAchados(todos.filter((a) => a.area === s.chave)) }));
   const renault = fichas.filter((f) => f.renault).map((f) => {
     const a = f.achados.find((x) => x.area === AREAS.RENAULT || (x.area === AREAS.OPORTUNIDADE && x.sem_custo));
-    return { item_id: f.id, sku: f.sku, titulo: f.titulo, link: f.link, preco: f.preco, custo: f.custo, tabela_renault: a?.tabela_renault ?? null, concorrencia: a?.concorrencia ?? null, recomendacao: f.custo ? "custo no Bling: margem calculada normalmente" : (a?.recomendacao || "dados insuficientes") };
+    return { item_id: f.id, vendedor_id: f.vendedor_id || "", sku: f.sku, titulo: f.titulo, link: f.link, preco: f.preco, custo: f.custo, tabela_renault: a?.tabela_renault ?? null, concorrencia: a?.concorrencia ?? null, recomendacao: f.custo ? "custo no Bling: margem calculada normalmente" : (a?.recomendacao || "dados insuficientes") };
   });
 
   const limitacoes = [];
@@ -220,7 +220,7 @@ export function montarRelatorio({ dados, analise, nomeConta = "", origem = "test
     fretes_por_sku: fretesPorSku,
     classificacoes_medidas: CLASSIFICACOES_MEDIDAS,
     renault,
-    anuncios: fichas.map((f) => ({ item_id: f.id, sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, faturamento30: f.faturamento30, custo: f.custo, custo_a_confirmar: f.custo_a_confirmar || false, custo_faixa: f.custo_faixa || null, custo_motivo: f.custo_motivo || null, link: f.link, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
+    anuncios: fichas.map((f) => ({ item_id: f.id, vendedor_id: f.vendedor_id || "", sku: f.sku, titulo: f.titulo, preco: f.preco, estoque: f.estoque, visitas30: f.visitas30, vendas30: f.vendas30, faturamento30: f.faturamento30, custo: f.custo, custo_a_confirmar: f.custo_a_confirmar || false, custo_faixa: f.custo_faixa || null, custo_motivo: f.custo_motivo || null, link: f.link, conversao30: f.conversao30, pontuacao: f.pontuacao.total, margem_pct: f.margem?.margem_pct ?? null, problemas: f.achados.length, frete_gratis: f.frete.gratis, frete_vendedor: f.frete.vendedor, medidas_anuncio: f.medidas_ml, medidas_bling: f.medidas_bling, divergencia_pequena: f.divergencia_pequena || null, dados_originais: f.dados_originais })),
     limitacoes,
     falhas: resumirFalhas(dados.falhas),
     regras: REGRAS_DO_RELATORIO,

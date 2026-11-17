@@ -191,6 +191,8 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     sku,
     titulo: txt(item.title),
     link: txt(item.permalink),
+    // (17/11) Conta dona do MLB = seller_id lido no próprio anúncio (Central: conta ao lado do MLB).
+    vendedor_id: txt(item.seller_id),
     preco,
     tipo: txt(item.listing_type_id),
     categoria: txt(item.category_id),
@@ -254,7 +256,7 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
 function achado(f, area, severidade, problema, sugestao, impacto_rs = null, extra = {}) {
   return {
     area, severidade,
-    item_id: f.id, sku: f.sku || "", titulo: f.titulo, link: f.link,
+    item_id: f.id, sku: f.sku || "", titulo: f.titulo, link: f.link, vendedor_id: f.vendedor_id || "",
     problema, sugestao,
     impacto_rs: impacto_rs === null || !Number.isFinite(impacto_rs) ? null : centavos(impacto_rs),
     ...extra,
@@ -530,7 +532,7 @@ function regrasFrete(f, ctx) {
   const vendasLidas = f.vendas30 !== null;
   const motivoBling = motivoBlingSuspeito(bl, ml, ctx.perfilBling);
   const linha = {
-    item_id: f.id, sku: f.sku, titulo: f.titulo, link: f.link, preco: f.preco,
+    item_id: f.id, sku: f.sku, titulo: f.titulo, link: f.link, vendedor_id: f.vendedor_id || "", preco: f.preco,
     classificacao: null,
     medidas_anuncio: textoMedida(ml),
     medidas_bling: f.bling_lido ? (f.bling_encontrado ? textoMedida(bl) : "SKU não encontrado no Bling") : "Bling não consultado",

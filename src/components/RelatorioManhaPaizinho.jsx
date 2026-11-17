@@ -7,6 +7,7 @@
 // =============================================================
 import { useEffect, useState } from "react";
 import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTA_PILOTO } from "../services/paizinhoAuditoria/relatorioService";
+import PrioridadesPaizinho from "./PrioridadesPaizinho";
 
 const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
@@ -149,7 +150,8 @@ function Relatorio({ rel }) {
       </div>
 
       <h3 style={S.h3}>🎯 Prioridades de hoje</h3>
-      {rel.prioridades.length ? <ListaAchados lista={rel.prioridades} /> : <p style={S.ajuda}>Nenhum problema prioritário encontrado.</p>}
+      {/* (17/11) Conta ao lado do MLB, Central de Anúncios, Resolvido / Remover da lista (só a lista do PAIIA). */}
+      <PrioridadesPaizinho rel={rel} textoPotencial={textoPotencial} />
 
       {rel.oportunidades.length > 0 && <>
         <h3 style={S.h3}>💡 Oportunidades comerciais</h3>
