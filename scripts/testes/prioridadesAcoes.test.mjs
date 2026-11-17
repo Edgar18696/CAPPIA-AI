@@ -169,8 +169,9 @@ test("contas: seletor com LOJA ONLINE (padrão), CIEBR e REVELAÇÃO, nessa orde
   assert.equal(CONTA_PADRAO.nome, "LOJA ONLINE");
   const tela = fs.readFileSync(path.join(RAIZ, "src/components/RelatorioManhaPaizinho.jsx"), "utf8");
   assert.match(tela, /useState\(CONTA_PADRAO\.id\)/);
-  assert.ok(tela.indexOf("data-paizinho-seletor-conta") < tela.indexOf("Rodar análise agora"), "botões das contas acima de Rodar análise agora");
-  assert.match(tela, /rodarTesteLocal\(\{ conta: alvo/);
+  // (17/11) "Rodar análise agora" virou "Analisar novos" (fila sem repetição).
+  assert.ok(tela.indexOf("data-paizinho-seletor-conta") < tela.indexOf("data-paizinho-analisar-novos"), "botões das contas acima da análise");
+  assert.match(tela, /analisarFila\(\{ conta: alvo/);
 });
 
 test("análise da CIEBR usa só anúncios da CIEBR: anúncio de outra conta é descartado, conta e vendedor = CIEBR", async () => {

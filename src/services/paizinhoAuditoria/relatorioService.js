@@ -14,6 +14,9 @@ import { executarAuditoria, CONTAS_AUDITORIA, contaLiberada } from "./index.js";
 import { CONTA_PADRAO } from "./contas.js";
 import { CHAVE_TESTE_LOCAL, idDe, chaveDaConta, lerRelatorioDaConta, guardarRelatorioDaConta, conferirRelatorioDaConta } from "./relatoriosPorConta.js";
 import { roteadorConsultas, consultorComercial as leitorComercial } from "./leituraComercial.js";
+import { MODO, montarRodada, escolherIneditos, escolherReanalise, novoId } from "./filaAnuncios.js";
+import { repositorioNavegador, repositorioBanco, enviarRegistroParaBanco, ORIGEM } from "./filaRepositorio.js";
+import { lerHistorico } from "./prioridadesAcoes.js";
 
 const consultorComercial = (conta) => leitorComercial(conta, (nome, opcoes) => supabase.functions.invoke(nome, opcoes));
 
@@ -107,7 +110,7 @@ export function resumirCusto(d) {
  * Análise com dados reais de UMA conta (somente leitura). (17/11) A conta vem do seletor
  * da Central; tudo (ML, caches e relatório guardado) fica separado por conta.
  */
-export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir } = {}) {
+export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir, escolherIds } = {}) {
   const escolhida = contaLiberada(conta);
   if (!escolhida) throw new Error("Conta não liberada para a análise.");
   const cache = lerCacheBling(escolhida.id);
@@ -168,7 +171,7 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
       consultarCusto,
       buscarConcorrentes,
       config: { impostoPercentual: impostoDoPerfil() },
-      opcoesColeta: { limiteItens, limiteConcorrencia: concorrencia },
+      opcoesColeta: { limiteItens, limiteConcorrencia: concorrencia, ...(escolherIds ? { escolherIds } : {}) },
       origem: "teste_local",
       aoProgredir,
     });
@@ -181,4 +184,105 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
   conferirRelatorioDaConta(rel, escolhida);
   guardarRelatorioTesteLocal(rel);
   return rel;
+}
+
+/* ------------------------------------------------------------ */
+/* (17/11) FILA SEM REPETIÇÃO                                    */
+/* ------------------------------------------------------------ */
+const armazenamento = () => globalThis.localStorage;
+const CHAVE_RODADA_A_GRAVAR = "paiia_paizinho_fila_a_gravar";
+const chaveAGravar = (conta) => chaveDaConta(CHAVE_RODADA_A_GRAVAR, conta);
+
+/**
+ * Abre a fila da conta: no BANCO se a migração já foi aplicada; senão NESTE NAVEGADOR.
+ * Também tenta gravar uma rodada que ficou pendente (falha ao salvar) e informa quanto
+ * do registro do navegador ainda não foi para o banco.
+ */
+export async function abrirFila(conta) {
+  const id = idDe(conta);
+  const local = repositorioNavegador(armazenamento(), id);
+  let repo = local;
+  let avisoBanco = "";
+  let estado;
+  try {
+    const banco = repositorioBanco(supabase, id);
+    estado = await banco.carregar();
+    repo = banco;
+  } catch (e) {
+    avisoBanco = e?.semEstrutura
+      ? "Banco da fila ainda não ativado (migração aguardando aprovação): o progresso fica guardado neste navegador."
+      : `Banco indisponível agora (${String(e?.message || e)}): usando o registro deste navegador.`;
+    estado = await local.carregar();
+  }
+  const reenviada = await regravarRodadaPendente(repo, id);
+  const importadas = await importarHistoricoAntigo(repo, id);
+  if (reenviada || importadas) estado = await repo.carregar();
+  const naoEnviados = repo.origem === ORIGEM.BANCO ? local.registro().length : 0;
+  return { repo, estado, origem: repo.origem, avisoBanco, naoEnviados };
+}
+
+/**
+ * (17/11) Resolvido/Remover feitos antes da fila (histórico só do navegador) entram na fila
+ * como ações, com id fixo ("legado:..."): importar de novo não duplica.
+ */
+export async function importarHistoricoAntigo(repo, conta) {
+  let n = 0;
+  for (const h of lerHistorico(armazenamento(), conta)) {
+    const r = await repo.registrarAcao({ id: `legado:${h.id}`, conta: idDe(conta), acao: h.acao, mlb: h.item_id, area: h.area, motivo: h.motivo || "", problema: h.problema, titulo: h.titulo, em: h.em });
+    if (r.ok && !r.ja) n++;
+  }
+  return n;
+}
+
+async function regravarRodadaPendente(repo, conta) {
+  let pendente;
+  try { pendente = JSON.parse(armazenamento().getItem(chaveAGravar(conta)) || "null"); } catch { pendente = null; }
+  if (!pendente?.id) return false;
+  const r = await repo.registrarRodada(pendente);
+  if (r.ok) { try { armazenamento().removeItem(chaveAGravar(conta)); } catch { /* segue */ } return true; }
+  return false;
+}
+
+/** Envia ao banco o registro deste navegador (mesma ordem; nada duplica). */
+export async function enviarFilaDoNavegador(conta) {
+  const local = repositorioNavegador(armazenamento(), conta);
+  return enviarRegistroParaBanco(local.registro(), repositorioBanco(supabase, conta));
+}
+
+/**
+ * Analisa uma rodada da fila (somente leitura no ML e no Bling) e só depois registra.
+ * modo "novos": N anúncios nunca analisados nesta conta; "reanalise": N já analisados.
+ * Falha no meio → nada registrado. Falha ao salvar → a rodada fica guardada e é gravada
+ * na próxima abertura (mesmo id: não duplica).
+ */
+export async function analisarFila({ conta, modo, quantidade = 20, concorrencia = 0, aoProgredir, fila }) {
+  const id = idDe(conta);
+  const aberta = fila || (await abrirFila(id));
+  const estadoAntes = aberta.estado;
+  const info = { ativosTotal: null, ineditosAntes: null, listaCompleta: true, escolhidos: [] };
+  const escolherIds = (idsAtivos, { total, completa }) => {
+    info.ativosTotal = total || idsAtivos.length;
+    info.listaCompleta = completa;
+    const ined = escolherIneditos(idsAtivos, estadoAntes, quantidade);
+    info.ineditosAntes = ined.ineditosAntes;
+    info.escolhidos = modo === MODO.NOVOS ? ined.escolhidos : escolherReanalise(idsAtivos, estadoAntes, quantidade);
+    if (!info.escolhidos.length) throw new Error(modo === MODO.NOVOS ? "Não há anúncios inéditos nesta conta: todos já foram analisados." : "Ainda não há anúncios analisados para reanalisar nesta conta.");
+    return info.escolhidos;
+  };
+  const rel = await rodarTesteLocal({ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds });
+  const m = montarRodada({ id: novoId(), conta: id, modo, rel, ativosTotal: info.ativosTotal, ineditosAntes: info.ineditosAntes, listaCompleta: info.listaCompleta });
+  if (!m.ok) return { rel, registrada: false, erro: m.erro, estado: estadoAntes };
+  try { armazenamento().setItem(chaveAGravar(id), JSON.stringify(m.rodada)); } catch { /* segue: grava direto */ }
+  const r = await aberta.repo.registrarRodada(m.rodada);
+  if (!r.ok) return { rel, registrada: false, erro: `Análise concluída, mas não foi salva ainda (${r.erro}). Ela fica guardada e é gravada ao abrir de novo.`, estado: estadoAntes };
+  try { armazenamento().removeItem(chaveAGravar(id)); } catch { /* segue */ }
+  return { rel, registrada: true, rodada: m.rodada, estado: await aberta.repo.carregar() };
+}
+
+/** Resolvido / Remover da lista / Voltar para a lista — só no histórico da fila desta conta. */
+export async function registrarAcaoFila(fila, { acao, achado, motivo = "" }) {
+  return fila.repo.registrarAcao({
+    id: novoId(), conta: idDe(fila.estado.conta), acao, mlb: achado.item_id, area: achado.area, motivo,
+    severidade: achado.severidade, problema: achado.problema, sugestao: achado.sugestao, titulo: achado.titulo, em: new Date().toISOString(),
+  });
 }

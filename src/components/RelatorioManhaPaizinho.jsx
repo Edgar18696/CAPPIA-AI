@@ -6,8 +6,12 @@
 // resultado só nele. Antes existia apenas no ambiente local (npm run dev).
 // =============================================================
 import { useEffect, useState } from "react";
-import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO } from "../services/paizinhoAuditoria/relatorioService";
-import PrioridadesPaizinho from "./PrioridadesPaizinho";
+import {
+  lerUltimoRelatorio, lerRelatorioTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO,
+  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador,
+} from "../services/paizinhoAuditoria/relatorioService";
+import { MODO, indicadores, pendenciasAbertas } from "../services/paizinhoAuditoria/filaAnuncios";
+import PrioridadesPaizinho, { HistoricoFila } from "./PrioridadesPaizinho";
 
 const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
@@ -19,7 +23,7 @@ const COR = { alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
 const ROTULO = { alta: "Urgente", media: "Importante", baixa: "Acompanhar" };
 
 // (17/11) Seletor das 3 contas (LOJA ONLINE é a padrão). Cada conta tem o seu relatório,
-// o seu histórico e os seus caches: ao trocar, nada da conta anterior continua na tela.
+// a sua fila e o seu histórico: ao trocar, nada da conta anterior continua na tela.
 const idDe = (c) => String(c?.id ?? c ?? "").replace(/\D/g, "");
 const daConta = (rel, conta) => (rel && idDe(rel.conta) === conta ? rel : null);
 
@@ -29,14 +33,20 @@ export default function RelatorioManhaPaizinho() {
   const [teste, setTeste] = useState(() => (LOCAL ? lerRelatorioTesteLocal(CONTA_PADRAO.id) : null));
   const [rodando, setRodando] = useState("");
   const [erroTeste, setErroTeste] = useState("");
-  const [limite, setLimite] = useState(100);
+  const [avisoFila, setAvisoFila] = useState("");
+  const [limite, setLimite] = useState(20);
   const [concorrencia, setConcorrencia] = useState(0);
   const [verTeste, setVerTeste] = useState(LOCAL);
+  const [fila, setFila] = useState(null); // { repo, estado, origem, avisoBanco, naoEnviados, conta }
+  const [painel, setPainel] = useState(""); // "", "historico", "pendencias"
   const contaAtual = CONTAS_AUDITORIA.find((c) => c.id === conta) || CONTA_PADRAO;
 
   useEffect(() => {
     let vivo = true;
     lerUltimoRelatorio(conta).then((r) => { if (vivo) setServidor({ ...r, conta }); });
+    abrirFila(conta)
+      .then((f) => { if (vivo) setFila({ ...f, conta }); })
+      .catch((e) => { if (vivo) setFila({ conta, erro: String(e?.message || e) }); });
     return () => { vivo = false; };
   }, [conta]);
 
@@ -46,33 +56,63 @@ export default function RelatorioManhaPaizinho() {
     setServidor({ estado: "carregando" });
     setTeste(LOCAL ? lerRelatorioTesteLocal(id) : null);
     setErroTeste("");
+    setAvisoFila("");
+    setFila(null);
+    setPainel("");
     setVerTeste(LOCAL);
   }
 
-  async function rodar() {
+  const filaDaConta = fila?.conta === conta && fila.estado ? fila : null;
+
+  async function rodar(modo) {
+    if (!filaDaConta) return;
     setErroTeste("");
+    setAvisoFila("");
     setRodando("Começando…");
     const alvo = conta;
     try {
-      const rel = await rodarTesteLocal({ conta: alvo, limiteItens: limite, concorrencia, aoProgredir: setRodando });
-      setTeste(daConta(rel, alvo));
+      const r = await analisarFila({ conta: alvo, modo, quantidade: limite, concorrencia, aoProgredir: setRodando, fila: filaDaConta });
+      setTeste(daConta(r.rel, alvo));
       setVerTeste(true);
+      setFila((f) => (f?.conta === alvo ? { ...f, estado: r.estado } : f));
+      setAvisoFila(r.registrada
+        ? `✔ ${r.rodada.anuncios.length} anúncio(s) ${modo === MODO.NOVOS ? "inéditos analisados" : "reanalisados"} e registrados na fila da ${contaAtual.nome}.`
+        : `⚠️ ${r.erro}`);
     } catch (e) {
       setErroTeste(String(e?.message || e));
     }
     setRodando("");
   }
 
+  async function agir(acao, achado, motivo) {
+    if (!filaDaConta) return { ok: false, erro: "Fila não carregada." };
+    const r = await registrarAcaoFila(filaDaConta, { acao, achado, motivo });
+    if (r.ok) {
+      const estado = r.estado || (await filaDaConta.repo.carregar());
+      setFila((f) => (f?.conta === conta ? { ...f, estado } : f));
+    }
+    return r;
+  }
+
+  async function enviarAoBanco() {
+    const r = await enviarFilaDoNavegador(conta);
+    setAvisoFila(r.ok ? `✔ Registro deste navegador enviado ao banco (${r.enviados} novo(s), ${r.jaExistiam} já existiam).` : `⚠️ Envio parou: ${r.erro}`);
+    const f = await abrirFila(conta);
+    setFila({ ...f, conta });
+  }
+
   const doServidor = servidor.conta === conta && servidor.estado === "ok" && servidor.registro?.status === "concluido" ? daConta(servidor.registro.relatorio, conta) : null;
   const testeDaConta = daConta(teste, conta);
   const rel = verTeste && testeDaConta ? testeDaConta : doServidor || (LOCAL ? testeDaConta : null);
+  const ind = filaDaConta ? indicadores(filaDaConta.estado) : null;
+  const ocupado = Boolean(rodando) || !filaDaConta;
 
   return (
     <section style={S.caixa} data-paizinho-relatorio-manha data-paizinho-conta={conta}>
       <div style={S.topo}>
         <div>
           <h2 style={S.titulo}>☀️ Relatório da manhã — {contaAtual.nome}</h2>
-          <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR (fica só nele)" : "rotina automática das 03h"}` : `${textoEstado(servidor)}${LOCAL ? ` Nenhuma análise da ${contaAtual.nome} feita neste navegador ainda.` : ""}`}</p>
+          <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR" : "rotina automática das 03h"}` : `${textoEstado(servidor)}${LOCAL ? ` Nenhuma análise da ${contaAtual.nome} feita neste navegador ainda.` : ""}`}</p>
         </div>
         {LOCAL && doServidor && testeDaConta && (
           <div style={S.linha}>
@@ -84,8 +124,8 @@ export default function RelatorioManhaPaizinho() {
 
       {LOCAL && (
         <div style={S.teste} data-paizinho-teste-local>
-          <strong>🔍 Análise com dados reais (somente leitura)</strong>
-          <span style={S.ajuda}>Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. A conta inteira leva cerca de 1 hora; mantenha esta página aberta e não use "Sair" durante a leitura. O resultado fica guardado só neste navegador.</span>
+          <strong>🔍 Análise com dados reais (somente leitura) — fila sem repetição</strong>
+          <span style={S.ajuda}>Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. "Analisar novos" pega só anúncios nunca analisados nesta conta; o progresso continua de onde parou. Mantenha esta página aberta e não use "Sair" durante a leitura.</span>
           <div style={S.linha} role="group" aria-label="Conta do Mercado Livre" data-paizinho-seletor-conta>
             {CONTAS_AUDITORIA.map((c) => (
               <button
@@ -101,11 +141,24 @@ export default function RelatorioManhaPaizinho() {
               </button>
             ))}
           </div>
+
+          <div style={S.kpis} data-paizinho-fila-indicadores>
+            <Kpi rotulo="Total de anúncios" valor={ind?.total == null ? "— (após a 1ª rodada)" : numero(ind.total)} />
+            <Kpi rotulo="Já analisados" valor={ind ? numero(ind.analisados) : "…"} />
+            <Kpi rotulo="Restantes (inéditos)" valor={ind?.restantes == null ? "—" : numero(ind.restantes)} />
+            <Kpi rotulo="Com pendências" valor={ind ? numero(ind.pendentes) : "…"} cor={ind?.pendentes ? COR.media : undefined} />
+            <Kpi rotulo="Resolvidos" valor={ind ? numero(ind.resolvidos) : "…"} />
+          </div>
+          {fila?.conta === conta && fila.avisoBanco && <span style={S.ajuda} data-paizinho-fila-origem>💾 {fila.avisoBanco}</span>}
+          {fila?.conta === conta && fila.erro && <span style={S.erro}>❌ Fila: {fila.erro}</span>}
+          {filaDaConta?.naoEnviados > 0 && (
+            <span style={S.ajuda}>Há {filaDaConta.naoEnviados} registro(s) desta conta guardados neste navegador antes do banco existir. <button type="button" style={S.chip} onClick={enviarAoBanco} disabled={ocupado}>Enviar para o banco</button></span>
+          )}
+
           <div style={S.linha}>
-            <label style={S.rotulo}>Anúncios
+            <label style={S.rotulo}>Anúncios por rodada
               <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
                 {[20, 50, 100, 300, 500].map((n) => <option key={n} value={n}>{n}</option>)}
-                <option value={5000}>todos</option>
               </select>
             </label>
             <label style={S.rotulo}>Concorrência (usa créditos SerpAPI)
@@ -113,16 +166,35 @@ export default function RelatorioManhaPaizinho() {
                 {[0, 3, 5, 15].map((n) => <option key={n} value={n}>{n === 0 ? "não pesquisar" : `${n} anúncios`}</option>)}
               </select>
             </label>
-            <button type="button" onClick={rodar} disabled={Boolean(rodando)} style={S.botao} data-paizinho-rodar-teste>{rodando ? "⏳ Analisando…" : "Rodar análise agora"}</button>
+          </div>
+          <div style={S.linha} data-paizinho-fila-acessos>
+            <button type="button" onClick={() => rodar(MODO.NOVOS)} disabled={ocupado} style={S.botao} data-paizinho-rodar-teste data-paizinho-analisar-novos>{rodando ? "⏳ Analisando…" : "Analisar novos"}</button>
+            <button type="button" onClick={() => setPainel(painel === "historico" ? "" : "historico")} disabled={!filaDaConta} style={painel === "historico" ? S.chipAtivo : S.chip} data-paizinho-fila-historico>Histórico</button>
+            <button type="button" onClick={() => setPainel(painel === "pendencias" ? "" : "pendencias")} disabled={!filaDaConta} style={painel === "pendencias" ? S.chipAtivo : S.chip} data-paizinho-fila-pendencias>Revisar pendências{ind?.pendentes ? ` (${ind.pendentes})` : ""}</button>
+            <button type="button" onClick={() => rodar(MODO.REANALISE)} disabled={ocupado || !ind?.analisados} style={S.chip} data-paizinho-reanalisar>Reanalisar</button>
           </div>
           {rodando && <span style={S.ajuda}>⏳ {rodando}</span>}
           {erroTeste && <span style={S.erro}>❌ {erroTeste}</span>}
+          {avisoFila && <span style={avisoFila.startsWith("✔") ? S.ok : S.erro} data-paizinho-fila-aviso>{avisoFila}</span>}
+
+          {painel === "historico" && filaDaConta && (
+            <div data-paizinho-painel-historico>
+              <h3 style={S.h3}>🗂️ Histórico — {contaAtual.nome}</h3>
+              <HistoricoFila estado={filaDaConta.estado} aoDevolver={(a) => agir("devolvido", a, "")} />
+            </div>
+          )}
+          {painel === "pendencias" && filaDaConta && (
+            <div data-paizinho-painel-pendencias>
+              <h3 style={S.h3}>📌 Pendências em aberto — {contaAtual.nome}</h3>
+              <PrioridadesPaizinho rel={{ conta: { id: conta } }} lista={pendenciasAbertas(filaDaConta.estado)} estado={filaDaConta.estado} aoAgir={agir} vazio="Nenhuma pendência em aberto nesta conta." />
+            </div>
+          )}
         </div>
       )}
 
       {rel?.leitura_incompleta ? <AvisoLeituraIncompleta info={rel.leitura_incompleta} /> : null}
       {rel ? <AvisoLeiturasComerciais rel={rel} /> : null}
-      {rel ? <Relatorio key={`${conta}-${rel.gerado_em}`} rel={rel} /> : null}
+      {rel ? <Relatorio key={`${conta}-${rel.gerado_em}`} rel={rel} estado={filaDaConta?.estado} aoAgir={agir} /> : null}
     </section>
   );
 }
@@ -176,7 +248,7 @@ function useCelular() {
   return celular;
 }
 
-function Relatorio({ rel }) {
+function Relatorio({ rel, estado, aoAgir }) {
   const r = rel.resumo;
   const celular = useCelular();
   const secoesExtras = rel.secoes.filter((s) => s.achados.length && s.chave !== "frete" && s.chave !== "renault");
@@ -198,7 +270,7 @@ function Relatorio({ rel }) {
 
       <h3 style={S.h3}>🎯 Prioridades de hoje</h3>
       {/* (17/11) Conta ao lado do MLB, Central de Anúncios, Resolvido / Remover da lista (só a lista do PAIIA). */}
-      <PrioridadesPaizinho rel={rel} textoPotencial={textoPotencial} />
+      <PrioridadesPaizinho rel={rel} estado={estado} aoAgir={aoAgir} textoPotencial={textoPotencial} />
 
       {rel.oportunidades.length > 0 && <>
         <h3 style={S.h3}>💡 Oportunidades comerciais</h3>
@@ -371,6 +443,7 @@ const S = {
   select: { background: "#020617", color: "#f8fafc", border: "1px solid #475569", borderRadius: 8, padding: "8px 10px" },
   botao: { border: "1px solid #22d3ee", borderRadius: 10, background: "linear-gradient(135deg,#0369a1,#0891b2)", color: "white", padding: "10px 15px", fontWeight: 900, cursor: "pointer" },
   erro: { color: "#fca5a5" },
+  ok: { color: "#86efac" },
   ajuda: { color: "#94a3b8", fontSize: 13 },
   kpis: { display: "flex", flexWrap: "wrap", gap: 10, marginTop: 16 },
   kpi: { flex: "1 1 150px", display: "flex", flexDirection: "column", gap: 4, padding: "10px 12px", border: "1px solid #1e3a5f", borderRadius: 12, background: "#020617" },
