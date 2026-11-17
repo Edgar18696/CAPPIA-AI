@@ -288,7 +288,7 @@ const FUNCOES_CENTRAL = [
     id: "black-friday",
     icone: "🛍️",
     titulo: "Black Friday",
-    descricao: "Simule e aprove as ofertas de 27 a 30/11 nas 3 contas. Fase 1: só simulação.",
+    descricao: "Campanha de 27 a 30/11: consulte, simule, confira e aprove as ofertas, uma conta por vez. Nada é ativado sem autorização.",
     painel: "blackfriday",
   },
 ];

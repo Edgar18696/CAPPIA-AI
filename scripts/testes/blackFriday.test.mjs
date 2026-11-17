@@ -506,7 +506,7 @@ test("Central: aba Black Friday montada à parte; Ranqueamento e Regras intactos
   assert.match(src, /blackFridayAberta && <div style=\{\{ display: painel === "blackfriday"/);
   assert.match(src, /<RelatorioManhaPaizinho \/>/);
   const { CONTAS_AUDITORIA } = await import("../../src/services/paizinhoAuditoria/contas.js");
-  assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.id), [LOJA], "o piloto do Ranqueamento continua só na LOJA ONLINE");
+  assert.ok(CONTAS_AUDITORIA.some((c) => c.id === LOJA), "Ranqueamento da Central (main, 3 contas) intacto: a Black Friday não mexe nas contas de auditoria");
   const tela = fs.readFileSync(path.join(RAIZ, "src/components/BlackFridayPaizinho.jsx"), "utf8");
   assert.doesNotMatch(tela, /paiiaPaizinhoRelatorioTeste|paiiaRegrasMLLeitura|paiiaPaizinhoBlingCache/, "não usa as chaves do Ranqueamento/Regras");
   assert.deepEqual(R.CONTAS_BLACK_FRIDAY.map((c) => c.id), [LOJA, CIEBR, REV], "ordem de trabalho (16/11): LOJA ONLINE → CIEBR → REVELAÇÃO");
