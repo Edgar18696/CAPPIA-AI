@@ -10,21 +10,24 @@
 // =============================================================
 import { supabase } from "../../supabase";
 import { consultorML } from "../consultaMLLeitura";
-import { executarAuditoria, CONTAS_AUDITORIA } from "./index.js";
+import { executarAuditoria, CONTAS_AUDITORIA, contaLiberada } from "./index.js";
+import { CONTA_PADRAO } from "./contas.js";
+import { CHAVE_TESTE_LOCAL, idDe, chaveDaConta, lerRelatorioDaConta, guardarRelatorioDaConta, conferirRelatorioDaConta } from "./relatoriosPorConta.js";
 import { roteadorConsultas, consultorComercial as leitorComercial } from "./leituraComercial.js";
 
 const consultorComercial = (conta) => leitorComercial(conta, (nome, opcoes) => supabase.functions.invoke(nome, opcoes));
 
-export const CHAVE_TESTE_LOCAL = "paiiaPaizinhoRelatorioTeste";
-export const CONTA_PILOTO = CONTAS_AUDITORIA[0];
+export const CONTA_PILOTO = CONTA_PADRAO;
+// (17/11) Uma chave por conta: o relatório de uma conta nunca aparece na outra (relatoriosPorConta.js).
+export { CONTAS_AUDITORIA, CONTA_PADRAO, CHAVE_TESTE_LOCAL, chaveDaConta, conferirRelatorioDaConta };
 
 /** Último relatório do servidor. { estado: "ok"|"vazio"|"nao_ativado"|"erro", registro } */
-export async function lerUltimoRelatorio() {
+export async function lerUltimoRelatorio(conta = CONTA_PADRAO.id) {
   try {
     const { data, error } = await supabase
       .from("paiia_paizinho_relatorios")
       .select("id, conta_ml, conta_nome, status, data_referencia, iniciado_em, concluido_em, relatorio, erro")
-      .eq("conta_ml", CONTA_PILOTO.id)
+      .eq("conta_ml", idDe(conta))
       .order("iniciado_em", { ascending: false })
       .limit(1);
     if (error) {
@@ -37,11 +40,12 @@ export async function lerUltimoRelatorio() {
   }
 }
 
-export function lerRelatorioTesteLocal() {
-  try { return JSON.parse(localStorage.getItem(CHAVE_TESTE_LOCAL) || "null"); } catch { return null; }
+/** Relatório desta conta guardado neste navegador (nunca o de outra conta). */
+export function lerRelatorioTesteLocal(conta = CONTA_PADRAO.id) {
+  return lerRelatorioDaConta(conta, globalThis.localStorage);
 }
 export function guardarRelatorioTesteLocal(rel) {
-  try { localStorage.setItem(CHAVE_TESTE_LOCAL, JSON.stringify(rel)); return true; } catch { return false; }
+  return guardarRelatorioDaConta(rel, globalThis.localStorage);
 }
 
 function impostoDoPerfil() {
@@ -66,17 +70,19 @@ export function resumirProdutoBling(p) {
   return out;
 }
 
-function lerCacheBling(agora = Date.now(), chave = CHAVE_CACHE_BLING) {
+// (17/11) Caches do Bling também separados por conta.
+function lerCacheBling(conta, agora = Date.now(), base = CHAVE_CACHE_BLING) {
   try {
-    const c = JSON.parse(localStorage.getItem(chave) || "null");
-    if (!c || c.conta !== CONTA_PILOTO.id || typeof c.itens !== "object") return {};
+    const id = idDe(conta);
+    const c = JSON.parse(localStorage.getItem(chaveDaConta(base, id)) || (id === CONTA_PADRAO.id ? localStorage.getItem(base) : null) || "null");
+    if (!c || c.conta !== id || typeof c.itens !== "object") return {};
     const validos = {};
     for (const [sku, v] of Object.entries(c.itens)) if (agora - Number(v?.lidoEm || 0) < VALIDADE_CACHE_BLING_MS) validos[sku] = v;
     return validos;
   } catch { return {}; }
 }
-function gravarCacheBling(itens, chave = CHAVE_CACHE_BLING) {
-  try { localStorage.setItem(chave, JSON.stringify({ conta: CONTA_PILOTO.id, itens })); } catch { /* sem espaço: segue sem cache */ }
+function gravarCacheBling(conta, itens, base = CHAVE_CACHE_BLING) {
+  try { localStorage.setItem(chaveDaConta(base, conta), JSON.stringify({ conta: idDe(conta), itens })); } catch { /* sem espaço: segue sem cache */ }
 }
 
 // (12/11) Preço de custo: ação SOMENTE LEITURA "custo_por_sku" da bling-integracao
@@ -97,9 +103,14 @@ export function resumirCusto(d) {
   };
 }
 
-/** Teste local com dados reais da LOJA ONLINE (somente leitura). */
-export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoProgredir } = {}) {
-  const cache = lerCacheBling();
+/**
+ * Análise com dados reais de UMA conta (somente leitura). (17/11) A conta vem do seletor
+ * da Central; tudo (ML, caches e relatório guardado) fica separado por conta.
+ */
+export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir } = {}) {
+  const escolhida = contaLiberada(conta);
+  if (!escolhida) throw new Error("Conta não liberada para a análise.");
+  const cache = lerCacheBling(escolhida.id);
   let novos = 0;
   const consultarBlingServidor = async (sku) => {
     const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "buscar_produto", codigo: sku } });
@@ -117,11 +128,11 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
     const r = await consultarBlingServidor(sku);
     if (r.ok || r.encontrado === false) {
       cache[sku] = { produto: resumirProdutoBling(r.produto), encontrado: r.encontrado !== false && !!r.produto, lidoEm: Date.now() };
-      if (++novos % 25 === 0) gravarCacheBling(cache);
+      if (++novos % 25 === 0) gravarCacheBling(escolhida.id, cache);
     }
     return r;
   };
-  const cacheCusto = lerCacheBling(Date.now(), CHAVE_CACHE_CUSTO);
+  const cacheCusto = lerCacheBling(escolhida.id, Date.now(), CHAVE_CACHE_CUSTO);
   let novosCusto = 0;
   const consultarCusto = async (sku) => {
     const guardado = cacheCusto[sku];
@@ -135,7 +146,7 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
     if (!data?.ok) return { ok: false, erro: data?.erro || "resposta inesperada", status: data?.status };
     const resposta = resumirCusto(data);
     cacheCusto[sku] = { resposta, lidoEm: Date.now() };
-    if (++novosCusto % 25 === 0) gravarCacheBling(cacheCusto, CHAVE_CACHE_CUSTO);
+    if (++novosCusto % 25 === 0) gravarCacheBling(escolhida.id, cacheCusto, CHAVE_CACHE_CUSTO);
     return resposta;
   };
   const buscarConcorrentes = concorrencia > 0 ? async (item) => {
@@ -149,10 +160,10 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
   let rel;
   try {
     rel = await executarAuditoria({
-      conta: CONTA_PILOTO.id,
+      conta: escolhida.id,
       // (12/11) Vendas, visitas e custo de envio pela função paizinho-leitura-ml;
       // o resto continua pela mercadolivre-publicacao. As duas só leem.
-      consultar: roteadorConsultas({ principal: consultorML(CONTA_PILOTO.id), comercial: consultorComercial(CONTA_PILOTO.id) }),
+      consultar: roteadorConsultas({ principal: consultorML(escolhida.id), comercial: consultorComercial(escolhida.id) }),
       consultarBling,
       consultarCusto,
       buscarConcorrentes,
@@ -161,10 +172,13 @@ export async function rodarTesteLocal({ limiteItens = 100, concorrencia = 0, aoP
       origem: "teste_local",
       aoProgredir,
     });
+  } catch (e) {
+    throw new Error(`${escolhida.nome}: ${String(e?.message || e)}`, { cause: e });
   } finally {
-    if (novos) gravarCacheBling(cache);
-    if (novosCusto) gravarCacheBling(cacheCusto, CHAVE_CACHE_CUSTO);
+    if (novos) gravarCacheBling(escolhida.id, cache);
+    if (novosCusto) gravarCacheBling(escolhida.id, cacheCusto, CHAVE_CACHE_CUSTO);
   }
+  conferirRelatorioDaConta(rel, escolhida);
   guardarRelatorioTesteLocal(rel);
   return rel;
 }

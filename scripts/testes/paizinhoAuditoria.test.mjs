@@ -22,9 +22,12 @@ async function rodar(extra = {}) {
 }
 const achadosDe = (rel, id) => rel.secoes.flatMap((s) => s.achados).filter((a) => a.item_id === id);
 
-test("piloto: só a conta LOJA ONLINE está liberada; outra conta é recusada", async () => {
-  assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.id), [CONTA]);
+test("contas: LOJA ONLINE (padrão), CIEBR e REVELAÇÃO liberadas; outra conta é recusada", async () => {
+  // (17/11) As 3 contas, escolhidas uma por vez na Central.
+  assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.id), [CONTA, "824312524", "2412238242"]);
   assert.equal(contaLiberada("1729335019")?.nome, "LOJA ONLINE");
+  assert.equal(contaLiberada("824312524")?.nome, "CIEBR");
+  assert.equal(contaLiberada("2412238242")?.nome, "REVELAÇÃO");
   await assert.rejects(() => executarAuditoria({ conta: "123", consultar: mlFalso().consultar }), /não liberada/);
   await assert.rejects(() => executarAuditoria({ conta: "", consultar: mlFalso().consultar }), /não liberada/);
 });

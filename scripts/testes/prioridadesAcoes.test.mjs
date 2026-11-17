@@ -78,7 +78,7 @@ test("Resolvido: sai das prioridades e fica no histórico; nova análise que ain
   const conta = P.contaDoAnuncio(lista[0], r);
   const res = P.registrarAcao(arm, { acao: P.ACAO.RESOLVIDO, achado: lista[0], conta, rel: r, agora: new Date("2026-11-17T12:00:00Z") });
   assert.equal(res.ok, true);
-  const h = P.lerHistorico(arm);
+  const h = P.lerHistorico(arm, "1729335019");
   assert.equal(h.length, 1);
   assert.deepEqual([h[0].acao, h[0].item_id, h[0].conta_nome, h[0].conta_id], ["resolvido", "MLB4000000001", "LOJA ONLINE", "1729335019"]);
   const { visiveis, fora } = P.separarPrioridades(lista, h, r);
@@ -98,14 +98,14 @@ test("Remover da lista: exige motivo, registra motivo e ação, continua fora na
   const semMotivo = P.registrarAcao(arm, { acao: P.ACAO.REMOVIDO, achado: a, conta, rel: r });
   assert.equal(semMotivo.ok, false);
   assert.match(semMotivo.erro, /motivo/);
-  assert.equal(P.lerHistorico(arm).length, 0, "nada gravado sem motivo");
+  assert.equal(P.lerHistorico(arm, "2412238242").length, 0, "nada gravado sem motivo");
   const ok = P.registrarAcao(arm, { acao: P.ACAO.REMOVIDO, achado: a, conta, motivo: "Não é problema (análise não se aplica)", rel: r, agora: new Date("2026-11-17T12:00:00Z") });
   assert.equal(ok.ok, true);
-  const h = P.lerHistorico(arm);
+  const h = P.lerHistorico(arm, "2412238242");
   assert.deepEqual([h[0].acao, h[0].motivo, h[0].conta_nome], ["removido", "Não é problema (análise não se aplica)", "REVELAÇÃO"]);
   assert.equal(P.separarPrioridades([a], h, rel("2412238242", "2026-11-20T06:00:00.000Z")).visiveis.length, 0);
   P.registrarAcao(arm, { acao: P.ACAO.DEVOLVIDO, achado: a, conta, rel: r, agora: new Date("2026-11-17T13:00:00Z") });
-  const h2 = P.lerHistorico(arm);
+  const h2 = P.lerHistorico(arm, "2412238242");
   assert.deepEqual(h2.map((x) => x.acao), ["removido", "devolvido"], "histórico guarda a remoção e a volta");
   assert.equal(P.separarPrioridades([a], h2, r).visiveis.length, 1);
 });
@@ -113,8 +113,8 @@ test("Remover da lista: exige motivo, registra motivo e ação, continua fora na
 test("histórico corrompido ou ausente não quebra a tela; ação desconhecida é recusada", () => {
   const arm = memoria();
   arm.setItem(P.CHAVE_HISTORICO, "{quebrado");
-  assert.deepEqual(P.lerHistorico(arm), []);
-  assert.deepEqual(P.lerHistorico(null), []);
+  assert.deepEqual(P.lerHistorico(arm, "1729335019"), []);
+  assert.deepEqual(P.lerHistorico(null, "1729335019"), []);
   assert.equal(P.registrarAcao(arm, { acao: "excluir", achado: achado("MLB4000000004") }).ok, false);
 });
 
@@ -139,4 +139,90 @@ test("nunca exclui, pausa ou modifica anúncio: tela e serviço não chamam ML, 
   const tela = fs.readFileSync(path.join(RAIZ, "src/components/RelatorioManhaPaizinho.jsx"), "utf8");
   assert.match(tela, /<PrioridadesPaizinho rel=\{rel\}/);
   assert.match(tela, /Prioridades de hoje/);
+});
+
+/* ------------------------------------------------------------ */
+/* (17/11) Seleção das 3 contas: nada misturado entre contas     */
+/* ------------------------------------------------------------ */
+const RC = await import("../../src/services/paizinhoAuditoria/relatoriosPorConta.js");
+const CIEBR = "824312524";
+const REVELACAO = "2412238242";
+
+/** ML falso de OUTRA conta: mesmos cenários, vendedor trocado; MLB6 continua da LOJA ONLINE (intruso). */
+function mlDaConta(conta, { desconectada = false } = {}) {
+  const base = mlFalso();
+  const consultar = async (caminho) => {
+    if (desconectada) return { ok: false, status: 404, erro: "Conta Mercado Livre não conectada." };
+    const r = await base.consultar(caminho.replaceAll(`/users/${conta}`, `/users/${CONTA}`).replace(`seller=${conta}`, `seller=${CONTA}`));
+    if (/^\/users\/\d+$/.test(caminho) && r.ok) return { ...r, dados: { ...r.dados, id: Number(conta), nickname: "x" } };
+    const troca = (b) => (b && b.id !== "MLB6" ? { ...b, seller_id: Number(conta) } : b);
+    if (r.ok && /^\/items\?ids=/.test(caminho)) return { ...r, dados: r.dados.map((x) => ({ ...x, body: troca(x.body) })) };
+    if (r.ok && /^\/items\/MLB\d+$/.test(caminho)) return { ...r, dados: troca(r.dados) };
+    return r;
+  };
+  return { consultar };
+}
+
+test("contas: seletor com LOJA ONLINE (padrão), CIEBR e REVELAÇÃO, nessa ordem", async () => {
+  const { CONTAS_AUDITORIA, CONTA_PADRAO } = await import("../../src/services/paizinhoAuditoria/contas.js");
+  assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.nome), ["LOJA ONLINE", "CIEBR", "REVELAÇÃO"]);
+  assert.equal(CONTA_PADRAO.nome, "LOJA ONLINE");
+  const tela = fs.readFileSync(path.join(RAIZ, "src/components/RelatorioManhaPaizinho.jsx"), "utf8");
+  assert.match(tela, /useState\(CONTA_PADRAO\.id\)/);
+  assert.ok(tela.indexOf("data-paizinho-seletor-conta") < tela.indexOf("Rodar análise agora"), "botões das contas acima de Rodar análise agora");
+  assert.match(tela, /rodarTesteLocal\(\{ conta: alvo/);
+});
+
+test("análise da CIEBR usa só anúncios da CIEBR: anúncio de outra conta é descartado, conta e vendedor = CIEBR", async () => {
+  const rel = await executarAuditoria({ conta: CIEBR, consultar: mlDaConta(CIEBR).consultar, consultarBling: blingFalso, agora: AGORA });
+  assert.deepEqual([rel.conta.id, rel.conta.nome], [CIEBR, "CIEBR"]);
+  assert.ok(rel.resumo.descartados_outra_conta >= 1, "MLB6 (LOJA ONLINE) descartado");
+  assert.ok(!rel.anuncios.some((a) => a.item_id === "MLB6"));
+  assert.ok(rel.prioridades.length > 0);
+  for (const a of rel.prioridades) {
+    assert.equal(a.vendedor_id, CIEBR);
+    assert.equal(P.contaDoAnuncio(a, rel).nome, "CIEBR");
+  }
+  assert.equal(RC.conferirRelatorioDaConta(rel, CIEBR), true);
+  assert.throws(() => RC.conferirRelatorioDaConta(rel, CONTA), /outra conta/);
+});
+
+test("conta desconectada: análise para com o motivo e nenhum relatório de outra conta é usado", async () => {
+  await assert.rejects(() => executarAuditoria({ conta: REVELACAO, consultar: mlDaConta(REVELACAO, { desconectada: true }).consultar, agora: AGORA }), /não conectada/);
+  // perfil recusado mas anúncios sem leitura: o relatório vazio é barrado com o motivo
+  const vazio = { conta: { id: REVELACAO }, resumo: { anuncios_analisados: 0 }, falhas: [{ etapa: "anúncios", exemplo: "Token vencido" }] };
+  assert.throws(() => RC.conferirRelatorioDaConta(vazio, REVELACAO), /REVELAÇÃO: não foi possível ler os anúncios.*Token vencido.*Nenhum dado de outra conta/);
+});
+
+test("relatório guardado por conta: cada conta lê só o seu; a chave antiga vale só para a LOJA ONLINE", () => {
+  const arm = memoria();
+  const relDe = (id) => ({ conta: { id }, gerado_em: `x-${id}` });
+  assert.equal(RC.guardarRelatorioDaConta(relDe(CIEBR), arm), true);
+  assert.equal(RC.lerRelatorioDaConta(CIEBR, arm).gerado_em, `x-${CIEBR}`);
+  assert.equal(RC.lerRelatorioDaConta(REVELACAO, arm), null, "REVELAÇÃO sem análise: nada (nunca o da CIEBR)");
+  assert.equal(RC.lerRelatorioDaConta(CONTA, arm), null);
+  arm.setItem(RC.CHAVE_TESTE_LOCAL, JSON.stringify(relDe(CONTA)));
+  assert.equal(RC.lerRelatorioDaConta(CONTA, arm).gerado_em, `x-${CONTA}`, "relatório antigo da LOJA ONLINE continua");
+  assert.equal(RC.lerRelatorioDaConta(REVELACAO, arm), null);
+  // chave de uma conta com relatório de outra (adulterada) → ignorado
+  arm.setItem(RC.chaveDaConta(RC.CHAVE_TESTE_LOCAL, REVELACAO), JSON.stringify(relDe(CIEBR)));
+  assert.equal(RC.lerRelatorioDaConta(REVELACAO, arm), null);
+  assert.equal(RC.guardarRelatorioDaConta(relDe("999"), arm), false, "conta fora das 3 não é guardada");
+});
+
+test("histórico separado por conta: ação na CIEBR não aparece na LOJA ONLINE nem na REVELAÇÃO", () => {
+  const arm = memoria();
+  const relC = rel(CIEBR);
+  const a = achado("MLB4000000010", "margem", { vendedor_id: CIEBR });
+  P.registrarAcao(arm, { acao: P.ACAO.REMOVIDO, achado: a, conta: P.contaDoAnuncio(a, relC), motivo: "Outro", rel: relC });
+  assert.equal(P.lerHistorico(arm, CIEBR).length, 1);
+  assert.equal(P.lerHistorico(arm, CONTA).length, 0);
+  assert.equal(P.lerHistorico(arm, REVELACAO).length, 0);
+  assert.ok(arm.getItem(P.chaveHistorico(CIEBR)));
+  // histórico antigo (sem conta) era da LOJA ONLINE e continua só nela
+  arm.setItem(P.CHAVE_HISTORICO, JSON.stringify([{ chave: "MLB1|x", acao: "resolvido", em: "2026-11-17T10:00:00Z" }]));
+  assert.equal(P.lerHistorico(arm, CONTA).length, 1);
+  assert.equal(P.lerHistorico(arm, REVELACAO).length, 0);
+  // relatório sem conta conhecida: não registra
+  assert.equal(P.registrarAcao(arm, { acao: P.ACAO.RESOLVIDO, achado: a, rel: { conta: { id: "999" } } }).ok, false);
 });

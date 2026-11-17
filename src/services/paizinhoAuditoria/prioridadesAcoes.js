@@ -74,6 +74,9 @@ export function linkCentralAnuncios(mlb, conta) {
 /* ------------------------------------------------------------ */
 
 export const CHAVE_HISTORICO = "paiia_paizinho_prioridades_historico_v1";
+/** (17/11) Um histórico por conta. A chave antiga (sem conta) era só da LOJA ONLINE. */
+export const chaveHistorico = (conta) => `${CHAVE_HISTORICO}:${idConta(conta?.id ?? conta)}`;
+const CONTA_DA_CHAVE_ANTIGA = "1729335019";
 export const ACAO = Object.freeze({ RESOLVIDO: "resolvido", REMOVIDO: "removido", DEVOLVIDO: "devolvido" });
 export const ROTULO_ACAO = Object.freeze({ resolvido: "✅ Resolvido", removido: "🗑️ Removido da lista", devolvido: "↩️ Voltou para a lista" });
 export const MOTIVOS_REMOCAO = Object.freeze([
@@ -86,13 +89,20 @@ export const MOTIVOS_REMOCAO = Object.freeze([
 /** Chave do item na lista: o mesmo MLB pode ter achados de assuntos diferentes. */
 export const chaveAchado = (a) => `${mlbValido(a?.item_id) || txt(a?.item_id)}|${txt(a?.area)}`;
 
-export function lerHistorico(armazenamento) {
-  try {
-    const h = JSON.parse(armazenamento?.getItem(CHAVE_HISTORICO) || "[]");
-    return Array.isArray(h) ? h.filter((x) => x && x.chave && x.acao) : [];
-  } catch {
-    return [];
-  }
+export function lerHistorico(armazenamento, conta) {
+  const id = idConta(conta?.id ?? conta);
+  if (!contaPorId(id)) return [];
+  const ler = (chave) => {
+    try {
+      const h = JSON.parse(armazenamento?.getItem(chave) || "null");
+      return Array.isArray(h) ? h.filter((x) => x && x.chave && x.acao) : null;
+    } catch {
+      return null;
+    }
+  };
+  const proprio = ler(chaveHistorico(id));
+  if (proprio) return proprio;
+  return id === CONTA_DA_CHAVE_ANTIGA ? ler(CHAVE_HISTORICO) || [] : [];
 }
 
 /**
@@ -104,7 +114,10 @@ export function registrarAcao(armazenamento, { acao, achado, conta, motivo = "",
   if (!achado?.item_id) return { ok: false, erro: "Anúncio sem MLB." };
   const m = txt(motivo);
   if (acao === ACAO.REMOVIDO && !m) return { ok: false, erro: "Informe o motivo para remover da lista." };
-  const historico = lerHistorico(armazenamento);
+  // O histórico é o da conta DO RELATÓRIO (nunca mistura contas).
+  const contaRel = contaPorId(rel?.conta?.id);
+  if (!contaRel) return { ok: false, erro: "Relatório sem conta identificada: ação não registrada." };
+  const historico = lerHistorico(armazenamento, contaRel.id);
   const reg = {
     id: `${agora.getTime()}-${historico.length + 1}`,
     em: agora.toISOString(),
@@ -119,10 +132,11 @@ export function registrarAcao(armazenamento, { acao, achado, conta, motivo = "",
     conta_nome: conta?.nome || CONTA_NAO_IDENTIFICADA,
     motivo: m,
     relatorio_de: txt(rel?.gerado_em),
+    relatorio_conta: contaRel.id,
   };
   const novo = [...historico, reg];
   try {
-    armazenamento.setItem(CHAVE_HISTORICO, JSON.stringify(novo));
+    armazenamento.setItem(chaveHistorico(contaRel.id), JSON.stringify(novo));
   } catch {
     return { ok: false, erro: "Não foi possível gravar o histórico neste navegador." };
   }

@@ -34,7 +34,7 @@ export function ehLeituraComercial(caminho) {
 export function conferirLeituraComercial(caminho, conta) {
   const c = txt(caminho);
   const id = txt(conta).replace(/\D/g, "");
-  if (!CONTAS_AUDITORIA.some((x) => x.id === id)) return { ok: false, erro: "Conta não liberada para a leitura comercial (piloto: LOJA ONLINE)." };
+  if (!CONTAS_AUDITORIA.some((x) => x.id === id)) return { ok: false, erro: "Conta não liberada para a leitura comercial." };
   if (/[\s\\]|\.\.|\/\//.test(c)) return { ok: false, erro: "Endereço inválido." };
   const p = PADROES.find((x) => x.re.test(c));
   if (!p) return { ok: false, erro: "Leitura não permitida (só visitas, vendas e custo de envio)." };

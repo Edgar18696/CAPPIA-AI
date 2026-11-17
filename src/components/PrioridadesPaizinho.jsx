@@ -20,7 +20,8 @@ const hora = (iso) => { try { return new Date(iso).toLocaleString("pt-BR", { dat
 const armazenamento = () => (typeof window !== "undefined" ? window.localStorage : null);
 
 export default function PrioridadesPaizinho({ rel, textoPotencial }) {
-  const [historico, setHistorico] = useState(() => lerHistorico(armazenamento()));
+  // (17/11) Histórico da conta deste relatório (a tela remonta ao trocar de conta).
+  const [historico, setHistorico] = useState(() => lerHistorico(armazenamento(), rel?.conta?.id));
   const [removendo, setRemovendo] = useState(null); // chave do item com a confirmação aberta
   const [erro, setErro] = useState("");
   const lista = rel?.prioridades || [];
@@ -137,7 +138,7 @@ function Historico({ historico, fora, aoDevolver }) {
   return (
     <details style={S.detalhe} data-paiia-historico-prioridades>
       <summary style={S.resumo}>🗂️ Histórico das prioridades ({historico.length}) · fora da lista agora: {fora.length}</summary>
-      <p style={S.ajudaPeq}>Guardado neste navegador. Só registra o que foi feito na lista do PAIIA; nenhum anúncio foi alterado no Mercado Livre.</p>
+      <p style={S.ajudaPeq}>Guardado neste navegador, separado por conta. Só registra o que foi feito na lista do PAIIA; nenhum anúncio foi alterado no Mercado Livre.</p>
       <div style={S.achados}>
         {recentes.map((h) => {
           const achadoFora = foraPorChave.get(h.chave);
