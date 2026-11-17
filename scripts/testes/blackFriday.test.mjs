@@ -811,7 +811,9 @@ test("margem negativa ou não verificável nunca é aprovável; lote só PRONTO 
   assert.equal(PL.margemComProblema({ custo_motivo: null, margem_pct: -3, lucro: -2 }), true);
   assert.equal(PL.margemComProblema({ custo_motivo: null, margem_pct: 18, lucro: 20 }), false);
   const tela = fs.readFileSync(path.join(RAIZ, "src/components/BlackFridayPaizinho.jsx"), "utf8");
-  assert.match(tela, /const aptas = lista\.filter\(\(l\) => aprovavel\(l\)\)/, "aprovação só PRONTO com margem verificada");
+  // (17/11) Mais restrita: além de PRONTO com margem verificada, o anúncio precisa estar SELECIONADO e sem revisão.
+  assert.match(tela, /const aptas = lista\.filter\(\(l\) => aprovavelNaCampanha\(l\)\)/, "aprovação só PRONTO com margem verificada");
+  assert.match(tela, /return !!r && !r\.revisao && aprovavel\(l\)/, "aprovavel(l) continua obrigatório");
   assert.doesNotMatch(tela, /Aprovar \(conferido\)|confirmarAtencao/, "sem exceção manual para CONFERIR");
   assert.match(tela, /ofertasConfirmadasNoML/, "ativa só com confirmação lida no ML");
   assert.doesNotMatch(tela, /testarPromocoesConta|diagnosticarContas|lerDonoPeloAplicativo/, "não repete chamadas que já deram 403");

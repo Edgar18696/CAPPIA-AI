@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { lerUltimoRelatorio, lerRelatorioTesteLocal, rodarTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO } from "../services/paizinhoAuditoria/relatorioService";
 import PrioridadesPaizinho from "./PrioridadesPaizinho";
+import EnviarParaPromocoes from "./EnviarParaPromocoes";
 
 const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
@@ -202,7 +203,7 @@ function Relatorio({ rel }) {
 
       {rel.oportunidades.length > 0 && <>
         <h3 style={S.h3}>💡 Oportunidades comerciais</h3>
-        <ListaAchados lista={rel.oportunidades} />
+        <ListaAchados lista={rel.oportunidades} conta={rel.conta} />
       </>}
 
       <FretesMedidas rel={rel} celular={celular} />
@@ -211,7 +212,7 @@ function Relatorio({ rel }) {
         <h3 style={S.h3}>🔧 Peças Renault ({rel.renault.length})</h3>
         {celular ? <div style={S.achados}>{rel.renault.map((l) => (
           <article key={l.item_id} style={{ ...S.achado, borderLeftColor: l.recomendacao === "manter" ? "#22c55e" : COR.media }}>
-            <div style={S.linhaAchado}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a>{l.sku && <span style={S.ajuda}>SKU {l.sku}</span>}<strong>{l.recomendacao}</strong></div>
+            <div style={S.linhaAchado}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.item_id}</a>{l.sku && <span style={S.ajuda}>SKU {l.sku}</span>}<strong>{l.recomendacao}</strong><EnviarParaPromocoes conta={l.vendedor_id || rel.conta} anuncio={l} /></div>
             <div style={S.tituloAchado}>{l.titulo}</div>
             <div style={S.ajuda}>Preço {reais(l.preco)} · Custo: {l.custo ? reais(l.custo) : "sem custo"} · Tabela Renault: {l.tabela_renault ? reais(l.tabela_renault) : "—"} · Concorrência: {l.concorrencia ? `${reais(l.concorrencia.minimo)} a ${reais(l.concorrencia.maximo)}` : "—"}</div>
           </article>
@@ -226,7 +227,7 @@ function Relatorio({ rel }) {
                 <td style={S.td}>{l.custo ? reais(l.custo) : "sem custo"}</td>
                 <td style={S.td}>{l.tabela_renault ? reais(l.tabela_renault) : "—"}</td>
                 <td style={S.td}>{l.concorrencia ? `${reais(l.concorrencia.minimo)} a ${reais(l.concorrencia.maximo)}` : "—"}</td>
-                <td style={S.td}><strong>{l.recomendacao}</strong></td>
+                <td style={S.td}><strong>{l.recomendacao}</strong><br /><EnviarParaPromocoes conta={l.vendedor_id || rel.conta} anuncio={l} /></td>
               </tr>
             ))}</tbody>
           </table>
@@ -237,7 +238,7 @@ function Relatorio({ rel }) {
       {secoesExtras.map((s) => (
         <details key={s.chave} style={S.detalhe}>
           <summary style={S.resumo}>{s.titulo} ({s.achados.length})</summary>
-          <ListaAchados lista={s.achados} />
+          <ListaAchados lista={s.achados} conta={rel.conta} />
         </details>
       ))}
 
@@ -337,7 +338,7 @@ function FretesMedidas({ rel }) {
   );
 }
 
-function ListaAchados({ lista }) {
+function ListaAchados({ lista, conta }) {
   return (
     <div style={S.achados}>
       {lista.map((a, i) => (
@@ -348,6 +349,7 @@ function ListaAchados({ lista }) {
             {a.sku && <span style={S.ajuda}>SKU {a.sku}</span>}
             {a.impacto_rs !== null && a.impacto_rs !== undefined && <span style={{ color: a.impacto_rs < 0 ? COR.alta : "#86efac", fontWeight: 800 }}>{reais(a.impacto_rs)} / 30 dias</span>}
             {a.impacto_potencial_por_envio > 0 && <span style={S.potencial}>{textoPotencial(a)}</span>}
+            <EnviarParaPromocoes conta={a.vendedor_id || conta} anuncio={a} />
           </div>
           <div style={S.tituloAchado}>{a.titulo}</div>
           <div>{a.problema}</div>

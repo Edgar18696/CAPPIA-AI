@@ -304,6 +304,7 @@ export function simularAnuncio(a, op = {}) {
     id, sku, titulo: txt(item.title), link: txt(item.permalink),
     condicao: txt(item.condition) || null, tipo_anuncio: txt(item.listing_type_id) || null,
     estoque: num(item.available_quantity),
+    vendidos: item.sold_quantity === null || item.sold_quantity === undefined ? null : num(item.sold_quantity),
     classe: cls.classe, evidencias: cls.evidencias, duvida: cls.duvida, decisao,
     desconto_pct: desconto,
     preco_original: precoOriginal,

@@ -27,7 +27,7 @@ export function resumirItem(d) {
   return {
     id: d.id, seller_id: d.seller_id, title: d.title, price: d.price, original_price: d.original_price ?? null,
     status: d.status, condition: d.condition ?? null, listing_type_id: d.listing_type_id, category_id: d.category_id,
-    available_quantity: d.available_quantity, permalink: d.permalink, seller_custom_field: d.seller_custom_field ?? null,
+    available_quantity: d.available_quantity, sold_quantity: d.sold_quantity ?? null, permalink: d.permalink, seller_custom_field: d.seller_custom_field ?? null,
     shipping: { free_shipping: d.shipping?.free_shipping === true, logistic_type: d.shipping?.logistic_type || "" },
     attributes: (d.attributes || []).filter((a) => ATRIBUTOS_GUARDADOS.includes(a?.id)).map((a) => ({ id: a.id, value_name: a.value_name ?? a.values?.[0]?.name ?? "" })),
   };

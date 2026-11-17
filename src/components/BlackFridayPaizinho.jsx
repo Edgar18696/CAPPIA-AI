@@ -21,6 +21,8 @@ import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro"
 import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, LISTAS, aprovavel } from "../services/blackFriday/planilha";
 import { renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 import { montarCopiaPrecos, validarCopia, precosDaCopia, lerCopiaGuardada, guardarCopia } from "../services/blackFriday/precosOriginais";
+import { criarSelecao, adaptadorLocal, sugerirAnuncios, chaveItemSelecao, EVENTO_SELECAO } from "../services/promocoes/selecao";
+import { METAS_SELECAO } from "../services/promocoes/campanhas";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela ml_consulta.
@@ -60,10 +62,11 @@ export default function BlackFridayPaizinho() {
   const [simulado, setSimulado] = useState(false);
   const [versao, setVersao] = useState(0); // força reler plano/histórico
   const [aviso, setAviso] = useState("");
-  const [filtro, setFiltro] = useState({ lista: "", classe: "", busca: "" });
+  const [filtro, setFiltro] = useState({ lista: "", classe: "", busca: "", sel: "" });
   const [marcados, setMarcados] = useState(() => new Set());
   const [mostrar, setMostrar] = useState(POR_PAGINA);
   const [ocupado, setOcupado] = useState(false);
+  const [metaOutra, setMetaOutra] = useState(null); // meta personalizada em edição
   const cancelar = useRef(false);
   // (17/11) Cada conta tem a sua leitura guardada: ao entrar e ao trocar de conta, carrega a dela.
   const contaRef = useRef(CONTAS_BLACK_FRIDAY[0].id);
@@ -86,6 +89,15 @@ export default function BlackFridayPaizinho() {
   const registro = useMemo(() => (usuarioId ? criarRegistroBF({ storage: localStorage, usuarioId }) : null), [usuarioId]);
   const plano = useMemo(() => registro?.lerPlano() || null, [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const historico = useMemo(() => registro?.historico() || [], [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (17/11) Central de Promoções: seleção dos anúncios da campanha (usuário + campanha + conta + MLB).
+  // LIMITAÇÃO: hoje fica só neste navegador; a tabela no Supabase depende de autorização.
+  const selecao = useMemo(() => (usuarioId ? criarSelecao({ adaptador: adaptadorLocal(localStorage), usuarioId, campanhaId: CAMPANHA_BF.id }) : null), [usuarioId]);
+  // O Ranqueamento ("Enviar para Promoções") avisa quando inclui: a lista aqui acompanha.
+  useEffect(() => {
+    const atualizar = () => setVersao((v) => v + 1);
+    window.addEventListener(EVENTO_SELECAO, atualizar);
+    return () => window.removeEventListener(EVENTO_SELECAO, atualizar);
+  }, []);
   const perfil = useMemo(() => lerPerfil(), [versao]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // (16/11) Uma conta por vez: tudo abaixo é só da conta escolhida (nunca mistura).
@@ -99,13 +111,35 @@ export default function BlackFridayPaizinho() {
 
   const linhas = useMemo(() => (simulado && leitura ? montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil }).filter((l) => l.conta === contaAtual) : []), [simulado, leitura, plano, perfil, contaAtual]);
   const listaDe = useMemo(() => new Map(linhas.map((l) => [l.chave, classificarParaPlanilha(l)])), [linhas]);
-  const visiveis = useMemo(() => filtrarLinhas(linhas, { busca: filtro.busca, classe: filtro.classe }).filter((l) => !filtro.lista || listaDe.get(l.chave)?.lista === filtro.lista), [linhas, filtro, listaDe]);
+  const visiveisBase = useMemo(() => filtrarLinhas(linhas, { busca: filtro.busca, classe: filtro.classe }).filter((l) => !filtro.lista || listaDe.get(l.chave)?.lista === filtro.lista), [linhas, filtro, listaDe]);
   const resumo = useMemo(() => resumirSimulacao(linhas), [linhas]);
   const resumoListas = useMemo(() => resumirPlanilha(montarPlanilha(linhas, contaAtual)), [linhas, contaAtual]);
   const aprovados = useMemo(() => plano?.aprovados || {}, [plano]);
   const aprovadosConta = Object.values(aprovados).filter((a) => a.conta === contaAtual);
   const campanhaConta = useMemo(() => registro?.campanhasPorConta()?.[contaAtual] || null, [registro, versao, contaAtual]); // eslint-disable-line react-hooks/exhaustive-deps
   const momento = momentoDaCampanha();
+  const selConta = useMemo(() => (selecao ? selecao.mapa(contaAtual) : new Map()), [selecao, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  const metaConta = useMemo(() => selecao?.meta(contaAtual) ?? null, [selecao, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  const regSel = (l) => selConta.get(chaveItemSelecao(l.conta, l.id)) || null;
+  // Aprovação: só anúncio SELECIONADO, sem "Revisão necessária" e PRONTO (regra de sempre).
+  const aprovavelNaCampanha = (l) => { const r = regSel(l); return !!r && !r.revisao && aprovavel(l); };
+  const visiveis = useMemo(() => visiveisBase.filter((l) => {
+    const r = selConta.get(chaveItemSelecao(l.conta, l.id));
+    return !filtro.sel || (filtro.sel === "sim" && !!r) || (filtro.sel === "nao" && !r) || (filtro.sel === "revisao" && !!r?.revisao);
+  }), [visiveisBase, filtro.sel, selConta]);
+  const linhasSel = useMemo(() => linhas.filter((l) => selConta.has(chaveItemSelecao(l.conta, l.id))), [linhas, selConta]);
+  const resumoSel = useMemo(() => {
+    const r = { total: selConta.size, lidos: linhasSel.length, revisao: 0, renault: 0, demais: 0, duvida: 0, prejuizo: 0, sem_margem: 0, margem_baixa: 0, soma_original: 0, soma_promocional: 0 };
+    for (const x of selConta.values()) if (x.revisao) r.revisao++;
+    for (const l of linhasSel) {
+      if (l.classe === CLASSES.RENAULT) r.renault++; else if (l.classe === CLASSES.DEMAIS) r.demais++; else r.duvida++;
+      if (l.lucro !== null && l.lucro < 0) r.prejuizo++;
+      else if (l.margem_pct === null) r.sem_margem++;
+      else if (l.alertas?.some((a) => /Margem de/.test(a))) r.margem_baixa++;
+      r.soma_original += Number(l.preco_original) || 0; r.soma_promocional += Number(l.preco_final) || 0;
+    }
+    return r;
+  }, [selConta, linhasSel]);
 
   // (16/11) Caminho automático: só quando a API do ML autorizar. A própria leitura já mostra
   // (uma tentativa por consulta; 403 não é repetido).
@@ -165,7 +199,12 @@ export default function BlackFridayPaizinho() {
     registro.registrar("simulacao", { conta: nomeConta, anuncios: r.total, renault: r.renault, demais: r.demais, revisao: r.revisao, prejuizo: r.prejuizo, sem_margem: r.sem_margem });
     // Aprovação cujo preço ou situação mudou desde então sai do plano (nunca usa preço antigo).
     const { desatualizadas } = registro.conferirAprovacoes(l);
-    setAviso(desatualizadas.length ? `${desatualizadas.length} aprovação(ões) ficaram desatualizadas (preço ou pendência mudou) e saíram do plano.` : "");
+    // (17/11) Preço mudou desde a seleção: o anúncio continua selecionado, com "Revisão necessária".
+    const rev = selecao ? selecao.revisar(l) : { novas: [] };
+    setAviso([
+      desatualizadas.length ? `${desatualizadas.length} aprovação(ões) ficaram desatualizadas (preço ou pendência mudou) e saíram do plano.` : "",
+      rev.novas.length ? `${rev.novas.length} anúncio(s) selecionado(s) mudaram de preço: continuam na seleção com "Revisão necessária" e só podem ser aprovados depois de conferidos.` : "",
+    ].filter(Boolean).join(" "));
   }
 
   // (16/11) Renovar o acesso da conta pelo mecanismo oficial (refresh guardado; não é reconexão).
@@ -225,18 +264,20 @@ export default function BlackFridayPaizinho() {
   }
 
   // (16/11) Planilha para cadastro MANUAL na Central de Promoções do ML (só gera arquivo).
-  function baixarPlanilha() {
-    const planilha = montarPlanilha(linhas, contaAtual);
-    if (!planilha.length) { setAviso(`Consulte e simule a ${nomeConta} antes de gerar a planilha.`); return; }
+  // (17/11) Padrão: SÓ os anúncios selecionados para a campanha. "completa" = conferência de todos.
+  function baixarPlanilha(completa = false) {
+    if (!linhas.length) { setAviso(`Consulte e simule a ${nomeConta} antes de gerar a planilha.`); return; }
+    if (!completa && !linhasSel.length) { setAviso(`Selecione os anúncios da ${nomeConta} para a campanha antes de gerar a planilha de cadastro.`); return; }
+    const planilha = montarPlanilha(completa ? linhas : linhasSel, contaAtual);
     const r = resumirPlanilha(planilha);
     try {
       const url = URL.createObjectURL(new Blob([planilhaCSV(planilha)], { type: "text/csv;charset=utf-8" }));
       const a = document.createElement("a");
-      a.href = url; a.download = `black-friday-2026-${nomeConta.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-")}.csv`;
+      a.href = url; a.download = `black-friday-2026-${completa ? "conferencia-completa-" : "selecionados-"}${nomeConta.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-")}.csv`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e) { setAviso(`Não foi possível gerar o arquivo: ${e?.message || e}`); }
-    setPlanilhaInfo({ conta: nomeConta, resumo: r });
+    setPlanilhaInfo({ conta: nomeConta, resumo: r, completa });
     registro?.registrar("planilha", { conta: nomeConta, total: r.total, pronto: r.pronto, conferir: r.conferir, bloqueado: r.bloqueado });
   }
 
@@ -260,8 +301,8 @@ export default function BlackFridayPaizinho() {
 
   // (16/11) Aprovação SÓ de anúncios PRONTO, com margem verificada e não negativa. Sem exceção.
   function aprovar(lista, modo) {
-    const aptas = lista.filter((l) => aprovavel(l));
-    if (!aptas.length) { setAviso("Só anúncios PRONTO (sem pendência, com margem verificada e não negativa) podem ser aprovados."); return; }
+    const aptas = lista.filter((l) => aprovavelNaCampanha(l));
+    if (!aptas.length) { setAviso("Só anúncios SELECIONADOS para a campanha, sem \"Revisão necessária\" e PRONTO (sem pendência, com margem verificada e não negativa) podem ser aprovados."); return; }
     if (!window.confirm(`Registrar a APROVAÇÃO de ${aptas.length} anúncio(s) PRONTO da ${nomeConta}?\n\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nSó registra o plano. NENHUMA oferta é ativada e nenhum preço é alterado.`)) return;
     const r = registro.aprovar(aptas, { modo });
     setAviso(`Aprovação registrada: ${r.aprovados.length} novo(s), ${r.ja_aprovados.length} já aprovado(s), ${r.recusados.length} não aprovado(s).`);
@@ -271,6 +312,54 @@ export default function BlackFridayPaizinho() {
   function desaprovar(chaves) {
     if (!chaves.length || !window.confirm(`Retirar a aprovação de ${chaves.length} anúncio(s)?`)) return;
     registro.desaprovar(chaves); setVersao((v) => v + 1);
+  }
+
+  // (17/11) Seleção da campanha (escolher não aprova nem altera nada).
+  function selecionar(lista) {
+    if (!selecao) return;
+    const r = selecao.incluir(lista.map((l) => ({ conta: l.conta, id: l.id, sku: l.sku, titulo: l.titulo, preco_original: l.preco_original })), { origem: "central" });
+    if (r.incluidos.length) registro?.registrar("selecao_incluida", { conta: nomeConta, quantidade: r.incluidos.length });
+    setAviso([r.incluidos.length ? `${r.incluidos.length} anúncio(s) selecionado(s).` : "", r.ja_estavam.length ? `${r.ja_estavam.length} já estava(m) na seleção (sem duplicar).` : "", r.recusados.length ? `${r.recusados.length} não entrou(aram): ${[...new Set(r.recusados.map((x) => x.motivo))].join(" ")}` : ""].filter(Boolean).join(" "));
+    setMarcados(new Set()); setVersao((v) => v + 1);
+  }
+  function retirarDaSelecao(lista) {
+    if (!selecao || !lista.length) return;
+    const aprovadosJuntos = lista.filter((l) => aprovados[l.chave]);
+    if (aprovadosJuntos.length && !window.confirm(`${aprovadosJuntos.length} anúncio(s) também estão aprovados. Retirar da seleção também retira a aprovação. Continuar?`)) return;
+    const n = selecao.remover(lista.map((l) => chaveItemSelecao(l.conta, l.id)));
+    if (aprovadosJuntos.length) registro.desaprovar(aprovadosJuntos.map((l) => l.chave));
+    registro?.registrar("selecao_retirada", { conta: nomeConta, quantidade: n });
+    setMarcados(new Set()); setVersao((v) => v + 1);
+  }
+  function sugerir() {
+    if (!selecao) return;
+    if (metaConta === null) { setAviso("Escolha a meta da conta (50, 100, 200 ou outra) antes de pedir a sugestão."); return; }
+    const vagas = metaConta - selConta.size;
+    if (vagas <= 0) { setAviso(`A meta de ${metaConta} da ${nomeConta} já está completa.`); return; }
+    const s = sugerirAnuncios(linhas, { vagas, selecionado: (l) => selConta.has(chaveItemSelecao(l.conta, l.id)), apto: (l) => aprovavel(l) });
+    if (!s.length) { setAviso("Nenhum anúncio PRONTO e com estoque disponível para sugerir."); return; }
+    selecionar(s);
+  }
+  function mudarMeta(v) {
+    if (!selecao) return;
+    if (v === "outra") { setMetaOutra(metaConta ?? ""); return; }
+    const r = selecao.definirMeta(contaAtual, v === "" ? null : v);
+    if (!r.ok) setAviso(r.motivo); else { setMetaOutra(null); setVersao((x) => x + 1); }
+  }
+  function limparSelecao() {
+    if (!selConta.size || !window.confirm(`Retirar TODOS os ${selConta.size} anúncio(s) selecionados da ${nomeConta}? As aprovações desta conta também saem.`)) return;
+    const chavesAprov = Object.entries(aprovados).filter(([, a]) => a.conta === contaAtual).map(([k]) => k);
+    selecao.limpar(contaAtual);
+    if (chavesAprov.length) registro.desaprovar(chavesAprov);
+    registro?.registrar("selecao_limpa", { conta: nomeConta });
+    setMarcados(new Set()); setVersao((v) => v + 1);
+  }
+  function conferiRevisao(l) {
+    if (!selecao) return;
+    if (!window.confirm(`Confirmar o anúncio ${l.id} com o preço atual (${real(l.preco_original)})? A revisão sai e ele pode ser aprovado de novo.`)) return;
+    selecao.confirmarRevisao(chaveItemSelecao(l.conta, l.id));
+    registro?.registrar("selecao_revisada", { conta: nomeConta, item: l.id });
+    setVersao((v) => v + 1);
   }
 
   const marcar = (k) => setMarcados((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -283,7 +372,13 @@ export default function BlackFridayPaizinho() {
   return (
     <section id="black-friday-paizinho" style={S.caixa} data-paiia-black-friday>
       <h2 style={S.titulo}>🛍️ Black Friday 2026</h2>
-      <p style={S.sub}>Uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO. Consultar → Simular → Conferir → Aprovar → Ativar.</p>
+      <div style={S.acoes}>
+        <span style={S.base}>Central de Promoções · campanha:</span>
+        <select value={CAMPANHA_BF.id} onChange={() => {}} style={{ ...S.busca, flex: "0 1 240px" }} aria-label="Campanha">
+          <option value={CAMPANHA_BF.id}>{CAMPANHA_BF.nome} (primeira campanha)</option>
+        </select>
+      </div>
+      <p style={S.sub}>Uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO. Consultar → Simular → Selecionar → Conferir → Aprovar → Ativar.</p>
       <div style={S.trava}>🔒 <strong>Simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio, estoque ou Bling é alterado. Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · nunca cumulativos · calculados sobre o preço original confirmado.</div>
 
       <div style={S.calendario}>
@@ -372,6 +467,42 @@ export default function BlackFridayPaizinho() {
         <Kpi rotulo="Margem não verificável" valor={resumo.sem_margem} cor="#fb923c" />
       </div>}
 
+      {/* (17/11) Seleção dos anúncios da campanha — escolher NÃO aprova nem ativa. */}
+      <h3 style={S.h3}>Anúncios da campanha — {nomeConta}</h3>
+      <div style={S.nota}>
+        Escolha quais anúncios participam: 50, 100, 200 ou outra quantidade, pela sugestão ou um por um na tabela (filtre por SKU, MLB ou título).
+        O desconto (10% Renault comprovada · 5% demais) vale só para os selecionados; os outros anúncios não entram na planilha e não são alterados.
+        <br /><small>⚠️ Por enquanto a seleção fica guardada <strong>só neste navegador</strong> (por usuário, campanha e conta). A gravação no Supabase, compartilhada entre aparelhos, depende da sua autorização.</small>
+      </div>
+      <div style={S.acoes}>
+        <label style={S.base}>Meta da {nomeConta}:{" "}
+          <select value={metaOutra !== null ? "outra" : metaConta === null ? "" : METAS_SELECAO.includes(metaConta) ? String(metaConta) : "outra"} onChange={(e) => mudarMeta(e.target.value)} style={{ ...S.busca, flex: "0 1 160px" }} aria-label="Meta de anúncios" data-paiia-bf="meta">
+            <option value="">sem meta</option>
+            {METAS_SELECAO.map((n) => <option key={n} value={n}>{n} anúncios</option>)}
+            <option value="outra">{metaConta !== null && !METAS_SELECAO.includes(metaConta) ? `${metaConta} anúncios (outra)` : "outra quantidade"}</option>
+          </select>
+        </label>
+        {metaOutra !== null && <>
+          <input value={metaOutra} onChange={(e) => setMetaOutra(e.target.value.replace(/\D/g, ""))} placeholder="Quantidade" style={{ ...S.busca, flex: "0 1 110px" }} aria-label="Meta personalizada" />
+          <button type="button" style={S.mini} onClick={() => mudarMeta(metaOutra)}>Gravar meta</button>
+          <button type="button" style={S.mini} onClick={() => setMetaOutra(null)}>Cancelar</button>
+        </>}
+        <button type="button" style={S.botao} disabled={!simulado || !linhas.length} onClick={sugerir} title="Entre os PRONTO com estoque: maior quantidade vendida lida no ML e, no empate, maior estoque" data-paiia-bf="sugerir">✨ Sugerir até a meta</button>
+        <button type="button" style={S.filtro} disabled={!selConta.size} onClick={limparSelecao}>Limpar seleção</button>
+      </div>
+      <div style={S.kpis}>
+        <Kpi rotulo="Selecionados" valor={metaConta !== null ? `${resumoSel.total} de ${metaConta}` : resumoSel.total} cor="#67e8f9" />
+        <Kpi rotulo="Renault (10%)" valor={simulado ? resumoSel.renault : "—"} cor={COR_CLASSE.renault} />
+        <Kpi rotulo="Demais (5%)" valor={simulado ? resumoSel.demais : "—"} cor={COR_CLASSE.demais} />
+        <Kpi rotulo="Revisão necessária" valor={resumoSel.revisao} cor="#fb923c" />
+        <Kpi rotulo="Prejuízo" valor={simulado ? resumoSel.prejuizo : "—"} cor="#f87171" />
+        <Kpi rotulo="Margem baixa / não verificável" valor={simulado ? `${resumoSel.margem_baixa} / ${resumoSel.sem_margem}` : "—"} cor="#fbbf24" />
+        <Kpi rotulo="Preço original (soma)" valor={simulado ? real(resumoSel.soma_original) : "—"} />
+        <Kpi rotulo="Preço promocional (soma)" valor={simulado ? real(resumoSel.soma_promocional) : "—"} cor="#4ade80" />
+      </div>
+      {simulado && resumoSel.total > resumoSel.lidos && <p style={S.nota}>{resumoSel.total - resumoSel.lidos} anúncio(s) selecionado(s) não estão nesta leitura (pausados, encerrados ou ainda não lidos): consulte a conta inteira para conferir.</p>}
+      {!simulado && resumoSel.total > 0 && <p style={S.nota}>Simule a {nomeConta} para ver preços, descontos e margens dos selecionados.</p>}
+
       {/* 3. Conferir */}
       {simulado && <>
         <h3 style={S.h3}>3. Conferir</h3>
@@ -383,19 +514,30 @@ export default function BlackFridayPaizinho() {
           <select value={filtro.classe} onChange={(e) => { setFiltro({ ...filtro, classe: e.target.value }); setMostrar(POR_PAGINA); }} style={{ ...S.busca, flex: "0 1 170px" }} aria-label="Classe">
             <option value="">Todas as classes</option>{Object.values(CLASSES).map((c) => <option key={c} value={c}>{ROTULO_CLASSE[c]}</option>)}
           </select>
+          <select value={filtro.sel} onChange={(e) => { setFiltro({ ...filtro, sel: e.target.value }); setMostrar(POR_PAGINA); }} style={{ ...S.busca, flex: "0 1 190px" }} aria-label="Seleção" data-paiia-bf="filtro-selecao">
+            <option value="">Selecionados e não selecionados</option><option value="sim">Só selecionados</option><option value="nao">Só não selecionados</option><option value="revisao">Revisão necessária</option>
+          </select>
           <input value={filtro.busca} onChange={(e) => { setFiltro({ ...filtro, busca: e.target.value }); setMostrar(POR_PAGINA); }} placeholder="Buscar MLB, SKU ou título" style={S.busca} />
         </div>
 
         <div style={S.tabelaCaixa}>
           <table style={S.tabela}>
-            <thead><tr>{["", "Anúncio", "Classe", "Preço original", "Desc.", "Preço promocional", "Comissão · imposto · frete", "Lucro (margem)", "Lista e motivo", "Ação"].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
+            <thead><tr>{["", "Campanha", "Anúncio", "Classe", "Preço original", "Desc.", "Preço promocional", "Comissão · imposto · frete", "Lucro (margem)", "Lista e motivo", "Ação"].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
             <tbody>
               {visiveis.slice(0, mostrar).map((l) => {
                 const aprovado = !!aprovados[l.chave];
                 const cl = listaDe.get(l.chave) || { lista: "", pendencias: [], observacoes: [] };
+                const sel = regSel(l);
                 return (
-                  <tr key={l.chave} style={aprovado ? S.aprovado : undefined}>
-                    <td style={S.td}><input type="checkbox" checked={marcados.has(l.chave)} disabled={!aprovavel(l) || aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></td>
+                  <tr key={l.chave} style={aprovado ? S.aprovado : sel ? S.selecionado : undefined}>
+                    <td style={S.td}><input type="checkbox" checked={marcados.has(l.chave)} disabled={aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></td>
+                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 120 }}>
+                      {sel
+                        ? <><span style={{ ...S.selo, color: "#67e8f9", borderColor: "#67e8f9" }}>✓ Selecionado</span>
+                          {sel.revisao && <div title={sel.revisao_motivo || ""}><span style={{ ...S.selo, color: "#fb923c", borderColor: "#fb923c" }}>Revisão necessária</span><br /><small style={S.base}>{sel.revisao_motivo}</small><br /><button type="button" style={S.mini} onClick={() => conferiRevisao(l)}>Conferi o preço</button></div>}
+                          <div style={{ marginTop: 4 }}><button type="button" style={S.mini} onClick={() => retirarDaSelecao([l])}>Retirar</button></div></>
+                        : <button type="button" style={S.mini} onClick={() => selecionar([l])} data-paiia-bf="selecionar">+ Selecionar</button>}
+                    </td>
                     <td style={{ ...S.td, whiteSpace: "normal", minWidth: 220 }}>
                       <a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? ` · ${l.sku}` : ""}<br /><small style={S.base}>{l.titulo}</small>
                     </td>
@@ -418,7 +560,7 @@ export default function BlackFridayPaizinho() {
                     <td style={{ ...S.td, whiteSpace: "normal" }}>
                       {aprovado
                         ? <button type="button" style={S.mini} onClick={() => desaprovar([l.chave])}>Retirar</button>
-                        : aprovavel(l) && <button type="button" style={S.mini} onClick={() => aprovar([l], "anuncio")}>Aprovar</button>}
+                        : aprovavelNaCampanha(l) && <button type="button" style={S.mini} onClick={() => aprovar([l], "anuncio")}>Aprovar</button>}
                       {(l.classe === CLASSES.REVISAO || l.decisao) && l.situacao !== SITUACOES.BLOQUEADO && l.decisao !== "excluir" && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
                         <button type="button" style={S.mini} onClick={() => decidir(l, "renault")} title="Só se a aplicação Renault estiver comprovada">Renault 10%</button>
                         <button type="button" style={S.mini} onClick={() => decidir(l, "demais")}>Demais 5%</button>
@@ -439,11 +581,15 @@ export default function BlackFridayPaizinho() {
 
         {/* 4. Aprovar */}
         <h3 style={S.h3}>4. Aprovar</h3>
-        <p style={S.nota}>Só anúncios <strong>PRONTO</strong> (sem pendência, margem verificada e não negativa). CONFERIR precisa ser resolvido antes; BLOQUEADO não entra.</p>
+        <p style={S.nota}>Selecionar e aprovar são passos diferentes. Só são aprovados anúncios <strong>selecionados</strong>, sem "Revisão necessária" e <strong>PRONTO</strong> (sem pendência, margem verificada e não negativa). CONFERIR precisa ser resolvido antes; BLOQUEADO não entra.</p>
         <div style={S.acoes}>
           <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selecionadas.length} marcado(s)</span>
-          <button type="button" style={S.botao} disabled={!selecionadas.length} onClick={() => aprovar(selecionadas, "selecao")}>✅ Aprovar marcados</button>
-          <button type="button" style={S.botao} disabled={!visiveis.some((l) => aprovavel(l) && !aprovados[l.chave])} onClick={() => aprovar(visiveis, "lote")}>✅ Aprovar todos os PRONTO do filtro</button>
+          <button type="button" style={S.filtro} disabled={!selecionadas.length} onClick={() => selecionar(selecionadas)} data-paiia-bf="selecionar-marcados">+ Selecionar marcados para a campanha</button>
+          <button type="button" style={S.filtro} disabled={!selecionadas.some((l) => regSel(l))} onClick={() => retirarDaSelecao(selecionadas.filter((l) => regSel(l)))}>Retirar marcados da campanha</button>
+        </div>
+        <div style={S.acoes}>
+          <button type="button" style={S.botao} disabled={!selecionadas.some((l) => aprovavelNaCampanha(l))} onClick={() => aprovar(selecionadas, "selecao")}>✅ Aprovar marcados</button>
+          <button type="button" style={S.botao} disabled={!visiveis.some((l) => aprovavelNaCampanha(l) && !aprovados[l.chave])} onClick={() => aprovar(visiveis, "lote")}>✅ Aprovar todos os selecionados PRONTO do filtro</button>
         </div>
         <p style={S.nota}>Ofertas aprovadas da {nomeConta}: <strong>{aprovadosConta.length}</strong> · Campanha da conta: {!campanhaConta ? "não aprovada" : campanhaConta.valida ? `✅ aprovada em ${dataHoraBrasilia(campanhaConta.aprovado_em)} (${campanhaConta.ofertas} oferta(s))` : "⚠️ desatualizada (as ofertas mudaram depois) — aprove de novo"}
           {" "}{campanhaConta ? <button type="button" style={S.mini} onClick={retirarCampanha}>Retirar</button> : <button type="button" style={S.mini} disabled={!aprovadosConta.length} onClick={aprovarCampanha}>Aprovar campanha da {nomeConta}</button>}</p>
@@ -455,12 +601,13 @@ export default function BlackFridayPaizinho() {
       <div style={S.acoes}>
         <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa e permissão de promoções no ML">🚀 Ativar ofertas aprovadas</button>
       </div>
-      <p style={S.nota}><strong>Manual assistido:</strong> baixe a planilha da {nomeConta} (PRONTO, CONFERIR e BLOQUEADO, com custos, comissão, imposto, frete, lucro, margem e motivo) e cadastre as ofertas PRONTO como "Desconto individual" na Central de Promoções do ML, de {dataHoraBrasilia(CAMPANHA_BF.inicio)} a {dataHoraBrasilia(CAMPANHA_BF.fim)}. Regras do ML: produto novo, anúncio pago, desconto de 5% a 80%, até 14 dias.</p>
+      <p style={S.nota}><strong>Manual assistido:</strong> baixe a planilha dos anúncios SELECIONADOS da {nomeConta} (com lista PRONTO/CONFERIR/BLOQUEADO, custos, comissão, imposto, frete, lucro, margem e motivo) e cadastre as ofertas PRONTO como "Desconto individual" na Central de Promoções do ML, de {dataHoraBrasilia(CAMPANHA_BF.inicio)} a {dataHoraBrasilia(CAMPANHA_BF.fim)}. Regras do ML: produto novo, anúncio pago, desconto de 5% a 80%, até 14 dias.</p>
       <div style={S.acoes}>
-        <button type="button" style={S.botao} disabled={!linhas.length} onClick={baixarPlanilha}>📥 Planilha {nomeConta}</button>
+        <button type="button" style={S.botao} disabled={!linhasSel.length} onClick={() => baixarPlanilha(false)} data-paiia-bf="planilha">📥 Planilha dos selecionados ({linhasSel.length})</button>
+        <button type="button" style={S.filtro} disabled={!linhas.length} onClick={() => baixarPlanilha(true)} title="Todos os anúncios lidos, só para conferência (não é a lista da campanha)">Planilha completa (conferência)</button>
       </div>
       {planilhaInfo && planilhaInfo.conta === nomeConta && <p style={S.nota}>
-        <strong>Planilha {planilhaInfo.conta}:</strong> {planilhaInfo.resumo.total} anúncio(s) · <strong>{planilhaInfo.resumo.pronto} PRONTO</strong> · {planilhaInfo.resumo.conferir} CONFERIR · {planilhaInfo.resumo.bloqueado} BLOQUEADO · Renault 10%: {planilhaInfo.resumo.renault10} · Demais 5%: {planilhaInfo.resumo.demais5} · Dúvida: {planilhaInfo.resumo.revisao}. PRONTO: de {real(planilhaInfo.resumo.soma_atual)} para {real(planilhaInfo.resumo.soma_promocional)} (soma dos preços).
+        <strong>Planilha {planilhaInfo.completa ? "completa (conferência)" : "dos selecionados"} {planilhaInfo.conta}:</strong> {planilhaInfo.resumo.total} anúncio(s) · <strong>{planilhaInfo.resumo.pronto} PRONTO</strong> · {planilhaInfo.resumo.conferir} CONFERIR · {planilhaInfo.resumo.bloqueado} BLOQUEADO · Renault 10%: {planilhaInfo.resumo.renault10} · Demais 5%: {planilhaInfo.resumo.demais5} · Dúvida: {planilhaInfo.resumo.revisao}. PRONTO: de {real(planilhaInfo.resumo.soma_atual)} para {real(planilhaInfo.resumo.soma_promocional)} (soma dos preços).
       </p>}
       <p style={S.nota}>Confirmadas no Mercado Livre: <strong>{confirmacao.confirmadas.length}</strong> de {confirmacao.aprovadas} aprovada(s). Só conta como ativa a oferta cujo preço com desconto foi LIDO no ML numa consulta (a partir de {dataHoraBrasilia(CAMPANHA_BF.inicio)}); nada é marcado como publicado sem essa confirmação.</p>
 
@@ -522,5 +669,6 @@ const S = {
   th: { textAlign: "left", padding: "6px 7px", color: "#94a3b8", borderBottom: "1px solid #334155", whiteSpace: "nowrap" },
   td: { padding: "6px 7px", borderBottom: "1px solid #1e293b", color: "#e2e8f0", whiteSpace: "nowrap", verticalAlign: "top" },
   aprovado: { background: "rgba(74,222,128,.08)" },
+  selecionado: { background: "rgba(103,232,249,.06)" },
   link: { color: "#67e8f9" },
 };
