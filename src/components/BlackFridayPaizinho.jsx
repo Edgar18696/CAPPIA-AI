@@ -20,6 +20,7 @@ import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraP
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
 import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, LISTAS, aprovavel } from "../services/blackFriday/planilha";
 import { renovarAcessoConta } from "../services/blackFriday/aplicativoML";
+import { montarCopiaPrecos, validarCopia, precosDaCopia, lerCopiaGuardada, guardarCopia } from "../services/blackFriday/precosOriginais";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela ml_consulta.
@@ -86,6 +87,9 @@ export default function BlackFridayPaizinho() {
   const nomeConta = CONTAS_BLACK_FRIDAY.find((c) => c.id === contaAtual)?.nome || "";
   const leituraConta = leitura?.contas?.[contaAtual] || null;
   const podeRetomar = !!(leituraConta && leituraConta.completa === false);
+  // (17/11) Cópia de segurança dos preços originais da conta (navegador + arquivo).
+  const copia = useMemo(() => (usuarioId ? lerCopiaGuardada(localStorage, usuarioId, contaAtual) : null), [usuarioId, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  const arquivoCopia = useRef(null);
 
   const linhas = useMemo(() => (simulado && leitura ? montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil }).filter((l) => l.conta === contaAtual) : []), [simulado, leitura, plano, perfil, contaAtual]);
   const listaDe = useMemo(() => new Map(linhas.map((l) => [l.chave, classificarParaPlanilha(l)])), [linhas]);
@@ -102,7 +106,7 @@ export default function BlackFridayPaizinho() {
   const promoBloqueada = !!leitura?.falhas?.some((f) => f.conta === nomeConta && f.etapa === "promoções" && RE_403.test(f.erro));
   const promoLiberada = !!leituraConta?.itens?.some((x) => x.promocoes?.lido);
   const confirmacao = useMemo(() => ofertasConfirmadasNoML({ aprovados, itens: leituraConta?.itens, conta: contaAtual }), [aprovados, leituraConta, contaAtual]);
-  const encerramento = useMemo(() => (momento === "encerrada" && leituraConta ? conferirEncerramento({ aprovados, itens: leituraConta.itens, conta: contaAtual, lidoEm: leituraConta.lido_em || leitura?.lido_em }) : null), [momento, leituraConta, leitura, aprovados, contaAtual]);
+  const encerramento = useMemo(() => (momento === "encerrada" && leituraConta ? conferirEncerramento({ aprovados, itens: leituraConta.itens, conta: contaAtual, lidoEm: leituraConta.lido_em || leitura?.lido_em, precos: copia ? precosDaCopia(copia) : null }) : null), [momento, leituraConta, leitura, aprovados, contaAtual, copia]);
 
   function alternarConta(id) {
     setContas([id]); setMarcados(new Set()); setPlanilhaInfo(null); setRenovacao(null); setAviso("");
@@ -128,6 +132,12 @@ export default function BlackFridayPaizinho() {
       });
       setLeitura(r);
       if (!guardar(r)) setAviso("Leitura grande demais para guardar neste navegador: fica só nesta tela (não dá para retomar se fechar).");
+      // (17/11) Leitura completa antes de 27/11: grava a cópia de segurança dos preços originais.
+      const rc = r.contas?.[contaAtual];
+      if (rc && rc.completa !== false && momentoDaCampanha() === "preparacao") {
+        const m = montarCopiaPrecos(rc);
+        if (m.ok && guardarCopia(localStorage, usuarioId, m.copia)) registro.registrar("copia_precos", { conta: nomeConta, anuncios: m.copia.total, em_promocao: m.copia.em_promocao });
+      }
       const lidos = Object.values(r.contas).reduce((s, c) => s + c.lidos, 0);
       registro.registrar("consulta_concluida", { contas: nomeConta, anuncios: lidos, falhas: r.falhas.length, interrompida: cancelar.current });
       // (15/11) Um registro por conta + etapa (com a quantidade), em vez de 1 por anúncio.
@@ -178,6 +188,32 @@ export default function BlackFridayPaizinho() {
       registro?.registrar("custos_locais", { imposto_pct: Number(imposto), custo_pedido: pedido === "" ? null : Number(pedido) });
       setCustosForm(null); setAviso(simulado ? "Imposto gravado neste navegador. Simulação atualizada." : "Imposto gravado neste navegador."); setVersao((v) => v + 1);
     } catch { setAviso("Não foi possível gravar neste navegador."); }
+  }
+
+  // (17/11) Cópia dos preços originais: baixar arquivo e carregar de volta (só neste navegador).
+  function baixarCopia() {
+    if (!copia) return;
+    try {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(copia, null, 1)], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = `black-friday-2026-precos-originais-${nomeConta.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-")}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      registro?.registrar("copia_precos_baixada", { conta: nomeConta, anuncios: copia.total });
+    } catch (e) { setAviso(`Não foi possível gerar o arquivo: ${e?.message || e}`); }
+  }
+  async function carregarCopia(ev) {
+    const f = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!f) return;
+    let obj;
+    try { obj = JSON.parse(await f.text()); } catch { setAviso("Arquivo inválido: não é a cópia de preços do PAIIA."); return; }
+    const v = validarCopia(obj, contaAtual);
+    if (!v.ok) { setAviso(v.motivo); return; }
+    if (copia && !window.confirm(`Substituir a cópia guardada da ${nomeConta} (${copia.total} anúncios, gravada em ${new Date(copia.gravado_em).toLocaleString("pt-BR")}) pela do arquivo (${v.copia.total} anúncios, gravada em ${new Date(v.copia.gravado_em).toLocaleString("pt-BR")})?`)) return;
+    if (!guardarCopia(localStorage, usuarioId, v.copia)) { setAviso("Não foi possível gravar neste navegador."); return; }
+    registro?.registrar("copia_precos_carregada", { conta: nomeConta, anuncios: v.copia.total });
+    setAviso(`Cópia dos preços originais da ${nomeConta} carregada (${v.copia.total} anúncios).`); setVersao((x) => x + 1);
   }
 
   // (16/11) Planilha para cadastro MANUAL na Central de Promoções do ML (só gera arquivo).
@@ -279,6 +315,24 @@ export default function BlackFridayPaizinho() {
       {leituraConta
         ? <p style={S.nota}>Última leitura da {nomeConta}: {new Date(leituraConta.lido_em || leitura.lido_em).toLocaleString("pt-BR")} · {leituraConta.lidos}{leituraConta.total_ativos ? ` de ${leituraConta.total_ativos}` : ""} anúncios ativos{leituraConta.completa === false ? " · INCOMPLETA (retome)" : ""}{leitura.bling_parou ? " · Bling parou de responder (custos incompletos)" : ""}.</p>
         : leitura && <p style={S.nota}>A última leitura guardada é de outra conta. Consulte a {nomeConta}.</p>}
+      <div style={copia ? S.nota : S.aviso}>
+        <strong>💾 Preços originais da {nomeConta} (cópia de segurança):</strong>{" "}
+        {copia
+          ? <>gravada em {new Date(copia.gravado_em).toLocaleString("pt-BR")} · {copia.total} anúncio(s){copia.em_promocao ? ` · ${copia.em_promocao} já em promoção na leitura (guardado o preço normal)` : ""}. É a referência da conferência de 01/12. Baixe o arquivo e guarde fora do navegador.</>
+          : <>ainda não gravada. Ela é gravada sozinha quando a consulta da conta termina completa, antes de {dataHoraBrasilia(CAMPANHA_BF.inicio)}.</>}
+        <div style={S.acoes}>
+          {!copia && leituraConta && leituraConta.completa !== false && momento === "preparacao" && <button type="button" style={S.mini} onClick={() => {
+            const m = montarCopiaPrecos(leituraConta);
+            if (!m.ok) { setAviso(m.motivo); return; }
+            if (!guardarCopia(localStorage, usuarioId, m.copia)) { setAviso("Não foi possível gravar neste navegador."); return; }
+            registro?.registrar("copia_precos", { conta: nomeConta, anuncios: m.copia.total, em_promocao: m.copia.em_promocao });
+            setVersao((x) => x + 1);
+          }}>💾 Gravar a partir da última leitura</button>}
+          <button type="button" style={S.mini} disabled={!copia} onClick={baixarCopia}>📥 Baixar cópia dos preços</button>
+          <button type="button" style={S.mini} onClick={() => arquivoCopia.current?.click()}>📤 Carregar cópia de um arquivo</button>
+          <input ref={arquivoCopia} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={carregarCopia} aria-label="Arquivo da cópia de preços" />
+        </div>
+      </div>
       <div style={perfil.impostoPct === null ? S.aviso : S.nota}>
         <strong>Custos da venda usados na margem:</strong> imposto {perfil.impostoPct === null ? <strong>NÃO cadastrado neste endereço</strong> : <strong>{String(perfil.impostoPct).replace(".", ",")}%</strong>} · custo por pedido R$ {String(perfil.custoPedido.toFixed(2)).replace(".", ",")} · comissão e frete: lidos do Mercado Livre · custo da peça: Bling (nunca inventado).
         {perfil.impostoPct === null && <><br /><small>O cadastro "Preços, Custos e Lucro" fica no navegador e é separado por endereço: o do PAIIA oficial não aparece aqui. Sem imposto, a margem não é verificável e nenhum anúncio fica PRONTO.</small></>}
@@ -407,7 +461,7 @@ export default function BlackFridayPaizinho() {
       <p style={S.nota}>As ofertas terminam em {dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília) pela data de fim da própria oferta no ML; o PAIIA não troca preços. Em 01/12, consulte a {nomeConta} de novo: a conferência compara cada oferta aprovada com o preço original confirmado e só aponta diferenças — nunca sobrescreve preços.</p>
       {momento !== "encerrada" && <small style={S.base}>Disponível depois de {dataHoraBrasilia(CAMPANHA_BF.fim)}.</small>}
       {encerramento && (!encerramento.valida ? <p style={S.nota}>{encerramento.motivo}</p> : <>
-        <p style={S.nota}>Conferência da {nomeConta}: {encerramento.resumo.normal} no preço normal · {encerramento.resumo.com_desconto} ainda com desconto · {encerramento.resumo.diferente} com preço diferente · {encerramento.resumo.nao_lido} não lido(s).</p>
+        <p style={S.nota}>Conferência da {nomeConta} (referência: {encerramento.referencia}):{encerramento.resumo.normal} no preço normal · {encerramento.resumo.com_desconto} ainda com desconto · {encerramento.resumo.diferente} com preço diferente · {encerramento.resumo.nao_lido} não lido(s).</p>
         <ul style={S.lista}>{encerramento.linhas.filter((x) => x.estado !== "normal").slice(0, 100).map((x) => <li key={x.item}><small>{x.item}: {x.texto}</small></li>)}</ul>
       </>)}
 

@@ -849,3 +849,38 @@ test("encerramento 01/12 e confirmação no ML: só lê, nunca marca sem leitura
   assert.match(tela, /localStorage\.setItem\("paiiaPerfilCustos"/, "imposto gravado só no navegador");
   assert.doesNotMatch(tela, /from\("perfil|\.upsert\(/, "não grava custos na produção");
 });
+
+test("cópia dos preços originais: só antes de 27/11, só leitura completa, uma conta, guarda o preço normal; arquivo validado; 01/12 usa a cópia", async () => {
+  const P = await import("../../src/services/blackFriday/precosOriginais.js");
+  const C = await import("../../src/services/blackFriday/calendario.js");
+  const leituraConta = {
+    conta: LOJA, nome: "LOJA ONLINE", lido_em: "2026-11-20T10:00:00-03:00", completa: true,
+    itens: [
+      { item: { id: "MLB1", seller_id: Number(LOJA), price: 200, title: "Peça A", seller_custom_field: "SKU1" } },
+      { item: { id: "MLB2", seller_id: Number(LOJA), price: 90, original_price: 100, title: "Peça B" } },
+      { item: { id: "MLB3", seller_id: 824312524, price: 50, title: "de outra conta" } },
+    ],
+  };
+  const ok = P.montarCopiaPrecos(leituraConta, { agora: "2026-11-20T11:00:00-03:00" });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.copia.total, 2, "não mistura contas");
+  assert.equal(ok.copia.itens.MLB2.preco_normal, 100, "em promoção na leitura: guarda o preço normal");
+  assert.equal(ok.copia.em_promocao, 1);
+  assert.equal(P.montarCopiaPrecos(leituraConta, { agora: "2026-11-27T00:00:00-03:00" }).ok, false, "depois do início não grava");
+  assert.equal(P.montarCopiaPrecos({ ...leituraConta, completa: false }, { agora: "2026-11-20T11:00:00-03:00" }).ok, false, "leitura incompleta não grava");
+  assert.equal(P.validarCopia(ok.copia, LOJA).ok, true);
+  assert.equal(P.validarCopia(ok.copia, "824312524").ok, false, "arquivo de outra conta recusado");
+  assert.equal(P.validarCopia({ ...ok.copia, campanha: "outra" }, LOJA).ok, false);
+  assert.equal(P.validarCopia({ tipo: "x" }, LOJA).ok, false);
+  const st = memoria();
+  assert.equal(P.guardarCopia(st, "u1", ok.copia), true);
+  assert.equal(P.lerCopiaGuardada(st, "u1", LOJA).total, 2);
+  assert.equal(P.lerCopiaGuardada(st, "u1", "824312524"), null);
+  // 01/12: com a cópia, a referência é o preço normal guardado (mesmo sem aprovação no PAIIA).
+  const depois = [{ item: { id: "MLB1", price: 200 } }, { item: { id: "MLB2", price: 100 } }];
+  const r = C.conferirEncerramento({ aprovados: {}, itens: depois, conta: LOJA, lidoEm: "2026-12-01T08:00:00-03:00", precos: P.precosDaCopia(ok.copia) });
+  assert.equal(r.referencia, "cópia de segurança dos preços originais");
+  assert.deepEqual(r.resumo, { total: 2, normal: 2, com_desconto: 0, diferente: 0, nao_lido: 0 });
+  const fonte = fs.readFileSync(path.join(RAIZ, "src/services/blackFriday/precosOriginais.js"), "utf8");
+  assert.doesNotMatch(fonte, /invoke\(|fetch\(|method:|\.insert\(|\.update\(|\.upsert\(/, "não grava no banco nem no ML");
+});

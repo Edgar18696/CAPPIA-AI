@@ -42,31 +42,41 @@ export function diasParaInicio(agora = new Date().toISOString(), c = CAMPANHA_BF
 }
 
 /**
- * (16/11) Conferência do ENCERRAMENTO (01/12): compara, para cada oferta aprovada da
- * conta, o preço lido DEPOIS do fim da campanha com o preço original confirmado na
- * aprovação. Só aponta diferenças: nunca altera preço (nada de sobrescrever em massa).
- * @param {{ aprovados: object, itens: Array<{item, precoVenda}>, conta: string, lidoEm: string }} p
- * @returns {{ valida: boolean, motivo?: string, linhas: Array<{item, estado, texto}>, resumo: object }}
+ * (16/11) Conferência do ENCERRAMENTO (01/12): compara o preço lido DEPOIS do fim da
+ * campanha com o preço normal de referência — o da CÓPIA DE SEGURANÇA dos preços
+ * originais (17/11) quando existir; senão, o preço original guardado na aprovação.
+ * Confere as ofertas aprovadas da conta; sem aprovação, confere todos os anúncios da cópia.
+ * Só aponta diferenças: nunca altera preço (nada de sobrescrever em massa).
+ * @param {{ aprovados: object, itens: Array<{item, precoVenda}>, conta: string, lidoEm: string, precos?: Object<string, number> }} p
+ * @returns {{ valida: boolean, motivo?: string, linhas: Array<{item, estado, texto}>, resumo: object, referencia: string }}
  */
-export function conferirEncerramento({ aprovados, itens, conta, lidoEm }, c = CAMPANHA_BF) {
+export function conferirEncerramento({ aprovados, itens, conta, lidoEm, precos = null }, c = CAMPANHA_BF) {
   const resumo = { total: 0, normal: 0, com_desconto: 0, diferente: 0, nao_lido: 0 };
-  if (!lidoEm || ms(lidoEm) <= ms(c.fim)) return { valida: false, motivo: `A conferência só vale com uma leitura feita depois de ${dataHoraBrasilia(c.fim)}.`, linhas: [], resumo };
+  const temCopia = !!precos && Object.keys(precos).length > 0;
+  const referencia = temCopia ? "cópia de segurança dos preços originais" : "preço original guardado na aprovação";
+  if (!lidoEm || ms(lidoEm) <= ms(c.fim)) return { valida: false, motivo: `A conferência só vale com uma leitura feita depois de ${dataHoraBrasilia(c.fim)}.`, linhas: [], resumo, referencia };
   const porId = new Map((itens || []).map((x) => [String(x.item?.id || "").toUpperCase(), x]));
   const reais = (v) => `R$ ${Number(v).toFixed(2).replace(".", ",")}`;
-  const linhas = [];
+  const alvos = new Map();
   for (const a of Object.values(aprovados || {})) {
     if (String(a.conta) !== String(conta)) continue;
+    const id = String(a.item).toUpperCase();
+    alvos.set(id, temCopia && precos[id] > 0 ? Number(precos[id]) : Number(a.preco_original));
+  }
+  if (!alvos.size && temCopia) for (const [id, p] of Object.entries(precos)) alvos.set(id.toUpperCase(), Number(p));
+  const linhas = [];
+  for (const [id, normal] of alvos) {
     resumo.total++;
-    const x = porId.get(String(a.item).toUpperCase());
-    if (!x) { resumo.nao_lido++; linhas.push({ item: a.item, estado: "nao_lido", texto: "Anúncio não lido nesta consulta (pausado, encerrado ou erro): conferir no ML." }); continue; }
+    const x = porId.get(id);
+    if (!x) { resumo.nao_lido++; linhas.push({ item: id, estado: "nao_lido", texto: "Anúncio não lido nesta consulta (pausado, encerrado ou erro): conferir no ML." }); continue; }
     const preco = Number(x.item.price);
     const comDesconto = x.precoVenda?.ativa === true || (Number(x.item.original_price) > preco);
-    if (comDesconto) { resumo.com_desconto++; linhas.push({ item: a.item, estado: "com_desconto", texto: `Ainda com desconto no ML (${reais(x.precoVenda?.preco ?? preco)}): encerrar a oferta na Central de Promoções.` }); continue; }
-    if (Math.abs(preco - Number(a.preco_original)) < 0.01) { resumo.normal++; linhas.push({ item: a.item, estado: "normal", texto: `Preço normal (${reais(preco)}).` }); continue; }
+    if (comDesconto) { resumo.com_desconto++; linhas.push({ item: id, estado: "com_desconto", texto: `Ainda com desconto no ML (${reais(x.precoVenda?.preco ?? preco)}): encerrar a oferta na Central de Promoções. Preço normal: ${reais(normal)}.` }); continue; }
+    if (Math.abs(preco - normal) < 0.01) { resumo.normal++; linhas.push({ item: id, estado: "normal", texto: `Preço normal (${reais(preco)}).` }); continue; }
     resumo.diferente++;
-    linhas.push({ item: a.item, estado: "diferente", texto: `Preço ${reais(preco)} diferente do original ${reais(a.preco_original)}: pode ser alteração manual — conferir; o PAIIA não muda o preço.` });
+    linhas.push({ item: id, estado: "diferente", texto: `Preço ${reais(preco)} diferente do normal ${reais(normal)}: pode ser alteração manual — conferir; o PAIIA não muda o preço.` });
   }
-  return { valida: true, linhas, resumo };
+  return { valida: true, linhas, resumo, referencia };
 }
 
 /**
