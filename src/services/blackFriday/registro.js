@@ -19,7 +19,8 @@ const txt = (v) => String(v ?? "").trim();
 
 export const chavePlano = (usuarioId) => `paiiaBlackFriday:${CAMPANHA_BF.id}:plano:${txt(usuarioId) || "sem-usuario"}`;
 export const chaveHistorico = (usuarioId) => `paiiaBlackFriday:${CAMPANHA_BF.id}:historico:${txt(usuarioId) || "sem-usuario"}`;
-export const chaveLeitura = (usuarioId) => `paiiaBlackFriday:${CAMPANHA_BF.id}:leitura:${txt(usuarioId) || "sem-usuario"}`;
+// (17/11) Uma leitura guardada POR CONTA: consultar outra conta não apaga nem mistura a anterior.
+export const chaveLeitura = (usuarioId, conta = "") => `paiiaBlackFriday:${CAMPANHA_BF.id}:leitura:${txt(usuarioId) || "sem-usuario"}${txt(conta).replace(/D/g, "") ? `:${txt(conta).replace(/D/g, "")}` : ""}`;
 
 export function planoVazio(usuarioId) {
   return { campanha: CAMPANHA_BF.id, usuario: txt(usuarioId), decisoes: {}, aprovados: {}, campanhas_conta: {}, atualizado_em: null };

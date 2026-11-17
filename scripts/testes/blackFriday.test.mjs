@@ -884,3 +884,14 @@ test("cópia dos preços originais: só antes de 27/11, só leitura completa, um
   const fonte = fs.readFileSync(path.join(RAIZ, "src/services/blackFriday/precosOriginais.js"), "utf8");
   assert.doesNotMatch(fonte, /invoke\(|fetch\(|method:|\.insert\(|\.update\(|\.upsert\(/, "não grava no banco nem no ML");
 });
+
+test("leitura guardada por conta: consultar uma conta não apaga nem mistura a outra; cópia de preços por conta", async () => {
+  const P = await import("../../src/services/blackFriday/precosOriginais.js");
+  const k1 = G.chaveLeitura("u1", LOJA), k2 = G.chaveLeitura("u1", CIEBR), k3 = G.chaveLeitura("u2", LOJA);
+  assert.equal(new Set([k1, k2, k3]).size, 3, "uma chave por usuário e por conta");
+  assert.notEqual(P.chaveCopiaPrecos("u1", LOJA), P.chaveCopiaPrecos("u1", CIEBR));
+  const tela = fs.readFileSync(path.join(RAIZ, "src/components/BlackFridayPaizinho.jsx"), "utf8");
+  assert.match(tela, /chaveLeitura\(usuarioId, contaAtual\)/, "grava a leitura na chave da conta");
+  assert.match(tela, /return r\?\.contas\?\.\[conta\] \? r : null/, "só carrega leitura da própria conta");
+  assert.match(tela, /disabled title="Liberado só na Fase 3/, "ativação continua bloqueada");
+});

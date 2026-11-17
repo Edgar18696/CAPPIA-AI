@@ -37,8 +37,12 @@ const RE_403 = /policy returned UNAUTHORIZED|HTTP 403|\b403\b/i;
 function lerPerfil() {
   try { return custosDoPerfil(JSON.parse(localStorage.getItem("paiiaPerfilCustos") || "null")); } catch { return custosDoPerfil(null); }
 }
-function lerLeituraGuardada(usuarioId) {
-  try { return JSON.parse(localStorage.getItem(chaveLeitura(usuarioId)) || "null"); } catch { return null; }
+function lerLeituraGuardada(usuarioId, conta) {
+  try {
+    const r = JSON.parse(localStorage.getItem(chaveLeitura(usuarioId, conta)) || "null");
+    // Só aceita a leitura se ela for mesmo desta conta (nunca mistura).
+    return r?.contas?.[conta] ? r : null;
+  } catch { return null; }
 }
 
 export default function BlackFridayPaizinho() {
@@ -61,6 +65,8 @@ export default function BlackFridayPaizinho() {
   const [mostrar, setMostrar] = useState(POR_PAGINA);
   const [ocupado, setOcupado] = useState(false);
   const cancelar = useRef(false);
+  // (17/11) Cada conta tem a sua leitura guardada: ao entrar e ao trocar de conta, carrega a dela.
+  const contaRef = useRef(CONTAS_BLACK_FRIDAY[0].id);
 
   useEffect(() => {
     let vivo = true;
@@ -69,7 +75,7 @@ export default function BlackFridayPaizinho() {
       setUsuarioId(id);
       if (!id) { setErroLogin("Entre no PAIIA para usar a Black Friday: use o botão \"Login\" no topo da página."); setLeitura(null); return; }
       setErroLogin("");
-      const g = lerLeituraGuardada(id); setLeitura(g || null);
+      setLeitura(lerLeituraGuardada(id, contaRef.current));
     };
     supabase.auth.getUser().then(({ data }) => aplicar(data?.user?.id || "")).catch(() => vivo && setErroLogin("Não foi possível confirmar o login."));
     // (15/11) Entrou ou trocou de conta com a aba aberta: a tela acompanha sem recarregar.
@@ -109,6 +115,8 @@ export default function BlackFridayPaizinho() {
   const encerramento = useMemo(() => (momento === "encerrada" && leituraConta ? conferirEncerramento({ aprovados, itens: leituraConta.itens, conta: contaAtual, lidoEm: leituraConta.lido_em || leitura?.lido_em, precos: copia ? precosDaCopia(copia) : null }) : null), [momento, leituraConta, leitura, aprovados, contaAtual, copia]);
 
   function alternarConta(id) {
+    contaRef.current = id;
+    setLeitura(usuarioId ? lerLeituraGuardada(usuarioId, id) : null); setSimulado(false); setProgresso(null);
     setContas([id]); setMarcados(new Set()); setPlanilhaInfo(null); setRenovacao(null); setAviso("");
   }
 
@@ -118,7 +126,7 @@ export default function BlackFridayPaizinho() {
     setAviso(""); setSimulado(false); setMarcados(new Set()); cancelar.current = false;
     setLendo(retomar ? "Retomando…" : "Começando…"); setProgresso(null);
     // (16/11) Guarda o parcial a cada 50 anúncios: se a página fechar, dá para retomar.
-    const guardar = (r) => { try { localStorage.setItem(chaveLeitura(usuarioId), JSON.stringify(r)); return true; } catch { return false; } };
+    const guardar = (r) => { try { localStorage.setItem(chaveLeitura(usuarioId, contaAtual), JSON.stringify(r)); return true; } catch { return false; } };
     registro.registrar(retomar ? "consulta_retomada" : "consulta_iniciada", { contas: nomeConta, limite: Number(limite) });
     try {
       const r = await lerContasBF({
