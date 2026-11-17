@@ -1,14 +1,19 @@
 // =============================================================
-// PAIIA — Edge Function "paizinho-leitura-ml" (PILOTO — NÃO PUBLICADA).
-// Central do Paizinho: leitura de VENDAS, VISITAS e CUSTO DOS ENVIOS da
-// conta Mercado Livre do piloto (LOJA ONLINE), para o teste local da
-// auditoria. A mercadolivre-publicacao recusa essas leituras.
+// PAIIA — Edge Function "paizinho-leitura-ml".
+// Central do Paizinho: leitura de VENDAS, VISITAS e CUSTO DOS ENVIOS das
+// contas Mercado Livre liberadas (LOJA ONLINE, CIEBR e REVELAÇÃO — lista em
+// src/services/paizinhoAuditoria/contas.js), UMA conta por chamada.
+// A mercadolivre-publicacao recusa essas leituras.
+// Publicada v3 em 11/11 só com a LOJA ONLINE; (17/11) versão das 3 contas,
+// com a identidade da conta conferida no ML antes de cada leitura.
 //
 // SOMENTE LEITURA:
 //   - só GET na API do Mercado Livre, só nos endereços de
 //     src/services/paizinhoAuditoria/leituraComercial.js;
 //   - só para o usuário logado (JWT) e só na conta dele que estiver
-//     liberada no piloto;
+//     liberada (conectada em Contas Marketplace para este usuário);
+//   - identidade: o token da conta tem que ser DELA (/users/me = conta),
+//     senão nada é lido;
 //   - visitas só de anúncios da própria conta (confere o vendedor antes,
 //     com /items/{id}?attributes=id,seller_id);
 //   - NÃO renova nem grava token: se o token da conta estiver vencido,
@@ -26,6 +31,8 @@ import {
   anunciosDaLeitura,
   caminhosDonoDosAnuncios,
   anunciosSaoDaConta,
+  conferirIdentidadeConta,
+  CAMINHO_IDENTIDADE,
 } from "../../../src/services/paizinhoAuditoria/leituraComercial.js";
 
 const ML = "https://api.mercadolibre.com";
@@ -70,6 +77,9 @@ Deno.serve(async (req) => {
   //    Pedidos já são da própria conta (seller conferido + token da conta);
   //    custo de envio de outro vendedor o ML recusa.
   const get = getML(c.access_token);
+  // (17/11) Identidade: o token guardado para esta conta é DELA? (nada é lido antes disso)
+  const identidade = conferirIdentidadeConta(await get(CAMINHO_IDENTIDADE), conta);
+  if (!identidade.ok) return json({ ok: false, status: 403, erro: identidade.erro });
   if (conf.tipo === "visitas") {
     const ids = anunciosDaLeitura(caminho);
     // (12/11) 10 por vez: 50 de uma vez fez o ML limitar as consultas (429).

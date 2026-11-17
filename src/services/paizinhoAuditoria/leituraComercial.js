@@ -46,6 +46,21 @@ export function conferirLeituraComercial(caminho, conta) {
   return { ok: true, tipo: p.tipo };
 }
 
+/**
+ * (17/11) Identidade da conta ANTES de qualquer leitura: o token guardado para a conta
+ * tem que ser DELA (GET /users/me devolve o mesmo id). Token de outra conta, resposta
+ * estranha ou falha → nada é lido.
+ */
+export const CAMINHO_IDENTIDADE = "/users/me";
+export function conferirIdentidadeConta(resp, conta) {
+  const id = txt(conta).replace(/\D/g, "");
+  const nome = CONTAS_AUDITORIA.find((x) => x.id === id)?.nome || id;
+  if (!resp || resp.ok !== true) return { ok: false, erro: `Não foi possível confirmar a identidade da conta ${nome} no Mercado Livre (${txt(resp?.erro) || "sem resposta"}).` };
+  const doToken = txt(resp.dados?.id).replace(/\D/g, "");
+  if (!doToken || doToken !== id) return { ok: false, erro: `O token guardado para a conta ${nome} pertence a outra conta do Mercado Livre: leitura bloqueada (reconecte a conta em Contas Marketplace).` };
+  return { ok: true, id };
+}
+
 /** Anúncios citados numa leitura de visitas (para conferir o dono antes de ler). */
 export function anunciosDaLeitura(caminho) {
   const c = txt(caminho);
