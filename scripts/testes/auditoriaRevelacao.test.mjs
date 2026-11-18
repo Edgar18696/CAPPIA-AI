@@ -43,7 +43,9 @@ test("tela: auditoria por anúncio só mostra (sem escrita), com 'Como corrigir'
   assert.match(tela, /Como corrigir: \{x\.sugestao\}/);
   assert.match(tela, /textoCusto\(a\)/);
   assert.match(tela, /<EnviarParaPromocoes conta=/);
-  assert.match(tela, /\["problemas", "Com problema"\], \["urgentes", "Só urgentes"\], \["sem_custo", "Custo não informado"\], \["todos", "Todos"\]/);
+  // (18/11) filtros movidos para relatorioImpressao.js (tela e impressão usam a mesma lista)
+  assert.match(tela, /\{FILTROS_AUDITORIA\.map\(/);
+  assert.match(ler("src/services/paizinhoAuditoria/relatorioImpressao.js"), /\["problemas", "Com problema"\], \["urgentes", "Só urgentes"\], \["sem_custo", "Custo não informado"\], \["todos", "Todos"\]/);
   assert.doesNotMatch(tela, /functions\.invoke|\.from\(|fetch\(|method:/, "nada é gravado nem alterado");
   const rank = ler("src/components/RelatorioManhaPaizinho.jsx");
   assert.match(rank, /<AuditoriaAnuncios rel=\{rel\} \/>/);

@@ -10,29 +10,19 @@ import { useMemo, useState } from "react";
 import EnviarParaPromocoes from "./EnviarParaPromocoes";
 import { textoCusto, textoMargem, textoMargemEstimada, planilhaAuditoriaCSV } from "../services/paizinhoAuditoria/textosAnuncio";
 import { textoUltimaCompra } from "../services/paizinhoAuditoria/ultimaCompra";
+import { filtrarAnuncios, htmlRelatorioImpressao, FILTROS_AUDITORIA, ROTULO } from "../services/paizinhoAuditoria/relatorioImpressao";
 
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const num = (v) => (v === null || v === undefined ? "não lido" : Number(v).toLocaleString("pt-BR"));
 const COR = { alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
-const PESO = { alta: 3, media: 2, baixa: 1 };
-const ROTULO = { alta: "Urgente", media: "Importante", baixa: "Acompanhar" };
 const POR_PAGINA = 30;
-
-const problemasDo = (a) => (a.achados || []).filter((x) => !x.positivo).sort((x, y) => (PESO[y.severidade] || 0) - (PESO[x.severidade] || 0));
 
 export default function AuditoriaAnuncios({ rel }) {
   const [filtro, setFiltro] = useState("problemas");
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState(() => new Set());
   const [mostrar, setMostrar] = useState(POR_PAGINA);
-  const lista = useMemo(() => {
-    const b = busca.trim().toUpperCase();
-    return (rel.anuncios || [])
-      .map((a) => ({ ...a, _p: problemasDo(a) }))
-      .filter((a) => (filtro === "todos" || (filtro === "problemas" ? a._p.length : filtro === "sem_custo" ? !(Number(a.custo) > 0) : a._p.some((x) => x.severidade === "alta"))))
-      .filter((a) => !b || [a.item_id, a.sku, a.titulo].some((t) => String(t || "").toUpperCase().includes(b)))
-      .sort((x, y) => (PESO[y._p[0]?.severidade] || 0) - (PESO[x._p[0]?.severidade] || 0) || y._p.length - x._p.length || (y.vendas30 || 0) - (x.vendas30 || 0));
-  }, [rel, filtro, busca]);
+  const lista = useMemo(() => filtrarAnuncios(rel, filtro, busca), [rel, filtro, busca]);
   if (!rel.anuncios?.length) return null;
   const semCusto = rel.anuncios.filter((a) => !(Number(a.custo) > 0)).length;
   const abrir = (id) => setAbertos((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -42,13 +32,13 @@ export default function AuditoriaAnuncios({ rel }) {
       <h3 style={S.h3}>🔎 Auditoria por anúncio — o que está errado e como corrigir</h3>
       <p style={S.ajuda}>Preço, custo real do Bling, margem, visitas, vendas, fotos, compatibilidades e frete de cada anúncio. Abra ▸ para ver o problema e a correção recomendada. Nada é alterado automaticamente.{semCusto ? ` ${semCusto} anúncio(s) com "Custo não informado" no Bling.` : ""}</p>
       <div style={S.acoes}>
-        {[["problemas", "Com problema"], ["urgentes", "Só urgentes"], ["sem_custo", "Custo não informado"], ["todos", "Todos"]].map(([v, t]) => (
+        {FILTROS_AUDITORIA.map(([v, t]) => (
           <button key={v} type="button" style={filtro === v ? S.chipAtivo : S.chip} onClick={() => { setFiltro(v); setMostrar(POR_PAGINA); }}>{t}</button>
         ))}
         <input value={busca} onChange={(e) => { setBusca(e.target.value); setMostrar(POR_PAGINA); }} placeholder="Buscar MLB, SKU ou título" style={S.busca} aria-label="Buscar anúncio" />
         <span style={S.ajuda}>{lista.length} anúncio(s)</span>
         <button type="button" style={S.chip} onClick={() => exportar(rel)} title="Planilha com custos, margens, problemas e recomendações (abre no Excel)">📥 Exportar relatório</button>
-        <button type="button" style={S.chip} onClick={() => window.print()} title="Imprimir esta tela">🖨️ Imprimir</button>
+        <button type="button" style={S.chip} onClick={() => imprimir(rel, filtro, busca)} title="Relatório A4 com TODOS os anúncios deste filtro, problemas, correções e espaço para observações">🖨️ Imprimir</button>
       </div>
       <style>{"@media (max-width: 760px){.pz-rot{display:block!important}.pz-cab{display:none!important}}"}</style>
       <div style={S.lista}>
@@ -107,6 +97,19 @@ export default function AuditoriaAnuncios({ rel }) {
       {lista.length > mostrar && <button type="button" style={S.chip} onClick={() => setMostrar(mostrar + POR_PAGINA)}>Mostrar mais ({lista.length - mostrar})</button>}
     </section>
   );
+}
+
+// (18/11) Imprime o relatório A4 próprio (fundo branco) com todos os anúncios do filtro.
+// Usa um quadro invisível: não abre janela nova e não muda nada na tela nem nos dados.
+function imprimir(rel, filtro, busca) {
+  try {
+    const q = document.createElement("iframe");
+    q.setAttribute("aria-hidden", "true");
+    q.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    q.onload = () => { setTimeout(() => { try { q.contentWindow.focus(); q.contentWindow.print(); } finally { setTimeout(() => q.remove(), 60000); } }, 50); };
+    q.srcdoc = htmlRelatorioImpressao(rel, { filtro, busca });
+    document.body.appendChild(q);
+  } catch (e) { window.alert(`Não foi possível montar a impressão: ${e?.message || e}`); }
 }
 
 // (18/11) Exporta a auditoria completa (abre no Excel). Só gera arquivo; nada é alterado.

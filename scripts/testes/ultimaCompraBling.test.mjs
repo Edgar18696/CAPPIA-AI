@@ -75,7 +75,7 @@ test("exportar: planilha com custo cadastrado, última compra (valor, data, font
   ] });
   const [cab, l1, l2] = csv.replace(/^﻿/, "").split("\r\n");
   assert.ok(cab.includes("Custo cadastrado no Bling (R$);Situação do custo;Última compra (R$);Data da última compra;Fonte da última compra;Margem definitiva (%);Margem estimada pela última compra (%)"));
-  assert.ok(l1.includes(";;Custo não informado;51,50;22/04/2026;Pedido de compra no Bling (atendido) nº 340;;12.3;"));
+  assert.ok(l1.includes(";;Custo não informado;51,50;22/04/2026;Pedido de compra no Bling (atendido) nº 340;;12,3;"));
   assert.ok(l1.includes("Código fora do título;Incluir o código"));
   assert.ok(l2.includes(";5,00;cadastrado;;;;20;;"), "com custo cadastrado, a estimativa não aparece");
 });
