@@ -487,8 +487,10 @@ export default function BlackFridayPaizinho() {
         <button type="button" style={S.mini} disabled={!!lendo} data-paiia-bf="exemplo" onClick={() => {
           const lt = montarLeituraExemplo({ conta: contaAtual, nome: nomeConta });
           try { localStorage.setItem(chaveLeitura(usuarioId, contaAtual), JSON.stringify(lt)); } catch { /* fica só na tela */ }
-          setLeitura(lt); setSimulado(false); setProgresso(null);
-          setAviso(`${lt.contas[contaAtual].lidos} anúncios de EXEMPLO carregados para a ${nomeConta} (fictícios, MLB9…). Clique em Simular.`);
+          // (18/11) Carrega e já simula: a tabela aparece na hora, sem outro clique.
+          setLeitura(lt); setProgresso(null); setMostrar(POR_PAGINA); setSimulado(true); setVersao((v) => v + 1);
+          setAviso(`${lt.contas[contaAtual].lidos} anúncios de EXEMPLO carregados e simulados para a ${nomeConta} (fictícios, MLB9…). Escolha a meta e use ✨ Sugerir, ou selecione na tabela.`);
+          setTimeout(() => document.getElementById("bf-anuncios-campanha")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
         }}>🧪 Carregar anúncios de exemplo</button></div>}
       <small style={S.base}>Só leitura no Mercado Livre e no Bling. Mantenha a página aberta durante a leitura e não use "Sair".</small>
       {progresso && <div style={S.kpis}>
@@ -553,7 +555,7 @@ export default function BlackFridayPaizinho() {
       </div>}
 
       {/* (17/11) Seleção dos anúncios da campanha — escolher NÃO aprova nem ativa. */}
-      <h3 style={S.h3}>Anúncios da campanha — {nomeConta}</h3>
+      <h3 id="bf-anuncios-campanha" style={{ ...S.h3, scrollMarginTop: 18 }}>Anúncios da campanha — {nomeConta}</h3>
       <div style={S.nota}>
         Escolha quais anúncios participam: 50, 100, 200 ou outra quantidade, pela sugestão ou um por um na tabela (filtre por SKU, MLB ou título).
         O desconto (10% Renault comprovada · 5% demais) vale só para os selecionados; os outros anúncios não entram na planilha e não são alterados.

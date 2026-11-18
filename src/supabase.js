@@ -57,6 +57,9 @@ if (ambienteSupabase === "staging" && typeof document !== "undefined") {
     supabase.auth.getSession().then(({ data }) => mostrar(!!data?.session)).catch(() => {});
     supabase.auth.onAuthStateChange((_e, sessao) => mostrar(!!sessao));
   }
-  document.addEventListener("DOMContentLoaded", () => document.body.appendChild(faixa));
-  if (document.body) document.body.appendChild(faixa);
+  // A faixa fica por cima do fim da página: reserva espaço para não cobrir botões.
+  const fixar = () => { document.body.appendChild(faixa); document.body.style.paddingBottom = `${Math.max(40, faixa.offsetHeight + 8)}px`; };
+  document.addEventListener("DOMContentLoaded", fixar);
+  if (document.body) fixar();
+  if (typeof window !== "undefined") window.addEventListener("resize", () => { document.body.style.paddingBottom = `${Math.max(40, faixa.offsetHeight + 8)}px`; });
 }
