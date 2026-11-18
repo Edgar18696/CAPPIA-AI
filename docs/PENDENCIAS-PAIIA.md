@@ -25,6 +25,10 @@
 | 14 | Branch `central/analisar-correcao` (12–13/11) nunca publicada | Ranqueamento | P3 | pendente | Revisar se ainda faz sentido depois da simplificação. |
 | 15 | Conferência no site oficial da auditoria REVELAÇÃO (bobina/sonda, Exportar, Imprimir) | Ranqueamento | P2 | aguardando teste | Edgar logado: analisar REVELAÇÃO e clicar Imprimir uma vez. |
 
+## Ranqueamento operacional 18/11 — aguardando decisão (publicar)
+
+Tela principal com 4 números (analisados/restantes, pendências, urgentes, busca), lista com "Corrigir" e correção inteligente (prejuízo × custo não verificado × qualidade), "Marcar como resolvido" (fila/histórico), "Próximo anúncio", "Enviar para Promoções"; o resto em "Relatório completo". Testado no STAGING com o relatório real da REVELAÇÃO.
+
 ## Concluídas (histórico)
 
 | Data | O quê | Onde |
@@ -47,5 +51,5 @@ Branch `paizinho/simplificacao-geral` (= main fb9489c + margem fc2c40b + simplif
 | # | Próximos candidatos (risco médio, ficaram para o próximo pacote) | Módulo |
 |---|---|---|
 | S1 | Juntar "Prioridades de hoje" e "Detalhes por assunto" na Auditoria por anúncio (hoje o mesmo problema aparece em até 4 lugares) | Ranqueamento |
-| S2 | Na Black Friday, mostrar só o necessário para decidir e ligar "Ver no Ranqueamento" para o resto (não duplicar a auditoria) | Central de Promoções |
+| S2 | Central de Promoções aproveitar os dados do Ranqueamento (custo, margem, data da análise) ao receber um anúncio: o banco da seleção tem colunas fixas — precisa de coluna nova (migração, autorização) | Central de Promoções |
 | S3 | Imposto informado num só lugar (Preços, Custos e Lucro), com a Black Friday só lendo | Preços / Promoções |

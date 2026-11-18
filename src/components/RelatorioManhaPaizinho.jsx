@@ -14,6 +14,7 @@ import { MODO, indicadores, pendenciasAbertas } from "../services/paizinhoAudito
 import PrioridadesPaizinho, { HistoricoFila } from "./PrioridadesPaizinho";
 import EnviarParaPromocoes from "./EnviarParaPromocoes";
 import AuditoriaAnuncios from "./AuditoriaAnuncios";
+import { filtrarAnuncios } from "../services/paizinhoAuditoria/relatorioImpressao";
 
 const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
@@ -41,6 +42,7 @@ export default function RelatorioManhaPaizinho() {
   const [verTeste, setVerTeste] = useState(LOCAL);
   const [fila, setFila] = useState(null); // { repo, estado, origem, avisoBanco, naoEnviados, conta }
   const [painel, setPainel] = useState(""); // "", "historico", "pendencias"
+  const [busca, setBusca] = useState(""); // (18/11) busca do topo: comanda a lista de anúncios
   const contaAtual = CONTAS_AUDITORIA.find((c) => c.id === conta) || CONTA_PADRAO;
 
   useEffect(() => {
@@ -61,6 +63,7 @@ export default function RelatorioManhaPaizinho() {
     setAvisoFila("");
     setFila(null);
     setPainel("");
+    setBusca("");
     setVerTeste(LOCAL);
   }
 
@@ -108,6 +111,8 @@ export default function RelatorioManhaPaizinho() {
   const rel = verTeste && testeDaConta ? testeDaConta : doServidor || (LOCAL ? testeDaConta : null);
   const ind = filaDaConta ? indicadores(filaDaConta.estado) : null;
   const ocupado = Boolean(rodando) || !filaDaConta;
+  const abertas = filaDaConta ? pendenciasAbertas(filaDaConta.estado).length : null;
+  const urgentes = rel ? filtrarAnuncios(rel, "urgentes").length : null;
 
   return (
     <section style={S.caixa} data-paizinho-relatorio-manha data-paizinho-conta={conta}>
@@ -120,12 +125,7 @@ export default function RelatorioManhaPaizinho() {
 
       {LOCAL && (
         <div style={S.teste} data-paizinho-teste-local>
-          <strong>🔍 Análise com dados reais (somente leitura) — fila sem repetição</strong>
-          {/* (18/11) Ajuda recolhida em uma linha. */}
-          <details style={S.ajuda}>
-            <summary style={{ cursor: "pointer" }}>Só leitura · mantenha a página aberta durante a leitura. Como funciona</summary>
-            Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. "Analisar novos" pega só anúncios nunca analisados nesta conta; o progresso continua de onde parou. Mantenha esta página aberta e não use "Sair" durante a leitura.
-          </details>
+          {/* (18/11) Tela simples: contas → 4 números + busca → Analisar novos → lista com "Corrigir". */}
           <div style={S.linha} role="group" aria-label="Conta do Mercado Livre" data-paizinho-seletor-conta>
             {CONTAS_AUDITORIA.map((c) => (
               <button
@@ -142,52 +142,42 @@ export default function RelatorioManhaPaizinho() {
             ))}
           </div>
 
-          <div style={S.kpis} data-paizinho-fila-indicadores>
-            <Kpi rotulo="Total de anúncios" valor={ind?.total == null ? "— (após a 1ª rodada)" : numero(ind.total)} />
-            <Kpi rotulo="Já analisados" valor={ind ? numero(ind.analisados) : "…"} />
-            <Kpi rotulo="Restantes (inéditos)" valor={ind?.restantes == null ? "—" : numero(ind.restantes)} />
-            <Kpi rotulo="Com pendências" valor={ind ? numero(ind.pendentes) : "…"} cor={ind?.pendentes ? COR.media : undefined} />
-            <Kpi rotulo="Resolvidos" valor={ind ? numero(ind.resolvidos) : "…"} />
+          {/* (18/11) Só 4 números + busca no topo; os 5 indicadores da fila foram para o "Relatório completo". */}
+          <div style={S.numeros} data-paizinho-numeros-principais>
+            <Numero rotulo="Analisados / restantes" valor={ind ? `${numero(ind.analisados)} / ${ind.restantes == null ? "—" : numero(ind.restantes)}` : "…"} />
+            <Numero rotulo="Pendências abertas" valor={abertas == null ? "…" : numero(abertas)} cor={abertas ? COR.media : undefined} />
+            <Numero rotulo="Urgentes" valor={urgentes == null ? "—" : numero(urgentes)} cor={urgentes ? COR.alta : undefined} />
+            <label style={S.buscaCaixa}>
+              <small style={S.kpiRotulo}>Buscar</small>
+              <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar SKU, MLB ou produto" style={S.buscaTopo} aria-label="Buscar SKU, MLB ou produto" data-paizinho-busca />
+            </label>
           </div>
+
+          <div style={S.linha} data-paizinho-fila-acessos>
+            <button type="button" onClick={() => rodar(MODO.NOVOS)} disabled={ocupado} style={S.botao} data-paizinho-rodar-teste data-paizinho-analisar-novos>{rodando ? "⏳ Analisando…" : "Analisar novos"}</button>
+            {/* (18/11) Ações secundárias como links pequenos. */}
+            <span style={S.secundarias}>
+              <button type="button" onClick={() => setPainel(painel === "historico" ? "" : "historico")} disabled={!filaDaConta} style={painel === "historico" ? S.linkAtivo : S.linkBotao} data-paizinho-fila-historico>Histórico</button>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={() => setPainel(painel === "pendencias" ? "" : "pendencias")} disabled={!filaDaConta} style={painel === "pendencias" ? S.linkAtivo : S.linkBotao} data-paizinho-fila-pendencias>Revisar pendências{ind?.pendentes ? ` (${ind.pendentes})` : ""}</button>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={() => rodar(MODO.REANALISE)} disabled={ocupado || !ind?.analisados} style={S.linkBotao} data-paizinho-reanalisar>Reanalisar</button>
+            </span>
+          </div>
+          {/* (18/11) Ajuda recolhida em uma linha. */}
+          <details style={S.ajuda}>
+            <summary style={{ cursor: "pointer" }}>Só leitura · mantenha a página aberta durante a leitura. Como funciona</summary>
+            Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. "Analisar novos" pega só anúncios nunca analisados nesta conta; o progresso continua de onde parou. Mantenha esta página aberta e não use "Sair" durante a leitura.
+          </details>
+          {rodando && <span style={S.ajuda}>⏳ {rodando}</span>}
+          {erroTeste && <span style={S.erro}>❌ {erroTeste}</span>}
+          {avisoFila && <span style={avisoFila.startsWith("✔") ? S.ok : S.erro} data-paizinho-fila-aviso>{avisoFila}</span>}
           {/* (18/11) Origem da fila (banco/navegador) recolhida: é informação técnica. */}
           {fila?.conta === conta && fila.avisoBanco && <details style={S.ajuda} data-paizinho-fila-origem><summary style={{ cursor: "pointer" }}>💾 Progresso guardado neste navegador (por quê)</summary>{fila.avisoBanco}</details>}
           {fila?.conta === conta && fila.erro && <span style={S.erro}>❌ Fila: {fila.erro}</span>}
           {filaDaConta?.naoEnviados > 0 && (
             <span style={S.ajuda}>Há {filaDaConta.naoEnviados} registro(s) desta conta guardados neste navegador antes do banco existir. <button type="button" style={S.chip} onClick={enviarAoBanco} disabled={ocupado}>Enviar para o banco</button></span>
           )}
-
-          {/* (18/11) "Opções avançadas" (fechado; padrões iguais): quantidade por rodada, concorrência e origem do relatório. */}
-          <details style={S.ajuda} data-paizinho-opcoes-avancadas>
-          <summary style={{ cursor: "pointer" }}>Opções avançadas</summary>
-          {doServidor && testeDaConta && (
-            <div style={S.linha}>
-              <span>Mostrar o relatório:</span>
-              <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Neste navegador</button>
-              <button type="button" style={!verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(false)}>Servidor 03h</button>
-            </div>
-          )}
-          <div style={S.linha}>
-            <label style={S.rotulo}>Anúncios por rodada
-              <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
-                {[20, 50, 100, 300, 500].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
-            <label style={S.rotulo}>Concorrência (usa créditos SerpAPI)
-              <select value={concorrencia} onChange={(e) => setConcorrencia(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
-                {[0, 3, 5, 15].map((n) => <option key={n} value={n}>{n === 0 ? "não pesquisar" : `${n} anúncios`}</option>)}
-              </select>
-            </label>
-          </div>
-          </details>
-          <div style={S.linha} data-paizinho-fila-acessos>
-            <button type="button" onClick={() => rodar(MODO.NOVOS)} disabled={ocupado} style={S.botao} data-paizinho-rodar-teste data-paizinho-analisar-novos>{rodando ? "⏳ Analisando…" : "Analisar novos"}</button>
-            <button type="button" onClick={() => setPainel(painel === "historico" ? "" : "historico")} disabled={!filaDaConta} style={painel === "historico" ? S.chipAtivo : S.chip} data-paizinho-fila-historico>Histórico</button>
-            <button type="button" onClick={() => setPainel(painel === "pendencias" ? "" : "pendencias")} disabled={!filaDaConta} style={painel === "pendencias" ? S.chipAtivo : S.chip} data-paizinho-fila-pendencias>Revisar pendências{ind?.pendentes ? ` (${ind.pendentes})` : ""}</button>
-            <button type="button" onClick={() => rodar(MODO.REANALISE)} disabled={ocupado || !ind?.analisados} style={S.chip} data-paizinho-reanalisar>Reanalisar</button>
-          </div>
-          {rodando && <span style={S.ajuda}>⏳ {rodando}</span>}
-          {erroTeste && <span style={S.erro}>❌ {erroTeste}</span>}
-          {avisoFila && <span style={avisoFila.startsWith("✔") ? S.ok : S.erro} data-paizinho-fila-aviso>{avisoFila}</span>}
 
           {painel === "historico" && filaDaConta && (
             <div data-paizinho-painel-historico>
@@ -206,7 +196,49 @@ export default function RelatorioManhaPaizinho() {
 
       {rel?.leitura_incompleta ? <AvisoLeituraIncompleta info={rel.leitura_incompleta} /> : null}
       {rel ? <AvisoLeiturasComerciais rel={rel} /> : null}
-      {rel ? <Relatorio key={`${conta}-${rel.gerado_em}`} rel={rel} estado={filaDaConta?.estado} aoAgir={agir} /> : null}
+      {/* (18/11) Lista operacional: abrir → ver o problema → corrigir → próximo anúncio. */}
+      {rel ? <AuditoriaAnuncios key={`${conta}-${rel.gerado_em}`} rel={rel} busca={busca} estado={filaDaConta?.estado} aoAgir={agir} /> : null}
+
+      {/* (18/11) Todo o resto (indicadores, prioridades, oportunidades, fretes, Renault, detalhes,
+          limitações e opções avançadas) fica aqui, fechado. Nada foi apagado. */}
+      <details style={S.completo} data-paizinho-relatorio-completo>
+        <summary style={S.resumoCompleto}>📊 Relatório completo</summary>
+        {LOCAL && (
+          <>
+            <div style={S.kpis} data-paizinho-fila-indicadores>
+              <Kpi rotulo="Total de anúncios" valor={ind?.total == null ? "— (após a 1ª rodada)" : numero(ind.total)} />
+              <Kpi rotulo="Já analisados" valor={ind ? numero(ind.analisados) : "…"} />
+              <Kpi rotulo="Restantes (inéditos)" valor={ind?.restantes == null ? "—" : numero(ind.restantes)} />
+              <Kpi rotulo="Com pendências" valor={ind ? numero(ind.pendentes) : "…"} cor={ind?.pendentes ? COR.media : undefined} />
+              <Kpi rotulo="Resolvidos" valor={ind ? numero(ind.resolvidos) : "…"} />
+            </div>
+            {/* (18/11) "Opções avançadas" (fechado; padrões iguais): quantidade por rodada, concorrência e origem do relatório. */}
+            <details style={{ ...S.ajuda, marginTop: 10 }} data-paizinho-opcoes-avancadas>
+              <summary style={{ cursor: "pointer" }}>Opções avançadas</summary>
+              {doServidor && testeDaConta && (
+                <div style={S.linha}>
+                  <span>Mostrar o relatório:</span>
+                  <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Neste navegador</button>
+                  <button type="button" style={!verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(false)}>Servidor 03h</button>
+                </div>
+              )}
+              <div style={S.linha}>
+                <label style={S.rotulo}>Anúncios por rodada
+                  <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
+                    {[20, 50, 100, 300, 500].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+                <label style={S.rotulo}>Concorrência (usa créditos SerpAPI)
+                  <select value={concorrencia} onChange={(e) => setConcorrencia(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
+                    {[0, 3, 5, 15].map((n) => <option key={n} value={n}>{n === 0 ? "não pesquisar" : `${n} anúncios`}</option>)}
+                  </select>
+                </label>
+              </div>
+            </details>
+          </>
+        )}
+        {rel ? <Relatorio key={`${conta}-${rel.gerado_em}`} rel={rel} estado={filaDaConta?.estado} aoAgir={agir} /> : <p style={S.ajuda}>Nenhum relatório desta conta ainda.</p>}
+      </details>
     </section>
   );
 }
@@ -280,9 +312,7 @@ function Relatorio({ rel, estado, aoAgir }) {
         <Kpi rotulo="Pontuação média" valor={`${r.pontuacao_media}/100`} />
       </div>
 
-      {/* (18/11) Tela única por anúncio: o que está errado e como corrigir. */}
-      <AuditoriaAnuncios rel={rel} />
-
+      {/* (18/11) A lista por anúncio ("Corrigir") fica no topo da tela, fora do relatório completo. */}
       <h3 style={S.h3}>🎯 Prioridades de hoje</h3>
       {/* (17/11) Conta ao lado do MLB, Central de Anúncios, Resolvido / Remover da lista (só a lista do PAIIA). */}
       <PrioridadesPaizinho rel={rel} estado={estado} aoAgir={aoAgir} textoPotencial={textoPotencial} />
@@ -338,6 +368,10 @@ function Relatorio({ rel, estado, aoAgir }) {
       </details>
     </div>
   );
+}
+
+function Numero({ rotulo, valor, cor }) {
+  return <div style={S.numero}><small style={S.kpiRotulo}>{rotulo}</small><strong style={{ ...S.numeroValor, ...(cor ? { color: cor } : {}) }}>{valor}</strong></div>;
 }
 
 function Kpi({ rotulo, valor, cor }) {
@@ -487,4 +521,14 @@ const S = {
   detalhe: { marginTop: 8, border: "1px solid #1e293b", borderRadius: 10, padding: "8px 12px", background: "#020617" },
   resumo: { cursor: "pointer", fontWeight: 800, color: "#e2e8f0" },
   lista: { margin: "8px 0 0", paddingLeft: 18, lineHeight: 1.6, color: "#cbd5e1" },
+  numeros: { display: "flex", flexWrap: "wrap", gap: 10, marginTop: 4 },
+  numero: { flex: "1 1 140px", display: "flex", flexDirection: "column", gap: 2, padding: "10px 14px", border: "1px solid #1e3a5f", borderRadius: 12, background: "#020617" },
+  numeroValor: { fontSize: 26, lineHeight: 1.1, color: "#f8fafc", fontWeight: 900 },
+  buscaCaixa: { flex: "2 1 240px", display: "flex", flexDirection: "column", gap: 4, padding: "10px 14px", border: "1px solid #1e3a5f", borderRadius: 12, background: "#020617" },
+  buscaTopo: { border: "1px solid #475569", borderRadius: 10, background: "#0b1324", color: "#f8fafc", padding: "9px 11px", font: "inherit", fontSize: 15, minWidth: 0 },
+  secundarias: { display: "inline-flex", flexWrap: "wrap", gap: 6, alignItems: "center", color: "#475569", alignSelf: "center" },
+  linkBotao: { border: 0, background: "none", color: "#94a3b8", padding: "4px 2px", cursor: "pointer", textDecoration: "underline", fontSize: 13 },
+  linkAtivo: { border: 0, background: "none", color: "#67e8f9", padding: "4px 2px", cursor: "pointer", textDecoration: "underline", fontSize: 13, fontWeight: 800 },
+  completo: { marginTop: 18, border: "1px solid #1e3a5f", borderRadius: 12, padding: "10px 14px", background: "rgba(2,6,23,.6)" },
+  resumoCompleto: { cursor: "pointer", fontWeight: 900, color: "#e0f2fe", fontSize: 16 },
 };

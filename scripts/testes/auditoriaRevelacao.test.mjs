@@ -48,6 +48,7 @@ test("tela: auditoria por anúncio só mostra (sem escrita), com 'Como corrigir'
   assert.match(ler("src/services/paizinhoAuditoria/relatorioImpressao.js"), /\["problemas", "Com problema"\], \["urgentes", "Só urgentes"\], \["sem_custo", "Custo não informado"\], \["todos", "Todos"\]/);
   assert.doesNotMatch(tela, /functions\.invoke|\.from\(|fetch\(|method:/, "nada é gravado nem alterado");
   const rank = ler("src/components/RelatorioManhaPaizinho.jsx");
-  assert.match(rank, /<AuditoriaAnuncios rel=\{rel\} \/>/);
+  // (18/11) a lista saiu do relatório completo para o topo e recebe a busca/fila do topo.
+  assert.match(rank, /<AuditoriaAnuncios [^>]*rel=\{rel\}/);
   assert.match(rank, /<PrioridadesPaizinho rel=\{rel\}/, "Prioridades (Resolvido / Remover da lista) continuam");
 });
