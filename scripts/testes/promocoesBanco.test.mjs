@@ -151,7 +151,8 @@ test("modo staging: só com banco de teste, nunca a produção; produção conti
   assert.match(sb, /const demoEmail = ambienteSupabase === "staging" \? env\.VITE_STAGING_DEMO_EMAIL : "";/);
   assert.match(sb, /export const temAcessoDeTeste = !!\(demoEmail && demoSenha && ambienteSupabase === "staging" && !String\(supabaseUrl\)\.includes\(PRODUCAO_REF\)\);/);
   assert.match(sb, /if \(!temAcessoDeTeste\) throw new Error/);
-  assert.match(tela, /\{temAcessoDeTeste && <div style=\{S\.acoes\}><button[^>]*>🧪 Entrar no Teste<\/button>/);
+  assert.match(tela, /\{temAcessoDeTeste && <div style=\{S\.acoes\}><button type="button" style=\{S\.botao\} data-paiia-bf="entrar-teste" onClick=\{\(\) => entrarNoTeste\(\)/);
+  assert.match(tela, />🧪 Entrar no Teste<\/button>/);
   const gitignore = ler(".gitignore");
   assert.match(gitignore, /\*\.local/, "o arquivo com a chave do STAGING não vai para o git");
 });
