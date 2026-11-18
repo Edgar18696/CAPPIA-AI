@@ -63,6 +63,8 @@ export function conferirEstoque({ quantidade, confirmada, bling }) {
     const disp = Number(bling.saldoVirtualTotal);
     const fis = bling.saldoFisicoTotal != null ? Number(bling.saldoFisicoTotal) : null;
     const base = `Bling (SKU ${bling?.produto?.codigo || "—"}): físico ${fis ?? "—"} · disponível ${disp}. Anúncio: ${qtd}.`;
+    // (17/11) Caso 087100: produto já no Bling com disponível 0 → pendência só de estoque (nada é refeito).
+    if (disp <= 0) return { nivel: "erro", estoqueZero: true, texto: `${base} Produto encontrado no Bling. Estoque disponível: 0. Regularizar estoque para publicar.` };
     if (qtd > disp) return { nivel: "erro", texto: `${base} A quantidade do anúncio é maior que o disponível no Bling.` };
     if (!confirmada) return { nivel: "erro", texto: `${base} Confirme a quantidade do anúncio.` };
     return { nivel: "ok", texto: base };

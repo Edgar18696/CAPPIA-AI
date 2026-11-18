@@ -27,6 +27,7 @@ export default function DadosPeca({
   // (23/10 - E6) Padroniza as maiúsculas quando o campo perde o foco.
   aoSairDoTitulo,
   aoSairDaDescricao,
+  avisoCodigo = null,
 }) {
   const buscar = fichaPaiiaVoz ? () => {} : buscarEMontarAnuncio;
   return (
@@ -93,6 +94,7 @@ export default function DadosPeca({
         pecaEncontrada={pecaEncontrada}
         buscarEMontarAnuncio={buscar}
         processando={processando}
+        avisoCodigo={avisoCodigo}
       />
     </section>
   );

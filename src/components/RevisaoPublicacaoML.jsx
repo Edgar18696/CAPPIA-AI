@@ -62,6 +62,7 @@ import {
   TEXTO_SEM_APLICACAO,
   TEXTO_VEICULOS_SO_NA_DESCRICAO, compatibilidadeNaoExigivel, pendenciaSemVeiculosVinculados, resumoCompatAprovadas } from "../services/compatibilidadeML";
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
+import { TEXTO_ESTOQUE_ZERO, linkProdutoBling } from "../services/consultaInicialSKU";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, idsBlingDescartados, semBlingDescartados, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
@@ -1817,6 +1818,17 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
               <div data-paiia-bling-outro-id style={erro}>⚠ {situacaoProdutoBling({ leitura: estoque, registrados: produtosBlingDoSku }).texto}</div>
             )}
             <div data-paiia-bling-estoque>Estoque no Bling: físico <b>{estoque.saldoFisicoTotal ?? "—"}</b> · disponível <b>{estoque.saldoVirtualTotal ?? "—"}</b>{estoque.ok === false && estoque.mensagem ? ` — ${estoque.mensagem}` : ""}</div>
+            {/* (17/11) Estoque 0 no Bling: corrigir SÓ o estoque (no Bling) e reler; a ficha não é refeita. */}
+            {estoque.saldoVirtualTotal != null && Number(estoque.saldoVirtualTotal) <= 0 && (
+              <div data-paiia-bling-estoque-zero style={{ ...erro, marginTop: 6 }}>
+                ⚠ {TEXTO_ESTOQUE_ZERO}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                  <a data-paiia-regularizar-estoque href={linkProdutoBling(estoque.produto?.id)} target="_blank" rel="noopener noreferrer" style={{ ...botaoAzul, padding: "4px 10px", textDecoration: "none" }}>Regularizar estoque no Bling</a>
+                  <button type="button" data-paiia-verificar-estoque onClick={relerBling} disabled={lendoBlingPub} style={{ ...botaoCinza, padding: "4px 10px" }}>Verificar estoque novamente e continuar</button>
+                </div>
+                <div style={{ ...info, marginTop: 4 }}>O PAIIA não altera a quantidade: lance a entrada ou o balanço no Bling (produto ID {estoque.produto?.id}). Ficha, fotos, descrição e aplicações continuam como estão.</div>
+              </div>
+            )}
             {/* (03/11/2026) Vínculo automático só nas contas com loja Bling mapeada (hoje só LojaOnlineSP). */}
             {lojaBlingDaConta(contaEscolhida)?.vinculo_automatico ? (
               <div style={info} data-paiia-bling-vinculo="automatico">Na publicação o anúncio é VINCULADO a este produto (nada é duplicado no Bling). Depois de publicar, o PAIIA confere sozinho o vínculo no Bling ({lojaBlingDaConta(contaEscolhida).bling_loja_nome}) pelo SKU. Um produto Bling pode atender anúncios em várias contas Mercado Livre, cada um com o seu MLB.</div>

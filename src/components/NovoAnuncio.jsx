@@ -129,6 +129,7 @@ import {
 
 import CopilotoChat from "./CopilotoChat";
 import ProdutoExistenteSKU from "./ProdutoExistenteSKU";
+import AvisoSKU from "./AvisoSKU";
 import { lerFichasDoCodigo } from "../services/produtoExistenteService";
 import { fichasExistentes } from "../services/produtoExistenteSKU";
 
@@ -5349,6 +5350,8 @@ marcarAnuncioPronto({
   setTipoAnuncio={setTipoAnuncio}
   pecaEncontrada={pecaEncontrada}
   buscarEMontarAnuncio={buscarComReconhecimento}
+  // (17/11) Consulta automática do SKU em segundo plano (caso 087100): aviso pequeno ao lado do código.
+  avisoCodigo={<AvisoSKU codigo={codigo} fichaAtualId={fichaNovo.fichaId || ""} />}
   fichaPaiiaVoz={Boolean(origemPaiiaVoz)}
   processando={processando}
   etapaProcessamento={etapaProcessamento}

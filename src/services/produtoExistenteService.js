@@ -12,18 +12,31 @@ import { reconhecerSKU } from "./reconhecimentoSKU";
 import { lerRegistroDoSKU, aplicarGravacoesRegistro } from "./registroMLBService";
 import { identidadesDasFichas } from "./produtoExistenteSKU";
 
-async function lerBling(sku) {
+export async function lerBling(sku) {
   const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "saldo_por_sku", sku } });
   if (error) return { ok: false, erro: error.message || "falha ao falar com o Bling" };
   return data || { ok: false, erro: "resposta vazia do Bling" };
 }
 
-async function consultarML(conta, caminho) {
+export async function consultarML(conta, caminho) {
   const { data, error } = await supabase.functions.invoke("mercadolivre-publicacao", {
     body: { acao: "ml_consulta", conta_ml: String(conta), metodo: "GET", caminho },
   });
   if (error) return { ok: false, erro: error.message || "falha ao falar com o Mercado Livre" };
   return data || { ok: false, erro: "resposta vazia do Mercado Livre" };
+}
+
+// (17/11) Bling conectado? Lido uma vez e guardado por 5 min (só leitura; sem Bling, nada é consultado).
+let statusBling = null;
+export async function blingEstaConectado() {
+  if (statusBling && Date.now() - statusBling.em < 5 * 60 * 1000) return statusBling.valor;
+  let valor = null; // desconhecido: a consulta tenta e, se falhar, diz "não foi possível verificar"
+  try {
+    const { data, error } = await supabase.functions.invoke("bling-integracao", { body: { acao: "status" } });
+    if (!error && data?.ok) valor = Boolean(data.conectado);
+  } catch { /* desconhecido */ }
+  if (valor !== null) statusBling = { em: Date.now(), valor };
+  return valor;
 }
 
 /** Só as fichas PAIIA do código (base interna; nada externo). */
