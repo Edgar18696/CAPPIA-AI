@@ -308,7 +308,7 @@ test("custo nunca inventado: sem custo, custo a confirmar, Renault de lote → m
 });
 
 test("imposto não cadastrado, tarifa não lida ou frete não confirmado → margem não verificável", () => {
-  assert.match(R.simularAnuncio(leituraAnuncio(), { perfil: { impostoPct: null, custoPedido: 0 } }).motivos.join(" "), /Imposto não cadastrado/);
+  assert.match(R.simularAnuncio(leituraAnuncio(), { perfil: { impostoPct: null, custoPedido: 0 } }).motivos.join(" "), /Imposto não informado: margem não verificada/);
   assert.match(R.simularAnuncio(leituraAnuncio({ tarifaFinal: null }), { perfil: PERFIL }).motivos.join(" "), /Tarifa de venda/);
   // 85 → 80,75 (mesma faixa 79–99,99): usa a cotação atual
   const mesma = R.simularAnuncio(leituraAnuncio({ item: item({ price: 85 }), custo: custoOk(30), freteFinal: null }), { perfil: PERFIL });

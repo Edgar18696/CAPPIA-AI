@@ -18,7 +18,7 @@ import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, custosDoPerfil,
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
-import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, LISTAS, aprovavel } from "../services/blackFriday/planilha";
+import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, LISTAS, aprovavel, selecionavel } from "../services/blackFriday/planilha";
 import { renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 import { montarCopiaPrecos, validarCopia, precosDaCopia, lerCopiaGuardada, guardarCopia } from "../services/blackFriday/precosOriginais";
 import { criarSelecao, adaptadorLocal, sugerirAnuncios, chaveItemSelecao, EVENTO_SELECAO } from "../services/promocoes/selecao";
@@ -315,8 +315,11 @@ export default function BlackFridayPaizinho() {
   }
 
   // (17/11) Seleção da campanha (escolher não aprova nem altera nada).
-  function selecionar(lista) {
+  function selecionar(todos) {
     if (!selecao) return;
+    // (18/11) BLOQUEADO (inelegível, prejuízo, excluído) não entra; imposto/custo ausente não impede.
+    const lista = todos.filter((l) => listaDe.get(l.chave)?.lista !== LISTAS.BLOQUEADO);
+    if (!lista.length) { setAviso("Anúncio BLOQUEADO (inelegível, com prejuízo ou excluído) não entra na campanha."); return; }
     const r = selecao.incluir(lista.map((l) => ({ conta: l.conta, id: l.id, sku: l.sku, titulo: l.titulo, preco_original: l.preco_original })), { origem: "central" });
     if (r.incluidos.length) registro?.registrar("selecao_incluida", { conta: nomeConta, quantidade: r.incluidos.length });
     setAviso([r.incluidos.length ? `${r.incluidos.length} anúncio(s) selecionado(s).` : "", r.ja_estavam.length ? `${r.ja_estavam.length} já estava(m) na seleção (sem duplicar).` : "", r.recusados.length ? `${r.recusados.length} não entrou(aram): ${[...new Set(r.recusados.map((x) => x.motivo))].join(" ")}` : ""].filter(Boolean).join(" "));
@@ -336,8 +339,8 @@ export default function BlackFridayPaizinho() {
     if (metaConta === null) { setAviso("Escolha a meta da conta (50, 100, 200 ou outra) antes de pedir a sugestão."); return; }
     const vagas = metaConta - selConta.size;
     if (vagas <= 0) { setAviso(`A meta de ${metaConta} da ${nomeConta} já está completa.`); return; }
-    const s = sugerirAnuncios(linhas, { vagas, selecionado: (l) => selConta.has(chaveItemSelecao(l.conta, l.id)), apto: (l) => aprovavel(l) });
-    if (!s.length) { setAviso("Nenhum anúncio PRONTO e com estoque disponível para sugerir."); return; }
+    const s = sugerirAnuncios(linhas, { vagas, selecionado: (l) => selConta.has(chaveItemSelecao(l.conta, l.id)), apto: (l) => selecionavel(l) });
+    if (!s.length) { setAviso("Nenhum anúncio disponível para sugerir (fora BLOQUEADO e dúvida Renault, com estoque)."); return; }
     selecionar(s);
   }
   function mudarMeta(v) {
@@ -436,10 +439,10 @@ export default function BlackFridayPaizinho() {
           <input ref={arquivoCopia} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={carregarCopia} aria-label="Arquivo da cópia de preços" />
         </div>
       </div>
-      <div style={perfil.impostoPct === null ? S.aviso : S.nota}>
-        <strong>Custos da venda usados na margem:</strong> imposto {perfil.impostoPct === null ? <strong>NÃO cadastrado neste endereço</strong> : <strong>{String(perfil.impostoPct).replace(".", ",")}%</strong>} · custo por pedido R$ {String(perfil.custoPedido.toFixed(2)).replace(".", ",")} · comissão e frete: lidos do Mercado Livre · custo da peça: Bling (nunca inventado).
-        {perfil.impostoPct === null && <><br /><small>O cadastro "Preços, Custos e Lucro" fica no navegador e é separado por endereço: o do PAIIA oficial não aparece aqui. Sem imposto, a margem não é verificável e nenhum anúncio fica PRONTO.</small></>}
-        {!custosForm ? <> <button type="button" style={S.mini} onClick={() => setCustosForm({ imposto: perfil.impostoPct ?? "", pedido: perfil.custoPedido || "" })}>{perfil.impostoPct === null ? "Informar imposto" : "Alterar"}</button></>
+      <div style={S.nota}>
+        <strong>Custos da venda usados na margem:</strong> imposto {perfil.impostoPct === null ? <strong>não informado</strong> : <strong>{String(perfil.impostoPct).replace(".", ",")}%</strong>} · custo por pedido R$ {String(perfil.custoPedido.toFixed(2)).replace(".", ",")} · comissão e frete: lidos do Mercado Livre · custo da peça: Bling (nunca inventado).
+        {perfil.impostoPct === null && <><br /><small>(18/11) O imposto não é exigido para consultar, selecionar ou simular: sem ele, a margem aparece como <strong>"Margem não verificada"</strong>. Impostos serão tratados num projeto separado. A aprovação das ofertas continua exigindo margem verificada (segurança da ativação).</small></>}
+        {!custosForm ? <> <button type="button" style={S.mini} onClick={() => setCustosForm({ imposto: perfil.impostoPct ?? "", pedido: perfil.custoPedido || "" })}>{perfil.impostoPct === null ? "Informar imposto (opcional)" : "Alterar"}</button></>
           : <div style={S.acoes}>
             <input value={custosForm.imposto} onChange={(e) => setCustosForm({ ...custosForm, imposto: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="Imposto % (igual ao oficial)" style={{ ...S.busca, flex: "0 1 200px" }} aria-label="Imposto em %" />
             <input value={custosForm.pedido} onChange={(e) => setCustosForm({ ...custosForm, pedido: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="Custo por pedido R$ (opcional)" style={{ ...S.busca, flex: "0 1 220px" }} aria-label="Custo por pedido" />
@@ -464,7 +467,7 @@ export default function BlackFridayPaizinho() {
         <Kpi rotulo="Demais (5%)" valor={resumo.demais} cor={COR_CLASSE.demais} />
         <Kpi rotulo="Dúvida Renault" valor={resumo.revisao} cor={COR_CLASSE.revisao} />
         <Kpi rotulo="Prejuízo" valor={resumo.prejuizo} cor="#f87171" />
-        <Kpi rotulo="Margem não verificável" valor={resumo.sem_margem} cor="#fb923c" />
+        <Kpi rotulo="Margem não verificada" valor={resumo.sem_margem} cor="#fb923c" />
       </div>}
 
       {/* (17/11) Seleção dos anúncios da campanha — escolher NÃO aprova nem ativa. */}
@@ -487,7 +490,7 @@ export default function BlackFridayPaizinho() {
           <button type="button" style={S.mini} onClick={() => mudarMeta(metaOutra)}>Gravar meta</button>
           <button type="button" style={S.mini} onClick={() => setMetaOutra(null)}>Cancelar</button>
         </>}
-        <button type="button" style={S.botao} disabled={!simulado || !linhas.length} onClick={sugerir} title="Entre os PRONTO com estoque: maior quantidade vendida lida no ML e, no empate, maior estoque" data-paiia-bf="sugerir">✨ Sugerir até a meta</button>
+        <button type="button" style={S.botao} disabled={!simulado || !linhas.length} onClick={sugerir} title="Fora BLOQUEADO e dúvida Renault, com estoque: maior quantidade vendida lida no ML e, no empate, maior estoque. Não exige imposto." data-paiia-bf="sugerir">✨ Sugerir até a meta</button>
         <button type="button" style={S.filtro} disabled={!selConta.size} onClick={limparSelecao}>Limpar seleção</button>
       </div>
       <div style={S.kpis}>
@@ -496,7 +499,7 @@ export default function BlackFridayPaizinho() {
         <Kpi rotulo="Demais (5%)" valor={simulado ? resumoSel.demais : "—"} cor={COR_CLASSE.demais} />
         <Kpi rotulo="Revisão necessária" valor={resumoSel.revisao} cor="#fb923c" />
         <Kpi rotulo="Prejuízo" valor={simulado ? resumoSel.prejuizo : "—"} cor="#f87171" />
-        <Kpi rotulo="Margem baixa / não verificável" valor={simulado ? `${resumoSel.margem_baixa} / ${resumoSel.sem_margem}` : "—"} cor="#fbbf24" />
+        <Kpi rotulo="Margem baixa / não verificada" valor={simulado ? `${resumoSel.margem_baixa} / ${resumoSel.sem_margem}` : "—"} cor="#fbbf24" />
         <Kpi rotulo="Preço original (soma)" valor={simulado ? real(resumoSel.soma_original) : "—"} />
         <Kpi rotulo="Preço promocional (soma)" valor={simulado ? real(resumoSel.soma_promocional) : "—"} cor="#4ade80" />
       </div>
@@ -550,7 +553,7 @@ export default function BlackFridayPaizinho() {
                     <td style={S.td}>{real(l.preco_final)}</td>
                     <td style={{ ...S.td, whiteSpace: "normal" }}><small>{real(l.tarifa)} · {real(l.imposto)} · {real(l.frete)}</small></td>
                     <td style={{ ...S.td, whiteSpace: "normal", minWidth: 130, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={`Preço ${real(l.preco_final)} − comissão ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo/pedido ${real(l.custo_pedido)}${l.custo !== null ? ` − custo ${real(l.custo)} = ${real(l.lucro)}` : ` = sobra ${real(l.repasse)} para a peça`}`}>
-                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span>custo não confirmado</span>{l.repasse !== null && <><br /><small style={S.base}>Sobra p/ peça: {real(l.repasse)}</small></>}</>}
+                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span><br /><small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo === null ? "custo não confirmado" : ""].filter(Boolean).join(" · ")}</small>{l.repasse !== null && <><br /><small style={S.base}>Sobra p/ peça: {real(l.repasse)}</small></>}</>}
                     </td>
                     <td style={{ ...S.td, whiteSpace: "normal", minWidth: 220 }}>
                       <span style={{ ...S.selo, color: COR_LISTA[cl.lista], borderColor: COR_LISTA[cl.lista] }}>{aprovado ? "Aprovado (plano)" : cl.lista}</span>

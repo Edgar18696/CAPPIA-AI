@@ -191,6 +191,32 @@ test("descontos: 10% Renault comprovada · 5% demais · título sozinho não com
   assert.equal(PL.montarPlanilha(linhas.filter((l) => sel.has(l.id)), LOJA).length, 1);
 });
 
+test("sem imposto (18/11): simula e seleciona, margem 'não verificada' sem valor inventado; aprovação continua exigindo margem", () => {
+  const base = { id: "MLB1", seller_id: Number(LOJA), title: "Sensor Bosch", price: 200, status: "active", condition: "new", listing_type_id: "gold_special", available_quantity: 3, seller_custom_field: "SKU1", shipping: {}, attributes: [] };
+  const leitura = { conta: LOJA, item: base, compat: { lido: true, quantidade: 0, marcas: [], legivel: true }, promocoes: { lido: true, ativas: [], candidatas: [] }, tarifaFinal: { valor: 22 }, freteAtual: { ok: true, custo_vendedor: 20 }, freteFinal: { ok: true, custo_vendedor: 20 }, custo: { ok: true, encontrado: true, custo: { fornecedores: [{ padrao: true, precoCusto: 80 }] }, formato: "S" } };
+  const semImposto = R.simularAnuncio(leitura, { perfil: { impostoPct: null, custoPedido: 0 } });
+  assert.equal(semImposto.preco_final, 190, "5% calculado mesmo sem imposto");
+  assert.equal(semImposto.imposto, null, "imposto nunca inventado");
+  assert.equal(semImposto.lucro, null);
+  assert.equal(semImposto.margem_pct, null);
+  assert.match(semImposto.motivos.join(" "), /Imposto não informado: margem não verificada/);
+  assert.equal(PL.selecionavel(semImposto), true, "pode ser selecionado sem imposto");
+  assert.equal(PL.aprovavel(semImposto), false, "mas não pode ser aprovado sem margem verificada");
+  const comImposto = R.simularAnuncio(leitura, { perfil: { impostoPct: 6, custoPedido: 0 } });
+  assert.notEqual(comImposto.margem_pct, null, "com imposto (e custo) a margem é calculada");
+  assert.equal(comImposto.imposto, 11.4);
+  // BLOQUEADO e dúvida Renault não entram na seleção
+  const usado = R.simularAnuncio({ ...leitura, item: { ...base, condition: "used" } }, { perfil: { impostoPct: null, custoPedido: 0 } });
+  assert.equal(PL.classificarParaPlanilha(usado).lista, "BLOQUEADO");
+  assert.equal(PL.selecionavel(usado), false);
+  assert.equal(PL.selecionavel({ ...semImposto, classe: "revisao", decisao: null }), false);
+  assert.equal(PL.selecionavel({ ...semImposto, classe: "revisao", decisao: "renault" }), true);
+  const tela = ler("src/components/BlackFridayPaizinho.jsx");
+  assert.match(tela, /apto: \(l\) => selecionavel\(l\)/);
+  assert.match(tela, /Margem não verificada/);
+  assert.doesNotMatch(tela, /nenhum anúncio fica PRONTO/);
+});
+
 /* ------------------------------- telas ------------------------------- */
 
 test("aba: seleção separada da aprovação; aprovação só de selecionado sem revisão; ativação continua desligada", () => {

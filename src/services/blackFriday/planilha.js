@@ -28,6 +28,13 @@ export const margemComProblema = (l) => !!l && Boolean(l.custo_motivo || l.marge
 /** (16/11) Aprovação SÓ para PRONTO com margem verificada e não negativa (regra definitiva). */
 export const aprovavel = (l) => !!l && classificarParaPlanilha(l).lista === LISTAS.PRONTO && !margemComProblema(l);
 
+/**
+ * (18/11) Pode ENTRAR NA SELEÇÃO da campanha (não é aprovação): não está BLOQUEADO, tem preço
+ * promocional e a classe (10% ou 5%) está definida. Imposto ou custo ausentes NÃO impedem a seleção:
+ * a margem aparece como "Margem não verificada" e só a aprovação continua exigindo margem verificada.
+ */
+export const selecionavel = (l) => !!l && classificarParaPlanilha(l).lista !== LISTAS.BLOQUEADO && l.preco_final > 0 && !(l.classe === CLASSES.REVISAO && !l.decisao);
+
 /** Desconto real em % (2 casas), a partir dos preços em reais. */
 export const descontoReal = (original, final) => (num(original) > 0 ? Math.floor(((num(original) - num(final)) / num(original)) * 10000 + 1e-6) / 100 : 0);
 

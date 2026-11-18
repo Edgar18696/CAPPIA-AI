@@ -260,7 +260,8 @@ export function simularAnuncio(a, op = {}) {
     if (e.custo > 0 && !e.a_confirmar) custo = e.custo;
     custoMotivo = e.a_confirmar ? `custo a confirmar (${e.motivo})` : e.custo > 0 ? "" : e.motivo;
   }
-  if (perfil.impostoPct === null) motivos.push("Imposto não cadastrado em Preços, Custos e Lucro: despesas da venda incompletas.");
+  // (18/11) Imposto fica para um projeto separado: sem ele, nada é inventado — a margem fica "não verificada".
+  if (perfil.impostoPct === null) motivos.push("Imposto não informado: margem não verificada (impostos serão tratados em projeto separado).");
 
   // (15/11) Despesas CONHECIDAS da venda (sem o custo da peça): tarifa + frete + imposto + custo por pedido.
   // "Repasse" = o que sobra do preço final para pagar a peça. Serve para achar risco sem inventar custo.
