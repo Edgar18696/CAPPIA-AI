@@ -73,6 +73,7 @@ export default function BlackFridayPaizinho() {
   const [campanhaId, setCampanhaId] = useState(CAMPANHA_BLACK_FRIDAY.id);
   const [formCampanha, setFormCampanha] = useState(null); // nova/editar campanha
   const [pctProduto, setPctProduto] = useState({}); // edição do desconto individual por anúncio
+  const [abertos, setAbertos] = useState(() => new Set()); // anúncios com "Detalhes" abertos
   const cancelar = useRef(false);
   // (17/11) Cada conta tem a sua leitura guardada: ao entrar e ao trocar de conta, carrega a dela.
   const contaRef = useRef(CONTAS_BLACK_FRIDAY[0].id);
@@ -609,67 +610,83 @@ export default function BlackFridayPaizinho() {
           <input value={filtro.busca} onChange={(e) => { setFiltro({ ...filtro, busca: e.target.value }); setMostrar(POR_PAGINA); }} placeholder="Buscar MLB, SKU ou título" style={S.busca} />
         </div>
 
-        <div style={S.tabelaCaixa}>
-          <table style={S.tabela}>
-            <thead><tr>{["", "Campanha", "Anúncio", "Classe", "Preço original", "Desc.", "Preço promocional", "Comissão · imposto · frete", "Lucro (margem)", "Lista e motivo", "Ação"].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
-            <tbody>
-              {visiveis.slice(0, mostrar).map((l) => {
-                const aprovado = !!aprovados[l.chave];
-                const cl = listaDe.get(l.chave) || { lista: "", pendencias: [], observacoes: [] };
-                const sel = regSel(l);
-                return (
-                  <tr key={l.chave} style={aprovado ? S.aprovado : sel ? S.selecionado : undefined}>
-                    <td style={S.td}><input type="checkbox" checked={marcados.has(l.chave)} disabled={aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></td>
-                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 120 }}>
-                      {sel
-                        ? <><span style={{ ...S.selo, color: "#67e8f9", borderColor: "#67e8f9" }}>✓ Selecionado</span>
-                          {sel.revisao && <div title={sel.revisao_motivo || ""}><span style={{ ...S.selo, color: "#fb923c", borderColor: "#fb923c" }}>Revisão necessária</span><br /><small style={S.base}>{sel.revisao_motivo}</small><br /><button type="button" style={S.mini} onClick={() => conferiRevisao(l)}>Conferi o preço</button></div>}
-                          <div style={{ marginTop: 4 }}><button type="button" style={S.mini} onClick={() => retirarDaSelecao([l])}>Retirar</button></div></>
-                        : <button type="button" style={S.mini} onClick={() => selecionar([l])} data-paiia-bf="selecionar">+ Selecionar</button>}
-                    </td>
-                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 220 }}>
-                      <a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? ` · ${l.sku}` : ""}<br /><small style={S.base}>{l.titulo}</small>
-                    </td>
-                    <td style={{ ...S.td, whiteSpace: "normal" }} title={[...l.evidencias, l.duvida].filter(Boolean).join("\n")}>
-                      <span style={{ ...S.selo, color: COR_CLASSE[l.classe], borderColor: COR_CLASSE[l.classe] }}>{ROTULO_CLASSE[l.classe]}</span>
-                      {l.decisao && l.decisao !== "excluir" && <small style={S.base}> (manual)</small>}
-                    </td>
-                    <td style={S.td}>{real(l.preco_original)}</td>
-                    <td style={S.td}>{ehBF
-                      ? (l.classe === CLASSES.REVISAO && !l.decisao ? "a decidir" : `${l.desconto_pct}%`)
-                      : <>{String(l.desconto_pct).replace(".", ",")}%{sel?.desconto_pct ? <small style={S.base}> (do produto)</small> : null}
-                        {sel && campanha.descontos_por_produto && <div style={{ marginTop: 4, display: "flex", gap: 3 }}><input value={pctProduto[l.chave] ?? ""} onChange={(e) => setPctProduto({ ...pctProduto, [l.chave]: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="%" style={{ ...S.busca, width: 52, flex: "0 0 52px", padding: "3px 6px" }} aria-label={`Desconto de ${l.id}`} />
-                          <button type="button" style={S.mini} onClick={() => descontoProduto(l, pctProduto[l.chave] ?? "")}>ok</button>
-                          {sel.desconto_pct ? <button type="button" style={S.mini} onClick={() => descontoProduto(l, null)} title="Voltar ao desconto da campanha">↺</button> : null}</div>}</>}</td>
-                    <td style={S.td}>{real(l.preco_final)}</td>
-                    <td style={{ ...S.td, whiteSpace: "normal" }}><small>{real(l.tarifa)} · {real(l.imposto)} · {real(l.frete)}</small></td>
-                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 130, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={`Preço ${real(l.preco_final)} − comissão ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo/pedido ${real(l.custo_pedido)}${l.custo !== null ? ` − custo ${real(l.custo)} = ${real(l.lucro)}` : ` = sobra ${real(l.repasse)} para a peça`}`}>
-                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span><br /><small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo === null ? "custo não confirmado" : ""].filter(Boolean).join(" · ")}</small>{l.repasse !== null && <><br /><small style={S.base}>Sobra p/ peça: {real(l.repasse)}</small></>}</>}
-                    </td>
-                    <td style={{ ...S.td, whiteSpace: "normal", minWidth: 220 }}>
-                      <span style={{ ...S.selo, color: COR_LISTA[cl.lista], borderColor: COR_LISTA[cl.lista] }}>{aprovado ? "Aprovado (plano)" : cl.lista}</span>
-                      {cl.pendencias.map((m, i) => <div key={i}><small style={S.base}>• {m}</small></div>)}
-                      {cl.observacoes.map((m, i) => <div key={`o${i}`}><small style={{ ...S.base, opacity: 0.7 }}>ℹ {m}</small></div>)}
-                    </td>
-                    <td style={{ ...S.td, whiteSpace: "normal" }}>
-                      {aprovado
-                        ? <button type="button" style={S.mini} onClick={() => desaprovar([l.chave])}>Retirar</button>
-                        : aprovavelNaCampanha(l) && <button type="button" style={S.mini} onClick={() => aprovar([l], "anuncio")}>Aprovar</button>}
-                      {(l.classe === CLASSES.REVISAO || l.decisao) && l.situacao !== SITUACOES.BLOQUEADO && l.decisao !== "excluir" && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                        <button type="button" style={S.mini} onClick={() => decidir(l, "renault")} title="Só se a aplicação Renault estiver comprovada">Renault 10%</button>
-                        <button type="button" style={S.mini} onClick={() => decidir(l, "demais")}>Demais 5%</button>
-                      </div>}
-                      <div style={{ marginTop: 4 }}>
-                        {l.decisao
-                          ? <button type="button" style={S.mini} onClick={() => decidir(l, null)}>Desfazer decisão</button>
-                          : <button type="button" style={S.mini} onClick={() => decidir(l, "excluir")}>Tirar da campanha</button>}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        {/* (18/11) Lista compacta: uma linha por anúncio (conta, MLB, SKU, título, preços, desconto,
+            situação e Selecionar/Retirar); o resto (custos, margem, pendências, aprovação) em "Detalhes". */}
+        <div style={S.acoes}>
+          <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selConta.size} selecionado(s)</span>
+          <button type="button" style={S.mini} onClick={() => setAbertos(abertos.size ? new Set() : new Set(visiveis.slice(0, mostrar).map((l) => l.chave)))}>{abertos.size ? "Fechar todos os detalhes" : "Abrir detalhes dos visíveis"}</button>
+        </div>
+        <div style={S.lista2} data-paiia-bf="lista-anuncios">
+          <style>{"@media (max-width: 760px){.bf-rot{display:block!important}.bf-cab{display:none!important}}"}</style>
+          <div className="bf-cab" style={{ ...S.linha2, ...S.cabeca2 }} aria-hidden="true">
+            <span style={S.c_marca} /><span style={S.c_anuncio}>Conta · MLB · SKU / título</span><span style={S.c_preco}>Original</span><span style={S.c_desc}>Desconto</span><span style={S.c_preco}>Promocional</span><span style={S.c_situacao}>Situação e motivo</span><span style={S.c_acao}>Campanha</span><span style={S.c_abrir} />
+          </div>
+          {visiveis.slice(0, mostrar).map((l) => {
+            const aprovado = !!aprovados[l.chave];
+            const cl = listaDe.get(l.chave) || { lista: "", pendencias: [], observacoes: [] };
+            const sel = regSel(l);
+            const aberto = abertos.has(l.chave);
+            const motivos = [...(sel?.revisao ? [`Revisão necessária: ${sel.revisao_motivo || "preço mudou desde a seleção"}`] : []), ...cl.pendencias];
+            const descTxt = ehBF
+              ? (l.classe === CLASSES.REVISAO && !l.decisao ? "a decidir" : `${l.desconto_pct}%`)
+              : `${String(l.desconto_pct).replace(".", ",")}%`;
+            return (
+              <div key={l.chave} style={{ ...S.item2, ...(aprovado ? S.aprovado : sel ? S.selecionado : {}) }} data-paiia-bf-linha={l.id}>
+                <div style={S.linha2}>
+                  <span style={S.c_marca}><input type="checkbox" checked={marcados.has(l.chave)} disabled={aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></span>
+                  <span style={S.c_anuncio}>
+                    <small style={S.base}>{l.conta_nome || nomeConta} · </small><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? <small style={S.base}> · {l.sku}</small> : null}
+                    <span style={S.titulo2} title={l.titulo}>{l.titulo}</span>
+                  </span>
+                  <span style={S.c_preco}><small className="bf-rot" style={S.rotulo2}>Original</small>{real(l.preco_original)}</span>
+                  <span style={S.c_desc}><small className="bf-rot" style={S.rotulo2}>Desconto</small><span style={{ ...S.selo, color: COR_CLASSE[l.classe] || "#67e8f9", borderColor: COR_CLASSE[l.classe] || "#67e8f9" }} title={[ROTULO_CLASSE[l.classe], ...l.evidencias, l.duvida].filter(Boolean).join("\n")}>{descTxt}{ehBF && l.classe !== CLASSES.REVISAO ? ` ${l.classe === CLASSES.RENAULT ? "Renault" : "demais"}` : ""}{!ehBF && sel?.desconto_pct ? " (produto)" : ""}</span></span>
+                  <span style={S.c_preco}><small className="bf-rot" style={S.rotulo2}>Promocional</small><strong>{real(l.preco_final)}</strong></span>
+                  <span style={S.c_situacao}>
+                    <span style={{ ...S.selo, color: COR_LISTA[cl.lista], borderColor: COR_LISTA[cl.lista] }}>{aprovado ? "APROVADO" : cl.lista}</span>
+                    {sel?.revisao && <span style={{ ...S.selo, color: "#fb923c", borderColor: "#fb923c", marginLeft: 4 }}>Revisão</span>}
+                    {motivos.length > 0 && <span style={S.motivo2} title={motivos.join("\n")}>{motivos[0]}{motivos.length > 1 ? ` (+${motivos.length - 1})` : ""}</span>}
+                  </span>
+                  <span style={S.c_acao}>
+                    {sel
+                      ? <button type="button" style={{ ...S.mini, borderColor: "#67e8f9", color: "#67e8f9" }} onClick={() => retirarDaSelecao([l])} title="Retirar da campanha">✓ Retirar</button>
+                      : <button type="button" style={S.mini} onClick={() => selecionar([l])} data-paiia-bf="selecionar">+ Selecionar</button>}
+                  </span>
+                  <span style={S.c_abrir}><button type="button" style={S.abrir2} onClick={() => setAbertos((s) => { const n = new Set(s); if (n.has(l.chave)) n.delete(l.chave); else n.add(l.chave); return n; })} aria-expanded={aberto} aria-label={`Detalhes de ${l.id}`}>{aberto ? "▾" : "▸"}</button></span>
+                </div>
+                {aberto && <div style={S.detalhe2}>
+                  <div style={S.grade2}>
+                    <div><small style={S.rotulo2b}>Classificação</small><span style={{ ...S.selo, color: COR_CLASSE[l.classe], borderColor: COR_CLASSE[l.classe] }}>{ROTULO_CLASSE[l.classe]}</span>{l.decisao && l.decisao !== "excluir" && <small style={S.base}> (manual)</small>}
+                      {[...l.evidencias, l.duvida].filter(Boolean).map((t, i) => <div key={i}><small style={S.base}>{t}</small></div>)}</div>
+                    <div><small style={S.rotulo2b}>Comissão · imposto · frete</small>{real(l.tarifa)} · {real(l.imposto)} · {real(l.frete)}</div>
+                    <div><small style={S.rotulo2b}>Custo da peça</small>{l.custo !== null ? real(l.custo) : "não confirmado"}</div>
+                    <div style={{ color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }}><small style={S.rotulo2b}>Lucro (margem)</small>
+                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span> <small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo === null ? "custo não confirmado" : ""].filter(Boolean).join(" · ")}{l.repasse !== null ? ` · sobra p/ peça ${real(l.repasse)}` : ""}</small></>}</div>
+                    <div><small style={S.rotulo2b}>Estoque · vendidos</small>{l.estoque ?? "—"} · {l.vendidos ?? "não lido"}</div>
+                  </div>
+                  {(motivos.length > 0 || cl.observacoes.length > 0) && <ul style={S.lista}>
+                    {motivos.map((m, i) => <li key={i}><small>{m}</small></li>)}
+                    {cl.observacoes.map((m, i) => <li key={`o${i}`}><small style={{ opacity: 0.75 }}>ℹ {m}</small></li>)}
+                  </ul>}
+                  <div style={S.acoes}>
+                    {sel?.revisao && <button type="button" style={S.mini} onClick={() => conferiRevisao(l)}>Conferi o preço</button>}
+                    {!ehBF && sel && campanha.descontos_por_produto && <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}><small style={S.base}>Desconto deste produto:</small><input value={pctProduto[l.chave] ?? ""} onChange={(e) => setPctProduto({ ...pctProduto, [l.chave]: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="%" style={{ ...S.busca, width: 56, flex: "0 0 56px", padding: "3px 6px" }} aria-label={`Desconto de ${l.id}`} />
+                      <button type="button" style={S.mini} onClick={() => descontoProduto(l, pctProduto[l.chave] ?? "")}>ok</button>
+                      {sel.desconto_pct ? <button type="button" style={S.mini} onClick={() => descontoProduto(l, null)} title="Voltar ao desconto da campanha">↺ campanha</button> : null}</span>}
+                    {aprovado
+                      ? <button type="button" style={S.mini} onClick={() => desaprovar([l.chave])}>Retirar aprovação</button>
+                      : aprovavelNaCampanha(l) && <button type="button" style={S.mini} onClick={() => aprovar([l], "anuncio")}>Aprovar</button>}
+                    {(l.classe === CLASSES.REVISAO || l.decisao) && l.situacao !== SITUACOES.BLOQUEADO && l.decisao !== "excluir" && <>
+                      <button type="button" style={S.mini} onClick={() => decidir(l, "renault")} title="Só se a aplicação Renault estiver comprovada">Renault 10%</button>
+                      <button type="button" style={S.mini} onClick={() => decidir(l, "demais")}>Demais 5%</button>
+                    </>}
+                    {l.decisao
+                      ? <button type="button" style={S.mini} onClick={() => decidir(l, null)}>Desfazer decisão</button>
+                      : <button type="button" style={S.mini} onClick={() => decidir(l, "excluir")}>Tirar da campanha</button>}
+                  </div>
+                </div>}
+              </div>
+            );
+          })}
         </div>
         {visiveis.length > mostrar && <button type="button" style={S.filtro} onClick={() => setMostrar(mostrar + POR_PAGINA)}>Mostrar mais ({visiveis.length - mostrar} restantes)</button>}
 
@@ -800,5 +817,24 @@ const S = {
   td: { padding: "6px 7px", borderBottom: "1px solid #1e293b", color: "#e2e8f0", whiteSpace: "nowrap", verticalAlign: "top" },
   aprovado: { background: "rgba(74,222,128,.08)" },
   selecionado: { background: "rgba(103,232,249,.06)" },
+  // (18/11) Lista compacta de anúncios.
+  lista2: { border: "1px solid #1e293b", borderRadius: 12, overflow: "hidden", marginTop: 6 },
+  item2: { borderBottom: "1px solid #1e293b" },
+  linha2: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px", padding: "6px 10px", fontSize: 13, color: "#e2e8f0" },
+  cabeca2: { background: "#0b1324", color: "#94a3b8", fontSize: 12, fontWeight: 700 },
+  c_marca: { flex: "0 0 20px" },
+  c_anuncio: { flex: "3 1 260px", minWidth: 0, display: "flex", flexDirection: "column" },
+  titulo2: { color: "#cbd5e1", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
+  c_preco: { flex: "0 0 92px", display: "flex", flexDirection: "column" },
+  c_desc: { flex: "0 0 112px", display: "flex", flexDirection: "column" },
+  c_situacao: { flex: "2 1 220px", minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4 },
+  motivo2: { flexBasis: "100%", color: "#94a3b8", fontSize: 12, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
+  c_acao: { flex: "0 0 96px" },
+  c_abrir: { flex: "0 0 26px", textAlign: "right" },
+  abrir2: { border: "1px solid #475569", borderRadius: 6, background: "#0f172a", color: "#e2e8f0", width: 24, height: 24, cursor: "pointer", padding: 0 },
+  rotulo2: { display: "none" },
+  rotulo2b: { display: "block", color: "#94a3b8", fontSize: 11, textTransform: "uppercase", letterSpacing: ".03em" },
+  detalhe2: { padding: "4px 12px 10px 40px", background: "rgba(15,23,42,.6)" },
+  grade2: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,170px),1fr))", gap: 10, fontSize: 13, color: "#e2e8f0" },
   link: { color: "#67e8f9" },
 };
