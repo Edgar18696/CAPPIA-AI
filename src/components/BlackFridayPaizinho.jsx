@@ -818,7 +818,7 @@ const S = {
   aprovado: { background: "rgba(74,222,128,.08)" },
   selecionado: { background: "rgba(103,232,249,.06)" },
   // (18/11) Lista compacta de anúncios.
-  lista2: { border: "1px solid #1e293b", borderRadius: 12, overflow: "hidden", marginTop: 6 },
+  lista2: { border: "1px solid #1e293b", borderRadius: 12, overflow: "hidden", marginTop: 6, textAlign: "left" },
   item2: { borderBottom: "1px solid #1e293b" },
   linha2: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 10px", padding: "6px 10px", fontSize: 13, color: "#e2e8f0" },
   cabeca2: { background: "#0b1324", color: "#94a3b8", fontSize: 12, fontWeight: 700 },
