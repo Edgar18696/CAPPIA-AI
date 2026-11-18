@@ -24,7 +24,7 @@ import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, 
 import { renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 import { montarCopiaPrecos, validarCopia, precosDaCopia, lerCopiaGuardada, guardarCopia } from "../services/blackFriday/precosOriginais";
 import { criarSelecao, adaptadorLocal, sugerirAnuncios, chaveItemSelecao, EVENTO_SELECAO } from "../services/promocoes/selecao";
-import { METAS_SELECAO, OPCOES_DESCONTO, REGRAS, CAMPANHA_BLACK_FRIDAY, armazemCampanhas, campanhaPorId, descontoDoAnuncio, dataLocalParaIso, isoParaDataLocal, CONTAS_PROMOCOES } from "../services/promocoes/campanhas";
+import { METAS_SELECAO, CONTA_PRINCIPAL, OPCOES_DESCONTO, REGRAS, CAMPANHA_BLACK_FRIDAY, armazemCampanhas, campanhaPorId, descontoDoAnuncio, dataLocalParaIso, isoParaDataLocal, CONTAS_PROMOCOES } from "../services/promocoes/campanhas";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela ml_consulta.
@@ -54,8 +54,8 @@ function lerLeituraGuardada(usuarioId, conta) {
 export default function BlackFridayPaizinho() {
   const [usuarioId, setUsuarioId] = useState("");
   const [erroLogin, setErroLogin] = useState("");
-  // (16/11) Uma conta por vez: começa só com a 1ª da ordem (LOJA ONLINE).
-  const [contas, setContas] = useState([CONTAS_BLACK_FRIDAY[0].id]);
+  // (18/11) Uma conta por vez: começa pela conta principal (REVELAÇÃO); LOJA ONLINE e CIEBR continuam disponíveis.
+  const [contas, setContas] = useState([CONTA_PRINCIPAL]);
   const [renovacao, setRenovacao] = useState(null);
   const [planilhaInfo, setPlanilhaInfo] = useState(null);
   const [custosForm, setCustosForm] = useState(null); // { imposto, pedido } em edição
@@ -78,7 +78,7 @@ export default function BlackFridayPaizinho() {
   const [abertos, setAbertos] = useState(() => new Set()); // anúncios com "Detalhes" abertos
   const cancelar = useRef(false);
   // (17/11) Cada conta tem a sua leitura guardada: ao entrar e ao trocar de conta, carrega a dela.
-  const contaRef = useRef(CONTAS_BLACK_FRIDAY[0].id);
+  const contaRef = useRef(CONTA_PRINCIPAL);
 
   useEffect(() => {
     let vivo = true;
@@ -458,7 +458,7 @@ export default function BlackFridayPaizinho() {
         {OPCOES_DESCONTO.map((n) => <button key={n} type="button" style={{ ...S.filtro, ...(Number(campanha.desconto_pct) === n ? S.filtroAtivo : {}) }} onClick={() => mudarDescontoCampanha(n)}>{n}%</button>)}
         <input defaultValue={OPCOES_DESCONTO.includes(Number(campanha.desconto_pct)) ? "" : String(campanha.desconto_pct).replace(".", ",")} key={campanha.id + campanha.desconto_pct} placeholder="outro %" style={{ ...S.busca, flex: "0 1 90px" }} aria-label="Desconto personalizado" onKeyDown={(e) => { if (e.key === "Enter") mudarDescontoCampanha(e.currentTarget.value); }} />
       </div>}
-      <p style={S.sub}>Uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO. Consultar → Simular → Selecionar → Conferir → Aprovar → Ativar.</p>
+      <p style={S.sub}>Uma conta por vez (principal: REVELAÇÃO). Consultar → Simular → Selecionar → Conferir → Aprovar → Ativar.</p>
       <div style={S.trava}>🔒 <strong>Simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio, estoque ou Bling é alterado. {ehBF ? <>Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · nunca cumulativos · calculados sobre o preço original confirmado.</> : <>Rascunho: <strong>{String(campanha.desconto_pct).replace(".", ",")}%</strong> na campanha{campanha.descontos_por_produto ? " (ou o desconto individual do produto)" : ""}, só nos anúncios selecionados, nunca cumulativo. Salvar não ativa nada. <small>(Rascunho guardado só neste navegador.)</small></>}</div>
 
       <div style={S.calendario}>
@@ -571,7 +571,7 @@ export default function BlackFridayPaizinho() {
         <label style={S.base}>Meta da {nomeConta}:{" "}
           <select value={metaOutra !== null ? "outra" : metaConta === null ? "" : METAS_SELECAO.includes(metaConta) ? String(metaConta) : "outra"} onChange={(e) => mudarMeta(e.target.value)} style={{ ...S.busca, flex: "0 1 160px" }} aria-label="Meta de anúncios" data-paiia-bf="meta">
             <option value="">sem meta</option>
-            {METAS_SELECAO.map((n) => <option key={n} value={n}>{n} anúncios</option>)}
+            {METAS_SELECAO.map((n) => <option key={n} value={n}>{n} {n === 1 ? "anúncio" : "anúncios"}</option>)}
             <option value="outra">{metaConta !== null && !METAS_SELECAO.includes(metaConta) ? `${metaConta} anúncios (outra)` : "outra quantidade"}</option>
           </select>
         </label>

@@ -37,7 +37,9 @@ export const CAMPANHA_BLACK_FRIDAY = Object.freeze({
 /** Campanhas fixas do sistema (hoje só a Black Friday 2026). */
 export const CAMPANHAS_PROMOCOES = Object.freeze([CAMPANHA_BLACK_FRIDAY]);
 
-export const METAS_SELECAO = Object.freeze([50, 100, 200]);
+export const METAS_SELECAO = Object.freeze([1, 10, 50, 100, 200]);
+/** (18/11) Conta principal de trabalho: REVELAÇÃO (as outras continuam disponíveis). */
+export const CONTA_PRINCIPAL = "2412238242";
 
 export const campanhaPorId = (id, lista = CAMPANHAS_PROMOCOES) => lista.find((c) => c.id === id) || null;
 

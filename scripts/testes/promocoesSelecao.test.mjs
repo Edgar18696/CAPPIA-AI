@@ -45,7 +45,9 @@ test("campanhas: Black Friday 2026 é a 1ª e única; 3 contas; mesmo calendári
   assert.equal(bf.id, "black-friday-2026");
   assert.equal(bf.fim, "2026-11-30T23:59:00-03:00");
   assert.deepEqual([...bf.contas].sort(), [LOJA, CIEBR, REV].sort());
-  assert.deepEqual([...CAMP.METAS_SELECAO], [50, 100, 200]);
+  assert.deepEqual([...CAMP.METAS_SELECAO], [1, 10, 50, 100, 200]);
+  assert.equal(CAMP.CONTA_PRINCIPAL, REV, "REVELAÇÃO é a conta principal");
+  assert.ok(bf.contas.includes(CAMP.CONTA_PRINCIPAL));
   assert.equal(CAMP.periodosSeCruzam({ inicio: "2026-11-27T00:00:00-03:00", fim: "2026-11-30T23:59:00-03:00" }, { inicio: "2026-11-30T00:00:00-03:00", fim: "2026-12-05T00:00:00-03:00" }), true);
   assert.equal(CAMP.periodosSeCruzam({ inicio: "2026-11-27T00:00:00-03:00", fim: "2026-11-30T23:59:00-03:00" }, { inicio: "2026-12-01T00:00:00-03:00", fim: "2026-12-05T00:00:00-03:00" }), false);
 });
