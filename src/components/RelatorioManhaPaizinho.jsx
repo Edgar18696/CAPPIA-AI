@@ -13,6 +13,7 @@ import {
 import { MODO, indicadores, pendenciasAbertas } from "../services/paizinhoAuditoria/filaAnuncios";
 import PrioridadesPaizinho, { HistoricoFila } from "./PrioridadesPaizinho";
 import EnviarParaPromocoes from "./EnviarParaPromocoes";
+import AuditoriaAnuncios from "./AuditoriaAnuncios";
 
 const LOCAL = true; // leitura no navegador liberada no site e no ambiente local
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
@@ -268,6 +269,9 @@ function Relatorio({ rel, estado, aoAgir }) {
         <Kpi rotulo="Medidas ausentes" valor={numero(r.medidas_pendentes)} />
         <Kpi rotulo="Pontuação média" valor={`${r.pontuacao_media}/100`} />
       </div>
+
+      {/* (18/11) Tela única por anúncio: o que está errado e como corrigir. */}
+      <AuditoriaAnuncios rel={rel} />
 
       <h3 style={S.h3}>🎯 Prioridades de hoje</h3>
       {/* (17/11) Conta ao lado do MLB, Central de Anúncios, Resolvido / Remover da lista (só a lista do PAIIA). */}

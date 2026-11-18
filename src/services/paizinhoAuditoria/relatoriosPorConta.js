@@ -5,7 +5,7 @@
 // - A chave antiga, sem conta, só guardava relatórios da LOJA ONLINE: vale só para ela.
 // - Um relatório só é mostrado/guardado se for da conta escolhida.
 // =============================================================
-import { CONTAS_AUDITORIA, CONTA_PADRAO } from "./contas.js";
+import { CONTAS_AUDITORIA, CONTA_LEGADO } from "./contas.js";
 
 export const CHAVE_TESTE_LOCAL = "paiiaPaizinhoRelatorioTeste";
 
@@ -19,7 +19,7 @@ export function lerRelatorioDaConta(conta, armazenamento) {
   if (!liberada(id)) return null;
   const ler = (chave) => { try { return JSON.parse(armazenamento?.getItem(chave) || "null"); } catch { return null; } };
   let rel = ler(chaveDaConta(CHAVE_TESTE_LOCAL, id));
-  if (!rel && id === CONTA_PADRAO.id) rel = ler(CHAVE_TESTE_LOCAL);
+  if (!rel && id === CONTA_LEGADO.id) rel = ler(CHAVE_TESTE_LOCAL);
   return rel && idDe(rel.conta) === id ? rel : null;
 }
 

@@ -163,10 +163,11 @@ function mlDaConta(conta, { desconectada = false } = {}) {
   return { consultar };
 }
 
-test("contas: seletor com LOJA ONLINE (padrão), CIEBR e REVELAÇÃO, nessa ordem", async () => {
-  const { CONTAS_AUDITORIA, CONTA_PADRAO } = await import("../../src/services/paizinhoAuditoria/contas.js");
+test("contas: seletor com LOJA ONLINE, CIEBR e REVELAÇÃO (padrão desde 18/11), nessa ordem", async () => {
+  const { CONTAS_AUDITORIA, CONTA_PADRAO, CONTA_LEGADO } = await import("../../src/services/paizinhoAuditoria/contas.js");
   assert.deepEqual(CONTAS_AUDITORIA.map((c) => c.nome), ["LOJA ONLINE", "CIEBR", "REVELAÇÃO"]);
-  assert.equal(CONTA_PADRAO.nome, "LOJA ONLINE");
+  assert.equal(CONTA_PADRAO.nome, "REVELAÇÃO", "REVELAÇÃO é a conta prioritária");
+  assert.equal(CONTA_LEGADO.nome, "LOJA ONLINE", "registros antigos (sem conta no nome) continuam da LOJA ONLINE");
   const tela = fs.readFileSync(path.join(RAIZ, "src/components/RelatorioManhaPaizinho.jsx"), "utf8");
   assert.match(tela, /useState\(CONTA_PADRAO\.id\)/);
   // (17/11) "Rodar análise agora" virou "Analisar novos" (fila sem repetição).

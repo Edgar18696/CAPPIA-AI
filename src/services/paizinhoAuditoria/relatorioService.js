@@ -11,7 +11,7 @@
 import { supabase } from "../../supabase";
 import { consultorML } from "../consultaMLLeitura";
 import { executarAuditoria, CONTAS_AUDITORIA, contaLiberada } from "./index.js";
-import { CONTA_PADRAO } from "./contas.js";
+import { CONTA_PADRAO, CONTA_LEGADO } from "./contas.js";
 import { CHAVE_TESTE_LOCAL, idDe, chaveDaConta, lerRelatorioDaConta, guardarRelatorioDaConta, conferirRelatorioDaConta } from "./relatoriosPorConta.js";
 import { roteadorConsultas, consultorComercial as leitorComercial } from "./leituraComercial.js";
 import { MODO, montarRodada, escolherIneditos, escolherReanalise, novoId } from "./filaAnuncios.js";
@@ -20,7 +20,7 @@ import { lerHistorico } from "./prioridadesAcoes.js";
 
 const consultorComercial = (conta) => leitorComercial(conta, (nome, opcoes) => supabase.functions.invoke(nome, opcoes));
 
-export const CONTA_PILOTO = CONTA_PADRAO;
+export const CONTA_PILOTO = CONTA_LEGADO;
 // (17/11) Uma chave por conta: o relatório de uma conta nunca aparece na outra (relatoriosPorConta.js).
 export { CONTAS_AUDITORIA, CONTA_PADRAO, CHAVE_TESTE_LOCAL, chaveDaConta, conferirRelatorioDaConta };
 
@@ -77,7 +77,7 @@ export function resumirProdutoBling(p) {
 function lerCacheBling(conta, agora = Date.now(), base = CHAVE_CACHE_BLING) {
   try {
     const id = idDe(conta);
-    const c = JSON.parse(localStorage.getItem(chaveDaConta(base, id)) || (id === CONTA_PADRAO.id ? localStorage.getItem(base) : null) || "null");
+    const c = JSON.parse(localStorage.getItem(chaveDaConta(base, id)) || (id === CONTA_LEGADO.id ? localStorage.getItem(base) : null) || "null");
     if (!c || c.conta !== id || typeof c.itens !== "object") return {};
     const validos = {};
     for (const [sku, v] of Object.entries(c.itens)) if (agora - Number(v?.lidoEm || 0) < VALIDADE_CACHE_BLING_MS) validos[sku] = v;
