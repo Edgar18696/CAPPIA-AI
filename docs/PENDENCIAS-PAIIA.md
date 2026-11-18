@@ -11,7 +11,7 @@
 |---|---|---|---|---|---|
 | 1 | Bucket `imagens` listável com a chave pública (qualquer um lista caminhos das fotos) | Segurança / Supabase | P1 | aguardando decisão | Mudança separada nas políticas do storage. Precisa da autorização do Edgar. |
 | 2 | Permissão de Promoções do app ML ausente (`/seller-promotions` = 403) | Central de Promoções | P1 | aguardando suporte ML | Edgar abriu/abre chamado no Suporte para integradores. Não repetir o teste antes da resposta. |
-| 3 | Margem da Black Friday: comissão real, custo pela última compra (estimativa), faixas 15% / 10–14,99% / <10% com autorização | Central de Promoções | P1 | aguardando decisão (publicar) | Pronto e testado localmente (fc2c40b), no pacote de simplificação. |
+
 | 4 | Imposto não cadastrado: nenhuma margem é definitiva, nada pode ser aprovado | Preços, Custos e Lucro | P1 | aguardando decisão | Edgar informa o % de imposto (projeto separado de impostos). |
 | 5 | Custos vazios no Bling (ex.: 9091902258, 12663317) | Bling (dados) | P2 | pendente (Edgar) | Cadastrar o custo no fornecedor padrão do Bling. O PAIIA não grava no Bling. |
 | 6 | Fila do Ranqueamento só no navegador (migração `20261117_paizinho_fila_anuncios` não aplicada) | Ranqueamento | P2 | aguardando decisão | Migração de produção: precisa de autorização específica. |
@@ -29,6 +29,7 @@
 
 | Data | O quê | Onde |
 |---|---|---|
+| 18/11 | Simplificação geral (simulação automática, 1 clique para Promoções, textos e opções técnicas recolhidos) + margem com comissão real, custo pela última compra e faixas com autorização | main ad4b5fc |
 | 18/11 | Relatório de impressão A4 próprio (todos os anúncios do filtro, conta, título completo, problemas + correções, observações); planilha com conta por anúncio e margem com vírgula | main fb9489c |
 | 18/11 | Custo da última compra no Bling (função `paizinho-bling-compras` v1, só leitura); Exportar relatório | main c546b73 |
 | 18/11 | Botão 👁️ na senha do login | main bd8f690 |
@@ -39,7 +40,7 @@
 | 15/11 | Trava de MLB devolvido trocado | main 43c4568 |
 | 14/11 | Photoroom Basic na câmera (Foto IA) validado | produção |
 
-## Pacote de simplificação 18/11 (aguardando decisão: publicar)
+## Pacote de simplificação 18/11 — PUBLICADO (main ad4b5fc)
 
 Branch `paizinho/simplificacao-geral` (= main fb9489c + margem fc2c40b + simplificação). Testado em STAGING.
 
