@@ -37,6 +37,8 @@ const COR_CLASSE = { renault: "#facc15", demais: "#67e8f9", revisao: "#fb923c" }
 const LIMITES = [["20000", "Todos os anúncios ativos"], ["200", "200 (teste)"], ["50", "50 (teste)"]];
 const POR_PAGINA = 50;
 const RE_403 = /policy returned UNAUTHORIZED|HTTP 403|\b403\b/i;
+// (18/11) Pendências que são só "falta custo/imposto para calcular a margem".
+const RE_MARGEM = /margem n[ãa]o verific|imposto n[ãa]o (informado|cadastrado)|custo n[ãa]o (informado|lido|confirmado)|tarifa de venda do ML no pre[çc]o final n[ãa]o lida|frete no pre[çc]o final n[ãa]o confirmado/i;
 
 function lerPerfil() {
   try { return custosDoPerfil(JSON.parse(localStorage.getItem("paiiaPerfilCustos") || "null")); } catch { return custosDoPerfil(null); }
@@ -524,7 +526,8 @@ export default function BlackFridayPaizinho() {
           <input ref={arquivoCopia} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={carregarCopia} aria-label="Arquivo da cópia de preços" />
         </div>
       </div>
-      <div style={S.nota}>
+      <details style={S.nota}>
+        <summary>Margem: {perfil.impostoPct === null ? "imposto não informado — os anúncios aparecem com \"Margem não verificada\" (não impede selecionar nem simular)" : `imposto ${String(perfil.impostoPct).replace(".", ",")}% · custos do Bling quando existirem`}</summary>
         <strong>Custos da venda usados na margem:</strong> imposto {perfil.impostoPct === null ? <strong>não informado</strong> : <strong>{String(perfil.impostoPct).replace(".", ",")}%</strong>} · custo por pedido R$ {String(perfil.custoPedido.toFixed(2)).replace(".", ",")} · comissão e frete: lidos do Mercado Livre · custo da peça: Bling (nunca inventado).
         {perfil.impostoPct === null && <><br /><small>(18/11) O imposto não é exigido para consultar, selecionar ou simular: sem ele, a margem aparece como <strong>"Margem não verificada"</strong>. Impostos serão tratados num projeto separado. A aprovação das ofertas continua exigindo margem verificada (segurança da ativação).</small></>}
         {!custosForm ? <> <button type="button" style={S.mini} onClick={() => setCustosForm({ imposto: perfil.impostoPct ?? "", pedido: perfil.custoPedido || "" })}>{perfil.impostoPct === null ? "Informar imposto (opcional)" : "Alterar"}</button></>
@@ -535,7 +538,7 @@ export default function BlackFridayPaizinho() {
             <button type="button" style={S.filtro} onClick={() => setCustosForm(null)}>Cancelar</button>
             <small style={S.base}>Copie os valores de Preços, Custos e Lucro do PAIIA oficial. Não altera a produção.</small>
           </div>}
-      </div>
+      </details>
       {aviso && <div style={S.aviso}>{aviso}</div>}
 
       {/* 2. Simulação */}
@@ -619,7 +622,7 @@ export default function BlackFridayPaizinho() {
         <div style={S.lista2} data-paiia-bf="lista-anuncios">
           <style>{"@media (max-width: 760px){.bf-rot{display:block!important}.bf-cab{display:none!important}}"}</style>
           <div className="bf-cab" style={{ ...S.linha2, ...S.cabeca2 }} aria-hidden="true">
-            <span style={S.c_marca} /><span style={S.c_anuncio}>Conta · MLB · SKU / título</span><span style={S.c_preco}>Original</span><span style={S.c_desc}>Desconto</span><span style={S.c_preco}>Promocional</span><span style={S.c_situacao}>Situação e motivo</span><span style={S.c_acao}>Campanha</span><span style={S.c_abrir} />
+            <span style={S.c_marca} /><span style={S.c_anuncio}>MLB · SKU / produto</span><span style={S.c_preco}>Preço atual</span><span style={S.c_desc}>Desconto</span><span style={S.c_preco}>Promocional</span><span style={S.c_situacao}>Situação</span><span style={S.c_acao} /><span style={S.c_abrir} />
           </div>
           {visiveis.slice(0, mostrar).map((l) => {
             const aprovado = !!aprovados[l.chave];
@@ -627,6 +630,9 @@ export default function BlackFridayPaizinho() {
             const sel = regSel(l);
             const aberto = abertos.has(l.chave);
             const motivos = [...(sel?.revisao ? [`Revisão necessária: ${sel.revisao_motivo || "preço mudou desde a seleção"}`] : []), ...cl.pendencias];
+            // (18/11) Anúncio antigo sem custo/imposto: não é problema para selecionar — só "Margem não verificada".
+            const outrosMotivos = motivos.filter((m) => !RE_MARGEM.test(m));
+            const soMargem = !aprovado && cl.lista === LISTAS.CONFERIR && !outrosMotivos.length;
             const descTxt = ehBF
               ? (l.classe === CLASSES.REVISAO && !l.decisao ? "a decidir" : `${l.desconto_pct}%`)
               : `${String(l.desconto_pct).replace(".", ",")}%`;
@@ -635,16 +641,18 @@ export default function BlackFridayPaizinho() {
                 <div style={S.linha2}>
                   <span style={S.c_marca}><input type="checkbox" checked={marcados.has(l.chave)} disabled={aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></span>
                   <span style={S.c_anuncio}>
-                    <span style={S.ident2}><small style={S.base}>{l.conta_nome || nomeConta} · </small><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? <small style={S.base}> · {l.sku}</small> : null}</span>
+                    <span style={S.ident2}><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? <small style={S.base}> · {l.sku}</small> : null}</span>
                     <span style={S.titulo2} title={l.titulo}>{l.titulo}</span>
                   </span>
-                  <span style={S.c_preco}><small className="bf-rot" style={S.rotulo2}>Original</small>{real(l.preco_original)}</span>
+                  <span style={S.c_preco}><small className="bf-rot" style={S.rotulo2}>Preço atual</small>{real(l.preco_original)}</span>
                   <span style={S.c_desc}><small className="bf-rot" style={S.rotulo2}>Desconto</small><span style={{ ...S.selo, color: COR_CLASSE[l.classe] || "#67e8f9", borderColor: COR_CLASSE[l.classe] || "#67e8f9" }} title={[ROTULO_CLASSE[l.classe], ...l.evidencias, l.duvida].filter(Boolean).join("\n")}>{descTxt}{ehBF && l.classe !== CLASSES.REVISAO ? ` ${l.classe === CLASSES.RENAULT ? "Renault" : "demais"}` : ""}{!ehBF && sel?.desconto_pct ? " (produto)" : ""}</span></span>
                   <span style={S.c_preco}><small className="bf-rot" style={S.rotulo2}>Promocional</small><strong>{real(l.preco_final)}</strong></span>
                   <span style={S.c_situacao}>
-                    <span style={{ ...S.selo, color: COR_LISTA[cl.lista], borderColor: COR_LISTA[cl.lista] }}>{aprovado ? "APROVADO" : cl.lista}</span>
+                    {soMargem
+                      ? <span style={{ ...S.selo, color: "#fbbf24", borderColor: "#fbbf24" }} title={motivos.join("\n")}>Margem não verificada</span>
+                      : <span style={{ ...S.selo, color: COR_LISTA[cl.lista], borderColor: COR_LISTA[cl.lista] }}>{aprovado ? "APROVADO" : cl.lista}</span>}
                     {sel?.revisao && <span style={{ ...S.selo, color: "#fb923c", borderColor: "#fb923c", marginLeft: 4 }}>Revisão</span>}
-                    {motivos.length > 0 && <span style={S.motivo2} title={motivos.join("\n")}>{motivos[0]}{motivos.length > 1 ? ` (+${motivos.length - 1})` : ""}</span>}
+                    {!soMargem && outrosMotivos.length > 0 && <span style={S.motivo2} title={motivos.join("\n")}>{outrosMotivos[0]}{outrosMotivos.length > 1 ? ` (+${outrosMotivos.length - 1})` : ""}</span>}
                   </span>
                   <span style={S.c_acao}>
                     {sel
@@ -657,14 +665,11 @@ export default function BlackFridayPaizinho() {
                   <div style={S.grade2}>
                     <div><small style={S.rotulo2b}>Classificação</small><span style={{ ...S.selo, color: COR_CLASSE[l.classe], borderColor: COR_CLASSE[l.classe] }}>{ROTULO_CLASSE[l.classe]}</span>{l.decisao && l.decisao !== "excluir" && <small style={S.base}> (manual)</small>}
                       {[...l.evidencias, l.duvida].filter(Boolean).map((t, i) => <div key={i}><small style={S.base}>{t}</small></div>)}</div>
-                    <div><small style={S.rotulo2b}>Comissão · imposto · frete</small>{real(l.tarifa)} · {real(l.imposto)} · {real(l.frete)}</div>
-                    <div><small style={S.rotulo2b}>Custo da peça</small>{l.custo !== null ? real(l.custo) : "não confirmado"}</div>
-                    <div style={{ color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }}><small style={S.rotulo2b}>Lucro (margem)</small>
-                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span> <small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo === null ? "custo não confirmado" : ""].filter(Boolean).join(" · ")}{l.repasse !== null ? ` · sobra p/ peça ${real(l.repasse)}` : ""}</small></>}</div>
-                    <div><small style={S.rotulo2b}>Estoque · vendidos</small>{l.estoque ?? "—"} · {l.vendidos ?? "não lido"}</div>
+                    <div style={{ color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={l.margem_pct !== null ? `No preço promocional: ${real(l.preco_final)} − comissão ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo ${real(l.custo)}` : ""}><small style={S.rotulo2b}>Margem depois do desconto</small>
+                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span> <small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo === null ? "custo não cadastrado" : ""].filter(Boolean).join(" · ")} — dá para selecionar e simular; custos ficam em Preços, Custos e Lucro.</small></>}</div>
                   </div>
-                  {(motivos.length > 0 || cl.observacoes.length > 0) && <ul style={S.lista}>
-                    {motivos.map((m, i) => <li key={i}><small>{m}</small></li>)}
+                  {(outrosMotivos.length > 0 || cl.observacoes.length > 0) && <ul style={S.lista}>
+                    {outrosMotivos.map((m, i) => <li key={i}><small>{m}</small></li>)}
                     {cl.observacoes.map((m, i) => <li key={`o${i}`}><small style={{ opacity: 0.75 }}>ℹ {m}</small></li>)}
                   </ul>}
                   <div style={S.acoes}>

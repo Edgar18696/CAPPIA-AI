@@ -294,6 +294,30 @@ test("desconto flexível: % da campanha ou do produto; simulação recalcula; BF
   assert.equal(PL.selecionavel({ ...p15, classe: "revisao", decisao: null }), true);
 });
 
+test("margem DEPOIS do desconto: recalculada sobre o preço promocional (não é subtrair percentuais)", () => {
+  const base = { id: "MLB1", seller_id: Number(LOJA), title: "Bobina", price: 200, status: "active", condition: "new", listing_type_id: "gold_special", available_quantity: 3, seller_custom_field: "SKU1", shipping: { free_shipping: true }, attributes: [{ id: "BRAND", value_name: "Renault" }] };
+  const l = R.simularAnuncio({
+    conta: LOJA, item: base, compat: { lido: true, quantidade: 0, marcas: [], legivel: true }, promocoes: { lido: true, ativas: [], candidatas: [] },
+    tarifaFinal: { valor: 25 }, freteAtual: { ok: true, custo_vendedor: 20 }, freteFinal: { ok: true, custo_vendedor: 20 },
+    custo: { ok: true, encontrado: true, formato: "S", custo: { fornecedores: [{ padrao: true, precoCusto: 80 }] } },
+  }, { perfil: { impostoPct: 6, custoPedido: 0 } });
+  assert.equal(l.desconto_pct, 10, "Renault comprovada: 10%");
+  assert.equal(l.preco_final, 180);
+  assert.equal(l.imposto, 10.8, "imposto sobre o preço promocional");
+  assert.equal(l.lucro, 44.2, "180 − 25 − 20 − 10,80 − 80");
+  assert.equal(l.margem_pct, 24.6, "44,20 / 180");
+});
+
+test("tela simples (18/11): lista só com o essencial; sem custo/imposto mostra 'Margem não verificada' e deixa selecionar", () => {
+  const tela = ler("src/components/BlackFridayPaizinho.jsx");
+  assert.match(tela, /MLB · SKU \/ produto<\/span><span style=\{S\.c_preco\}>Preço atual<\/span><span style=\{S\.c_desc\}>Desconto<\/span><span style=\{S\.c_preco\}>Promocional<\/span><span style=\{S\.c_situacao\}>Situação<\/span>/);
+  assert.doesNotMatch(tela, /Comissão · imposto · frete<\/small>/, "custos detalhados ficam em Preços, Custos e Lucro");
+  assert.match(tela, /const soMargem = !aprovado && cl\.lista === LISTAS\.CONFERIR && !outrosMotivos\.length;/);
+  const RE = new RegExp(tela.match(/const RE_MARGEM = \/(.+)\/i;/)[1], "i");
+  for (const m of ["Imposto não informado: margem não verificada (impostos serão tratados em projeto separado).", "Custo não informado — margem não verificável (anúncio sem SKU). Custo e lucro não são inventados.", "Tarifa de venda do ML no preço final não lida.", "Margem não verificada."]) assert.ok(RE.test(m), m);
+  for (const m of ["PREJUÍZO de R$ 3,00 por venda no preço final.", "Dúvida de aplicação Renault (10% ou 5%).", "Atenção: Margem de 4% abaixo do mínimo de 8%."]) assert.ok(!RE.test(m), `continua aparecendo: ${m}`);
+});
+
 /* ------------------------------- telas ------------------------------- */
 
 test("aba: seleção separada da aprovação; aprovação só de selecionado sem revisão; ativação continua desligada", () => {
