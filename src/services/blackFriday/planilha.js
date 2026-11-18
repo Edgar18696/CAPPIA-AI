@@ -13,7 +13,7 @@
 //   - se o preço subir, o desconto cai; se estiver em DEAL, só começa quando o DEAL acabar.
 // =============================================================
 import { CAMPANHA_BF } from "./calendario.js";
-import { CLASSES, SITUACOES, ROTULO_SITUACAO } from "./regras.js";
+import { CLASSES, SITUACOES, ROTULO_SITUACAO, FAIXAS_MARGEM, ROTULO_FAIXA } from "./regras.js";
 
 const txt = (v) => (v === null || v === undefined ? "" : String(v)).trim();
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -69,6 +69,8 @@ export function classificarParaPlanilha(l) {
   if (l.promocao === "nao_verificada") observacoes.push("Promoções programadas não puderam ser conferidas pela API: confira na tela do ML ao cadastrar.");
   // (16/11) Margem não verificada NÃO vai para PRONTO (regra do Edgar).
   if (l.custo_motivo || l.margem_pct === null || l.margem_pct === undefined) pendencias.push(`Margem não verificada${l.custo_motivo ? ` (custo: ${l.custo_motivo})` : ""}.`);
+  // (18/11) Faixa estratégica / excepcional: continua PRONTO, mas a aprovação exige autorização (nunca automática).
+  if (l.faixa_margem === FAIXAS_MARGEM.ESTRATEGICA || l.faixa_margem === FAIXAS_MARGEM.EXCEPCIONAL) observacoes.push(ROTULO_FAIXA[l.faixa_margem]);
   const lista = impedimentos.length ? LISTAS.BLOQUEADO : pendencias.length ? LISTAS.CONFERIR : LISTAS.PRONTO;
   return { lista, pendencias: [...impedimentos, ...pendencias], observacoes, desconto_real_pct: real };
 }
@@ -79,7 +81,7 @@ const pct = (v) => (vazio(v) ? "" : String(num(v)).replace(".", ","));
 const celula = (v) => { const t = txt(v).replace(/\r?\n/g, " "); return /[;"\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 const dataBR = (iso) => { const m = txt(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; };
 
-export const COLUNAS_PLANILHA = Object.freeze(["Lista", "Conta", "MLB", "SKU", "Título", "Classe", "Preço original (R$)", "Desconto (%)", "Preço promocional (R$)", "Desconto real (%)", "Custo da peça (R$)", "Comissão ML (R$)", "Imposto (R$)", "Frete (R$)", "Custo por pedido (R$)", "Lucro (R$)", "Margem (%)", "Situação na simulação", "Motivo da pendência", "Observações", "Início", "Fim", "Link"]);
+export const COLUNAS_PLANILHA = Object.freeze(["Lista", "Conta", "MLB", "SKU", "Título", "Classe", "Preço original (R$)", "Desconto (%)", "Preço promocional (R$)", "Desconto real (%)", "Custo da peça (R$)", "Comissão ML (R$)", "Imposto (R$)", "Frete (R$)", "Custo por pedido (R$)", "Lucro (R$)", "Margem (%)", "Lucro estimado (R$)", "Margem estimada (%)", "Base da estimativa", "Faixa de margem", "Tipo de anúncio", "Comissão (%)", "Comissão confirmada pelo ML", "Origem do custo", "Situação na simulação", "Motivo da pendência", "Observações", "Início", "Fim", "Link"]);
 
 /** Linhas da planilha de UMA conta (ordem: PRONTO, CONFERIR, BLOQUEADO). Custo/lucro vazios = não confirmados (nunca inventados). */
 export function montarPlanilha(linhas, conta) {
@@ -96,6 +98,10 @@ export function montarPlanilha(linhas, conta) {
       desconto_real_pct: c.desconto_real_pct,
       custo: l.custo ?? null, comissao: l.tarifa ?? null, imposto: l.imposto ?? null, frete: l.frete ?? null,
       custo_pedido: l.custo_pedido ?? null, lucro: l.lucro ?? null, margem_pct: l.margem_pct ?? null,
+      lucro_estimado: l.lucro_estimado ?? null, margem_estimada_pct: l.margem_estimada_pct ?? null, base_estimativa: (l.base_estimativa || []).join(", "),
+      faixa_margem: l.faixa_margem ? ROTULO_FAIXA[l.faixa_margem] : "", tipo_anuncio: l.tipo_anuncio_nome || l.tipo_anuncio || "", comissao_pct: l.comissao_pct ?? null,
+      comissao_confirmada: l.comissao_origem === "real" ? "sim" : l.comissao_origem === "referencia" ? "não (referência)" : "Comissão não confirmada",
+      origem_custo: l.custo_origem === "cadastrado" ? "cadastrado no Bling" : l.custo_origem === "ultima_compra" ? `última compra (estimativa)${l.ultima_compra?.pedido ? ` pedido ${l.ultima_compra.pedido}` : ""}` : "Custo não encontrado",
       inicio: dataBR(CAMPANHA_BF.inicio), fim: dataBR(CAMPANHA_BF.fim),
       pendencias: c.pendencias, observacoes: c.observacoes, link: l.link,
     }));
@@ -106,7 +112,7 @@ export function planilhaCSV(planilha) {
   const linhas = [COLUNAS_PLANILHA.join(";")];
   for (const r of planilha) {
     const custo = vazio(r.custo) ? "não confirmado" : reais(r.custo);
-    linhas.push([r.lista, r.conta, r.mlb, r.sku, r.titulo, r.classe, reais(r.preco_atual), pct(r.desconto_pct), reais(r.preco_promocional), pct(r.desconto_real_pct), custo, reais(r.comissao), reais(r.imposto), reais(r.frete), reais(r.custo_pedido), reais(r.lucro), pct(r.margem_pct), r.situacao, r.pendencias.join(" | "), r.observacoes.join(" | "), r.inicio, r.fim, r.link].map(celula).join(";"));
+    linhas.push([r.lista, r.conta, r.mlb, r.sku, r.titulo, r.classe, reais(r.preco_atual), pct(r.desconto_pct), reais(r.preco_promocional), pct(r.desconto_real_pct), custo, reais(r.comissao), reais(r.imposto), reais(r.frete), reais(r.custo_pedido), reais(r.lucro), pct(r.margem_pct), reais(r.lucro_estimado), pct(r.margem_estimada_pct), r.base_estimativa, r.faixa_margem, r.tipo_anuncio, pct(r.comissao_pct), r.comissao_confirmada, r.origem_custo, r.situacao, r.pendencias.join(" | "), r.observacoes.join(" | "), r.inicio, r.fim, r.link].map(celula).join(";"));
   }
   return `${String.fromCharCode(0xfeff)}${linhas.join("\r\n")}\r\n`;
 }

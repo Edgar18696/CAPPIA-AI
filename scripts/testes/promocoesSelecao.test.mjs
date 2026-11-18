@@ -316,7 +316,7 @@ test("tela simples (18/11): lista só com o essencial; sem custo/imposto mostra 
   assert.doesNotMatch(tela, /Comissão · imposto · frete<\/small>/, "custos detalhados ficam em Preços, Custos e Lucro");
   assert.match(tela, /const soMargem = !aprovado && cl\.lista === LISTAS\.CONFERIR && !outrosMotivos\.length;/);
   const RE = new RegExp(tela.match(/const RE_MARGEM = \/(.+)\/i;/)[1], "i");
-  for (const m of ["Imposto não informado: margem não verificada (impostos serão tratados em projeto separado).", "Custo não informado — margem não verificável (anúncio sem SKU). Custo e lucro não são inventados.", "Tarifa de venda do ML no preço final não lida.", "Margem não verificada."]) assert.ok(RE.test(m), m);
+  for (const m of ["Imposto não informado: margem não verificada (impostos serão tratados em projeto separado).", "Custo não informado — margem não verificável (anúncio sem SKU). Custo e lucro não são inventados.", "Tarifa de venda do ML no preço final não lida.", "Margem não verificada.", "Custo não encontrado no Bling — margem não verificável (anúncio sem SKU).", "Comissão não confirmada: tarifa de venda do ML no preço final não lida.", "Custo cadastrado ausente no Bling (preço de custo vazio no Bling): usada a última compra (R$ 51,50) como ESTIMATIVA — margem não definitiva."]) assert.ok(RE.test(m), m);
   for (const m of ["PREJUÍZO de R$ 3,00 por venda no preço final.", "Dúvida de aplicação Renault (10% ou 5%).", "Atenção: Margem de 4% abaixo do mínimo de 8%."]) assert.ok(!RE.test(m), `continua aparecendo: ${m}`);
 });
 

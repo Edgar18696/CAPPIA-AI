@@ -11,7 +11,7 @@
 // no navegador e nos testes.
 // =============================================================
 import { txt, num, centavos, skuDoItem, comLimite } from "../paizinhoAuditoria/util.js";
-import { medidasDoAnuncio } from "../paizinhoAuditoria/analise.js";
+import { medidasDoAnuncio, escolherCusto } from "../paizinhoAuditoria/analise.js";
 import { lerRespostaCotacao, caminhoCotacao, parametrosCotacao, faixaDoPreco } from "../fretePrecificacao.js";
 import { tipoDeCaminho, caminhoRecusado } from "../paizinhoAuditoria/coleta.js";
 import { CONTAS_BLACK_FRIDAY, contaBF, classificarRenault, marcasDaCompatibilidade, lerPromocoes, lerPrecoVenda, marcaDoProdutoCatalogo, idsCatalogoDaCompatibilidade, precoComDesconto, DESCONTOS, CLASSES, simularAnuncio } from "./regras.js";
@@ -161,7 +161,11 @@ export async function lerContaBF({ conta, consultar, limite = PADROES_LEITURA.li
     const [preco, tipo, cat] = k.split("|");
     const r = await consultar(`/sites/MLB/listing_prices?price=${preco}&listing_type_id=${tipo}&category_id=${cat}`);
     const d = Array.isArray(r?.dados) ? r.dados[0] : r?.dados;
-    if (r?.ok && d && d.sale_fee_amount !== undefined) tarifas[k] = { valor: centavos(d.sale_fee_amount) };
+    // (18/11) Guarda também o % e o tipo (Clássico/Premium) da tarifa REAL do anúncio.
+    if (r?.ok && d && d.sale_fee_amount !== undefined) {
+      const pct = d.sale_fee_details?.percentage_fee ?? d.sale_fee_details?.meli_percentage_fee;
+      tarifas[k] = { valor: centavos(d.sale_fee_amount), percentual: pct === null || pct === undefined || !Number.isFinite(Number(pct)) ? null : Number(pct), fixa: num(d.sale_fee_details?.fixed_fee), tipo: txt(d.listing_type_name) || null };
+    }
     else falha("tarifa de venda", k, r);
   });
 
@@ -190,7 +194,7 @@ export async function lerCustosBF({ skus, consultarCusto, paralelo = PADROES_LEI
  * Lê as contas escolhidas, uma de cada vez. Falha numa conta não para as outras.
  * `consultorDaConta(contaId)` devolve consultar(caminho) só GET naquela conta.
  */
-export async function lerContasBF({ contas, consultorDaConta, consultarCusto = null, limite, aoProgredir = () => {}, cancelado = () => false, agora, anterior = null, aoParcial = null }) {
+export async function lerContasBF({ contas, consultorDaConta, consultarCusto = null, consultarUltimasCompras = null, limite, aoProgredir = () => {}, cancelado = () => false, agora, anterior = null, aoParcial = null }) {
   const escolhidas = CONTAS_BLACK_FRIDAY.filter((c) => (contas || []).includes(c.id));
   if (!escolhidas.length) throw new Error("Escolha pelo menos uma conta.");
   const resultado = { lido_em: (agora || (() => new Date().toISOString()))(), contas: {}, custos: {}, falhas: [] };
@@ -212,6 +216,19 @@ export async function lerContasBF({ contas, consultorDaConta, consultarCusto = n
     resultado.custos = { ...custosAntes, ...r.custos };
     resultado.falhas.push(...r.falhas);
     resultado.bling_parou = r.parou;
+    // (18/11) Sem custo cadastrado: última compra ATENDIDA no Bling (só leitura) = custo ESTIMADO.
+    if (typeof consultarUltimasCompras === "function" && !cancelado()) {
+      const antes = anterior?.ultimas_compras || {};
+      const semCusto = [...new Set(skus.filter(Boolean))].filter((k) => resultado.custos[k]?.ok && !(escolherCusto(resultado.custos[k]).custo > 0) && !(k in antes));
+      resultado.ultimas_compras = { ...antes };
+      if (semCusto.length) {
+        aoProgredir(`Bling: última compra de ${semCusto.length} SKU(s) sem custo cadastrado`);
+        const idsPorSku = Object.fromEntries(semCusto.map((k) => [k, resultado.custos[k]?.produto_id]).filter(([, v]) => v));
+        const u = await consultarUltimasCompras(semCusto, idsPorSku).catch((e) => ({ ok: false, erro: txt(e?.message || e) }));
+        if (u?.ok) Object.assign(resultado.ultimas_compras, u.ultimas || {});
+        else resultado.falhas.push({ conta: "Bling", etapa: "última compra", id: null, erro: txt(u?.erro) });
+      }
+    }
   }
   return resultado;
 }
@@ -237,6 +254,7 @@ export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPc
         freteAtual: r.fretes?.[`${item.id}|atual`] || null,
         freteFinal: r.fretes?.[`${item.id}|${pf.toFixed(2)}`] || null,
         custo: sku ? leitura.custos?.[sku] : undefined,
+        ultimaCompra: sku ? leitura.ultimas_compras?.[sku] || null : null,
       }, { decisao, perfil, ...(margemMinimaPct ? { margemMinimaPct } : {}), ...(pct !== null && pct !== undefined ? { descontoPct: pct } : {}) }));
     }
   }
@@ -424,8 +442,30 @@ export function consultorCustoBF(invocar) {
     if (error) return { ok: false, erro: error.message, status: error.context?.status };
     if (!data?.ok) return { ok: false, erro: data?.erro || "resposta inesperada" };
     return {
-      ok: true, encontrado: data.encontrado !== false, ambiguo: data.ambiguo === true, formato: data.produto?.formato ?? null,
+      ok: true, encontrado: data.encontrado !== false, ambiguo: data.ambiguo === true, formato: data.produto?.formato ?? null, produto_id: data.produto?.id ?? null,
       custo: data.custo ? { fornecedor_precoCusto: data.custo.fornecedor_precoCusto ?? null, fornecedores: (Array.isArray(data.custo.fornecedores) ? data.custo.fornecedores : []).map((f) => ({ padrao: f?.padrao === true, precoCusto: f?.precoCusto ?? null })) } : null,
     };
+  };
+}
+
+/**
+ * (18/11) Adaptador do Bling: ÚLTIMA COMPRA atendida (função paizinho-bling-compras, SÓ LEITURA),
+ * em partes (a função devolve 'proximo' quando não termina). Nada é gravado no Bling.
+ */
+export function consultorUltimasComprasBF(invocar, { maxPartes = 8 } = {}) {
+  return async (skus, idsPorSku = {}) => {
+    const ultimas = {};
+    let inicioEm = 0;
+    for (let partes = 0; partes < maxPartes; partes++) {
+      const pedir = skus.filter((s) => ultimas[s] === undefined);
+      if (!pedir.length) break;
+      const { data, error } = await invocar("paizinho-bling-compras", { body: { skus: pedir, idsPorSku, inicioEm } });
+      if (error || !data?.ok) return { ok: false, erro: data?.erro || error?.message || "sem resposta" };
+      for (const [s, u] of Object.entries(data.ultimas || {})) if (u) ultimas[s] = u;
+      if (!data.parcial || data.proximo === null || data.proximo === undefined) break;
+      inicioEm = data.proximo;
+    }
+    for (const s of skus) if (ultimas[s] === undefined) ultimas[s] = null;
+    return { ok: true, ultimas };
   };
 }

@@ -14,6 +14,7 @@
 import { num, txt, centavos, normalizar, codigoLimpo, atributo, skuDoItem } from "../paizinhoAuditoria/util.js";
 import { escolherCusto, conferirCustoDoKit } from "../paizinhoAuditoria/analise.js";
 import { faixaDoPreco } from "../fretePrecificacao.js";
+import { COMISSOES_REFERENCIA_PADRAO } from "../precificacaoSimples.js";
 import { CAMPANHA_BF } from "./calendario.js";
 
 import { CONTAS_BLACK_FRIDAY } from "./contas.js";
@@ -21,7 +22,8 @@ export { CONTAS_BLACK_FRIDAY };
 
 export const DESCONTOS = Object.freeze({ renault: 10, demais: 5 });
 export const PADROES_BF = Object.freeze({
-  margemMinimaPct: 10,   // abaixo disto (e acima de zero) = alerta de margem
+  margemMinimaPct: 10,   // (18/11) abaixo disto = autorização EXCEPCIONAL (risco destacado)
+  margemMetaPct: 15,     // (18/11) a partir disto = margem dentro da meta; 10–14,99 = aprovação estratégica
   limiteFreteGratis: 79, // abaixo deste preço a regra de frete do ML muda
   // (15/11) Peça sem custo (lote Renault): tarifa+frete+imposto podem consumir no máximo 40%
   // do preço final (repasse ≥ 60%); acima disso é risco relevante → revisão.
@@ -144,6 +146,19 @@ export function descontoDaClasse(classe) {
 // ("buyer_discount_not_in_range"); arredondar para cima podia dar 4,99%.
 export const precoComDesconto = (preco, pctDesconto) => Math.floor(num(preco) * (1 - num(pctDesconto) / 100) * 100 + 1e-6) / 100;
 
+// (18/11) Tipo de anúncio do ML e comissão de REFERÊNCIA (só estimativa; a tarifa lida no ML prevalece).
+export const TIPOS_ANUNCIO = Object.freeze({ gold_pro: "Premium", gold_special: "Clássico", free: "Grátis" });
+export const comissaoReferenciaPct = (tipo) => (tipo === "gold_pro" ? COMISSOES_REFERENCIA_PADRAO.premium : tipo === "gold_special" ? COMISSOES_REFERENCIA_PADRAO.classico : null);
+
+// (18/11) Margem estratégica para giro de estoque. Nenhuma faixa aprova sozinha.
+export const FAIXAS_MARGEM = Object.freeze({ META: "meta", ESTRATEGICA: "estrategica", EXCEPCIONAL: "excepcional" });
+export const ROTULO_FAIXA = Object.freeze({ meta: "Dentro da meta (15% ou mais)", estrategica: "Aprovação estratégica (10% a 14,99%): só com autorização do responsável", excepcional: "Abaixo de 10%: autorização EXCEPCIONAL — risco" });
+export function faixaDaMargem(margemPct, cfg = PADROES_BF) {
+  if (margemPct === null || margemPct === undefined || !Number.isFinite(Number(margemPct))) return null;
+  const m = Number(margemPct);
+  return m >= cfg.margemMetaPct ? FAIXAS_MARGEM.META : m >= cfg.margemMinimaPct ? FAIXAS_MARGEM.ESTRATEGICA : FAIXAS_MARGEM.EXCEPCIONAL;
+}
+
 const ATIVAS = new Set(["started", "active", "pending", "programmed", "scheduled"]);
 
 /**
@@ -239,8 +254,23 @@ export function simularAnuncio(a, op = {}) {
   if (verif.estado !== "sem_promocao") motivos.push(verif.texto);
 
   // Tarifa de venda NO PREÇO FINAL (muda com o preço).
+  // (18/11) Comissão REAL do anúncio (Clássico/Premium e categoria) lida no ML. Sem ela: "Comissão não
+  // confirmada" — a referência (Clássico 12% · Premium 17%) só entra na ESTIMATIVA, nunca na margem definitiva.
   const tarifa = a.tarifaFinal && txt(a.tarifaFinal.valor) !== "" ? centavos(a.tarifaFinal.valor) : null;
-  if (tarifa === null) motivos.push("Tarifa de venda do ML no preço final não lida.");
+  const tipoAnuncio = txt(item.listing_type_id) || null;
+  const pctLido = a.tarifaFinal && a.tarifaFinal.percentual !== null && a.tarifaFinal.percentual !== undefined && Number.isFinite(Number(a.tarifaFinal.percentual)) ? Number(a.tarifaFinal.percentual) : null;
+  const comissaoRefPct = comissaoReferenciaPct(tipoAnuncio);
+  let comissaoPct = null;
+  let comissaoOrigem = null;
+  let comissaoUsada = null;
+  if (tarifa !== null) {
+    comissaoOrigem = "real";
+    comissaoUsada = tarifa;
+    comissaoPct = pctLido ?? (precoFinal > 0 ? Math.round((tarifa / precoFinal) * 1000) / 10 : null);
+  } else {
+    motivos.push("Comissão não confirmada: tarifa de venda do ML no preço final não lida.");
+    if (comissaoRefPct !== null && precoFinal > 0) { comissaoOrigem = "referencia"; comissaoPct = comissaoRefPct; comissaoUsada = centavos(precoFinal * comissaoRefPct / 100); }
+  }
 
   // Frete pago pelo vendedor no preço final.
   const gratis = item?.shipping?.free_shipping === true;
@@ -263,6 +293,10 @@ export function simularAnuncio(a, op = {}) {
     if (e.custo > 0 && !e.a_confirmar) custo = e.custo;
     custoMotivo = e.a_confirmar ? `custo a confirmar (${e.motivo})` : e.custo > 0 ? "" : e.motivo;
   }
+  // (18/11) Ordem do custo: 1) cadastrado no Bling; 2) última compra atendida no Bling (ESTIMATIVA); 3) "Custo não encontrado".
+  const uc = custo === null && sku && num(a.ultimaCompra?.valor) > 0 ? a.ultimaCompra : null;
+  const custoUsado = custo !== null ? custo : uc ? centavos(uc.valor) : null;
+  const custoOrigem = custo !== null ? "cadastrado" : uc ? "ultima_compra" : null;
   // (18/11) Imposto fica para um projeto separado: sem ele, nada é inventado — a margem fica "não verificada".
   if (perfil.impostoPct === null) motivos.push("Imposto não informado: margem não verificada (impostos serão tratados em projeto separado).");
 
@@ -274,7 +308,9 @@ export function simularAnuncio(a, op = {}) {
   const repassePct = repasse !== null ? Math.round((repasse / precoFinal) * 1000) / 10 : null;
 
   if (custo === null) {
-    const texto = `Custo não informado — margem não verificável (${custoMotivo}). Custo e lucro não são inventados.`;
+    const texto = uc
+      ? `Custo cadastrado ausente no Bling (${custoMotivo}): usada a última compra (${reaisBF(uc.valor)}${uc.data ? ` em ${String(uc.data).slice(8, 10)}/${String(uc.data).slice(5, 7)}/${String(uc.data).slice(0, 4)}` : ""}) como ESTIMATIVA — margem não definitiva.`
+      : `Custo não encontrado no Bling — margem não verificável (${custoMotivo}). Custo e lucro não são inventados.`;
     // Peça Renault comprovada (lote sem custo individual): mantém os 10%, mas nunca libera sozinha:
     // só vai para "Atenção" (aprovação com confirmação extra) se as despesas conhecidas deixarem
     // repasse suficiente; risco relevante ou despesas desconhecidas → revisão.
@@ -293,8 +329,22 @@ export function simularAnuncio(a, op = {}) {
     lucro = centavos(precoFinal - tarifa - frete - imposto - custo - num(perfil.custoPedido));
     margemPct = Math.round((lucro / precoFinal) * 1000) / 10;
     if (lucro < 0) motivos.push(`PREJUÍZO de R$ ${(-lucro).toFixed(2).replace(".", ",")} por venda no preço final.`);
-    else if (margemPct < cfg.margemMinimaPct) alertas.push(`Margem de ${String(margemPct).replace(".", ",")}% abaixo do mínimo de ${cfg.margemMinimaPct}%.`);
   }
+  // (18/11) ESTIMATIVA (quando falta algo para a definitiva): última compra, comissão de referência e/ou
+  // sem imposto. Sempre identificada; nunca libera aprovação (a definitiva continua obrigatória).
+  let lucroEstimado = null;
+  let margemEstimadaPct = null;
+  if (margemPct === null && custoUsado !== null && comissaoUsada !== null && frete !== null && precoFinal > 0) {
+    lucroEstimado = centavos(precoFinal - comissaoUsada - frete - (imposto ?? 0) - custoUsado - num(perfil.custoPedido));
+    margemEstimadaPct = Math.round((lucroEstimado / precoFinal) * 1000) / 10;
+    if (lucroEstimado < 0) motivos.push(`Estimativa indica PREJUÍZO de R$ ${(-lucroEstimado).toFixed(2).replace(".", ",")} por venda.`);
+  }
+  const faixaMargem = faixaDaMargem(margemPct ?? margemEstimadaPct, cfg);
+  const baseEstimativa = margemEstimadaPct === null ? [] : [
+    custoOrigem === "ultima_compra" ? "custo da última compra" : "",
+    comissaoOrigem === "referencia" ? `comissão de referência ${comissaoRefPct}%` : "",
+    imposto === null ? "sem imposto" : "",
+  ].filter(Boolean);
 
   let situacao = SITUACOES.APTO;
   if (decisao === "excluir") situacao = SITUACOES.EXCLUIDO;
@@ -315,6 +365,10 @@ export function simularAnuncio(a, op = {}) {
     preco_original: precoOriginal,
     preco_final: precoFinal,
     custo, tarifa, frete, frete_origem: freteOrigem, imposto, custo_pedido: num(perfil.custoPedido),
+    tipo_anuncio_nome: TIPOS_ANUNCIO[tipoAnuncio] || null, comissao_pct: comissaoPct, comissao_origem: comissaoOrigem, comissao_usada: comissaoUsada,
+    custo_usado: custoUsado, custo_origem: custoOrigem, ultima_compra: uc ? { valor: centavos(uc.valor), data: txt(uc.data) || null, pedido: txt(uc.pedido) || null, fonte: txt(uc.fonte) || null } : null,
+    lucro_estimado: lucroEstimado, margem_estimada_pct: margemEstimadaPct, base_estimativa: baseEstimativa,
+    margem_definitiva: margemPct !== null, faixa_margem: faixaMargem,
     lucro, margem_pct: margemPct, repasse, repasse_pct: repassePct, custo_motivo: custo === null ? custoMotivo : null,
     promocao: verif.estado, promocao_texto: verif.texto,
     promocoes_ativas: verif.ativas,

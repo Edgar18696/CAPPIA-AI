@@ -165,7 +165,7 @@ test("Renault de lote sem custo: mantém 10%, mostra 'Custo não informado' e va
   assert.equal(l.repasse, 127.2);
   assert.equal(l.repasse_pct, 70.7);
   assert.equal(l.situacao, "atencao");
-  assert.match(l.alertas[0], /^Custo não informado — margem não verificável/);
+  assert.match(l.alertas[0], /^Custo não encontrado no Bling — margem não verificável/);
   assert.equal(R.podeAprovar(l), true);
   // (16/11) Margem não verificável: nunca aprovada, nem com confirmação.
   const reg = G.criarRegistroBF({ storage: memoria(), usuarioId: "u1" });
@@ -287,11 +287,16 @@ test("prejuízo → revisão (não pode ser aprovado)", () => {
   assert.equal(R.podeAprovar(l), false);
 });
 
-test("margem baixa (acima de zero) → atenção; aprovável com confirmação", () => {
+test("(18/11) margem baixa (acima de zero) → faixa EXCEPCIONAL: aprovável só com autorização excepcional", () => {
   const l = R.simularAnuncio(leituraAnuncio({ custo: custoOk(130) }), { perfil: PERFIL });
   assert.ok(l.lucro >= 0 && l.margem_pct < 10);
-  assert.equal(l.situacao, "atencao");
-  assert.equal(R.podeAprovar(l), true);
+  assert.equal(l.faixa_margem, "excepcional");
+  assert.equal(R.podeAprovar(l), true, "não é bloqueio: a aprovação pede a autorização");
+  assert.equal(R.faixaDaMargem(15), "meta");
+  assert.equal(R.faixaDaMargem(14.99), "estrategica");
+  assert.equal(R.faixaDaMargem(10), "estrategica");
+  assert.equal(R.faixaDaMargem(9.99), "excepcional");
+  assert.equal(R.faixaDaMargem(null), null);
 });
 
 test("custo nunca inventado: sem custo, custo a confirmar, Renault de lote → margem não verificável (revisão)", () => {
@@ -301,7 +306,7 @@ test("custo nunca inventado: sem custo, custo a confirmar, Renault de lote → m
   assert.equal(semCusto.situacao, "revisao");
   const naoLido = R.simularAnuncio(leituraAnuncio({ custo: undefined }), { perfil: PERFIL });
   assert.match(naoLido.motivos.join(" "), /custo não lido no Bling/);
-  assert.match(naoLido.motivos.join(" "), /^Custo não informado — margem não verificável/);
+  assert.match(naoLido.motivos.join(" "), /^Custo não encontrado no Bling — margem não verificável/);
   const aConfirmar = R.simularAnuncio(leituraAnuncio({ custo: { ok: true, encontrado: true, custo: { fornecedores: [{ padrao: true, precoCusto: 50 }, { padrao: false, precoCusto: 90 }] } } }), { perfil: PERFIL });
   assert.equal(aConfirmar.custo, null);
   assert.match(aConfirmar.motivos.join(" "), /custo a confirmar/);
@@ -309,7 +314,7 @@ test("custo nunca inventado: sem custo, custo a confirmar, Renault de lote → m
 
 test("imposto não cadastrado, tarifa não lida ou frete não confirmado → margem não verificável", () => {
   assert.match(R.simularAnuncio(leituraAnuncio(), { perfil: { impostoPct: null, custoPedido: 0 } }).motivos.join(" "), /Imposto não informado: margem não verificada/);
-  assert.match(R.simularAnuncio(leituraAnuncio({ tarifaFinal: null }), { perfil: PERFIL }).motivos.join(" "), /Tarifa de venda/);
+  assert.match(R.simularAnuncio(leituraAnuncio({ tarifaFinal: null }), { perfil: PERFIL }).motivos.join(" "), /^Comissão não confirmada: tarifa de venda/);
   // 85 → 80,75 (mesma faixa 79–99,99): usa a cotação atual
   const mesma = R.simularAnuncio(leituraAnuncio({ item: item({ price: 85 }), custo: custoOk(30), freteFinal: null }), { perfil: PERFIL });
   assert.equal(mesma.frete, 20);
@@ -445,11 +450,12 @@ test("aprovação: só PRONTO; idempotente; guarda preço original", () => {
   const revisao = R.simularAnuncio(leituraAnuncio({ item: item({ id: "MLB3" }), custo: custoOk(170) }), { perfil: PERFIL });
   const r1 = reg.aprovar([apto, atencao, revisao], { modo: "lote" });
   assert.deepEqual(r1.aprovados, [apto.chave]);
-  assert.equal(r1.recusados.length, 2, "atenção e revisão não estão PRONTO");
-  assert.match(r1.recusados[0].motivo, /não está PRONTO/);
+  assert.equal(r1.recusados.length, 2, "margem < 10% sem autorização e revisão não entram");
+  assert.match(r1.recusados.map((x) => x.motivo).join(" | "), /falta a autorização do responsável/);
+  assert.match(r1.recusados.map((x) => x.motivo).join(" | "), /não está PRONTO/);
   const r2 = reg.aprovar([apto, atencao], { modo: "lote", confirmarAtencao: true });
   assert.deepEqual(r2.ja_aprovados, [apto.chave], "não duplica");
-  assert.deepEqual(r2.aprovados, [], "atenção nunca entra, nem confirmada");
+  assert.deepEqual(r2.aprovados, [], "margem < 10% nunca entra sem autorização");
   const plano = reg.lerPlano();
   assert.equal(Object.keys(plano.aprovados).length, 1);
   assert.equal(plano.aprovados[apto.chave].preco_original, 200);

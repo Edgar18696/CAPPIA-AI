@@ -71,24 +71,29 @@ export function criarRegistroBF({ storage, usuarioId, agora = () => new Date().t
    * Idempotente.
    * @returns {{ aprovados: string[], ja_aprovados: string[], recusados: {chave, motivo}[] }}
    */
-  function aprovar(linhas, { modo = "anuncio" } = {}) {
+  function aprovar(linhas, { modo = "anuncio", autorizacao = null } = {}) {
     const p = lerPlano();
     const out = { aprovados: [], ja_aprovados: [], recusados: [] };
     for (const l of linhas || []) {
       // (16/11) Só PRONTO, com margem verificada e não negativa. Sem exceção manual.
       if (!aprovavel(l)) { out.recusados.push({ chave: l.chave, motivo: "não está PRONTO (pendência ou margem não verificada/negativa)" }); continue; }
+      // (18/11) Margem 10–14,99%: só com o responsável. Abaixo de 10%: também a autorização EXCEPCIONAL.
+      const resp = txt(autorizacao?.responsavel);
+      if ((l.faixa_margem === "estrategica" || l.faixa_margem === "excepcional") && !resp) { out.recusados.push({ chave: l.chave, motivo: "margem fora da meta: falta a autorização do responsável" }); continue; }
+      if (l.faixa_margem === "excepcional" && autorizacao?.excepcional !== true) { out.recusados.push({ chave: l.chave, motivo: "margem abaixo de 10%: falta a autorização excepcional" }); continue; }
       const atual = p.aprovados[l.chave];
       if (atual && atual.preco_original === l.preco_original && atual.preco_final === l.preco_final) { out.ja_aprovados.push(l.chave); continue; }
       p.aprovados[l.chave] = {
         chave: l.chave, conta: l.conta, item: l.id, sku: l.sku, classe: l.classe,
         desconto_pct: l.desconto_pct, preco_original: l.preco_original, preco_final: l.preco_final,
         margem_pct: l.margem_pct, situacao: l.situacao, aprovado_em: agora(), aprovado_por: u, modo,
+        faixa_margem: l.faixa_margem || null, autorizado_por: l.faixa_margem && l.faixa_margem !== "meta" ? resp : null, autorizacao_excepcional: l.faixa_margem === "excepcional",
         inicio: CAMPANHA_BF.inicio, fim: CAMPANHA_BF.fim,
       };
       out.aprovados.push(l.chave);
     }
     salvarPlano(p);
-    registrar("aprovacao", { modo, aprovados: out.aprovados.length, ja_aprovados: out.ja_aprovados.length, recusados: out.recusados.length, chaves: out.aprovados.slice(0, 200) });
+    registrar("aprovacao", { modo, autorizado_por: txt(autorizacao?.responsavel) || null, excepcional: autorizacao?.excepcional === true, aprovados: out.aprovados.length, ja_aprovados: out.ja_aprovados.length, recusados: out.recusados.length, chaves: out.aprovados.slice(0, 200) });
     return out;
   }
 

@@ -16,8 +16,8 @@ import { supabase, ambienteSupabase, temAcessoDeTeste, entrarNoTeste } from "../
 import { armazenamentoCompartilhado, ouvirErrosDoBanco } from "../services/promocoes/armazenamentoSupabase";
 import { montarLeituraExemplo } from "../services/promocoes/anunciosExemplo";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha, conferirEncerramento, ofertasConfirmadasNoML } from "../services/blackFriday/calendario";
-import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, custosDoPerfil, filtrarLinhas, resumirSimulacao } from "../services/blackFriday/regras";
-import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
+import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, ROTULO_FAIXA, custosDoPerfil, filtrarLinhas, resumirSimulacao } from "../services/blackFriday/regras";
+import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, consultorUltimasComprasBF, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
 import { roteadorBF, consultorLeituraBF } from "../services/blackFriday/leituraPermitida";
 import { criarRegistroBF, chaveLeitura } from "../services/blackFriday/registro";
 import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, LISTAS, aprovavel, selecionavel } from "../services/blackFriday/planilha";
@@ -38,7 +38,9 @@ const LIMITES = [["20000", "Todos os anúncios ativos"], ["200", "200 (teste)"],
 const POR_PAGINA = 50;
 const RE_403 = /policy returned UNAUTHORIZED|HTTP 403|\b403\b/i;
 // (18/11) Pendências que são só "falta custo/imposto para calcular a margem".
-const RE_MARGEM = /margem n[ãa]o verific|imposto n[ãa]o (informado|cadastrado)|custo n[ãa]o (informado|lido|confirmado)|tarifa de venda do ML no pre[çc]o final n[ãa]o lida|frete no pre[çc]o final n[ãa]o confirmado/i;
+const RE_MARGEM = /margem n[ãa]o verific|imposto n[ãa]o (informado|cadastrado)|custo n[ãa]o (informado|lido|confirmado|encontrado)|custo cadastrado ausente|comiss[ãa]o n[ãa]o confirmada|tarifa de venda do ML no pre[çc]o final n[ãa]o lida|frete no pre[çc]o final n[ãa]o confirmado/i;
+// (18/11) Faixas de margem (giro de estoque): cor do aviso.
+const COR_FAIXA = { meta: "#86efac", estrategica: "#fbbf24", excepcional: "#f87171" };
 
 function lerPerfil() {
   try { return custosDoPerfil(JSON.parse(localStorage.getItem("paiiaPerfilCustos") || "null")); } catch { return custosDoPerfil(null); }
@@ -194,6 +196,7 @@ export default function BlackFridayPaizinho() {
         contas, limite: Number(limite),
         consultorDaConta: consultorConta,
         consultarCusto: consultorCustoBF(invocar),
+        consultarUltimasCompras: consultorUltimasComprasBF(invocar),
         aoProgredir: (t, e) => { setLendo(t); if (e) setProgresso(e); },
         cancelado: () => cancelar.current,
         anterior: retomar ? leitura : null,
@@ -331,7 +334,20 @@ export default function BlackFridayPaizinho() {
     const aptas = lista.filter((l) => aprovavelNaCampanha(l));
     if (!aptas.length) { setAviso("Só anúncios SELECIONADOS para a campanha, sem \"Revisão necessária\" e PRONTO (sem pendência, com margem verificada e não negativa) podem ser aprovados."); return; }
     if (!window.confirm(`Registrar a APROVAÇÃO de ${aptas.length} anúncio(s) PRONTO da ${nomeConta}?\n\nPeríodo: ${dataHoraBrasilia(CAMPANHA_BF.inicio)} a ${dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília).\n\nSó registra o plano. NENHUMA oferta é ativada e nenhum preço é alterado.`)) return;
-    const r = registro.aprovar(aptas, { modo });
+    // (18/11) Margem fora da meta (abaixo de 15%): nunca aprova sozinha — pede o responsável; abaixo de 10%, autorização EXCEPCIONAL.
+    const estrategicas = aptas.filter((l) => l.faixa_margem === "estrategica");
+    const excepcionais = aptas.filter((l) => l.faixa_margem === "excepcional");
+    let autorizacao = null;
+    if (estrategicas.length || excepcionais.length) {
+      const lista = [...excepcionais, ...estrategicas].slice(0, 8).map((l) => `• ${l.id} — margem ${pctTxt(l.margem_pct)}${l.faixa_margem === "excepcional" ? " (RISCO)" : ""}`).join("\n");
+      const resp = window.prompt(`MARGEM FORA DA META (15%)\n\n${estrategicas.length} anúncio(s) entre 10% e 14,99% (aprovação estratégica)\n${excepcionais.length} anúncio(s) ABAIXO DE 10% (autorização excepcional — RISCO)\n\n${lista}\n\nNome do responsável que autoriza (vazio = aprova só os da meta):`, "");
+      if (resp === null) return;
+      const responsavel = String(resp).trim();
+      let excepcional = false;
+      if (responsavel && excepcionais.length) excepcional = String(window.prompt(`RISCO: ${excepcionais.length} anúncio(s) com margem ABAIXO DE 10%.\n\nDigite AUTORIZO para a autorização excepcional (qualquer outra coisa = esses ficam fora):`, "") || "").trim().toUpperCase() === "AUTORIZO";
+      autorizacao = responsavel ? { responsavel, excepcional } : null;
+    }
+    const r = registro.aprovar(aptas, { modo, autorizacao });
     setAviso(`Aprovação registrada: ${r.aprovados.length} novo(s), ${r.ja_aprovados.length} já aprovado(s), ${r.recusados.length} não aprovado(s).`);
     setMarcados(new Set()); setVersao((v) => v + 1);
   }
@@ -665,8 +681,14 @@ export default function BlackFridayPaizinho() {
                   <div style={S.grade2}>
                     <div><small style={S.rotulo2b}>Classificação</small><span style={{ ...S.selo, color: COR_CLASSE[l.classe], borderColor: COR_CLASSE[l.classe] }}>{ROTULO_CLASSE[l.classe]}</span>{l.decisao && l.decisao !== "excluir" && <small style={S.base}> (manual)</small>}
                       {[...l.evidencias, l.duvida].filter(Boolean).map((t, i) => <div key={i}><small style={S.base}>{t}</small></div>)}</div>
-                    <div style={{ color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={l.margem_pct !== null ? `No preço promocional: ${real(l.preco_final)} − comissão ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo ${real(l.custo)}` : ""}><small style={S.rotulo2b}>Margem depois do desconto</small>
-                      {l.margem_pct !== null ? `${real(l.lucro)} (${pctTxt(l.margem_pct)})` : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span> <small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo === null ? "custo não cadastrado" : ""].filter(Boolean).join(" · ")} — dá para selecionar e simular; custos ficam em Preços, Custos e Lucro.</small></>}</div>
+                    <div style={{ color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }}><small style={S.rotulo2b}>Margem depois do desconto</small>
+                      {l.margem_pct !== null
+                        ? <span><strong>Lucro {real(l.lucro)}</strong> · <strong>margem {pctTxt(l.margem_pct)}</strong></span>
+                        : l.margem_estimada_pct !== null && l.margem_estimada_pct !== undefined
+                          ? <><span style={{ color: l.lucro_estimado < 0 ? "#f87171" : "#fbbf24" }}>Lucro ≈ {real(l.lucro_estimado)} · margem ≈ {pctTxt(l.margem_estimada_pct)} (estimativa)</span> <small style={S.base}>Não é a margem definitiva: {(l.base_estimativa || []).join(" · ")}.</small></>
+                          : <><span style={{ color: "#fbbf24" }}>Margem não verificada</span> <small style={S.base}>{[perfil.impostoPct === null ? "imposto não informado" : "", l.custo_origem ? "" : "Custo não encontrado", l.comissao_origem ? "" : "Comissão não confirmada"].filter(Boolean).join(" · ")} — dá para selecionar e simular.</small></>}
+                      {l.faixa_margem && <div><small style={{ color: COR_FAIXA[l.faixa_margem], fontWeight: 700 }}>{ROTULO_FAIXA[l.faixa_margem]}</small></div>}
+                      <div><small style={S.base}>No preço promocional {real(l.preco_final)}: comissão {l.comissao_origem ? `${real(l.comissao_usada)} (${l.tipo_anuncio_nome || "anúncio"} ${String(l.comissao_pct ?? "").replace(".", ",")}%${l.comissao_origem === "real" ? ", tarifa real do ML" : ", referência — Comissão não confirmada"})` : "Comissão não confirmada"} · frete {l.frete === null ? "não confirmado" : real(l.frete)} · imposto {l.imposto === null ? "não informado" : real(l.imposto)} · custo {l.custo_origem === "cadastrado" ? `${real(l.custo_usado)} (cadastrado no Bling)` : l.custo_origem === "ultima_compra" ? `${real(l.custo_usado)} (última compra${l.ultima_compra?.pedido ? ` nº ${l.ultima_compra.pedido}` : ""} — estimativa)` : "Custo não encontrado"}{l.custo_pedido ? ` · por pedido ${real(l.custo_pedido)}` : ""}</small></div></div>
                   </div>
                   {(outrosMotivos.length > 0 || cl.observacoes.length > 0) && <ul style={S.lista}>
                     {outrosMotivos.map((m, i) => <li key={i}><small>{m}</small></li>)}
