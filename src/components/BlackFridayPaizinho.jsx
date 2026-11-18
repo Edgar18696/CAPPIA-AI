@@ -12,7 +12,9 @@
 // Não mexe no Ranqueamento nem nas outras funções da Central.
 // =============================================================
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "../supabase";
+import { supabase, ambienteSupabase } from "../supabase";
+import { armazenamentoCompartilhado, ouvirErrosDoBanco } from "../services/promocoes/armazenamentoSupabase";
+import { montarLeituraExemplo } from "../services/promocoes/anunciosExemplo";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha, conferirEncerramento, ofertasConfirmadasNoML } from "../services/blackFriday/calendario";
 import { CONTAS_BLACK_FRIDAY, CLASSES, SITUACOES, ROTULO_CLASSE, custosDoPerfil, filtrarLinhas, resumirSimulacao } from "../services/blackFriday/regras";
 import { lerContasBF, montarSimulacao, consultorBF, consultorCustoBF, agruparFalhas, explicarErro } from "../services/blackFriday/leitura";
@@ -94,12 +96,24 @@ export default function BlackFridayPaizinho() {
   const plano = useMemo(() => registro?.lerPlano() || null, [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const historico = useMemo(() => registro?.historico() || [], [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   // (17/11) Central de Promoções: seleção dos anúncios da campanha (usuário + campanha + conta + MLB).
-  // LIMITAÇÃO: hoje fica só neste navegador; a tabela no Supabase depende de autorização.
-  const armazem = useMemo(() => (usuarioId ? armazemCampanhas(localStorage, usuarioId) : null), [usuarioId]);
+  // (18/11) No MODO DE TESTE (STAGING) grava no banco de teste; na produção, ainda no navegador
+  // (as tabelas da produção dependem de autorização).
+  const NO_BANCO = ambienteSupabase === "staging";
+  const [banco, setBanco] = useState(null);
+  useEffect(() => {
+    if (!NO_BANCO || !usuarioId) return undefined;
+    let vivo = true;
+    armazenamentoCompartilhado({ supabase, usuarioId })
+      .then((a) => { if (vivo) { setBanco(a); setVersao((v) => v + 1); } })
+      .catch((e) => vivo && setAviso(`Não foi possível ler a Central de Promoções no banco de teste: ${e?.message || e}`));
+    const parar = ouvirErrosDoBanco((m) => vivo && setAviso(m));
+    return () => { vivo = false; parar(); };
+  }, [NO_BANCO, usuarioId]);
+  const armazem = useMemo(() => (!usuarioId ? null : NO_BANCO ? (banco ? armazemCampanhas(banco.storageCampanhas, usuarioId) : null) : armazemCampanhas(localStorage, usuarioId)), [usuarioId, NO_BANCO, banco]);
   const campanhas = useMemo(() => (armazem ? armazem.todas() : [CAMPANHA_BLACK_FRIDAY]), [armazem, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const campanha = campanhaPorId(campanhaId, campanhas) || CAMPANHA_BLACK_FRIDAY;
   const ehBF = campanha.regra !== REGRAS.PERCENTUAL;
-  const selecao = useMemo(() => (usuarioId ? criarSelecao({ adaptador: adaptadorLocal(localStorage), usuarioId, campanhaId: campanha.id, campanhas }) : null), [usuarioId, campanha.id, campanhas]);
+  const selecao = useMemo(() => (!usuarioId || (NO_BANCO && !banco) ? null : criarSelecao({ adaptador: NO_BANCO ? banco.adaptadorSelecao : adaptadorLocal(localStorage), usuarioId, campanhaId: campanha.id, campanhas })), [usuarioId, NO_BANCO, banco, campanha.id, campanhas]);
   // O Ranqueamento ("Enviar para Promoções") avisa quando inclui: a lista aqui acompanha.
   useEffect(() => {
     const atualizar = () => setVersao((v) => v + 1);
@@ -468,6 +482,13 @@ export default function BlackFridayPaizinho() {
         {!lendo && podeRetomar && <button type="button" style={S.botao} onClick={() => consultar(true)}>⏯️ Retomar consulta ({leituraConta.lidos} já lidos)</button>}
         {lendo && <button type="button" style={S.filtro} onClick={() => { cancelar.current = true; }}>Parar leitura</button>}
       </div>
+      {NO_BANCO && <div style={S.aviso}>🧪 <strong>Modo de teste (STAGING):</strong> este banco não lê o Mercado Livre. Use anúncios fictícios para testar seleção, metas, descontos e margens.{" "}
+        <button type="button" style={S.mini} disabled={!!lendo} data-paiia-bf="exemplo" onClick={() => {
+          const lt = montarLeituraExemplo({ conta: contaAtual, nome: nomeConta });
+          try { localStorage.setItem(chaveLeitura(usuarioId, contaAtual), JSON.stringify(lt)); } catch { /* fica só na tela */ }
+          setLeitura(lt); setSimulado(false); setProgresso(null);
+          setAviso(`${lt.contas[contaAtual].lidos} anúncios de EXEMPLO carregados para a ${nomeConta} (fictícios, MLB9…). Clique em Simular.`);
+        }}>🧪 Carregar anúncios de exemplo</button></div>}
       <small style={S.base}>Só leitura no Mercado Livre e no Bling. Mantenha a página aberta durante a leitura e não use "Sair".</small>
       {progresso && <div style={S.kpis}>
         <Kpi rotulo="Encontrados" valor={progresso.total ?? "…"} />
@@ -535,7 +556,9 @@ export default function BlackFridayPaizinho() {
       <div style={S.nota}>
         Escolha quais anúncios participam: 50, 100, 200 ou outra quantidade, pela sugestão ou um por um na tabela (filtre por SKU, MLB ou título).
         O desconto (10% Renault comprovada · 5% demais) vale só para os selecionados; os outros anúncios não entram na planilha e não são alterados.
-        <br /><small>⚠️ Por enquanto a seleção fica guardada <strong>só neste navegador</strong> (por usuário, campanha e conta). A gravação no Supabase, compartilhada entre aparelhos, depende da sua autorização.</small>
+        <br /><small>{NO_BANCO
+          ? (banco ? <>🧪 Seleção, metas e rascunhos gravados no <strong>banco de TESTE (STAGING)</strong>, por usuário, campanha, conta e MLB. Nada vai para o PAIIA oficial.</> : "🧪 Carregando a seleção do banco de teste…")
+          : <>⚠️ Por enquanto a seleção fica guardada <strong>só neste navegador</strong> (por usuário, campanha e conta). A gravação no Supabase, compartilhada entre aparelhos, depende da sua autorização.</>}</small>
       </div>
       <div style={S.acoes}>
         <label style={S.base}>Meta da {nomeConta}:{" "}

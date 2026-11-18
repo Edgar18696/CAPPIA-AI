@@ -317,7 +317,7 @@ test("Ranqueamento: só ganhou o botão 'Enviar para Promoções' (sem escrita, 
   assert.match(rank, /CONTAS_AUDITORIA, CONTA_PADRAO/);
   const botao = ler("src/components/EnviarParaPromocoes.jsx");
   assert.match(botao, /Enviar para Promoções/);
-  assert.match(botao, /CAMPANHAS_PROMOCOES\.filter\(\(c\) => c\.contas\.includes\(contaId\)\)/, "escolha da campanha de destino");
+  assert.match(botao, /todas\.filter\(\(c\) => c\.contas\.includes\(contaId\)\)/, "escolha da campanha de destino (BF + rascunhos)");
   assert.doesNotMatch(botao, /functions\.invoke|\.from\(|fetch\(/, "o botão só seleciona (nada no banco, nada no ML)");
   const sql = ler("supabase/pendentes/20261118_paiia_promocoes_selecao.sql");
   assert.match(sql, /NÃO APLICADA/);

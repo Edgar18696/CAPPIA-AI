@@ -7,8 +7,9 @@
 // navegador; a gravação no Supabase depende de autorização.
 // =============================================================
 import { useEffect, useState } from "react";
-import { supabase } from "../supabase";
-import { CAMPANHAS_PROMOCOES } from "../services/promocoes/campanhas";
+import { supabase, ambienteSupabase } from "../supabase";
+import { CAMPANHAS_PROMOCOES, armazemCampanhas } from "../services/promocoes/campanhas";
+import { armazenamentoCompartilhado } from "../services/promocoes/armazenamentoSupabase";
 import { adaptadorLocal, criarSelecao, chaveItemSelecao, EVENTO_SELECAO } from "../services/promocoes/selecao";
 
 const idConta = (c) => String(c?.id ?? c ?? "").replace(/\D/g, "");
@@ -34,20 +35,31 @@ export default function EnviarParaPromocoes({ conta, anuncio }) {
   const contaId = idConta(conta);
   const mlb = String(anuncio?.item_id || "").toUpperCase();
 
+  // (18/11) Modo de teste: a mesma seleção gravada no banco de teste (STAGING) que a aba usa.
+  const noBanco = ambienteSupabase === "staging";
+  const [banco, setBanco] = useState(null);
+  useEffect(() => {
+    if (!noBanco || !usuarioId) return undefined;
+    let vivo = true;
+    armazenamentoCompartilhado({ supabase, usuarioId }).then((a) => vivo && setBanco(a)).catch(() => {});
+    return () => { vivo = false; };
+  }, [noBanco, usuarioId]);
+
   useEffect(() => {
     const atualizar = () => setVersao((v) => v + 1);
     window.addEventListener(EVENTO_SELECAO, atualizar);
     return () => window.removeEventListener(EVENTO_SELECAO, atualizar);
   }, []);
 
-  if (!usuarioId || !contaId || !/^MLB\d+$/.test(mlb)) return null;
-  const sel = (id) => criarSelecao({ adaptador: adaptadorLocal(localStorage), usuarioId, campanhaId: id });
-  const naCampanha = CAMPANHAS_PROMOCOES.filter((c) => c.contas.includes(contaId) && sel(c.id).mapa(contaId).has(chaveItemSelecao(contaId, mlb)));
+  if (!usuarioId || !contaId || !/^MLB\d+$/.test(mlb) || (noBanco && !banco)) return null;
+  const todas = armazemCampanhas(noBanco ? banco.storageCampanhas : localStorage, usuarioId).todas();
+  const sel = (id) => criarSelecao({ adaptador: noBanco ? banco.adaptadorSelecao : adaptadorLocal(localStorage), usuarioId, campanhaId: id, campanhas: todas });
+  const naCampanha = todas.filter((c) => c.contas.includes(contaId) && sel(c.id).mapa(contaId).has(chaveItemSelecao(contaId, mlb)));
   void versao;
 
   function enviar() {
     const r = sel(campanhaId).incluir([{ conta: contaId, id: mlb, sku: anuncio.sku, titulo: anuncio.titulo, preco_original: anuncio.preco ?? null }], { origem: "ranqueamento" });
-    const nome = CAMPANHAS_PROMOCOES.find((c) => c.id === campanhaId)?.nome;
+    const nome = todas.find((c) => c.id === campanhaId)?.nome;
     setMsg(r.incluidos.length ? `Enviado para ${nome}.` : r.ja_estavam.length ? `Já estava em ${nome}.` : r.recusados[0]?.motivo || "Não foi possível enviar.");
     setAberto(false);
   }
@@ -59,7 +71,7 @@ export default function EnviarParaPromocoes({ conta, anuncio }) {
         ? <button type="button" style={S.botao} onClick={() => { setAberto(true); setMsg(""); }}>🏷️ Enviar para Promoções</button>
         : <>
           <select value={campanhaId} onChange={(e) => setCampanhaId(e.target.value)} style={S.select} aria-label="Campanha de destino">
-            {CAMPANHAS_PROMOCOES.filter((c) => c.contas.includes(contaId)).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {todas.filter((c) => c.contas.includes(contaId)).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
           </select>
           <button type="button" style={S.botao} onClick={enviar}>Enviar</button>
           <button type="button" style={S.botao} onClick={() => setAberto(false)}>Cancelar</button>
