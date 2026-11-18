@@ -90,6 +90,10 @@ alter table public.paiia_promocoes_selecao   enable row level security;
 alter table public.paiia_promocoes_metas     enable row level security;
 alter table public.paiia_promocoes_campanhas enable row level security;
 revoke all on public.paiia_promocoes_selecao, public.paiia_promocoes_metas, public.paiia_promocoes_campanhas from anon;
+-- Permissões explícitas (o teste no STAGING mostrou que não dá para depender das permissões padrão).
+-- Seleção e metas: sem DELETE. Campanhas: DELETE só de rascunho (pela política abaixo).
+grant select, insert, update on public.paiia_promocoes_selecao, public.paiia_promocoes_metas to authenticated;
+grant select, insert, update, delete on public.paiia_promocoes_campanhas to authenticated;
 
 create policy paiia_promocoes_selecao_select on public.paiia_promocoes_selecao for select to authenticated
   using (auth.uid() = usuario_id);
