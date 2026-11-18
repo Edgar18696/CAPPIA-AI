@@ -113,7 +113,10 @@ export async function coletarDadosConta({
   passo("Lendo os anúncios ativos");
   const ids = [];
   let total = 0;
-  for (let offset = 0; offset < 1000 && ids.length < o.limiteItens; offset += 100) {
+  // (17/11) Fila sem repetição: com `escolherIds` a lista de ativos é lida INTEIRA e a
+  // fila escolhe quais analisar (inéditos ou reanálise); só os escolhidos são lidos a fundo.
+  const limiteLista = typeof o.escolherIds === "function" ? Infinity : o.limiteItens;
+  for (let offset = 0; offset < 1000 && ids.length < limiteLista; offset += 100) {
     const r = await get(`/users/${contaId}/items/search?status=active&limit=100&offset=${offset}`);
     if (!r?.ok) { falha("anúncios", `/users/${contaId}/items/search`, r); break; }
     total = num(r.dados?.paging?.total);
@@ -121,10 +124,10 @@ export async function coletarDadosConta({
     ids.push(...lote);
     if (lote.length < 100) break;
   }
-  if (total > 1000 && ids.length < o.limiteItens) {
+  if (total > 1000 && ids.length < limiteLista) {
     // Mais de 1.000 anúncios: o ML exige a leitura por "scan".
     let scroll = "";
-    for (let volta = 0; volta < 100 && ids.length < o.limiteItens; volta++) {
+    for (let volta = 0; volta < 100 && ids.length < limiteLista; volta++) {
       const r = await get(`/users/${contaId}/items/search?status=active&search_type=scan&limit=100${scroll ? `&scroll_id=${encodeURIComponent(scroll)}` : ""}`);
       if (!r?.ok) { falha("anúncios (scan)", `/users/${contaId}/items/search`, r); break; }
       const lote = Array.isArray(r.dados?.results) ? r.dados.results : [];
@@ -134,7 +137,11 @@ export async function coletarDadosConta({
       if (!scroll) break;
     }
   }
-  const idsAnalisados = [...new Set(ids)].slice(0, o.limiteItens);
+  const idsAtivos = [...new Set(ids)];
+  const listaAtivosCompleta = !falhas.some((f) => /^anúncios/.test(f.etapa)) && (!total || idsAtivos.length >= total);
+  const idsAnalisados = typeof o.escolherIds === "function"
+    ? [...new Set(o.escolherIds(idsAtivos, { total, completa: listaAtivosCompleta }) || [])].filter((id) => idsAtivos.includes(id)).slice(0, o.limiteItens)
+    : idsAtivos.slice(0, o.limiteItens);
 
   // 3) Detalhes dos anúncios (20 por consulta)
   passo(`Lendo ${idsAnalisados.length} anúncios`);
@@ -343,7 +350,7 @@ export async function coletarDadosConta({
     conta: contaInfo,
     coletado_em: agora,
     periodo: { visitas_de: de, visitas_ate: ate, vendas_desde: desdeVendas },
-    totais: { anuncios_ativos: total || idsAnalisados.length, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
+    totais: { anuncios_ativos: total || idsAtivos.length || idsAnalisados.length, ativos_listados: idsAtivos.length, lista_ativos_completa: listaAtivosCompleta, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
     ...(typeof consultarCusto === "function" ? { custos } : {}),
     fontes: { bling: blingDisponivel, bling_parcial: leituraBling, custo: leituraCusto, releitura_visitas: releituraVisitas, concorrencia: typeof buscarConcorrentes === "function" },

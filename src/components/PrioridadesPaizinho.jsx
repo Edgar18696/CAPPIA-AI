@@ -2,68 +2,74 @@
 // PAIIA — Central do Paizinho: "Prioridades de hoje" com conta, acesso e ações (17/11/2026).
 // - Conta ao lado de cada MLB pelo vendedor real do anúncio (lido no ML na análise).
 // - "Abrir na Central de Anúncios": área do vendedor no ML (não a página pública).
-// - "Resolvido" / "Remover da lista": só a LISTA do PAIIA muda; tudo vai para o histórico.
+// - "Resolvido" / "Remover da lista": só a LISTA do PAIIA muda; tudo vai para o histórico
+//   da FILA desta conta (banco quando ativado; até lá, este navegador).
 //   Nenhum anúncio é excluído, pausado ou modificado no Mercado Livre; o Bling não é tocado.
 // A ordem (ranqueamento) e o conteúdo de cada prioridade continuam os do relatório.
 // =============================================================
 import { useState } from "react";
-import {
-  ACAO, MOTIVOS_REMOCAO, ROTULO_ACAO,
-  chaveAchado, contaDoAnuncio, lerHistorico, linkCentralAnuncios, registrarAcao, separarPrioridades,
-} from "../services/paizinhoAuditoria/prioridadesAcoes";
+import { MOTIVOS_REMOCAO, chaveAchado, contaDoAnuncio, linkCentralAnuncios } from "../services/paizinhoAuditoria/prioridadesAcoes";
+import { STATUS, statusPendencia, chavePendencia } from "../services/paizinhoAuditoria/filaAnuncios";
 
 const COR = { alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
 const ROTULO = { alta: "Urgente", media: "Importante", baixa: "Acompanhar" };
 const COR_CONTA = { "1729335019": "#38bdf8", "824312524": "#a78bfa", "2412238242": "#f472b6" };
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const hora = (iso) => { try { return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); } catch { return "—"; } };
-const armazenamento = () => (typeof window !== "undefined" ? window.localStorage : null);
+const FORA = new Set([STATUS.RESOLVIDA, STATUS.REMOVIDA]);
 
-export default function PrioridadesPaizinho({ rel, textoPotencial }) {
-  // (17/11) Histórico da conta deste relatório (a tela remonta ao trocar de conta).
-  const [historico, setHistorico] = useState(() => lerHistorico(armazenamento(), rel?.conta?.id));
+/**
+ * lista: achados (prioridades do relatório ou pendências da fila).
+ * estado: estado da fila da conta (status de cada pendência).
+ * aoAgir(acao, achado, motivo) → Promise<{ ok, erro }>.
+ */
+export default function PrioridadesPaizinho({ rel, lista, estado, aoAgir, textoPotencial, vazio = "Nenhum problema prioritário encontrado." }) {
   const [removendo, setRemovendo] = useState(null); // chave do item com a confirmação aberta
   const [erro, setErro] = useState("");
-  const lista = rel?.prioridades || [];
-  const { visiveis, fora } = separarPrioridades(lista, historico, rel);
+  const [ocupado, setOcupado] = useState(false);
+  const itens = lista || rel?.prioridades || [];
+  const visiveis = itens.filter((a) => !FORA.has(statusPendencia(estado, a)));
 
-  function agir(acao, achado, motivo = "") {
+  async function agir(acao, achado, motivo = "") {
+    if (ocupado) return;
     setErro("");
-    const conta = contaDoAnuncio(achado, rel);
-    const r = registrarAcao(armazenamento(), { acao, achado, conta, motivo, rel });
-    if (!r.ok) { setErro(r.erro); return false; }
-    setHistorico(r.historico);
-    setRemovendo(null);
-    return true;
+    setOcupado(true);
+    try {
+      const r = aoAgir ? await aoAgir(acao, achado, motivo) : { ok: false, erro: "Fila não carregada." };
+      if (!r?.ok) setErro(r?.erro || "Não foi possível registrar.");
+      else setRemovendo(null);
+    } finally {
+      setOcupado(false);
+    }
   }
 
   return (
     <div data-paizinho-prioridades>
-      {!lista.length ? <p style={S.ajuda}>Nenhum problema prioritário encontrado.</p> : null}
-      {lista.length > 0 && !visiveis.length ? <p style={S.ajuda}>Todas as prioridades deste relatório foram tratadas (veja o histórico abaixo).</p> : null}
+      {!itens.length ? <p style={S.ajuda}>{vazio}</p> : null}
+      {itens.length > 0 && !visiveis.length ? <p style={S.ajuda}>Todos os itens desta lista foram tratados (veja o Histórico).</p> : null}
       {erro && <p style={S.erro} role="alert">❌ {erro}</p>}
       <div style={S.achados}>
-        {visiveis.map(({ achado: a, acao, reapareceu }) => (
+        {visiveis.map((a) => (
           <ItemPrioridade
             key={chaveAchado(a)}
             a={a}
             rel={rel}
-            reapareceu={reapareceu ? acao : null}
+            reaberta={a.reaberta || estado?.pendencias?.[chavePendencia(a.item_id, a.area)]?.reaberta}
             textoPotencial={textoPotencial}
             confirmandoRemocao={removendo === chaveAchado(a)}
-            aoResolver={() => agir(ACAO.RESOLVIDO, a)}
+            ocupado={ocupado}
+            aoResolver={() => agir("resolvido", a)}
             aoPedirRemocao={() => { setErro(""); setRemovendo(chaveAchado(a)); }}
             aoCancelarRemocao={() => setRemovendo(null)}
-            aoRemover={(motivo) => agir(ACAO.REMOVIDO, a, motivo)}
+            aoRemover={(motivo) => agir("removido", a, motivo)}
           />
         ))}
       </div>
-      <Historico historico={historico} fora={fora} aoDevolver={(a) => agir(ACAO.DEVOLVIDO, a)} />
     </div>
   );
 }
 
-function ItemPrioridade({ a, rel, reapareceu, textoPotencial, confirmandoRemocao, aoResolver, aoPedirRemocao, aoCancelarRemocao, aoRemover }) {
+function ItemPrioridade({ a, rel, reaberta, textoPotencial, confirmandoRemocao, ocupado, aoResolver, aoPedirRemocao, aoCancelarRemocao, aoRemover }) {
   const conta = contaDoAnuncio(a, rel);
   const acesso = linkCentralAnuncios(a.item_id, conta);
   const [copiado, setCopiado] = useState(false);
@@ -89,7 +95,7 @@ function ItemPrioridade({ a, rel, reapareceu, textoPotencial, confirmandoRemocao
       <div style={S.tituloAchado}>{a.titulo}</div>
       <div>{a.problema}</div>
       <div style={S.sugestao}>👉 {a.sugestao}</div>
-      {reapareceu && <div style={S.aviso}>🔁 Marcado como resolvido em {hora(reapareceu.em)}, mas esta análise (mais nova) ainda encontrou o problema.</div>}
+      {reaberta && <div style={S.aviso}>🔁 Já tinha sido marcado como resolvido, mas a reanálise ainda encontrou o problema.</div>}
 
       <div style={S.acoes}>
         {acesso.url ? (
@@ -98,7 +104,7 @@ function ItemPrioridade({ a, rel, reapareceu, textoPotencial, confirmandoRemocao
           </a>
         ) : null}
         <button type="button" onClick={copiar} style={S.botaoSec}>{copiado ? "✔ Copiado" : "📋 Copiar MLB"}</button>
-        <button type="button" onClick={aoResolver} style={S.botaoOk} data-paiia-resolvido={a.item_id}>✅ Resolvido</button>
+        <button type="button" onClick={aoResolver} disabled={ocupado} style={S.botaoOk} data-paiia-resolvido={a.item_id}>✅ Resolvido</button>
         <button type="button" onClick={aoPedirRemocao} style={S.botaoSec} data-paiia-remover={a.item_id}>🗑️ Remover da lista</button>
       </div>
       <div style={conta.identificada ? S.ajudaPeq : { ...S.ajudaPeq, color: "#fbbf24" }}>{acesso.aviso}</div>
@@ -131,32 +137,36 @@ function ConfirmarRemocao({ mlb, aoConfirmar, aoCancelar }) {
   );
 }
 
-function Historico({ historico, fora, aoDevolver }) {
-  if (!historico.length) return null;
-  const foraPorChave = new Map(fora.map((f) => [chaveAchado(f.achado), f.achado]));
-  const recentes = [...historico].reverse();
+const ROTULO_EVENTO = { analise: "🔍 Analisado (1ª vez)", reanalise: "🔁 Reanalisado", resolvido: "✅ Resolvido", removido: "🗑️ Removido da lista", devolvido: "↩️ Voltou para a lista" };
+const ROTULO_SITUACAO = { analisado: "analisado", pendente: "pendente", resolvido: "resolvido" };
+
+/** Histórico da fila desta conta: análises, reanálises e mudanças de situação (mais recentes primeiro). */
+export function HistoricoFila({ estado, aoDevolver }) {
+  const eventos = [...(estado?.eventos || [])].reverse().slice(0, 300);
+  if (!eventos.length) return <p style={S.ajuda}>Nenhum registro ainda nesta conta.</p>;
   return (
-    <details style={S.detalhe} data-paiia-historico-prioridades>
-      <summary style={S.resumo}>🗂️ Histórico das prioridades ({historico.length}) · fora da lista agora: {fora.length}</summary>
-      <p style={S.ajudaPeq}>Guardado neste navegador, separado por conta. Só registra o que foi feito na lista do PAIIA; nenhum anúncio foi alterado no Mercado Livre.</p>
-      <div style={S.achados}>
-        {recentes.map((h) => {
-          const achadoFora = foraPorChave.get(h.chave);
-          const ultimo = historico.filter((x) => x.chave === h.chave).at(-1) === h;
-          return (
-            <div key={h.id} style={S.linhaHist} data-paiia-historico-item={h.item_id}>
-              <span>{hora(h.em)}</span>
-              <strong>{ROTULO_ACAO[h.acao] || h.acao}</strong>
-              <span style={S.mlb}>{h.item_id}</span>
-              <span style={S.ajuda}>{h.conta_nome}</span>
-              {h.motivo && <span>Motivo: {h.motivo}</span>}
-              <span style={S.ajuda}>{h.titulo}</span>
-              {ultimo && achadoFora && <button type="button" onClick={() => aoDevolver(achadoFora)} style={S.botaoSec}>↩️ Voltar para a lista</button>}
-            </div>
-          );
-        })}
-      </div>
-    </details>
+    <div style={S.achados} data-paiia-historico-fila>
+      {eventos.map((h) => {
+        const p = h.area ? estado.pendencias?.[chavePendencia(h.mlb, h.area)] : null;
+        const podeVoltar = p && FORA.has(p.status) && (h.tipo === "resolvido" || h.tipo === "removido");
+        return (
+          <div key={h.id} style={S.linhaHist} data-paiia-historico-item={h.mlb}>
+            <span>{hora(h.em)}</span>
+            <strong>{ROTULO_EVENTO[h.tipo] || h.tipo}</strong>
+            <span style={S.mlb}>{h.mlb}</span>
+            {h.area && <span style={S.ajuda}>assunto: {h.area}</span>}
+            {h.situacao_depois && <span style={S.ajuda}>situação: {h.situacao_antes ? `${ROTULO_SITUACAO[h.situacao_antes] || h.situacao_antes} → ` : ""}{ROTULO_SITUACAO[h.situacao_depois] || h.situacao_depois}</span>}
+            {h.pontuacao != null && <span style={S.ajuda}>pontuação {h.pontuacao}/100</span>}
+            {h.pendencias != null && <span style={S.ajuda}>{h.pendencias} pendência(s)</span>}
+            {h.motivo && <span>Motivo: {h.motivo}</span>}
+            {h.titulo && <span style={S.ajuda}>{h.titulo}</span>}
+            {podeVoltar && aoDevolver && (
+              <button type="button" onClick={() => aoDevolver({ item_id: p.mlb, area: p.area, severidade: p.severidade, problema: p.problema, sugestao: p.sugestao })} style={S.botaoSec}>↩️ Voltar para a lista</button>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
