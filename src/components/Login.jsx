@@ -65,6 +65,9 @@ export default function Login({
   const [cadastrando, setCadastrando] =
     useState(false);
 
+  const [mostrarSenha, setMostrarSenha] =
+    useState(false);
+
   function somenteNumeros(valor) {
     return String(valor || "").replace(/\D/g, "");
   }
@@ -376,15 +379,31 @@ export default function Login({
             style={campo}
           />
 
-          <input
-            type="password"
-            placeholder="Senha"
-            value={senha}
-            onChange={(e) =>
-              setSenha(e.target.value)
-            }
-            style={campo}
-          />
+          {/* (18/11) Botão 👁️ dentro do campo: mostra/esconde a senha (oculta por padrão). */}
+          <div style={{ position: "relative" }}>
+            <input
+              type={mostrarSenha ? "text" : "password"}
+              placeholder="Senha"
+              value={senha}
+              onChange={(e) =>
+                setSenha(e.target.value)
+              }
+              autoComplete="current-password"
+              style={{ ...campo, paddingRight: "48px" }}
+              data-paiia-login-senha
+            />
+            <button
+              type="button"
+              onClick={() => setMostrarSenha((v) => !v)}
+              aria-label={mostrarSenha ? "Esconder senha" : "Mostrar senha"}
+              aria-pressed={mostrarSenha}
+              title={mostrarSenha ? "Esconder senha" : "Mostrar senha"}
+              style={botaoOlho}
+              data-paiia-login-olho
+            >
+              {mostrarSenha ? "🙈" : "👁️"}
+            </button>
+          </div>
 
           <div
             style={{
@@ -839,6 +858,23 @@ const campo = {
   color: "#ffffff",
   outline: "none",
   fontSize: "14px",
+};
+
+const botaoOlho = {
+  position: "absolute",
+  right: "6px",
+  top: "calc(50% + 3.5px)",
+  transform: "translateY(-50%)",
+  width: "38px",
+  height: "34px",
+  border: "none",
+  borderRadius: "8px",
+  background: "transparent",
+  color: "#cbd5e1",
+  cursor: "pointer",
+  fontSize: "18px",
+  lineHeight: 1,
+  padding: 0,
 };
 
 const label = {
