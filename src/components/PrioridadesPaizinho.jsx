@@ -115,20 +115,20 @@ function ItemPrioridade({ a, rel, reaberta, textoPotencial, confirmandoRemocao, 
 }
 
 function ConfirmarRemocao({ mlb, aoConfirmar, aoCancelar }) {
-  const [motivo, setMotivo] = useState("");
+  // (18/11) Motivo opcional: padrão "Outro motivo" (continua registrado no histórico e dá para voltar).
+  const [motivo, setMotivo] = useState("Outro motivo");
   const [outro, setOutro] = useState("");
-  const texto = motivo === "Outro motivo" ? outro.trim() : motivo;
+  const texto = motivo === "Outro motivo" ? (outro.trim() || "Outro motivo") : motivo;
   return (
     <div style={S.confirmar} role="dialog" aria-label={`Remover ${mlb} da lista`} data-paiia-confirmar-remocao={mlb}>
       <strong>Remover {mlb} da lista de prioridades?</strong>
       <span style={S.ajudaPeq}>Sai só desta lista do PAIIA e fica registrado no histórico. O anúncio NÃO é excluído, pausado nem alterado no Mercado Livre, e nada muda no Bling.</span>
-      <label style={S.rotulo}>Motivo
+      <label style={S.rotulo}>Motivo (opcional)
         <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={S.select} data-paiia-motivo>
-          <option value="">Escolha o motivo…</option>
           {MOTIVOS_REMOCAO.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
       </label>
-      {motivo === "Outro motivo" && <input value={outro} onChange={(e) => setOutro(e.target.value)} placeholder="Descreva o motivo" style={S.select} data-paiia-motivo-outro />}
+      {motivo === "Outro motivo" && <input value={outro} onChange={(e) => setOutro(e.target.value)} placeholder="Descreva o motivo (opcional)" style={S.select} data-paiia-motivo-outro />}
       <div style={S.acoes}>
         <button type="button" disabled={!texto} onClick={() => aoConfirmar(texto)} style={texto ? S.botaoPerigo : { ...S.botaoPerigo, opacity: 0.45, cursor: "not-allowed" }} data-paiia-confirmar-remover>Confirmar remoção</button>
         <button type="button" onClick={aoCancelar} style={S.botaoSec}>Cancelar</button>

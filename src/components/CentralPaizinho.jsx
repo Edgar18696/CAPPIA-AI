@@ -293,6 +293,10 @@ const FUNCOES_CENTRAL = [
   },
 ];
 
+// (18/11) Cartões definidos acima mas NÃO mostrados na página. "Vendas e Despesas" ainda não tem a
+// integração (vendas/compras/despesas) pronta: volta a aparecer quando ela existir. Nada foi apagado.
+const CARTOES_OCULTOS = ["vendas-despesas"];
+
 const rolarPara = (id) => setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }), 30);
 
 function lerJson(chave) {
@@ -506,7 +510,7 @@ export default function CentralPaizinho({ setScreen }) {
       <header style={S.cabecalho}><div style={S.icone}>👨‍🔧</div><div><h1 style={S.titulo}>Central do Paizinho</h1><p style={S.subtitulo}>Desempenho dos anúncios, lucro, finanças e regras do Mercado Livre em um só lugar.</p></div></header>
 
       <nav className="central-funcoes" aria-label="Funções da Central do Paizinho" data-paiia-central-funcoes>
-        {FUNCOES_CENTRAL.map((f) => (
+        {FUNCOES_CENTRAL.filter((f) => !CARTOES_OCULTOS.includes(f.id)).map((f) => (
           <button type="button" key={f.id} className={`central-cartao${ativa(f) ? " ativo" : ""}`} onClick={() => abrirFuncao(f)} aria-pressed={!!ativa(f)} data-paiia-central-funcao={f.id}>
             <span className="central-cartao-icone" aria-hidden="true">{f.icone}</span>
             <span className="central-cartao-texto"><strong>{f.titulo}</strong><small>{f.descricao}</small></span>
@@ -516,8 +520,7 @@ export default function CentralPaizinho({ setScreen }) {
       </nav>
 
       <section id="ranqueamento-paizinho" style={{ ...S.ranqueamento, display: painel === "ranqueamento" ? "block" : "none" }}>
-        <h2 style={S.ranqueamentoTitulo}>🏆 Ranqueamento dos anúncios</h2>
-        <p style={S.ranqueamentoSub}>Prioridades do dia, vendas e visitas, margem, frete e anúncios que precisam melhorar — tudo numa tela só.</p>
+        {/* (18/11) Sem o título "Ranqueamento" repetido: o relatório já abre com o próprio título (☀️ Relatório da manhã). */}
         <RelatorioManhaPaizinho />
       </section>
 

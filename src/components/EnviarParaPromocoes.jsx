@@ -57,23 +57,28 @@ export default function EnviarParaPromocoes({ conta, anuncio }) {
   const naCampanha = todas.filter((c) => c.contas.includes(contaId) && sel(c.id).mapa(contaId).has(chaveItemSelecao(contaId, mlb)));
   void versao;
 
-  function enviar() {
-    const r = sel(campanhaId).incluir([{ conta: contaId, id: mlb, sku: anuncio.sku, titulo: anuncio.titulo, preco_original: anuncio.preco ?? null }], { origem: "ranqueamento" });
-    const nome = todas.find((c) => c.id === campanhaId)?.nome;
+  const disponiveis = todas.filter((c) => c.contas.includes(contaId));
+
+  function enviar(id = campanhaId) {
+    const r = sel(id).incluir([{ conta: contaId, id: mlb, sku: anuncio.sku, titulo: anuncio.titulo, preco_original: anuncio.preco ?? null }], { origem: "ranqueamento" });
+    const nome = todas.find((c) => c.id === id)?.nome;
     setMsg(r.incluidos.length ? `Enviado para ${nome}.` : r.ja_estavam.length ? `Já estava em ${nome}.` : r.recusados[0]?.motivo || "Não foi possível enviar.");
     setAberto(false);
   }
+
+  // (18/11) Uma campanha só para esta conta: envia num clique; com 2 ou mais, abre a escolha.
+  const clicarEnviar = () => { setMsg(""); if (disponiveis.length === 1) enviar(disponiveis[0].id); else setAberto(true); };
 
   if (naCampanha.length && !aberto) return <span style={S.ok} data-paiia-promocoes-enviado>✓ em {naCampanha.map((c) => c.nome).join(", ")}</span>;
   return (
     <span style={S.caixa} data-paiia-enviar-promocoes>
       {!aberto
-        ? <button type="button" style={S.botao} onClick={() => { setAberto(true); setMsg(""); }}>🏷️ Enviar para Promoções</button>
+        ? <button type="button" style={S.botao} onClick={clicarEnviar}>🏷️ Enviar para Promoções</button>
         : <>
           <select value={campanhaId} onChange={(e) => setCampanhaId(e.target.value)} style={S.select} aria-label="Campanha de destino">
-            {todas.filter((c) => c.contas.includes(contaId)).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {disponiveis.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
           </select>
-          <button type="button" style={S.botao} onClick={enviar}>Enviar</button>
+          <button type="button" style={S.botao} onClick={() => enviar()}>Enviar</button>
           <button type="button" style={S.botao} onClick={() => setAberto(false)}>Cancelar</button>
         </>}
       {msg && <small style={S.msg}>{msg}</small>}

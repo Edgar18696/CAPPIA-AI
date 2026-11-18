@@ -116,18 +116,16 @@ export default function RelatorioManhaPaizinho() {
           <h2 style={S.titulo}>☀️ Relatório da manhã — {contaAtual.nome}</h2>
           <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR" : "rotina automática das 03h"}` : `${textoEstado(servidor)}${LOCAL ? ` Nenhuma análise da ${contaAtual.nome} feita neste navegador ainda.` : ""}`}</p>
         </div>
-        {LOCAL && doServidor && testeDaConta && (
-          <div style={S.linha}>
-            <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Neste navegador</button>
-            <button type="button" style={!verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(false)}>Servidor 03h</button>
-          </div>
-        )}
       </div>
 
       {LOCAL && (
         <div style={S.teste} data-paizinho-teste-local>
           <strong>🔍 Análise com dados reais (somente leitura) — fila sem repetição</strong>
-          <span style={S.ajuda}>Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. "Analisar novos" pega só anúncios nunca analisados nesta conta; o progresso continua de onde parou. Mantenha esta página aberta e não use "Sair" durante a leitura.</span>
+          {/* (18/11) Ajuda recolhida em uma linha. */}
+          <details style={S.ajuda}>
+            <summary style={{ cursor: "pointer" }}>Só leitura · mantenha a página aberta durante a leitura. Como funciona</summary>
+            Lê a conta {contaAtual.nome} no Mercado Livre e os custos/medidas no Bling. Nada é alterado no Mercado Livre nem no Bling. "Analisar novos" pega só anúncios nunca analisados nesta conta; o progresso continua de onde parou. Mantenha esta página aberta e não use "Sair" durante a leitura.
+          </details>
           <div style={S.linha} role="group" aria-label="Conta do Mercado Livre" data-paizinho-seletor-conta>
             {CONTAS_AUDITORIA.map((c) => (
               <button
@@ -151,12 +149,23 @@ export default function RelatorioManhaPaizinho() {
             <Kpi rotulo="Com pendências" valor={ind ? numero(ind.pendentes) : "…"} cor={ind?.pendentes ? COR.media : undefined} />
             <Kpi rotulo="Resolvidos" valor={ind ? numero(ind.resolvidos) : "…"} />
           </div>
-          {fila?.conta === conta && fila.avisoBanco && <span style={S.ajuda} data-paizinho-fila-origem>💾 {fila.avisoBanco}</span>}
+          {/* (18/11) Origem da fila (banco/navegador) recolhida: é informação técnica. */}
+          {fila?.conta === conta && fila.avisoBanco && <details style={S.ajuda} data-paizinho-fila-origem><summary style={{ cursor: "pointer" }}>💾 Progresso guardado neste navegador (por quê)</summary>{fila.avisoBanco}</details>}
           {fila?.conta === conta && fila.erro && <span style={S.erro}>❌ Fila: {fila.erro}</span>}
           {filaDaConta?.naoEnviados > 0 && (
             <span style={S.ajuda}>Há {filaDaConta.naoEnviados} registro(s) desta conta guardados neste navegador antes do banco existir. <button type="button" style={S.chip} onClick={enviarAoBanco} disabled={ocupado}>Enviar para o banco</button></span>
           )}
 
+          {/* (18/11) "Opções avançadas" (fechado; padrões iguais): quantidade por rodada, concorrência e origem do relatório. */}
+          <details style={S.ajuda} data-paizinho-opcoes-avancadas>
+          <summary style={{ cursor: "pointer" }}>Opções avançadas</summary>
+          {doServidor && testeDaConta && (
+            <div style={S.linha}>
+              <span>Mostrar o relatório:</span>
+              <button type="button" style={verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(true)}>Neste navegador</button>
+              <button type="button" style={!verTeste ? S.chipAtivo : S.chip} onClick={() => setVerTeste(false)}>Servidor 03h</button>
+            </div>
+          )}
           <div style={S.linha}>
             <label style={S.rotulo}>Anúncios por rodada
               <select value={limite} onChange={(e) => setLimite(Number(e.target.value))} style={S.select} disabled={Boolean(rodando)}>
@@ -169,6 +178,7 @@ export default function RelatorioManhaPaizinho() {
               </select>
             </label>
           </div>
+          </details>
           <div style={S.linha} data-paizinho-fila-acessos>
             <button type="button" onClick={() => rodar(MODO.NOVOS)} disabled={ocupado} style={S.botao} data-paizinho-rodar-teste data-paizinho-analisar-novos>{rodando ? "⏳ Analisando…" : "Analisar novos"}</button>
             <button type="button" onClick={() => setPainel(painel === "historico" ? "" : "historico")} disabled={!filaDaConta} style={painel === "historico" ? S.chipAtivo : S.chip} data-paizinho-fila-historico>Histórico</button>
@@ -366,7 +376,12 @@ function FretesMedidas({ rel }) {
   return (
     <>
       <h3 style={S.h3} data-paizinho-fretes-medidas>🚚 Fretes e Medidas — Problemas Encontrados ({numero(grupos.length)} SKUs · {numero(rel.fretes_medidas.length)} anúncios)</h3>
-      <p style={S.ajuda}>Tudo aqui está <b>pendente de conferência física</b>. Diferenças de frete são <b>impacto potencial estimado</b>, não prejuízo confirmado. Nada é alterado no anúncio, no Bling ou no estoque.</p>
+      {/* (18/11) Notas recolhidas em uma linha. */}
+      <details style={S.ajuda}>
+        <summary style={{ cursor: "pointer" }}>Pendente de conferência física · valores estimados. Detalhes</summary>
+        Tudo aqui está <b>pendente de conferência física</b>. Diferenças de frete são <b>impacto potencial estimado</b>, não prejuízo confirmado. Nada é alterado no anúncio, no Bling ou no estoque.
+        {fm?.divergencia_pequena > 0 && <> Além disso, {numero(fm.divergencia_pequena)} anúncio(s) têm diferença pequena entre ML e Bling, sem impacto relevante no frete (registrado nos dados, sem alerta).</>}
+      </details>
       <div style={{ ...S.linha, marginTop: 8 }}>
         <button type="button" style={filtro === "todos" ? S.chipAtivo : S.chip} onClick={() => escolher("todos")}>Todos ({numero(grupos.length)} SKUs)</button>
         {Object.entries(classes).sort((a, b) => a[1].ordem - b[1].ordem).map(([c, info]) => (
@@ -376,7 +391,6 @@ function FretesMedidas({ rel }) {
         ))}
       </div>
       {filtro !== "todos" && classes[filtro]?.explicacao && <p style={S.ajuda}>{classes[filtro].explicacao}</p>}
-      {fm?.divergencia_pequena > 0 && <p style={S.ajuda}>Além disso, {numero(fm.divergencia_pequena)} anúncio(s) têm diferença pequena entre ML e Bling, sem impacto relevante no frete (registrado nos dados, sem alerta).</p>}
       <div style={{ ...S.achados, marginTop: 10 }}>
         {visiveis.slice(0, qtd).map((g) => (
           <article key={g.sku || g.anuncios[0].item_id} style={{ ...S.achado, borderLeftColor: COR_CLASSE[g.classificacao] || "#64748b" }}>

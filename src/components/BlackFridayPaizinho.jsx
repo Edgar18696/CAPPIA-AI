@@ -78,6 +78,7 @@ export default function BlackFridayPaizinho() {
   const [formCampanha, setFormCampanha] = useState(null); // nova/editar campanha
   const [pctProduto, setPctProduto] = useState({}); // edição do desconto individual por anúncio
   const [abertos, setAbertos] = useState(() => new Set()); // anúncios com "Detalhes" abertos
+  const [gerenciar, setGerenciar] = useState(false); // (18/11) editor de campanhas fechado por padrão
   const cancelar = useRef(false);
   // (17/11) Cada conta tem a sua leitura guardada: ao entrar e ao trocar de conta, carrega a dela.
   const contaRef = useRef(CONTA_PRINCIPAL);
@@ -221,6 +222,9 @@ export default function BlackFridayPaizinho() {
     setLendo(""); setVersao((v) => v + 1);
   }
 
+  // (18/11) Simulação automática: roda sozinha quando a consulta termina e quando a leitura
+  // guardada da conta é carregada (o botão "Simular" saiu). Os efeitos continuam os mesmos:
+  // registra a simulação, confere aprovações desatualizadas e marca "Revisão necessária".
   function simular() {
     if (!leitura || !registro) return;
     setSimulado(true); setMostrar(POR_PAGINA); setVersao((v) => v + 1);
@@ -231,11 +235,20 @@ export default function BlackFridayPaizinho() {
     const { desatualizadas } = registro.conferirAprovacoes(l);
     // (17/11) Preço mudou desde a seleção: o anúncio continua selecionado, com "Revisão necessária".
     const rev = selecao ? selecao.revisar(l) : { novas: [] };
-    setAviso([
+    const novo = [
       desatualizadas.length ? `${desatualizadas.length} aprovação(ões) ficaram desatualizadas (preço ou pendência mudou) e saíram do plano.` : "",
       rev.novas.length ? `${rev.novas.length} anúncio(s) selecionado(s) mudaram de preço: continuam na seleção com "Revisão necessária" e só podem ser aprovados depois de conferidos.` : "",
-    ].filter(Boolean).join(" "));
+    ].filter(Boolean).join(" ");
+    // (18/11) Automática: soma ao aviso da consulta em vez de apagá-lo.
+    if (novo) setAviso((a) => [a, novo].filter(Boolean).join(" "));
   }
+  // (18/11) Dispara a simulação quando há leitura desta conta e nada está sendo lido.
+  // No modo de teste espera a seleção do banco carregar (para conferir as revisões).
+  useEffect(() => {
+    if (simulado || lendo || !registro || !leitura?.contas?.[contaAtual]) return;
+    if (NO_BANCO && !selecao) return;
+    simular(); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [simulado, lendo, registro, leitura, contaAtual, NO_BANCO, selecao]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // (16/11) Renovar o acesso da conta pelo mecanismo oficial (refresh guardado; não é reconexão).
   async function renovarConta() {
@@ -402,9 +415,10 @@ export default function BlackFridayPaizinho() {
   }
   function conferiRevisao(l) {
     if (!selecao) return;
-    if (!window.confirm(`Confirmar o anúncio ${l.id} com o preço atual (${real(l.preco_original)})? A revisão sai e ele pode ser aprovado de novo.`)) return;
+    // (18/11) O clique em "Conferi o preço" já é a confirmação (sem janela extra). A aprovação continua separada.
     selecao.confirmarRevisao(chaveItemSelecao(l.conta, l.id));
     registro?.registrar("selecao_revisada", { conta: nomeConta, item: l.id });
+    setAviso(`${l.id} conferido com o preço atual (${real(l.preco_original)}): a revisão saiu.`);
     setVersao((v) => v + 1);
   }
 
@@ -464,17 +478,21 @@ export default function BlackFridayPaizinho() {
         <select value={campanha.id} onChange={(e) => trocarCampanha(e.target.value)} style={{ ...S.busca, flex: "0 1 260px" }} aria-label="Campanha" disabled={!!lendo} data-paiia-bf="campanha">
           {campanhas.map((c) => <option key={c.id} value={c.id}>{c.nome}{c.regra === REGRAS.PERCENTUAL ? ` (rascunho · ${String(c.desconto_pct).replace(".", ",")}%)` : " (primeira campanha)"}</option>)}
         </select>
-        <button type="button" style={S.mini} onClick={() => abrirFormCampanha(null)} disabled={!usuarioId} data-paiia-bf="nova-campanha">＋ Nova campanha</button>
-        {!ehBF && <button type="button" style={S.mini} onClick={() => abrirFormCampanha(campanha)}>Editar</button>}
-        {!ehBF && <button type="button" style={S.mini} onClick={excluirCampanha}>Excluir rascunho</button>}
+        {/* (18/11) Criar/editar/excluir e o % ficam atrás de "Gerenciar campanhas" (fechado por padrão). */}
+        <button type="button" style={{ ...S.mini, ...(gerenciar ? S.filtroAtivo : {}) }} onClick={() => setGerenciar(!gerenciar)} aria-expanded={gerenciar} data-paiia-bf="gerenciar-campanhas">{gerenciar ? "▾" : "▸"} Gerenciar campanhas</button>
+        {gerenciar && <>
+          <button type="button" style={S.mini} onClick={() => abrirFormCampanha(null)} disabled={!usuarioId} data-paiia-bf="nova-campanha">＋ Nova campanha</button>
+          {!ehBF && <button type="button" style={S.mini} onClick={() => abrirFormCampanha(campanha)}>Editar</button>}
+          {!ehBF && <button type="button" style={S.mini} onClick={excluirCampanha}>Excluir rascunho</button>}
+        </>}
       </div>
       {formCampanha && <FormCampanha form={formCampanha} setForm={setFormCampanha} salvar={salvarCampanha} />}
-      {!ehBF && <div style={S.acoes}>
+      {gerenciar && !ehBF && <div style={S.acoes}>
         <span style={S.base}>Desconto da campanha (recalcula a simulação):</span>
         {OPCOES_DESCONTO.map((n) => <button key={n} type="button" style={{ ...S.filtro, ...(Number(campanha.desconto_pct) === n ? S.filtroAtivo : {}) }} onClick={() => mudarDescontoCampanha(n)}>{n}%</button>)}
         <input defaultValue={OPCOES_DESCONTO.includes(Number(campanha.desconto_pct)) ? "" : String(campanha.desconto_pct).replace(".", ",")} key={campanha.id + campanha.desconto_pct} placeholder="outro %" style={{ ...S.busca, flex: "0 1 90px" }} aria-label="Desconto personalizado" onKeyDown={(e) => { if (e.key === "Enter") mudarDescontoCampanha(e.currentTarget.value); }} />
       </div>}
-      <p style={S.sub}>Uma conta por vez (principal: REVELAÇÃO). Consultar → Simular → Selecionar → Conferir → Aprovar → Ativar.</p>
+      <p style={S.sub}>Uma conta por vez (principal: REVELAÇÃO). Consultar (a simulação é automática) → Selecionar → Conferir → Aprovar → Ativar.</p>
       <div style={S.trava}>🔒 <strong>Simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio, estoque ou Bling é alterado. {ehBF ? <>Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · nunca cumulativos · calculados sobre o preço original confirmado.</> : <>Rascunho: <strong>{String(campanha.desconto_pct).replace(".", ",")}%</strong> na campanha{campanha.descontos_por_produto ? " (ou o desconto individual do produto)" : ""}, só nos anúncios selecionados, nunca cumulativo. Salvar não ativa nada. <small>(Rascunho guardado só neste navegador.)</small></>}</div>
 
       <div style={S.calendario}>
@@ -493,9 +511,13 @@ export default function BlackFridayPaizinho() {
             <input type="radio" name="bf-conta" checked={contas.includes(c.id)} onChange={() => alternarConta(c.id)} disabled={!!lendo} /> {c.nome}
           </label>
         ))}
-        <select value={limite} onChange={(e) => setLimite(e.target.value)} style={{ ...S.busca, flex: "0 1 220px" }} disabled={!!lendo} aria-label="Quantidade de anúncios">
-          {LIMITES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
-        </select>
+        {/* (18/11) Quantidade em "Opções avançadas" (padrão continua: todos os anúncios ativos). */}
+        <details style={S.base}>
+          <summary style={{ cursor: "pointer" }}>Opções avançadas</summary>
+          <select value={limite} onChange={(e) => setLimite(e.target.value)} style={{ ...S.busca, flex: "0 1 220px", marginTop: 6 }} disabled={!!lendo} aria-label="Quantidade de anúncios">
+            {LIMITES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+          </select>
+        </details>
       </div>
       <div style={S.acoes}>
         <button type="button" style={S.botao} onClick={() => consultar(false)} disabled={!!lendo || !contas.length} data-paiia-bf="consultar">{lendo ? `🔄 ${lendo}` : `🔎 Consultar ${nomeConta}`}</button>
@@ -511,7 +533,7 @@ export default function BlackFridayPaizinho() {
           setAviso(`${lt.contas[contaAtual].lidos} anúncios de EXEMPLO carregados e simulados para a ${nomeConta} (fictícios, MLB9…). Escolha a meta e use ✨ Sugerir, ou selecione na tabela.`);
           setTimeout(() => document.getElementById("bf-anuncios-campanha")?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
         }}>🧪 Carregar anúncios de exemplo</button></div>}
-      <small style={S.base}>Só leitura no Mercado Livre e no Bling. Mantenha a página aberta durante a leitura e não use "Sair".</small>
+      <small style={S.base}>Só leitura no ML e no Bling · mantenha a página aberta durante a leitura (não use "Sair").</small>
       {progresso && <div style={S.kpis}>
         <Kpi rotulo="Encontrados" valor={progresso.total ?? "…"} />
         <Kpi rotulo="Na consulta" valor={progresso.alvo || "…"} />
@@ -524,11 +546,17 @@ export default function BlackFridayPaizinho() {
       {leituraConta
         ? <p style={S.nota}>Última leitura da {nomeConta}: {new Date(leituraConta.lido_em || leitura.lido_em).toLocaleString("pt-BR")} · {leituraConta.lidos}{leituraConta.total_ativos ? ` de ${leituraConta.total_ativos}` : ""} anúncios ativos{leituraConta.completa === false ? " · INCOMPLETA (retome)" : ""}{leitura.bling_parou ? " · Bling parou de responder (custos incompletos)" : ""}.</p>
         : leitura && <p style={S.nota}>A última leitura guardada é de outra conta. Consulte a {nomeConta}.</p>}
-      <div style={copia ? S.nota : S.aviso}>
+      {/* (18/11) Cópia guardada = uma linha (detalhes e botões recolhidos); sem cópia = aviso visível. */}
+      {copia ? <details style={S.nota} data-paiia-bf="copia-precos">
+        <summary style={{ cursor: "pointer" }}>✔ Cópia dos preços originais guardada ({copia.total} anúncios, {new Date(copia.gravado_em).toLocaleString("pt-BR")})</summary>
+        {copia.em_promocao ? `${copia.em_promocao} já em promoção na leitura (guardado o preço normal). ` : ""}É a referência da conferência de 01/12. Baixe o arquivo e guarde fora do navegador.
+        <div style={S.acoes}>
+          <button type="button" style={S.mini} onClick={baixarCopia}>📥 Baixar cópia dos preços</button>
+          <button type="button" style={S.mini} onClick={() => arquivoCopia.current?.click()}>📤 Carregar cópia de um arquivo</button>
+        </div>
+      </details> : <div style={S.aviso}>
         <strong>💾 Preços originais da {nomeConta} (cópia de segurança):</strong>{" "}
-        {copia
-          ? <>gravada em {new Date(copia.gravado_em).toLocaleString("pt-BR")} · {copia.total} anúncio(s){copia.em_promocao ? ` · ${copia.em_promocao} já em promoção na leitura (guardado o preço normal)` : ""}. É a referência da conferência de 01/12. Baixe o arquivo e guarde fora do navegador.</>
-          : <>ainda não gravada. Ela é gravada sozinha quando a consulta da conta termina completa, antes de {dataHoraBrasilia(CAMPANHA_BF.inicio)}.</>}
+        ainda não gravada. Ela é gravada sozinha quando a consulta da conta termina completa, antes de {dataHoraBrasilia(CAMPANHA_BF.inicio)}.
         <div style={S.acoes}>
           {!copia && leituraConta && leituraConta.completa !== false && momento === "preparacao" && <button type="button" style={S.mini} onClick={() => {
             const m = montarCopiaPrecos(leituraConta);
@@ -537,11 +565,10 @@ export default function BlackFridayPaizinho() {
             registro?.registrar("copia_precos", { conta: nomeConta, anuncios: m.copia.total, em_promocao: m.copia.em_promocao });
             setVersao((x) => x + 1);
           }}>💾 Gravar a partir da última leitura</button>}
-          <button type="button" style={S.mini} disabled={!copia} onClick={baixarCopia}>📥 Baixar cópia dos preços</button>
           <button type="button" style={S.mini} onClick={() => arquivoCopia.current?.click()}>📤 Carregar cópia de um arquivo</button>
-          <input ref={arquivoCopia} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={carregarCopia} aria-label="Arquivo da cópia de preços" />
         </div>
-      </div>
+      </div>}
+      <input ref={arquivoCopia} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={carregarCopia} aria-label="Arquivo da cópia de preços" />
       <details style={S.nota}>
         <summary>Margem: {perfil.impostoPct === null ? "imposto não informado — os anúncios aparecem com \"Margem não verificada\" (não impede selecionar nem simular)" : `imposto ${String(perfil.impostoPct).replace(".", ",")}% · custos do Bling quando existirem`}</summary>
         <strong>Custos da venda usados na margem:</strong> imposto {perfil.impostoPct === null ? <strong>não informado</strong> : <strong>{String(perfil.impostoPct).replace(".", ",")}%</strong>} · custo por pedido R$ {String(perfil.custoPedido.toFixed(2)).replace(".", ",")} · comissão e frete: lidos do Mercado Livre · custo da peça: Bling (nunca inventado).
@@ -559,10 +586,10 @@ export default function BlackFridayPaizinho() {
 
       {/* 2. Simulação */}
       <h3 style={S.h3}>2. Simulação</h3>
-      <div style={S.acoes}>
-        <button type="button" style={S.botao} onClick={simular} disabled={!!lendo || !leituraConta} data-paiia-bf="simular">🧮 Simular {nomeConta}</button>
-      </div>
-      {simulado && <div style={S.kpis}>
+      {/* (18/11) Sem botão "Simular": a simulação roda sozinha depois da consulta e se refaz quando
+          o imposto, o desconto ou as decisões mudam. Os 9 números ficam recolhidos em "Resumo da simulação". */}
+      {!simulado && <p style={S.nota}>{lendo ? "A simulação aparece quando a consulta terminar." : `Consulte a ${nomeConta}: a simulação aparece sozinha em seguida.`}</p>}
+      {simulado && <details style={S.nota} data-paiia-bf="resumo-simulacao"><summary style={{ cursor: "pointer" }}>Resumo da simulação ({resumo.total} anúncios · {resumoListas.pronto} PRONTO · {resumoListas.conferir} CONFERIR · {resumoListas.bloqueado} BLOQUEADO)</summary><div style={S.kpis}>
         <Kpi rotulo="Anúncios" valor={resumo.total} />
         <Kpi rotulo="PRONTO" valor={resumoListas.pronto} cor={COR_LISTA.PRONTO} />
         <Kpi rotulo="CONFERIR" valor={resumoListas.conferir} cor={COR_LISTA.CONFERIR} />
@@ -572,17 +599,19 @@ export default function BlackFridayPaizinho() {
         <Kpi rotulo="Dúvida Renault" valor={resumo.revisao} cor={COR_CLASSE.revisao} />
         <Kpi rotulo="Prejuízo" valor={resumo.prejuizo} cor="#f87171" />
         <Kpi rotulo="Margem não verificada" valor={resumo.sem_margem} cor="#fb923c" />
-      </div>}
+      </div></details>}
 
       {/* (17/11) Seleção dos anúncios da campanha — escolher NÃO aprova nem ativa. */}
       <h3 id="bf-anuncios-campanha" style={{ ...S.h3, scrollMarginTop: 18 }}>Anúncios da campanha — {nomeConta}</h3>
-      <div style={S.nota}>
+      {/* (18/11) Explicação recolhida: fica uma linha visível. */}
+      <details style={S.nota}>
+        <summary style={{ cursor: "pointer" }}>Escolha a meta e use ✨ Sugerir, ou selecione um por um na lista. Como funciona</summary>
         Escolha quais anúncios participam: 50, 100, 200 ou outra quantidade, pela sugestão ou um por um na tabela (filtre por SKU, MLB ou título).
         O desconto (10% Renault comprovada · 5% demais) vale só para os selecionados; os outros anúncios não entram na planilha e não são alterados.
         <br /><small>{NO_BANCO
           ? (banco ? <>🧪 Seleção, metas e rascunhos gravados no <strong>banco de TESTE (STAGING)</strong>, por usuário, campanha, conta e MLB. Nada vai para o PAIIA oficial.</> : "🧪 Carregando a seleção do banco de teste…")
           : <>⚠️ Por enquanto a seleção fica guardada <strong>só neste navegador</strong> (por usuário, campanha e conta). A gravação no Supabase, compartilhada entre aparelhos, depende da sua autorização.</>}</small>
-      </div>
+      </details>
       <div style={S.acoes}>
         <label style={S.base}>Meta da {nomeConta}:{" "}
           <select value={metaOutra !== null ? "outra" : metaConta === null ? "" : METAS_SELECAO.includes(metaConta) ? String(metaConta) : "outra"} onChange={(e) => mudarMeta(e.target.value)} style={{ ...S.busca, flex: "0 1 160px" }} aria-label="Meta de anúncios" data-paiia-bf="meta">
@@ -610,7 +639,7 @@ export default function BlackFridayPaizinho() {
         <Kpi rotulo="Preço promocional (soma)" valor={simulado ? real(resumoSel.soma_promocional) : "—"} cor="#4ade80" />
       </div>
       {simulado && resumoSel.total > resumoSel.lidos && <p style={S.nota}>{resumoSel.total - resumoSel.lidos} anúncio(s) selecionado(s) não estão nesta leitura (pausados, encerrados ou ainda não lidos): consulte a conta inteira para conferir.</p>}
-      {!simulado && resumoSel.total > 0 && <p style={S.nota}>Simule a {nomeConta} para ver preços, descontos e margens dos selecionados.</p>}
+      {!simulado && resumoSel.total > 0 && <p style={S.nota}>Consulte a {nomeConta} para ver preços, descontos e margens dos selecionados.</p>}
 
       {/* 3. Conferir */}
       {simulado && <>
@@ -632,8 +661,11 @@ export default function BlackFridayPaizinho() {
         {/* (18/11) Lista compacta: uma linha por anúncio (conta, MLB, SKU, título, preços, desconto,
             situação e Selecionar/Retirar); o resto (custos, margem, pendências, aprovação) em "Detalhes". */}
         <div style={S.acoes}>
-          <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selConta.size} selecionado(s)</span>
+          <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selConta.size} selecionado(s) · {selecionadas.length} marcado(s)</span>
           <button type="button" style={S.mini} onClick={() => setAbertos(abertos.size ? new Set() : new Set(visiveis.slice(0, mostrar).map((l) => l.chave)))}>{abertos.size ? "Fechar todos os detalhes" : "Abrir detalhes dos visíveis"}</button>
+          {/* (18/11) Seleção dos marcados aqui, junto da lista (antes ficava na etapa 4). */}
+          <button type="button" style={S.mini} disabled={!selecionadas.length} onClick={() => selecionar(selecionadas)} data-paiia-bf="selecionar-marcados">+ Selecionar marcados para a campanha</button>
+          <button type="button" style={S.mini} disabled={!selecionadas.some((l) => regSel(l))} onClick={() => retirarDaSelecao(selecionadas.filter((l) => regSel(l)))}>Retirar marcados da campanha</button>
         </div>
         <div style={S.lista2} data-paiia-bf="lista-anuncios">
           <style>{"@media (max-width: 760px){.bf-rot{display:block!important}.bf-cab{display:none!important}}"}</style>
@@ -721,12 +753,11 @@ export default function BlackFridayPaizinho() {
         {ehBF && <>
         {/* 4. Aprovar */}
         <h3 style={S.h3}>4. Aprovar</h3>
-        <p style={S.nota}>Selecionar e aprovar são passos diferentes. Só são aprovados anúncios <strong>selecionados</strong>, sem "Revisão necessária" e <strong>PRONTO</strong> (sem pendência, margem verificada e não negativa). CONFERIR precisa ser resolvido antes; BLOQUEADO não entra.</p>
-        <div style={S.acoes}>
-          <span style={S.base}>{visiveis.length} anúncio(s) no filtro · {selecionadas.length} marcado(s)</span>
-          <button type="button" style={S.filtro} disabled={!selecionadas.length} onClick={() => selecionar(selecionadas)} data-paiia-bf="selecionar-marcados">+ Selecionar marcados para a campanha</button>
-          <button type="button" style={S.filtro} disabled={!selecionadas.some((l) => regSel(l))} onClick={() => retirarDaSelecao(selecionadas.filter((l) => regSel(l)))}>Retirar marcados da campanha</button>
-        </div>
+        {/* (18/11) Regra de aprovação recolhida em uma linha; a regra em si não mudou. */}
+        <details style={S.nota}>
+          <summary style={{ cursor: "pointer" }}>Só aprova anúncio selecionado e PRONTO. Ver regra</summary>
+          Selecionar e aprovar são passos diferentes. Só são aprovados anúncios <strong>selecionados</strong>, sem "Revisão necessária" e <strong>PRONTO</strong> (sem pendência, margem verificada e não negativa). CONFERIR precisa ser resolvido antes; BLOQUEADO não entra.
+        </details>
         <div style={S.acoes}>
           <button type="button" style={S.botao} disabled={!selecionadas.some((l) => aprovavelNaCampanha(l))} onClick={() => aprovar(selecionadas, "selecao")}>✅ Aprovar marcados</button>
           <button type="button" style={S.botao} disabled={!visiveis.some((l) => aprovavelNaCampanha(l) && !aprovados[l.chave])} onClick={() => aprovar(visiveis, "lote")}>✅ Aprovar todos os selecionados PRONTO do filtro</button>
@@ -739,11 +770,7 @@ export default function BlackFridayPaizinho() {
       {ehBF && <>
       {/* 5. Ativar */}
       <h3 style={S.h3}>5. Ativar</h3>
-      <p style={S.nota}><strong>Automático (API do Mercado Livre):</strong> {promoLiberada ? "o ML respondeu às promoções nesta leitura. A ativação automática ainda depende da sua autorização expressa." : promoBloqueada ? <>bloqueado — o ML recusou as promoções desta conta (HTTP 403: o aplicativo não tem a permissão "Promoções, cupons e descontos"). A tentativa não é repetida; a próxima consulta mostra se foi liberado.</> : "consulte a conta para saber se o ML libera as promoções."}</p>
-      <div style={S.acoes}>
-        <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa e permissão de promoções no ML">🚀 Ativar ofertas aprovadas</button>
-      </div>
-      <p style={S.nota}><strong>Manual assistido:</strong> baixe a planilha dos anúncios SELECIONADOS da {nomeConta} (com lista PRONTO/CONFERIR/BLOQUEADO, custos, comissão, imposto, frete, lucro, margem e motivo) e cadastre as ofertas PRONTO como "Desconto individual" na Central de Promoções do ML, de {dataHoraBrasilia(CAMPANHA_BF.inicio)} a {dataHoraBrasilia(CAMPANHA_BF.fim)}. Regras do ML: produto novo, anúncio pago, desconto de 5% a 80%, até 14 dias.</p>
+      <p style={S.nota}>Baixe a planilha dos selecionados e cadastre as ofertas PRONTO na Central de Promoções do ML.</p>
       <div style={S.acoes}>
         <button type="button" style={S.botao} disabled={!linhasSel.length} onClick={() => baixarPlanilha(false)} data-paiia-bf="planilha">📥 Planilha dos selecionados ({linhasSel.length})</button>
         <button type="button" style={S.filtro} disabled={!linhas.length} onClick={() => baixarPlanilha(true)} title="Todos os anúncios lidos, só para conferência (não é a lista da campanha)">Planilha completa (conferência)</button>
@@ -751,11 +778,21 @@ export default function BlackFridayPaizinho() {
       {planilhaInfo && planilhaInfo.conta === nomeConta && <p style={S.nota}>
         <strong>Planilha {planilhaInfo.completa ? "completa (conferência)" : "dos selecionados"} {planilhaInfo.conta}:</strong> {planilhaInfo.resumo.total} anúncio(s) · <strong>{planilhaInfo.resumo.pronto} PRONTO</strong> · {planilhaInfo.resumo.conferir} CONFERIR · {planilhaInfo.resumo.bloqueado} BLOQUEADO · Renault 10%: {planilhaInfo.resumo.renault10} · Demais 5%: {planilhaInfo.resumo.demais5} · Dúvida: {planilhaInfo.resumo.revisao}. PRONTO: de {real(planilhaInfo.resumo.soma_atual)} para {real(planilhaInfo.resumo.soma_promocional)} (soma dos preços).
       </p>}
-      <p style={S.nota}>Confirmadas no Mercado Livre: <strong>{confirmacao.confirmadas.length}</strong> de {confirmacao.aprovadas} aprovada(s). Só conta como ativa a oferta cujo preço com desconto foi LIDO no ML numa consulta (a partir de {dataHoraBrasilia(CAMPANHA_BF.inicio)}); nada é marcado como publicado sem essa confirmação.</p>
+      <p style={S.nota}>Confirmadas no Mercado Livre: <strong>{confirmacao.confirmadas.length}</strong> de {confirmacao.aprovadas} aprovada(s).</p>
+      {/* (18/11) Notas longas e o botão de ativação automática (sempre desligado nesta fase) recolhidos. */}
+      <details style={S.nota} data-paiia-bf="como-funciona-ativacao">
+        <summary style={{ cursor: "pointer" }}>Como funciona a ativação e o encerramento</summary>
+        <p style={S.nota}><strong>Automático (API do Mercado Livre):</strong> {promoLiberada ? "o ML respondeu às promoções nesta leitura. A ativação automática ainda depende da sua autorização expressa." : promoBloqueada ? <>bloqueado — o ML recusou as promoções desta conta (HTTP 403: o aplicativo não tem a permissão "Promoções, cupons e descontos"). A tentativa não é repetida; a próxima consulta mostra se foi liberado.</> : "consulte a conta para saber se o ML libera as promoções."}</p>
+        <div style={S.acoes}>
+          <button type="button" style={{ ...S.botao, opacity: 0.5, cursor: "not-allowed" }} disabled title="Liberado só na Fase 3, com autorização expressa e permissão de promoções no ML">🚀 Ativar ofertas aprovadas</button>
+        </div>
+        <p style={S.nota}><strong>Manual assistido:</strong> baixe a planilha dos anúncios SELECIONADOS da {nomeConta} (com lista PRONTO/CONFERIR/BLOQUEADO, custos, comissão, imposto, frete, lucro, margem e motivo) e cadastre as ofertas PRONTO como "Desconto individual" na Central de Promoções do ML, de {dataHoraBrasilia(CAMPANHA_BF.inicio)} a {dataHoraBrasilia(CAMPANHA_BF.fim)}. Regras do ML: produto novo, anúncio pago, desconto de 5% a 80%, até 14 dias.</p>
+        <p style={S.nota}>Só conta como ativa a oferta cujo preço com desconto foi LIDO no ML numa consulta (a partir de {dataHoraBrasilia(CAMPANHA_BF.inicio)}); nada é marcado como publicado sem essa confirmação.</p>
+        <p style={S.nota}><strong>Encerramento:</strong> as ofertas terminam em {dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília) pela data de fim da própria oferta no ML; o PAIIA não troca preços. Em 01/12, consulte a {nomeConta} de novo: a conferência compara cada oferta aprovada com o preço original confirmado e só aponta diferenças — nunca sobrescreve preços.</p>
+      </details>
 
       {/* 6. Encerramento */}
       <h3 style={S.h3}>6. Encerramento</h3>
-      <p style={S.nota}>As ofertas terminam em {dataHoraBrasilia(CAMPANHA_BF.fim)} (Brasília) pela data de fim da própria oferta no ML; o PAIIA não troca preços. Em 01/12, consulte a {nomeConta} de novo: a conferência compara cada oferta aprovada com o preço original confirmado e só aponta diferenças — nunca sobrescreve preços.</p>
       {momento !== "encerrada" && <small style={S.base}>Disponível depois de {dataHoraBrasilia(CAMPANHA_BF.fim)}.</small>}
       {encerramento && (!encerramento.valida ? <p style={S.nota}>{encerramento.motivo}</p> : <>
         <p style={S.nota}>Conferência da {nomeConta} (referência: {encerramento.referencia}):{encerramento.resumo.normal} no preço normal · {encerramento.resumo.com_desconto} ainda com desconto · {encerramento.resumo.diferente} com preço diferente · {encerramento.resumo.nao_lido} não lido(s).</p>

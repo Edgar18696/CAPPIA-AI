@@ -30,7 +30,12 @@ export default function AuditoriaAnuncios({ rel }) {
   return (
     <section style={S.caixa} data-paizinho-auditoria-anuncios>
       <h3 style={S.h3}>🔎 Auditoria por anúncio — o que está errado e como corrigir</h3>
-      <p style={S.ajuda}>Preço, custo real do Bling, margem, visitas, vendas, fotos, compatibilidades e frete de cada anúncio. Abra ▸ para ver o problema e a correção recomendada. Nada é alterado automaticamente.{semCusto ? ` ${semCusto} anúncio(s) com "Custo não informado" no Bling.` : ""}</p>
+      {/* (18/11) Ajuda recolhida; a contagem de "Custo não informado" continua visível. */}
+      {semCusto ? <p style={{ ...S.ajuda, color: "#fbbf24" }}>{semCusto} anúncio(s) com "Custo não informado" no Bling.</p> : null}
+      <details style={S.ajuda}>
+        <summary style={{ cursor: "pointer" }}>Como ler esta lista</summary>
+        Preço, custo real do Bling, margem, visitas, vendas, fotos, compatibilidades e frete de cada anúncio. Abra ▸ para ver o problema e a correção recomendada. Nada é alterado automaticamente.
+      </details>
       <div style={S.acoes}>
         {FILTROS_AUDITORIA.map(([v, t]) => (
           <button key={v} type="button" style={filtro === v ? S.chipAtivo : S.chip} onClick={() => { setFiltro(v); setMostrar(POR_PAGINA); }}>{t}</button>
