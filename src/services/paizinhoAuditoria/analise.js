@@ -244,6 +244,8 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
       return { custo: e.custo, custo_a_confirmar: e.a_confirmar, custo_faixa: e.faixa, custo_motivo: e.motivo, custo_lido: true };
     })(),
     compat: dados.compat?.[id]?.quantidade ?? null,
+    // (18/11) Última compra (pedido de compra atendido no Bling): referência quando não há custo cadastrado.
+    ultima_compra: (sku && dados.ultimasCompras?.[sku]) || null,
     concorrencia: dados.concorrencia?.[id] || null,
     tabela_renault: config.precoTabelaRenault ? config.precoTabelaRenault({ codigo: codigoDoItem(item), sku, item }) : null,
   };
@@ -348,7 +350,7 @@ function regrasMargem(f, ctx) {
       const faixa = f.custo_faixa ? ` (fornecedores: ${reais(f.custo_faixa[0])} a ${reais(f.custo_faixa[1])})` : "";
       out.push(achado(f, AREAS.MARGEM, "baixa",
         `Sem custo para a margem: ${f.custo_motivo}${faixa}. Margem não calculada.`,
-        f.custo_a_confirmar ? "Conferir qual fornecedor/custo vale e marcar o fornecedor padrão no Bling." : "Cadastrar o preço de custo no Bling para o Paizinho calcular a margem real.",
+        f.custo_a_confirmar ? "Conferir qual fornecedor/custo vale e marcar o fornecedor padrão no Bling." : `Cadastrar o preço de custo no Bling para o Paizinho calcular a margem real.${f.ultima_compra?.valor > 0 ? ` Referência: última compra de ${reais(f.ultima_compra.valor)} em ${String(f.ultima_compra.data || "").slice(0, 10).split("-").reverse().join("/")} (pedido de compra ${f.ultima_compra.pedido}).` : ""}`,
         null, { sem_custo: true, custo_a_confirmar: f.custo_a_confirmar }));
     } else if (f.bling_lido) {
       out.push(achado(f, AREAS.MARGEM, "baixa",
@@ -693,6 +695,8 @@ export function analisarAnuncios(dados, config = {}) {
   for (const f of fichas) {
     f.pontuacao = pontuacaoInterna(f, ctx);
     f.margem = margemPorVenda(f, cfg);
+    // (18/11) Sem custo cadastrado, mas com última compra: margem ESTIMADA (nunca a definitiva).
+    f.margem_estimada = !f.custo && f.ultima_compra?.valor > 0 ? margemPorVenda({ ...f, custo: f.ultima_compra.valor }, cfg) : null;
     const frete = regrasFrete(f, ctx);
     if (frete.linha) linhasFrete.push(frete.linha);
     f.achados = [

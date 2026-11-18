@@ -91,6 +91,7 @@ function gravarCacheBling(conta, itens, base = CHAVE_CACHE_BLING) {
 // (12/11) Preço de custo: ação SOMENTE LEITURA "custo_por_sku" da bling-integracao
 // (só GET no Bling; não grava nem no Bling nem no PAIIA). Também guardado 24 h.
 export const CHAVE_CACHE_CUSTO = "paiiaPaizinhoCustoCache";
+export const CHAVE_CACHE_ULTIMA_COMPRA = "paiiaPaizinhoUltimaCompraCache";
 /** Guarda só o necessário da resposta de custo_por_sku. */
 export function resumirCusto(d) {
   return {
@@ -99,6 +100,7 @@ export function resumirCusto(d) {
     ambiguo: d?.ambiguo === true,
     // (12/11) "S" simples, "E" composição (kit) — para conferir anúncio de kit/par.
     formato: d?.produto?.formato ?? null,
+    produto_id: d?.produto?.id ?? null,
     custo: d?.custo ? {
       fornecedor_precoCusto: d.custo.fornecedor_precoCusto ?? null,
       fornecedores: (Array.isArray(d.custo.fornecedores) ? d.custo.fornecedores : []).map((f) => ({ padrao: f?.padrao === true, precoCusto: f?.precoCusto ?? null })),
@@ -152,6 +154,26 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
     if (++novosCusto % 25 === 0) gravarCacheBling(escolhida.id, cacheCusto, CHAVE_CACHE_CUSTO);
     return resposta;
   };
+  // (18/11) Última compra no Bling (função paizinho-bling-compras, SÓ LEITURA), em partes, com cache de 24 h.
+  const consultarUltimasCompras = async (skus, idsPorSku) => {
+    const cache = lerCacheBling(escolhida.id, Date.now(), CHAVE_CACHE_ULTIMA_COMPRA);
+    const ultimas = {};
+    const faltam = skus.filter((s) => { const g = cache[s]; if (g) { ultimas[s] = g.resposta; return false; } return true; });
+    let inicioEm = 0; let partes = 0; let completa = true;
+    while (faltam.some((s) => ultimas[s] === undefined) && partes < 8) {
+      const pedir = faltam.filter((s) => ultimas[s] === undefined);
+      const { data, error } = await supabase.functions.invoke("paizinho-bling-compras", { body: { skus: pedir, idsPorSku, inicioEm } });
+      if (error || !data?.ok) return { ok: false, erro: data?.erro || error?.message || "sem resposta" };
+      for (const [s, u] of Object.entries(data.ultimas || {})) if (u) ultimas[s] = u;
+      partes++;
+      if (!data.parcial || data.proximo === null || data.proximo === undefined) break;
+      inicioEm = data.proximo;
+      if (partes >= 8) completa = false;
+    }
+    for (const s of faltam) { if (ultimas[s] === undefined) ultimas[s] = null; cache[s] = { resposta: ultimas[s], lidoEm: Date.now() }; }
+    gravarCacheBling(escolhida.id, cache, CHAVE_CACHE_ULTIMA_COMPRA);
+    return { ok: true, ultimas, completa };
+  };
   const buscarConcorrentes = concorrencia > 0 ? async (item) => {
     const a = (id) => (item.attributes || []).find((x) => x.id === id)?.value_name || "";
     const marca = a("BRAND");
@@ -169,6 +191,7 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
       consultar: roteadorConsultas({ principal: consultorML(escolhida.id), comercial: consultorComercial(escolhida.id) }),
       consultarBling,
       consultarCusto,
+      consultarUltimasCompras,
       buscarConcorrentes,
       config: { impostoPercentual: impostoDoPerfil() },
       opcoesColeta: { limiteItens, limiteConcorrencia: concorrencia, ...(escolherIds ? { escolherIds } : {}) },

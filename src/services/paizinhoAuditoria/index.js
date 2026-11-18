@@ -46,6 +46,7 @@ export async function executarAuditoria({
   consultar,
   consultarBling = null,
   consultarCusto = null,
+  consultarUltimasCompras = null,
   buscarConcorrentes = null,
   precoTabelaRenault = null,
   config = {},
@@ -57,7 +58,7 @@ export async function executarAuditoria({
   const liberada = contaLiberada(conta);
   if (!liberada) throw new Error(`Conta ${txt(conta) || "(vazia)"} não liberada para a auditoria (só LOJA ONLINE, CIEBR e REVELAÇÃO).`);
   const get = somenteLeitura(consultar);
-  const dados = await coletarDadosConta({ conta: liberada.id, consultar: get, consultarBling, consultarCusto, buscarConcorrentes, agora, opcoes: opcoesColeta, aoProgredir });
+  const dados = await coletarDadosConta({ conta: liberada.id, consultar: get, consultarBling, consultarCusto, consultarUltimasCompras, buscarConcorrentes, agora, opcoes: opcoesColeta, aoProgredir });
 
   // Frete com as medidas do Bling, só onde as medidas divergem (impacto em R$).
   const recotacoes = {};

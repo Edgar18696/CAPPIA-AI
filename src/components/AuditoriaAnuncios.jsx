@@ -8,7 +8,8 @@
 // =============================================================
 import { useMemo, useState } from "react";
 import EnviarParaPromocoes from "./EnviarParaPromocoes";
-import { textoCusto, textoMargem } from "../services/paizinhoAuditoria/textosAnuncio";
+import { textoCusto, textoMargem, textoMargemEstimada, planilhaAuditoriaCSV } from "../services/paizinhoAuditoria/textosAnuncio";
+import { textoUltimaCompra } from "../services/paizinhoAuditoria/ultimaCompra";
 
 const reais = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 const num = (v) => (v === null || v === undefined ? "não lido" : Number(v).toLocaleString("pt-BR"));
@@ -46,6 +47,8 @@ export default function AuditoriaAnuncios({ rel }) {
         ))}
         <input value={busca} onChange={(e) => { setBusca(e.target.value); setMostrar(POR_PAGINA); }} placeholder="Buscar MLB, SKU ou título" style={S.busca} aria-label="Buscar anúncio" />
         <span style={S.ajuda}>{lista.length} anúncio(s)</span>
+        <button type="button" style={S.chip} onClick={() => exportar(rel)} title="Planilha com custos, margens, problemas e recomendações (abre no Excel)">📥 Exportar relatório</button>
+        <button type="button" style={S.chip} onClick={() => window.print()} title="Imprimir esta tela">🖨️ Imprimir</button>
       </div>
       <style>{"@media (max-width: 760px){.pz-rot{display:block!important}.pz-cab{display:none!important}}"}</style>
       <div style={S.lista}>
@@ -63,8 +66,8 @@ export default function AuditoriaAnuncios({ rel }) {
                   <span style={S.titulo} title={a.titulo}>{a.titulo}</span>
                 </span>
                 <span style={S.cNum}><small className="pz-rot" style={S.rot}>Preço</small>{reais(a.preco)}</span>
-                <span style={{ ...S.cNum, color: Number(a.custo) > 0 ? undefined : "#fbbf24" }}><small className="pz-rot" style={S.rot}>Custo (Bling)</small>{textoCusto(a)}</span>
-                <span style={{ ...S.cNum, color: a.margem_pct !== null && a.margem_pct < 0 ? COR.alta : a.margem_pct === null ? "#94a3b8" : undefined }}><small className="pz-rot" style={S.rot}>Margem</small>{textoMargem(a)}</span>
+                <span style={{ ...S.cNum, color: Number(a.custo) > 0 ? undefined : "#fbbf24" }}><small className="pz-rot" style={S.rot}>Custo (Bling)</small>{textoCusto(a)}{!(Number(a.custo) > 0) && a.ultima_compra?.valor > 0 && <small style={{ color: "#cbd5e1" }} title={`${a.ultima_compra.fonte} nº ${a.ultima_compra.pedido}`}>última compra {textoUltimaCompra(a.ultima_compra)}</small>}</span>
+                <span style={{ ...S.cNum, color: a.margem_pct !== null && a.margem_pct < 0 ? COR.alta : a.margem_pct === null ? "#94a3b8" : undefined }}><small className="pz-rot" style={S.rot}>Margem</small>{a.margem_pct === null && a.margem_estimada_pct !== null && a.margem_estimada_pct !== undefined ? <span style={{ color: "#fbbf24" }} title="Estimativa pelo valor da última compra (não é a margem definitiva)">{textoMargemEstimada(a)}</span> : textoMargem(a)}</span>
                 <span style={S.cMini}><small className="pz-rot" style={S.rot}>Visitas</small>{num(a.visitas30)}</span>
                 <span style={S.cMini}><small className="pz-rot" style={S.rot}>Vendas</small>{num(a.vendas30)}</span>
                 <span style={{ ...S.cMini, color: a.fotos !== null && a.fotos < 3 ? COR.media : undefined }}><small className="pz-rot" style={S.rot}>Fotos</small>{a.fotos ?? "—"}</span>
@@ -88,7 +91,12 @@ export default function AuditoriaAnuncios({ rel }) {
                   <strong>Título:</strong> {a.titulo}
                   {a.palavras?.length ? <><br /><strong>Palavras-chave sugeridas (concorrência):</strong> {a.palavras.join(", ")}</> : <><br /><small>Palavras-chave: só aparecem quando a pesquisa de concorrência é usada na análise.</small></>}
                   {a.lucro !== null && a.lucro !== undefined && <><br /><strong>Lucro por venda:</strong> {reais(a.lucro)}{a.margem_com_imposto === false ? " (antes do imposto: cadastre o imposto em Preços, Custos e Lucro)" : ""}</>}
-                  {!(Number(a.custo) > 0) && <><br /><span style={{ color: "#fbbf24" }}>Custo não informado no Bling{a.custo_motivo ? ` (${a.custo_motivo})` : ""}: cadastre o custo do fornecedor no Bling para calcular a margem.</span></>}
+                  <br /><strong>Custo cadastrado no Bling:</strong> {Number(a.custo) > 0 ? textoCusto(a) : <span style={{ color: "#fbbf24" }}>Custo não informado{a.custo_motivo ? ` (${a.custo_motivo})` : ""}</span>}
+                  {!(Number(a.custo) > 0) && (a.ultima_compra?.valor > 0
+                    ? <><br /><strong>Última compra encontrada:</strong> R$ {a.ultima_compra.valor.toFixed(2).replace(".", ",")} · <strong>Data:</strong> {textoUltimaCompra(a.ultima_compra).split(" em ")[1]} · <strong>Fonte:</strong> {a.ultima_compra.fonte} nº {a.ultima_compra.pedido}{a.ultima_compra.quantidade ? ` (${a.ultima_compra.quantidade} un.)` : ""}
+                      {a.margem_estimada_pct !== null && a.margem_estimada_pct !== undefined && <><br /><span style={{ color: "#fbbf24" }}><strong>Margem estimada:</strong> {textoMargemEstimada(a)} — referência: última compra; não é a margem definitiva.</span></>}
+                      <br /><small>Cadastre esse custo no fornecedor padrão do Bling para a margem passar a ser definitiva.</small></>
+                    : <><br /><span style={{ color: "#fbbf24" }}>Sem compra atendida encontrada no Bling: cadastre o custo do fornecedor no Bling para calcular a margem.</span></>)}
                 </div>
                 <div style={S.acoes}><EnviarParaPromocoes conta={a.vendedor_id || rel.conta} anuncio={a} /></div>
               </div>}
@@ -99,6 +107,18 @@ export default function AuditoriaAnuncios({ rel }) {
       {lista.length > mostrar && <button type="button" style={S.chip} onClick={() => setMostrar(mostrar + POR_PAGINA)}>Mostrar mais ({lista.length - mostrar})</button>}
     </section>
   );
+}
+
+// (18/11) Exporta a auditoria completa (abre no Excel). Só gera arquivo; nada é alterado.
+function exportar(rel) {
+  try {
+    const url = URL.createObjectURL(new Blob([planilhaAuditoriaCSV(rel)], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    const nome = String(rel.conta?.nome || "conta").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-");
+    a.href = url; a.download = `auditoria-${nome}-${String(rel.gerado_em || "").slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (e) { window.alert(`Não foi possível gerar o arquivo: ${e?.message || e}`); }
 }
 
 const S = {

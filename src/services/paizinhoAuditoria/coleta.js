@@ -15,6 +15,7 @@
 //     e o relatório mostra o que não pôde ser conferido (nunca supõe).
 // =============================================================
 import { txt, num, pedacos, comLimite, diasAtras, skuDoItem } from "./util.js";
+import { escolherCusto } from "./analise.js";
 
 export const PADROES_COLETA = Object.freeze({
   limiteItens: 500,          // anúncios ativos analisados por execução
@@ -82,6 +83,7 @@ export async function coletarDadosConta({
   consultar,
   consultarBling = null,
   consultarCusto = null,
+  consultarUltimasCompras = null,
   buscarConcorrentes = null,
   agora = new Date().toISOString(),
   opcoes = {},
@@ -330,6 +332,21 @@ export async function coletarDadosConta({
     leituraCusto = { lidos: lidosCusto, total: skusCusto.length, motivo: lidosCusto < skusCusto.length ? motivoParada || "incompleta" : null };
   }
 
+  // 11c) (18/11) Custo da ÚLTIMA COMPRA (pedidos de compra atendidos no Bling), SÓ para os SKUs
+  //      sem custo cadastrado. Só leitura; vira referência/estimativa, nunca custo definitivo.
+  let ultimasCompras = null;
+  let leituraUltimaCompra = null;
+  if (typeof consultarUltimasCompras === "function") {
+    const semCusto = Object.keys(custos).filter((s) => !(escolherCusto(custos[s]).custo > 0));
+    if (semCusto.length) {
+      passo(`Procurando a última compra no Bling (${semCusto.length} SKU(s) sem custo cadastrado)`);
+      const ids = Object.fromEntries(semCusto.map((s) => [s, custos[s]?.produto_id ?? bling[s]?.id ?? null]).filter(([, v]) => v));
+      const r = await consultarUltimasCompras(semCusto, ids).catch((e) => ({ ok: false, erro: txt(e?.message || e) }));
+      if (r?.ok) { ultimasCompras = r.ultimas || {}; leituraUltimaCompra = { procurados: semCusto.length, achados: Object.values(ultimasCompras).filter(Boolean).length, completa: r.completa !== false }; }
+      else { falha("última compra no Bling", "paizinho-bling-compras", r); leituraUltimaCompra = { procurados: semCusto.length, achados: 0, completa: false, erro: txt(r?.erro) }; }
+    }
+  }
+
   // 12) Concorrência: só os anúncios mais importantes (usa créditos)
   const concorrencia = {};
   if (typeof buscarConcorrentes === "function" && o.limiteConcorrencia > 0) {
@@ -353,7 +370,8 @@ export async function coletarDadosConta({
     totais: { anuncios_ativos: total || idsAtivos.length || idsAnalisados.length, ativos_listados: idsAtivos.length, lista_ativos_completa: listaAtivosCompleta, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
     ...(typeof consultarCusto === "function" ? { custos } : {}),
-    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, custo: leituraCusto, releitura_visitas: releituraVisitas, concorrencia: typeof buscarConcorrentes === "function" },
+    ...(ultimasCompras ? { ultimasCompras } : {}),
+    fontes: { bling: blingDisponivel, bling_parcial: leituraBling, custo: leituraCusto, ultima_compra: leituraUltimaCompra, releitura_visitas: releituraVisitas, concorrencia: typeof buscarConcorrentes === "function" },
     // (11/11) O que NÃO foi lido nunca vira zero na análise.
     leituras: {
       visitas: itens.length === 0 || Object.keys(visitas).length > 0,
