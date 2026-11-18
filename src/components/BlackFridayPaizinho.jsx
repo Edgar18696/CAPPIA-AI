@@ -12,7 +12,7 @@
 // Não mexe no Ranqueamento nem nas outras funções da Central.
 // =============================================================
 import { useEffect, useMemo, useRef, useState } from "react";
-import { supabase, ambienteSupabase } from "../supabase";
+import { supabase, ambienteSupabase, temAcessoDeTeste, entrarNoTeste } from "../supabase";
 import { armazenamentoCompartilhado, ouvirErrosDoBanco } from "../services/promocoes/armazenamentoSupabase";
 import { montarLeituraExemplo } from "../services/promocoes/anunciosExemplo";
 import { CAMPANHA_BF, dataHoraBrasilia, diasParaInicio, momentoDaCampanha, conferirEncerramento, ofertasConfirmadasNoML } from "../services/blackFriday/calendario";
@@ -434,7 +434,8 @@ export default function BlackFridayPaizinho() {
   const erros = historico.filter((h) => h.tipo === "erro");
   const falhasConta = (leitura?.falhas || []).filter((f) => f.conta === nomeConta);
 
-  if (erroLogin) return <section style={S.caixa}><h2 style={S.titulo}>🛍️ Black Friday 2026</h2><div style={S.aviso}>{erroLogin}</div></section>;
+  if (erroLogin) return <section style={S.caixa}><h2 style={S.titulo}>🛍️ Black Friday 2026</h2><div style={S.aviso}>{erroLogin}</div>
+    {temAcessoDeTeste && <div style={S.acoes}><button type="button" style={S.botao} data-paiia-bf="entrar-teste" onClick={() => entrarNoTeste().catch((e) => setErroLogin(e.message))}>🧪 Entrar no Teste</button><small style={S.base}>Só no ambiente de TESTE (STAGING), com anúncios fictícios.</small></div>}</section>;
 
   return (
     <section id="black-friday-paizinho" style={S.caixa} data-paiia-black-friday>
