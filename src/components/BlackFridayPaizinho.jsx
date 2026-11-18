@@ -635,7 +635,7 @@ export default function BlackFridayPaizinho() {
                 <div style={S.linha2}>
                   <span style={S.c_marca}><input type="checkbox" checked={marcados.has(l.chave)} disabled={aprovado} onChange={() => marcar(l.chave)} aria-label={`Marcar ${l.id}`} /></span>
                   <span style={S.c_anuncio}>
-                    <small style={S.base}>{l.conta_nome || nomeConta} · </small><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? <small style={S.base}> · {l.sku}</small> : null}
+                    <span style={S.ident2}><small style={S.base}>{l.conta_nome || nomeConta} · </small><a href={l.link} target="_blank" rel="noreferrer" style={S.link}>{l.id}</a>{l.sku ? <small style={S.base}> · {l.sku}</small> : null}</span>
                     <span style={S.titulo2} title={l.titulo}>{l.titulo}</span>
                   </span>
                   <span style={S.c_preco}><small className="bf-rot" style={S.rotulo2}>Original</small>{real(l.preco_original)}</span>
@@ -824,12 +824,13 @@ const S = {
   cabeca2: { background: "#0b1324", color: "#94a3b8", fontSize: 12, fontWeight: 700 },
   c_marca: { flex: "0 0 20px" },
   c_anuncio: { flex: "3 1 260px", minWidth: 0, display: "flex", flexDirection: "column" },
+  ident2: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   titulo2: { color: "#cbd5e1", lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
-  c_preco: { flex: "0 0 92px", display: "flex", flexDirection: "column" },
-  c_desc: { flex: "0 0 112px", display: "flex", flexDirection: "column" },
-  c_situacao: { flex: "2 1 220px", minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4 },
+  c_preco: { flex: "0 0 84px", display: "flex", flexDirection: "column" },
+  c_desc: { flex: "0 0 100px", display: "flex", flexDirection: "column" },
+  c_situacao: { flex: "2 1 150px", minWidth: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4 },
   motivo2: { flexBasis: "100%", color: "#94a3b8", fontSize: 12, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
-  c_acao: { flex: "0 0 96px" },
+  c_acao: { flex: "0 0 92px" },
   c_abrir: { flex: "0 0 26px", textAlign: "right" },
   abrir2: { border: "1px solid #475569", borderRadius: 6, background: "#0f172a", color: "#e2e8f0", width: 24, height: 24, cursor: "pointer", padding: 0 },
   rotulo2: { display: "none" },
