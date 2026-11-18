@@ -13,7 +13,7 @@
 // registro é o mesmo da tabela prevista no Supabase (paiia_promocoes_selecao, ainda
 // NÃO criada — depende de autorização), para a troca não mudar a tela.
 // =============================================================
-import { CAMPANHAS_PROMOCOES, campanhaPorId, campanhasConflitantes } from "./campanhas.js";
+import { CAMPANHAS_PROMOCOES, campanhaPorId, campanhasConflitantes, REGRAS, validarPct } from "./campanhas.js";
 
 const txt = (v) => (v === null || v === undefined ? "" : String(v)).trim();
 const conta_ = (c) => txt(c).replace(/\D/g, "");
@@ -123,7 +123,7 @@ export function criarSelecao({ adaptador, usuarioId, campanhaId, campanhas = CAM
         doc.itens[k] = {
           usuario_id: txt(usuarioId), campanha_id: campanha.id, conta_ml: conta, mlb, sku: txt(a.sku) || null, titulo: txt(a.titulo) || null,
           preco_referencia: preco, origem: txt(origem) || "central", incluido_em: agora(), removido_em: null,
-          revisao: false, revisao_motivo: null, preco_atual: preco,
+          revisao: false, revisao_motivo: null, preco_atual: preco, desconto_pct: null,
         };
         out.incluidos.push(mlb);
       }
@@ -161,6 +161,20 @@ export function criarSelecao({ adaptador, usuarioId, campanhaId, campanhas = CAM
       }
       if (mudou) gravar(doc);
       return { novas };
+    },
+    /**
+     * (18/11) Desconto individual do produto (só em campanha percentual que permite).
+     * pct null = volta ao desconto da campanha. Não altera preço nenhum: só a simulação.
+     */
+    definirDesconto(chave, pct) {
+      if (campanha.regra !== REGRAS.PERCENTUAL || !campanha.descontos_por_produto) return { ok: false, motivo: `A campanha ${campanha.nome} não usa desconto por produto.` };
+      const doc = ler(); const r = doc.itens[chave];
+      if (!ativo(r)) return { ok: false, motivo: "Selecione o anúncio antes de definir o desconto dele." };
+      if (pct === null || pct === "") { r.desconto_pct = null; return gravar(doc) ? { ok: true, pct: null } : { ok: false, motivo: "Não foi possível gravar." }; }
+      const v = validarPct(pct);
+      if (!v.ok) return v;
+      r.desconto_pct = v.pct;
+      return gravar(doc) ? { ok: true, pct: v.pct } : { ok: false, motivo: "Não foi possível gravar." };
     },
     /** Você conferiu o anúncio: o preço atual vira a referência e a revisão sai. */
     confirmarRevisao(chave) {

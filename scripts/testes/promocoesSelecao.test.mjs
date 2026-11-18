@@ -217,6 +217,83 @@ test("sem imposto (18/11): simula e seleciona, margem 'não verificada' sem valo
   assert.doesNotMatch(tela, /nenhum anúncio fica PRONTO/);
 });
 
+/* ------------------- campanhas futuras: desconto flexível ------------------- */
+
+const AGORA = "2026-11-18T12:00:00Z";
+const natal = (x = {}) => ({ nome: "Natal 2026", inicio: "2026-12-15T00:00:00-03:00", fim: "2026-12-24T23:59:00-03:00", contas: [LOJA, CIEBR], desconto_pct: 15, ...x });
+
+test("nova campanha: valida nome, datas (fim > início, até 14 dias, não passada), contas e % (5 a 79); BF não é editável", () => {
+  assert.equal(CAMP.validarCampanha(natal(), undefined, { agora: AGORA }).ok, true);
+  assert.match(CAMP.validarCampanha(natal({ nome: "X" }), undefined, { agora: AGORA }).motivo, /nome/);
+  assert.match(CAMP.validarCampanha(natal({ fim: "2026-12-14T00:00:00-03:00" }), undefined, { agora: AGORA }).motivo, /depois do início/);
+  assert.match(CAMP.validarCampanha(natal({ fim: "2026-12-31T00:00:00-03:00" }), undefined, { agora: AGORA }).motivo, /14 dias/);
+  assert.match(CAMP.validarCampanha(natal({ inicio: "2026-11-01T00:00:00-03:00", fim: "2026-11-05T00:00:00-03:00" }), undefined, { agora: AGORA }).motivo, /já passou/);
+  assert.match(CAMP.validarCampanha(natal({ contas: ["999"] }), undefined, { agora: AGORA }).motivo, /conta/);
+  for (const [v, ok] of [[5, true], [10, true], [15, true], [20, true], ["12,5", true], [4, false], [80, false], ["abc", false]]) assert.equal(CAMP.validarCampanha(natal({ desconto_pct: v }), undefined, { agora: AGORA }).ok, ok, `desconto ${v}`);
+  assert.equal(CAMP.validarCampanha(natal({ desconto_pct: "12,5" }), undefined, { agora: AGORA }).campanha.desconto_pct, 12.5);
+  assert.match(CAMP.validarCampanha(natal({ id: "black-friday-2026" }), undefined, { agora: AGORA }).motivo, /Black Friday/);
+  const cruz = CAMP.validarCampanha(natal({ nome: "Semana", inicio: "2026-11-29T00:00:00-03:00", fim: "2026-12-02T00:00:00-03:00" }), undefined, { agora: AGORA });
+  assert.equal(cruz.ok, true);
+  assert.match(cruz.avisos[0], /Black Friday 2026/, "avisa quando as datas cruzam com outra campanha");
+  assert.equal(CAMP.dataLocalParaIso("2026-12-15T08:30"), "2026-12-15T08:30:00-03:00");
+  assert.equal(CAMP.isoParaDataLocal("2026-12-15T08:30:00-03:00"), "2026-12-15T08:30");
+});
+
+test("rascunhos: salvar sem ativar, listar junto da BF, mudar o % (recalcula), excluir; BF continua a 1ª e fixa", () => {
+  const storage = memoria();
+  const a = CAMP.armazemCampanhas(storage, "u1");
+  const r = a.salvar(natal(), { agora: AGORA });
+  assert.equal(r.ok, true);
+  assert.equal(r.campanha.situacao, "rascunho");
+  assert.equal(r.campanha.regra, "percentual");
+  assert.deepEqual(a.todas().map((c) => c.id), ["black-friday-2026", r.campanha.id]);
+  assert.equal(a.salvar(natal({ nome: "natal 2026" }), { agora: AGORA }).ok, false, "nome repetido");
+  const r2 = a.salvar({ ...r.campanha, desconto_pct: 20 }, { agora: AGORA });
+  assert.equal(r2.ok, true);
+  assert.equal(a.todas().length, 2, "editar não duplica");
+  assert.equal(a.todas()[1].desconto_pct, 20);
+  assert.equal(CAMP.armazemCampanhas(storage, "u2").todas().length, 1, "rascunho é por usuário");
+  assert.equal(a.excluir("black-friday-2026"), false, "a BF não é excluída");
+  assert.equal(a.excluir(r.campanha.id), true);
+  assert.equal(a.todas().length, 1);
+  assert.equal(CAMP.CAMPANHA_BLACK_FRIDAY.regra, "renault_bf");
+  assert.equal(CAMP.CAMPANHA_BLACK_FRIDAY.descontos_por_produto, false);
+});
+
+test("desconto flexível: % da campanha ou do produto; simulação recalcula; BF mantém 10%/5% e não aceita desconto por produto", () => {
+  const storage = memoria();
+  const a = CAMP.armazemCampanhas(storage, "u1");
+  const c = a.salvar(natal(), { agora: AGORA }).campanha;
+  const sel = SEL.criarSelecao({ adaptador: SEL.adaptadorLocal(storage), usuarioId: "u1", campanhaId: c.id, campanhas: a.todas(), agora });
+  sel.incluir([an("MLB1"), an("MLB2")]);
+  const k1 = SEL.chaveItemSelecao(LOJA, "MLB1");
+  assert.equal(CAMP.descontoDoAnuncio(c, sel.mapa(LOJA).get(k1)), 15);
+  assert.equal(sel.definirDesconto(k1, 25).ok, true);
+  assert.equal(CAMP.descontoDoAnuncio(c, sel.mapa(LOJA).get(k1)), 25, "desconto individual do produto");
+  assert.equal(sel.definirDesconto(k1, 90).ok, false);
+  assert.equal(sel.definirDesconto(SEL.chaveItemSelecao(LOJA, "MLB9"), 10).ok, false, "só anúncio selecionado");
+  assert.equal(sel.definirDesconto(k1, null).ok, true);
+  assert.equal(CAMP.descontoDoAnuncio(c, sel.mapa(LOJA).get(k1)), 15, "volta ao % da campanha");
+  // BF: sem desconto por produto e regra fixa
+  const bf = nova(storage).s;
+  bf.incluir([an("MLB7")]);
+  assert.equal(bf.definirDesconto(SEL.chaveItemSelecao(LOJA, "MLB7"), 15).ok, false);
+  assert.equal(CAMP.descontoDoAnuncio(CAMP.CAMPANHA_BLACK_FRIDAY, null), null, "BF usa a regra Renault/demais");
+  // simulação: o mesmo anúncio com 15% (campanha) e com a regra da BF (5%)
+  const base = { id: "MLB1", seller_id: Number(LOJA), title: "Sensor Bosch", price: 200, status: "active", condition: "new", listing_type_id: "gold_special", available_quantity: 3, seller_custom_field: "SKU1", shipping: {}, attributes: [] };
+  const leitura = { conta: LOJA, item: base, compat: { lido: true, quantidade: 0, marcas: [], legivel: true }, promocoes: { lido: true, ativas: [], candidatas: [] } };
+  const p15 = R.simularAnuncio(leitura, { perfil: { impostoPct: null, custoPedido: 0 }, descontoPct: 15 });
+  assert.equal(p15.preco_final, 170); assert.equal(p15.desconto_pct, 15); assert.equal(p15.regra, "percentual");
+  const pbf = R.simularAnuncio(leitura, { perfil: { impostoPct: null, custoPedido: 0 } });
+  assert.equal(pbf.preco_final, 190); assert.equal(pbf.regra, "renault_bf");
+  // leitura completa: montarSimulacao usa descontoDe
+  const leituraConta = { contas: { [LOJA]: { conta: LOJA, itens: [{ item: base, compat: leitura.compat, promocoes: leitura.promocoes }], tarifas: {}, fretes: {} } }, custos: {} };
+  assert.equal(L.montarSimulacao(leituraConta, { perfil: { impostoPct: null, custoPedido: 0 }, descontoDe: () => 20 })[0].preco_final, 160);
+  assert.equal(L.montarSimulacao(leituraConta, { perfil: { impostoPct: null, custoPedido: 0 } })[0].preco_final, 190, "sem campanha percentual = regra da BF");
+  // na campanha percentual, a dúvida Renault não trava a seleção (o % não depende da classe)
+  assert.equal(PL.selecionavel({ ...p15, classe: "revisao", decisao: null }), true);
+});
+
 /* ------------------------------- telas ------------------------------- */
 
 test("aba: seleção separada da aprovação; aprovação só de selecionado sem revisão; ativação continua desligada", () => {

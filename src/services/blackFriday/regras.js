@@ -218,7 +218,10 @@ export function simularAnuncio(a, op = {}) {
   const decisao = op.decisao || null;
   const precoOriginal = centavos(item.price);
   const cls = classificarRenault(item, a.compat, decisao);
-  const desconto = descontoDaClasse(cls.classe);
+  // (18/11) Campanhas da Central de Promoções com desconto PERCENTUAL (op.descontoPct): o % vem da
+  // campanha ou do produto. Sem op.descontoPct = regra fixa da Black Friday 2026 (10% Renault · 5% demais).
+  const percentual = op.descontoPct !== null && op.descontoPct !== undefined && Number.isFinite(Number(op.descontoPct));
+  const desconto = percentual ? Number(op.descontoPct) : descontoDaClasse(cls.classe);
   const precoFinal = precoComDesconto(precoOriginal, desconto);
   const motivos = []; // revisão
   const alertas = []; // atenção
@@ -228,7 +231,7 @@ export function simularAnuncio(a, op = {}) {
   if (txt(item.status) && txt(item.status) !== "active") bloqueios.push(`anúncio ${txt(item.status) === "paused" ? "pausado" : txt(item.status)}`);
   if (!(precoOriginal > 0)) bloqueios.push("anúncio sem preço");
 
-  if (cls.classe === CLASSES.REVISAO) motivos.push(cls.duvida);
+  if (cls.classe === CLASSES.REVISAO && !percentual) motivos.push(cls.duvida);
 
   // Promoções já existentes: nunca acumula. Falha de leitura NUNCA vale como "sem promoção".
   const promo = a.promocoes || { lido: false, ativas: [], candidatas: [] };
@@ -307,6 +310,7 @@ export function simularAnuncio(a, op = {}) {
     estoque: num(item.available_quantity),
     vendidos: item.sold_quantity === null || item.sold_quantity === undefined ? null : num(item.sold_quantity),
     classe: cls.classe, evidencias: cls.evidencias, duvida: cls.duvida, decisao,
+    regra: percentual ? "percentual" : "renault_bf",
     desconto_pct: desconto,
     preco_original: precoOriginal,
     preco_final: precoFinal,

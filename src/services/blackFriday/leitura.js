@@ -220,14 +220,16 @@ export async function lerContasBF({ contas, consultorDaConta, consultarCusto = n
  * Monta a tabela simulada a partir da leitura (sem nenhuma consulta nova).
  * `decisoes` = { [chave]: "renault"|"demais"|"excluir" } da revisão manual.
  */
-export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPct } = {}) {
+export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPct, descontoDe = null } = {}) {
   const linhas = [];
   for (const r of Object.values(leitura?.contas || {})) {
     for (const { item, compat, promocoes, precoVenda } of r.itens) {
       const chave = `${r.conta}:${item.id}`;
       const decisao = decisoes[chave] || null;
       const classe = classificarRenault(item, compat, decisao).classe;
-      const pf = precoComDesconto(item.price, classe === CLASSES.DEMAIS ? DESCONTOS.demais : DESCONTOS.renault);
+      // (18/11) descontoDe(conta, id) → % da campanha/produto (Central de Promoções); null = regra da Black Friday.
+      const pct = descontoDe ? descontoDe(r.conta, item.id) : null;
+      const pf = precoComDesconto(item.price, pct !== null && pct !== undefined ? pct : classe === CLASSES.DEMAIS ? DESCONTOS.demais : DESCONTOS.renault);
       const tarifaFinal = r.tarifas?.[chaveTarifa(pf, item.listing_type_id, item.category_id)] || null;
       const sku = skuDoItem(item);
       linhas.push(simularAnuncio({
@@ -235,7 +237,7 @@ export function montarSimulacao(leitura, { decisoes = {}, perfil, margemMinimaPc
         freteAtual: r.fretes?.[`${item.id}|atual`] || null,
         freteFinal: r.fretes?.[`${item.id}|${pf.toFixed(2)}`] || null,
         custo: sku ? leitura.custos?.[sku] : undefined,
-      }, { decisao, perfil, ...(margemMinimaPct ? { margemMinimaPct } : {}) }));
+      }, { decisao, perfil, ...(margemMinimaPct ? { margemMinimaPct } : {}), ...(pct !== null && pct !== undefined ? { descontoPct: pct } : {}) }));
     }
   }
   return linhas;

@@ -22,7 +22,7 @@ import { montarPlanilha, planilhaCSV, resumirPlanilha, classificarParaPlanilha, 
 import { renovarAcessoConta } from "../services/blackFriday/aplicativoML";
 import { montarCopiaPrecos, validarCopia, precosDaCopia, lerCopiaGuardada, guardarCopia } from "../services/blackFriday/precosOriginais";
 import { criarSelecao, adaptadorLocal, sugerirAnuncios, chaveItemSelecao, EVENTO_SELECAO } from "../services/promocoes/selecao";
-import { METAS_SELECAO } from "../services/promocoes/campanhas";
+import { METAS_SELECAO, OPCOES_DESCONTO, REGRAS, CAMPANHA_BLACK_FRIDAY, armazemCampanhas, campanhaPorId, descontoDoAnuncio, dataLocalParaIso, isoParaDataLocal, CONTAS_PROMOCOES } from "../services/promocoes/campanhas";
 
 const invocar = (nome, opcoes) => supabase.functions.invoke(nome, opcoes);
 // (15/11) Promoções e catálogo pela função própria paizinho-bf-leitura (só leitura); o resto pela ml_consulta.
@@ -67,6 +67,10 @@ export default function BlackFridayPaizinho() {
   const [mostrar, setMostrar] = useState(POR_PAGINA);
   const [ocupado, setOcupado] = useState(false);
   const [metaOutra, setMetaOutra] = useState(null); // meta personalizada em edição
+  // (18/11) Central de Promoções: campanha escolhida (Black Friday 2026 = regra fixa; rascunhos = percentual).
+  const [campanhaId, setCampanhaId] = useState(CAMPANHA_BLACK_FRIDAY.id);
+  const [formCampanha, setFormCampanha] = useState(null); // nova/editar campanha
+  const [pctProduto, setPctProduto] = useState({}); // edição do desconto individual por anúncio
   const cancelar = useRef(false);
   // (17/11) Cada conta tem a sua leitura guardada: ao entrar e ao trocar de conta, carrega a dela.
   const contaRef = useRef(CONTAS_BLACK_FRIDAY[0].id);
@@ -91,7 +95,11 @@ export default function BlackFridayPaizinho() {
   const historico = useMemo(() => registro?.historico() || [], [registro, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   // (17/11) Central de Promoções: seleção dos anúncios da campanha (usuário + campanha + conta + MLB).
   // LIMITAÇÃO: hoje fica só neste navegador; a tabela no Supabase depende de autorização.
-  const selecao = useMemo(() => (usuarioId ? criarSelecao({ adaptador: adaptadorLocal(localStorage), usuarioId, campanhaId: CAMPANHA_BF.id }) : null), [usuarioId]);
+  const armazem = useMemo(() => (usuarioId ? armazemCampanhas(localStorage, usuarioId) : null), [usuarioId]);
+  const campanhas = useMemo(() => (armazem ? armazem.todas() : [CAMPANHA_BLACK_FRIDAY]), [armazem, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  const campanha = campanhaPorId(campanhaId, campanhas) || CAMPANHA_BLACK_FRIDAY;
+  const ehBF = campanha.regra !== REGRAS.PERCENTUAL;
+  const selecao = useMemo(() => (usuarioId ? criarSelecao({ adaptador: adaptadorLocal(localStorage), usuarioId, campanhaId: campanha.id, campanhas }) : null), [usuarioId, campanha.id, campanhas]);
   // O Ranqueamento ("Enviar para Promoções") avisa quando inclui: a lista aqui acompanha.
   useEffect(() => {
     const atualizar = () => setVersao((v) => v + 1);
@@ -109,7 +117,10 @@ export default function BlackFridayPaizinho() {
   const copia = useMemo(() => (usuarioId ? lerCopiaGuardada(localStorage, usuarioId, contaAtual) : null), [usuarioId, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const arquivoCopia = useRef(null);
 
-  const linhas = useMemo(() => (simulado && leitura ? montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil }).filter((l) => l.conta === contaAtual) : []), [simulado, leitura, plano, perfil, contaAtual]);
+  const selConta = useMemo(() => (selecao ? selecao.mapa(contaAtual) : new Map()), [selecao, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (18/11) Desconto da campanha percentual (ou do produto); null = regra fixa da Black Friday.
+  const descontoDe = useMemo(() => (ehBF ? null : (conta, id) => descontoDoAnuncio(campanha, selConta.get(chaveItemSelecao(conta, id)))), [ehBF, campanha, selConta]);
+  const linhas = useMemo(() => (simulado && leitura ? montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil, descontoDe }).filter((l) => l.conta === contaAtual) : []), [simulado, leitura, plano, perfil, contaAtual, descontoDe]);
   const listaDe = useMemo(() => new Map(linhas.map((l) => [l.chave, classificarParaPlanilha(l)])), [linhas]);
   const visiveisBase = useMemo(() => filtrarLinhas(linhas, { busca: filtro.busca, classe: filtro.classe }).filter((l) => !filtro.lista || listaDe.get(l.chave)?.lista === filtro.lista), [linhas, filtro, listaDe]);
   const resumo = useMemo(() => resumirSimulacao(linhas), [linhas]);
@@ -118,7 +129,6 @@ export default function BlackFridayPaizinho() {
   const aprovadosConta = Object.values(aprovados).filter((a) => a.conta === contaAtual);
   const campanhaConta = useMemo(() => registro?.campanhasPorConta()?.[contaAtual] || null, [registro, versao, contaAtual]); // eslint-disable-line react-hooks/exhaustive-deps
   const momento = momentoDaCampanha();
-  const selConta = useMemo(() => (selecao ? selecao.mapa(contaAtual) : new Map()), [selecao, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const metaConta = useMemo(() => selecao?.meta(contaAtual) ?? null, [selecao, contaAtual, versao]); // eslint-disable-line react-hooks/exhaustive-deps
   const regSel = (l) => selConta.get(chaveItemSelecao(l.conta, l.id)) || null;
   // Aprovação: só anúncio SELECIONADO, sem "Revisão necessária" e PRONTO (regra de sempre).
@@ -194,7 +204,7 @@ export default function BlackFridayPaizinho() {
   function simular() {
     if (!leitura || !registro) return;
     setSimulado(true); setMostrar(POR_PAGINA); setVersao((v) => v + 1);
-    const l = montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil: lerPerfil() }).filter((x) => x.conta === contaAtual);
+    const l = montarSimulacao(leitura, { decisoes: plano?.decisoes || {}, perfil: lerPerfil(), descontoDe }).filter((x) => x.conta === contaAtual);
     const r = resumirSimulacao(l);
     registro.registrar("simulacao", { conta: nomeConta, anuncios: r.total, renault: r.renault, demais: r.demais, revisao: r.revisao, prejuizo: r.prejuizo, sem_margem: r.sem_margem });
     // Aprovação cujo preço ou situação mudou desde então sai do plano (nunca usa preço antigo).
@@ -365,6 +375,46 @@ export default function BlackFridayPaizinho() {
     setVersao((v) => v + 1);
   }
 
+  // (18/11) Campanhas: trocar, criar/editar rascunho, mudar o % e o desconto de um produto.
+  function trocarCampanha(id) {
+    setCampanhaId(id); setMarcados(new Set()); setPlanilhaInfo(null); setFormCampanha(null); setPctProduto({}); setAviso("");
+    setVersao((v) => v + 1);
+  }
+  function abrirFormCampanha(c) {
+    setFormCampanha(c
+      ? { id: c.id, nome: c.nome, inicio: isoParaDataLocal(c.inicio), fim: isoParaDataLocal(c.fim), contas: [...c.contas], desconto: String(c.desconto_pct).replace(".", ","), porProduto: c.descontos_por_produto !== false }
+      : { id: "", nome: "", inicio: "", fim: "", contas: CONTAS_PROMOCOES.map((x) => x.id), desconto: "10", porProduto: true });
+  }
+  function salvarCampanha() {
+    if (!armazem || !formCampanha) return;
+    const f = formCampanha;
+    const r = armazem.salvar({ id: f.id || undefined, nome: f.nome, inicio: dataLocalParaIso(f.inicio), fim: dataLocalParaIso(f.fim), contas: f.contas, desconto_pct: f.desconto, descontos_por_produto: f.porProduto });
+    if (!r.ok) { setAviso(r.motivo); return; }
+    registro?.registrar("campanha_rascunho", { campanha: r.campanha.nome, desconto_pct: r.campanha.desconto_pct });
+    setFormCampanha(null); setCampanhaId(r.campanha.id); setSimulado(false);
+    setAviso([`Campanha "${r.campanha.nome}" salva como RASCUNHO (nada foi ativado).`, ...(r.avisos || [])].join(" "));
+    setVersao((v) => v + 1);
+  }
+  function mudarDescontoCampanha(v) {
+    if (!armazem || ehBF) return;
+    const r = armazem.salvar({ ...campanha, desconto_pct: v });
+    if (!r.ok) { setAviso(r.motivo); return; }
+    setAviso(`Desconto da campanha: ${String(r.campanha.desconto_pct).replace(".", ",")}%. Simulação recalculada (nenhum preço real foi alterado).`);
+    setVersao((x) => x + 1);
+  }
+  function excluirCampanha() {
+    if (!armazem || ehBF || !window.confirm(`Excluir o rascunho "${campanha.nome}"? A seleção dele deixa de aparecer. Nada no Mercado Livre é alterado.`)) return;
+    armazem.excluir(campanha.id);
+    trocarCampanha(CAMPANHA_BLACK_FRIDAY.id);
+  }
+  function descontoProduto(l, v) {
+    if (!selecao) return;
+    const r = selecao.definirDesconto(chaveItemSelecao(l.conta, l.id), v === null ? null : v);
+    if (!r.ok) { setAviso(r.motivo); return; }
+    setPctProduto((m) => { const n = { ...m }; delete n[l.chave]; return n; });
+    setVersao((x) => x + 1);
+  }
+
   const marcar = (k) => setMarcados((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const selecionadas = linhas.filter((l) => marcados.has(l.chave));
   const erros = historico.filter((h) => h.tipo === "erro");
@@ -374,21 +424,31 @@ export default function BlackFridayPaizinho() {
 
   return (
     <section id="black-friday-paizinho" style={S.caixa} data-paiia-black-friday>
-      <h2 style={S.titulo}>🛍️ Black Friday 2026</h2>
+      <h2 style={S.titulo}>🛍️ {campanha.nome}</h2>
       <div style={S.acoes}>
         <span style={S.base}>Central de Promoções · campanha:</span>
-        <select value={CAMPANHA_BF.id} onChange={() => {}} style={{ ...S.busca, flex: "0 1 240px" }} aria-label="Campanha">
-          <option value={CAMPANHA_BF.id}>{CAMPANHA_BF.nome} (primeira campanha)</option>
+        <select value={campanha.id} onChange={(e) => trocarCampanha(e.target.value)} style={{ ...S.busca, flex: "0 1 260px" }} aria-label="Campanha" disabled={!!lendo} data-paiia-bf="campanha">
+          {campanhas.map((c) => <option key={c.id} value={c.id}>{c.nome}{c.regra === REGRAS.PERCENTUAL ? ` (rascunho · ${String(c.desconto_pct).replace(".", ",")}%)` : " (primeira campanha)"}</option>)}
         </select>
+        <button type="button" style={S.mini} onClick={() => abrirFormCampanha(null)} disabled={!usuarioId} data-paiia-bf="nova-campanha">＋ Nova campanha</button>
+        {!ehBF && <button type="button" style={S.mini} onClick={() => abrirFormCampanha(campanha)}>Editar</button>}
+        {!ehBF && <button type="button" style={S.mini} onClick={excluirCampanha}>Excluir rascunho</button>}
       </div>
+      {formCampanha && <FormCampanha form={formCampanha} setForm={setFormCampanha} salvar={salvarCampanha} />}
+      {!ehBF && <div style={S.acoes}>
+        <span style={S.base}>Desconto da campanha (recalcula a simulação):</span>
+        {OPCOES_DESCONTO.map((n) => <button key={n} type="button" style={{ ...S.filtro, ...(Number(campanha.desconto_pct) === n ? S.filtroAtivo : {}) }} onClick={() => mudarDescontoCampanha(n)}>{n}%</button>)}
+        <input defaultValue={OPCOES_DESCONTO.includes(Number(campanha.desconto_pct)) ? "" : String(campanha.desconto_pct).replace(".", ",")} key={campanha.id + campanha.desconto_pct} placeholder="outro %" style={{ ...S.busca, flex: "0 1 90px" }} aria-label="Desconto personalizado" onKeyDown={(e) => { if (e.key === "Enter") mudarDescontoCampanha(e.currentTarget.value); }} />
+      </div>}
       <p style={S.sub}>Uma conta por vez: LOJA ONLINE → CIEBR → REVELAÇÃO. Consultar → Simular → Selecionar → Conferir → Aprovar → Ativar.</p>
-      <div style={S.trava}>🔒 <strong>Simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio, estoque ou Bling é alterado. Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · nunca cumulativos · calculados sobre o preço original confirmado.</div>
+      <div style={S.trava}>🔒 <strong>Simulação.</strong> Nenhuma oferta é ativada e nenhum preço, anúncio, estoque ou Bling é alterado. {ehBF ? <>Descontos: <strong>10%</strong> Renault comprovada · <strong>5%</strong> demais · nunca cumulativos · calculados sobre o preço original confirmado.</> : <>Rascunho: <strong>{String(campanha.desconto_pct).replace(".", ",")}%</strong> na campanha{campanha.descontos_por_produto ? " (ou o desconto individual do produto)" : ""}, só nos anúncios selecionados, nunca cumulativo. Salvar não ativa nada. <small>(Rascunho guardado só neste navegador.)</small></>}</div>
 
       <div style={S.calendario}>
-        <Kpi rotulo="Início" valor={dataHoraBrasilia(CAMPANHA_BF.inicio)} />
-        <Kpi rotulo="Encerramento" valor={dataHoraBrasilia(CAMPANHA_BF.fim)} />
-        <Kpi rotulo="Conferência dos preços normais" valor="01/12/2026" />
-        <Kpi rotulo={momento === "preparacao" ? "Faltam" : "Situação"} valor={momento === "preparacao" ? `${diasParaInicio()} dia(s)` : momento === "em_andamento" ? "Em andamento" : "Encerrada"} />
+        <Kpi rotulo="Início" valor={dataHoraBrasilia(campanha.inicio)} />
+        <Kpi rotulo="Encerramento" valor={dataHoraBrasilia(campanha.fim)} />
+        {ehBF && <Kpi rotulo="Conferência dos preços normais" valor="01/12/2026" />}
+        {ehBF && <Kpi rotulo={momento === "preparacao" ? "Faltam" : "Situação"} valor={momento === "preparacao" ? `${diasParaInicio()} dia(s)` : momento === "em_andamento" ? "Em andamento" : "Encerrada"} />}
+        {!ehBF && <Kpi rotulo="Contas" valor={campanha.contas.map((c) => CONTAS_PROMOCOES.find((x) => x.id === c)?.nome || c).join(", ")} />}
       </div>
 
       {/* 1. Conta e consulta */}
@@ -549,7 +609,12 @@ export default function BlackFridayPaizinho() {
                       {l.decisao && l.decisao !== "excluir" && <small style={S.base}> (manual)</small>}
                     </td>
                     <td style={S.td}>{real(l.preco_original)}</td>
-                    <td style={S.td}>{l.classe === CLASSES.REVISAO && !l.decisao ? "a decidir" : `${l.desconto_pct}%`}</td>
+                    <td style={S.td}>{ehBF
+                      ? (l.classe === CLASSES.REVISAO && !l.decisao ? "a decidir" : `${l.desconto_pct}%`)
+                      : <>{String(l.desconto_pct).replace(".", ",")}%{sel?.desconto_pct ? <small style={S.base}> (do produto)</small> : null}
+                        {sel && campanha.descontos_por_produto && <div style={{ marginTop: 4, display: "flex", gap: 3 }}><input value={pctProduto[l.chave] ?? ""} onChange={(e) => setPctProduto({ ...pctProduto, [l.chave]: e.target.value.replace(/[^\d,.]/g, "") })} placeholder="%" style={{ ...S.busca, width: 52, flex: "0 0 52px", padding: "3px 6px" }} aria-label={`Desconto de ${l.id}`} />
+                          <button type="button" style={S.mini} onClick={() => descontoProduto(l, pctProduto[l.chave] ?? "")}>ok</button>
+                          {sel.desconto_pct ? <button type="button" style={S.mini} onClick={() => descontoProduto(l, null)} title="Voltar ao desconto da campanha">↺</button> : null}</div>}</>}</td>
                     <td style={S.td}>{real(l.preco_final)}</td>
                     <td style={{ ...S.td, whiteSpace: "normal" }}><small>{real(l.tarifa)} · {real(l.imposto)} · {real(l.frete)}</small></td>
                     <td style={{ ...S.td, whiteSpace: "normal", minWidth: 130, color: l.lucro !== null && l.lucro < 0 ? "#f87171" : undefined }} title={`Preço ${real(l.preco_final)} − comissão ${real(l.tarifa)} − frete ${real(l.frete)} − imposto ${real(l.imposto)} − custo/pedido ${real(l.custo_pedido)}${l.custo !== null ? ` − custo ${real(l.custo)} = ${real(l.lucro)}` : ` = sobra ${real(l.repasse)} para a peça`}`}>
@@ -582,6 +647,8 @@ export default function BlackFridayPaizinho() {
         </div>
         {visiveis.length > mostrar && <button type="button" style={S.filtro} onClick={() => setMostrar(mostrar + POR_PAGINA)}>Mostrar mais ({visiveis.length - mostrar} restantes)</button>}
 
+        {!ehBF && <p style={S.aviso}>Rascunho: a aprovação, a planilha de cadastro e a ativação desta campanha ficam para a próxima etapa. Aqui você prepara a seleção, o desconto e confere preços e margens — nada é ativado.</p>}
+        {ehBF && <>
         {/* 4. Aprovar */}
         <h3 style={S.h3}>4. Aprovar</h3>
         <p style={S.nota}>Selecionar e aprovar são passos diferentes. Só são aprovados anúncios <strong>selecionados</strong>, sem "Revisão necessária" e <strong>PRONTO</strong> (sem pendência, margem verificada e não negativa). CONFERIR precisa ser resolvido antes; BLOQUEADO não entra.</p>
@@ -596,8 +663,10 @@ export default function BlackFridayPaizinho() {
         </div>
         <p style={S.nota}>Ofertas aprovadas da {nomeConta}: <strong>{aprovadosConta.length}</strong> · Campanha da conta: {!campanhaConta ? "não aprovada" : campanhaConta.valida ? `✅ aprovada em ${dataHoraBrasilia(campanhaConta.aprovado_em)} (${campanhaConta.ofertas} oferta(s))` : "⚠️ desatualizada (as ofertas mudaram depois) — aprove de novo"}
           {" "}{campanhaConta ? <button type="button" style={S.mini} onClick={retirarCampanha}>Retirar</button> : <button type="button" style={S.mini} disabled={!aprovadosConta.length} onClick={aprovarCampanha}>Aprovar campanha da {nomeConta}</button>}</p>
+        </>}
       </>}
 
+      {ehBF && <>
       {/* 5. Ativar */}
       <h3 style={S.h3}>5. Ativar</h3>
       <p style={S.nota}><strong>Automático (API do Mercado Livre):</strong> {promoLiberada ? "o ML respondeu às promoções nesta leitura. A ativação automática ainda depende da sua autorização expressa." : promoBloqueada ? <>bloqueado — o ML recusou as promoções desta conta (HTTP 403: o aplicativo não tem a permissão "Promoções, cupons e descontos"). A tentativa não é repetida; a próxima consulta mostra se foi liberado.</> : "consulte a conta para saber se o ML libera as promoções."}</p>
@@ -623,6 +692,8 @@ export default function BlackFridayPaizinho() {
         <ul style={S.lista}>{encerramento.linhas.filter((x) => x.estado !== "normal").slice(0, 100).map((x) => <li key={x.item}><small>{x.item}: {x.texto}</small></li>)}</ul>
       </>)}
 
+      </>}
+
       {/* Diagnóstico (só se algo falhar) */}
       <details style={{ ...S.nota, marginTop: 22 }}>
         <summary>Diagnóstico e histórico ({falhasConta.length} leitura(s) com falha · {erros.length} erro(s) registrados)</summary>
@@ -640,6 +711,36 @@ export default function BlackFridayPaizinho() {
         </>}
       </details>
     </section>
+  );
+}
+
+// (18/11) Nova campanha / editar rascunho: nome, datas (Brasília), contas, desconto e desconto por produto.
+function FormCampanha({ form, setForm, salvar }) {
+  const muda = (k, v) => setForm({ ...form, [k]: v });
+  const conta = (id) => muda("contas", form.contas.includes(id) ? form.contas.filter((x) => x !== id) : [...form.contas, id]);
+  return (
+    <div style={{ ...S.nota, border: "1px solid #334155", borderRadius: 12, padding: 12 }} data-paiia-bf="form-campanha">
+      <strong>{form.id ? "Editar rascunho" : "Nova campanha (rascunho)"}</strong> — salvar não ativa nada e não altera preços.
+      <div style={S.acoes}>
+        <input value={form.nome} onChange={(e) => muda("nome", e.target.value)} placeholder="Nome (ex.: Natal 2026)" style={S.busca} aria-label="Nome da campanha" />
+        <label style={S.base}>Início <input type="datetime-local" value={form.inicio} onChange={(e) => muda("inicio", e.target.value)} style={{ ...S.busca, flex: "0 1 200px" }} aria-label="Início" /></label>
+        <label style={S.base}>Encerramento <input type="datetime-local" value={form.fim} onChange={(e) => muda("fim", e.target.value)} style={{ ...S.busca, flex: "0 1 200px" }} aria-label="Encerramento" /></label>
+        <small style={S.base}>horário de Brasília · máximo 14 dias (regra do ML)</small>
+      </div>
+      <div style={S.acoes}>
+        {CONTAS_PROMOCOES.map((c) => <label key={c.id} style={{ ...S.filtro, ...(form.contas.includes(c.id) ? S.filtroAtivo : {}) }}><input type="checkbox" checked={form.contas.includes(c.id)} onChange={() => conta(c.id)} /> {c.nome}</label>)}
+      </div>
+      <div style={S.acoes}>
+        <span style={S.base}>Desconto:</span>
+        {OPCOES_DESCONTO.map((n) => <button key={n} type="button" style={{ ...S.filtro, ...(String(form.desconto) === String(n) ? S.filtroAtivo : {}) }} onClick={() => muda("desconto", String(n))}>{n}%</button>)}
+        <input value={OPCOES_DESCONTO.map(String).includes(String(form.desconto)) ? "" : form.desconto} onChange={(e) => muda("desconto", e.target.value.replace(/[^\d,.]/g, ""))} placeholder="outro %" style={{ ...S.busca, flex: "0 1 90px" }} aria-label="Outro desconto" />
+        <label style={S.base}><input type="checkbox" checked={form.porProduto} onChange={(e) => muda("porProduto", e.target.checked)} /> permitir desconto individual por produto</label>
+      </div>
+      <div style={S.acoes}>
+        <button type="button" style={S.botao} onClick={salvar} data-paiia-bf="salvar-campanha">💾 Salvar rascunho</button>
+        <button type="button" style={S.filtro} onClick={() => setForm(null)}>Cancelar</button>
+      </div>
+    </div>
   );
 }
 

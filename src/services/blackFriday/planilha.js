@@ -33,7 +33,7 @@ export const aprovavel = (l) => !!l && classificarParaPlanilha(l).lista === LIST
  * promocional e a classe (10% ou 5%) está definida. Imposto ou custo ausentes NÃO impedem a seleção:
  * a margem aparece como "Margem não verificada" e só a aprovação continua exigindo margem verificada.
  */
-export const selecionavel = (l) => !!l && classificarParaPlanilha(l).lista !== LISTAS.BLOQUEADO && l.preco_final > 0 && !(l.classe === CLASSES.REVISAO && !l.decisao);
+export const selecionavel = (l) => !!l && classificarParaPlanilha(l).lista !== LISTAS.BLOQUEADO && l.preco_final > 0 && (l.regra === "percentual" || !(l.classe === CLASSES.REVISAO && !l.decisao));
 
 /** Desconto real em % (2 casas), a partir dos preços em reais. */
 export const descontoReal = (original, final) => (num(original) > 0 ? Math.floor(((num(original) - num(final)) / num(original)) * 10000 + 1e-6) / 100 : 0);
