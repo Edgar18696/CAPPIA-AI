@@ -8,9 +8,9 @@
 import { useEffect, useState } from "react";
 import {
   lerUltimoRelatorio, lerRelatorioTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO,
-  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador, podeContinuar,
+  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador, podeContinuar, reanalisarAnuncio,
 } from "../services/paizinhoAuditoria/relatorioService";
-import { MODO, indicadores, pendenciasAbertas } from "../services/paizinhoAuditoria/filaAnuncios";
+import { MODO, indicadores, pendenciasAbertas, buscarAnalisados } from "../services/paizinhoAuditoria/filaAnuncios";
 import PrioridadesPaizinho, { HistoricoFila } from "./PrioridadesPaizinho";
 import EnviarParaPromocoes from "./EnviarParaPromocoes";
 import AuditoriaAnuncios from "./AuditoriaAnuncios";
@@ -101,6 +101,26 @@ export default function RelatorioManhaPaizinho() {
     setRodando("");
   }
 
+  // (19/11) Reanalisa UM anúncio e JUNTA à lista atual (nunca apaga nem substitui os outros).
+  async function reanalisarUm(mlb) {
+    if (!filaDaConta || rodando) return;
+    setErroTeste("");
+    setAvisoFila("");
+    setRodando(`Reanalisando ${mlb}…`);
+    const alvo = conta;
+    try {
+      const r = await reanalisarAnuncio({ conta: alvo, mlb, aoProgredir: setRodando, fila: filaDaConta });
+      if (r.estado) setFila((f) => (f?.conta === alvo ? { ...f, estado: r.estado } : f));
+      if (r.ok && r.juntada) { setTeste(daConta(r.rel, alvo)); setVerTeste(true); }
+      setAvisoFila(r.ok && r.juntada
+        ? `✔ ${mlb} reanalisado e ${r.acrescentado ? "acrescentado à" : "atualizado na"} lista atual; pendências e histórico atualizados. Os outros anúncios não mudaram.`
+        : `⚠️ ${r.erro}`);
+    } catch (e) {
+      setErroTeste(String(e?.message || e));
+    }
+    setRodando("");
+  }
+
   async function agir(acao, achado, motivo) {
     if (!filaDaConta) return { ok: false, erro: "Fila não carregada." };
     const r = await registrarAcaoFila(filaDaConta, { acao, achado, motivo });
@@ -125,6 +145,8 @@ export default function RelatorioManhaPaizinho() {
   const ocupado = Boolean(rodando) || !filaDaConta;
   const abertas = filaDaConta ? pendenciasAbertas(filaDaConta.estado).length : null;
   const urgentes = rel ? filtrarAnuncios(rel, "urgentes").length : null;
+  // (19/11) Busca também nos anúncios já analisados em rodadas anteriores (fila desta conta).
+  const anteriores = filaDaConta && busca.trim() ? buscarAnalisados(filaDaConta.estado, busca).filter((x) => !(rel?.anuncios || []).some((a) => String(a.item_id).toUpperCase() === x.mlb)) : [];
 
   return (
     <section style={S.caixa} data-paizinho-relatorio-manha data-paizinho-conta={conta}>
@@ -215,7 +237,26 @@ export default function RelatorioManhaPaizinho() {
       ) : null}
       {rel ? <AvisoLeiturasComerciais rel={rel} /> : null}
       {/* (18/11) Lista operacional: abrir → ver o problema → corrigir → próximo anúncio. */}
-      {rel ? <AuditoriaAnuncios key={`${conta}-${rel.gerado_em}`} rel={rel} busca={busca} estado={filaDaConta?.estado} aoAgir={agir} /> : null}
+      {rel ? <AuditoriaAnuncios key={`${conta}-${rel.gerado_em}`} rel={rel} busca={busca} estado={filaDaConta?.estado} aoAgir={agir} aoReanalisar={filaDaConta ? reanalisarUm : null} reanalisando={rodando} /> : null}
+      {anteriores.length > 0 && (
+        <div style={S.teste} data-paizinho-anteriores>
+          <h3 style={S.h3}>🔎 Também encontrado em análises anteriores ({anteriores.length})</h3>
+          <p style={S.ajuda}>Analisados em outra rodada desta conta (não estão na lista atual). Veja as pendências ou reanalise: o resultado é juntado à lista atual, sem apagar os outros anúncios.</p>
+          {anteriores.slice(0, 10).map((x) => (
+            <div key={x.mlb} style={S.anterior} data-paizinho-anterior={x.mlb}>
+              <div style={S.linha}>
+                <strong>{x.mlb}</strong>
+                {x.sku ? <small style={S.ajuda}>SKU {x.sku}</small> : null}
+                <small style={S.ajuda}>Analisado em {hora(x.ultima_analise_em)} · {x.analises} análise(s) · situação: {x.situacao}{x.pontuacao != null ? ` · pontuação ${x.pontuacao}/100` : ""}</small>
+                <button type="button" style={S.chip} disabled={Boolean(rodando)} onClick={() => reanalisarUm(x.mlb)} data-paizinho-reanalisar-um={x.mlb}>{rodando ? "⏳ Reanalisando…" : "🔁 Reanalisar este anúncio"}</button>
+              </div>
+              <div style={S.ajuda}>{x.titulo}</div>
+              <PrioridadesPaizinho rel={{ conta: { id: conta } }} lista={pendenciasAbertas(filaDaConta.estado).filter((p) => p.item_id === x.mlb)} estado={filaDaConta.estado} aoAgir={agir} vazio="Nenhuma pendência em aberto neste anúncio." />
+            </div>
+          ))}
+          {anteriores.length > 10 && <p style={S.ajuda}>Mais {anteriores.length - 10} resultado(s): refine a busca.</p>}
+        </div>
+      )}
 
       {/* (18/11) Todo o resto (indicadores, prioridades, oportunidades, fretes, Renault, detalhes,
           limitações e opções avançadas) fica aqui, fechado. Nada foi apagado. */}
@@ -518,6 +559,7 @@ const S = {
   select: { background: "#020617", color: "#f8fafc", border: "1px solid #475569", borderRadius: 8, padding: "8px 10px" },
   botao: { border: "1px solid #22d3ee", borderRadius: 10, background: "linear-gradient(135deg,#0369a1,#0891b2)", color: "white", padding: "10px 15px", fontWeight: 900, cursor: "pointer" },
   erro: { color: "#fca5a5" },
+  anterior: { borderTop: "1px dashed #1e293b", paddingTop: 8, marginTop: 8 },
   ok: { color: "#86efac" },
   ajuda: { color: "#94a3b8", fontSize: 13 },
   kpis: { display: "flex", flexWrap: "wrap", gap: 10, marginTop: 16 },

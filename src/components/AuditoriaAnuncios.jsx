@@ -38,7 +38,7 @@ function situacaoNaFila(estado, areas) {
  * rel: relatório; busca: texto da busca do topo (sem ela, a lista mostra a própria caixa);
  * estado + aoAgir: fila da conta (Resolvido / Voltar para a lista), o mesmo das Prioridades.
  */
-export default function AuditoriaAnuncios({ rel, busca: buscaDoTopo, estado, aoAgir }) {
+export default function AuditoriaAnuncios({ rel, busca: buscaDoTopo, estado, aoAgir, aoReanalisar, reanalisando = "" }) {
   const [filtro, setFiltro] = useState("problemas");
   const [buscaLocal, setBuscaLocal] = useState("");
   const busca = buscaDoTopo ?? buscaLocal;
@@ -128,6 +128,8 @@ export default function AuditoriaAnuncios({ rel, busca: buscaDoTopo, estado, aoA
                     rel={rel}
                     sit={sit}
                     aoAgir={aoAgir}
+                    aoReanalisar={aoReanalisar}
+                    reanalisando={reanalisando}
                     temProximo={Boolean(proximoDaLista(lista, a.item_id))}
                     aoProximo={() => proximo(a.item_id)}
                     aoFechar={() => setAberto(null)}
@@ -145,7 +147,7 @@ export default function AuditoriaAnuncios({ rel, busca: buscaDoTopo, estado, aoA
 }
 
 /** Painel "Correção inteligente" de UM anúncio (abre logo abaixo da linha). */
-function PainelCorrecao({ a, c, rel, sit, aoAgir, temProximo, aoProximo, aoFechar }) {
+function PainelCorrecao({ a, c, rel, sit, aoAgir, aoReanalisar, reanalisando, temProximo, aoProximo, aoFechar }) {
   const p = c.problemas;
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState("");
@@ -224,6 +226,7 @@ function PainelCorrecao({ a, c, rel, sit, aoAgir, temProximo, aoProximo, aoFecha
         </div>
       </details>
 
+      {a.reanalisado_em && <p style={{ ...S.ajuda, margin: 0 }} data-paizinho-reanalisado-em={a.item_id}>🔁 Reanalisado em {hora(a.reanalisado_em)} (os números do topo continuam os da rodada original).</p>}
       {sit.resolvido && <p style={{ ...S.ajuda, color: "#86efac", margin: 0 }}>✅ Marcado como resolvido{sit.em ? ` em ${hora(sit.em)}` : ""} (fica no Histórico; se a reanálise ainda achar o problema, ele volta).</p>}
       {erro && <p style={{ color: "#fca5a5", margin: 0 }} role="alert">❌ {erro}</p>}
 
@@ -232,6 +235,8 @@ function PainelCorrecao({ a, c, rel, sit, aoAgir, temProximo, aoProximo, aoFecha
         {!sit.resolvido
           ? <button type="button" style={S.botaoOk} disabled={ocupado || !c.areas.length} onClick={() => marcar("resolvido", c.areas)} title={c.areas.length ? "Registra na fila desta conta, com histórico (dá para desfazer)" : "Nada para registrar na fila (só oportunidades ou sem problema)"} data-paizinho-marcar-resolvido={a.item_id}>{ocupado ? "⏳ Registrando…" : "✅ Marcar como resolvido"}</button>
           : sit.resolvidas.length > 0 && <button type="button" style={S.botaoSec} disabled={ocupado} onClick={() => marcar("devolvido", sit.resolvidas)} data-paizinho-desfazer-resolvido={a.item_id}>↩️ Desfazer (voltar para a lista)</button>}
+        {/* (19/11) Reanalisa SÓ este anúncio e junta à lista atual (não apaga nem substitui os outros). */}
+        {aoReanalisar && <button type="button" style={S.botaoSec} disabled={Boolean(reanalisando)} onClick={() => aoReanalisar(a.item_id)} title="Lê de novo só este anúncio (somente leitura) e atualiza a linha dele, as pendências e o histórico" data-paizinho-reanalisar-um={a.item_id}>{reanalisando ? "⏳ Reanalisando…" : "🔁 Reanalisar este anúncio"}</button>}
         <button type="button" style={temProximo ? S.botaoProx : { ...S.botaoProx, opacity: 0.45, cursor: "not-allowed" }} onClick={aoProximo} disabled={!temProximo} data-paizinho-proximo-anuncio>Próximo anúncio →</button>
         <EnviarParaPromocoes conta={a.vendedor_id || rel.conta} anuncio={a} />
         <button type="button" style={S.botaoSec} onClick={aoFechar}>Fechar</button>

@@ -17,6 +17,7 @@ import { roteadorConsultas, consultorComercial as leitorComercial } from "./leit
 import { MODO, montarRodada, escolherIneditos, escolherReanalise, novoId } from "./filaAnuncios.js";
 import { repositorioNavegador, repositorioBanco, enviarRegistroParaBanco, ORIGEM } from "./filaRepositorio.js";
 import { lerHistorico } from "./prioridadesAcoes.js";
+import { juntarAnuncioAoRelatorio } from "./juntarRelatorio.js";
 import { novaRetomada, retomadaValida, consultaComRetomada, parouPorLogin, MSG_LOGIN_INVALIDO } from "./retomada.js";
 
 const consultorComercial = (conta) => leitorComercial(conta, (nome, opcoes) => supabase.functions.invoke(nome, opcoes));
@@ -113,7 +114,7 @@ export function resumirCusto(d) {
  * Análise com dados reais de UMA conta (somente leitura). (17/11) A conta vem do seletor
  * da Central; tudo (ML, caches e relatório guardado) fica separado por conta.
  */
-export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir, escolherIds, continuar = false, tipo = "" } = {}) {
+export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir, escolherIds, continuar = false, tipo = "", guardar = true } = {}) {
   const escolhida = contaLiberada(conta);
   if (!escolhida) throw new Error("Conta não liberada para a análise.");
   // (Pacote 1) Login conferido ANTES de começar; memória de retomada por conta e tipo de rodada.
@@ -216,7 +217,8 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
   conferirRelatorioDaConta(rel, escolhida);
   // Terminou sem queda de login: a memória da retomada não é mais necessária.
   if (!parouPorLogin(rel) && retomadas.get(chaveRet) === ret) retomadas.delete(chaveRet);
-  guardarRelatorioTesteLocal(rel);
+  // (19/11) guardar = false: reanálise de UM anúncio (o resultado é JUNTADO à lista atual depois).
+  if (guardar) guardarRelatorioTesteLocal(rel);
   return rel;
 }
 
@@ -328,6 +330,42 @@ export async function analisarFila({ conta, modo, quantidade = 20, concorrencia 
 }
 
 /** Resolvido / Remover da lista / Voltar para a lista — só no histórico da fila desta conta. */
+/**
+ * (19/11) Reanalisa UM anúncio já analisado (somente leitura no ML e no Bling) SEM apagar nem
+ * substituir a lista atual: registra a análise na fila (histórico + pendências) e depois junta o
+ * resultado ao relatório que está na tela (troca só a linha deste MLB, ou acrescenta).
+ * Falha na análise ou leitura incompleta → nada registrado e a lista continua a mesma.
+ * Falha ao registrar → a lista continua a mesma. Antes de juntar, guarda uma cópia da lista.
+ */
+export async function reanalisarAnuncio({ conta, mlb, aoProgredir, fila, continuar = false }) {
+  const id = idDe(conta);
+  const m = String(mlb || "").trim().toUpperCase();
+  const aberta = fila || (await abrirFila(id));
+  const estadoAntes = aberta.estado;
+  const info = { ativosTotal: null, ineditosAntes: null, listaCompleta: true };
+  const escolherIds = (idsAtivos, { total, completa }) => {
+    info.ativosTotal = total || idsAtivos.length;
+    info.listaCompleta = completa;
+    info.ineditosAntes = escolherIneditos(idsAtivos, estadoAntes, 0).ineditosAntes;
+    if (!idsAtivos.map((x) => String(x).toUpperCase()).includes(m)) throw new Error(`O anúncio ${m} não está mais ativo nesta conta: nada foi reanalisado (as pendências dele continuam como estão).`);
+    return [m];
+  };
+  const relUm = await rodarTesteLocal({ conta: id, limiteItens: 1, concorrencia: 0, aoProgredir, escolherIds, continuar, tipo: `um:${m}`, guardar: false });
+  const jaNaFila = Boolean(estadoAntes.anuncios?.[m]);
+  const modo = jaNaFila ? MODO.REANALISE : MODO.NOVOS;
+  const mr = montarRodada({ id: novoId(), conta: id, modo, rel: relUm, ativosTotal: info.ativosTotal, ineditosAntes: info.ineditosAntes, listaCompleta: info.listaCompleta });
+  if (!mr.ok) return { ok: false, relUm, erro: `${mr.erro} A lista atual não foi alterada.`, estado: estadoAntes };
+  const r = await aberta.repo.registrarRodada(mr.rodada);
+  if (!r.ok) return { ok: false, relUm, erro: `Reanálise feita, mas não foi registrada (${r.erro}). A lista atual não foi alterada.`, estado: estadoAntes };
+  const estado = await aberta.repo.carregar();
+  const atual = lerRelatorioTesteLocal(id);
+  const j = juntarAnuncioAoRelatorio(atual, relUm, m);
+  if (!j.ok) return { ok: true, registrada: true, juntada: false, erro: j.erro, rel: atual, estado };
+  try { if (atual) armazenamento().setItem(chaveDaConta(`${CHAVE_TESTE_LOCAL}:anterior`, id), JSON.stringify(atual)); } catch { /* sem espaço para a cópia: segue */ }
+  const salvo = guardarRelatorioTesteLocal(j.rel);
+  return { ok: true, registrada: true, juntada: salvo, acrescentado: j.acrescentado, rel: salvo ? j.rel : atual, estado, erro: salvo ? "" : "Reanálise registrada no histórico, mas não coube juntar à lista neste navegador (sem espaço). A lista atual não foi alterada." };
+}
+
 export async function registrarAcaoFila(fila, { acao, achado, motivo = "" }) {
   return fila.repo.registrarAcao({
     id: novoId(), conta: idDe(fila.estado.conta), acao, mlb: achado.item_id, area: achado.area, motivo,

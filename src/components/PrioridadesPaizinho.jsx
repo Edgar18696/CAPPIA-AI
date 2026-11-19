@@ -100,6 +100,7 @@ function ItemPrioridade({ a, rel, reaberta, textoPotencial, confirmandoRemocao, 
       <div style={S.tituloAchado}>{a.titulo}</div>
       <div>{a.problema}</div>
       <div style={S.sugestao}>👉 {a.sugestao}</div>
+      {a.analisado_em && <div style={S.ajudaPeq} data-paiia-analisado-em={a.item_id}>Analisado em {hora(a.analisado_em)}{a.registro_anterior ? " · registro anterior à correção de 19/11: texto mostrado já no formato atual (o registro guardado não muda; reanalise para atualizar)" : ""}</div>}
       {reaberta && <div style={S.aviso}>🔁 Já tinha sido marcado como resolvido, mas a reanálise ainda encontrou o problema.</div>}
 
       <div style={S.acoes}>

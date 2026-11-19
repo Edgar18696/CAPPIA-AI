@@ -220,12 +220,46 @@ export function indicadores(estado) {
   };
 }
 
-/** Pendências abertas no formato de "achado" (para a lista com os botões). */
+/**
+ * (19/11) Texto ATUAL de uma pendência guardada antes da correção de 19/11 ("PREJUÍZO de …"):
+ * mostra como "Prejuízo estimado … (custo cadastrado no Bling…)" e, se a MESMA análise leu zero
+ * vendas em 30 dias, "não realizado" e Importante. Só para EXIBIR: o registro guardado não muda.
+ */
+const RE_PREJUIZO_ANTIGO = /^PREJUÍZO de (R\$\s?[\d.,]+) por venda( \(antes dos impostos\))?: ([\s\S]*)$/;
+export function textoAtualDaPendencia(p, anuncio) {
+  const mesmo = { problema: p?.problema, severidade: p?.severidade, registro_anterior: false };
+  if (txt(p?.area) !== "margem") return mesmo;
+  const mm = txt(p?.problema).match(RE_PREJUIZO_ANTIGO);
+  if (!mm) return mesmo;
+  const semVendas = anuncio?.resultado?.vendas30 === 0;
+  return {
+    problema: `Prejuízo estimado de ${mm[1]} por venda (custo cadastrado no Bling${mm[2] ? ", antes dos impostos" : ""}): ${mm[3]}${semVendas ? " Nenhuma venda nos últimos 30 dias: prejuízo estimado por venda, não realizado." : ""}`,
+    severidade: semVendas ? "media" : p.severidade,
+    registro_anterior: true,
+  };
+}
+
+/** Pendências abertas no formato de "achado" (para a lista com os botões). (19/11) Com a data da análise. */
 export function pendenciasAbertas(estado) {
   return Object.values(estado?.pendencias || {})
     .filter((p) => p.status === STATUS.ABERTA)
-    .sort((a, b) => (PESO[b.severidade] || 0) - (PESO[a.severidade] || 0) || Math.abs(Number(b.impacto_rs) || 0) - Math.abs(Number(a.impacto_rs) || 0) || a.mlb.localeCompare(b.mlb))
-    .map((p) => ({ item_id: p.mlb, area: p.area, severidade: p.severidade, problema: p.problema, sugestao: p.sugestao, impacto_rs: p.impacto_rs, sku: estado.anuncios[p.mlb]?.sku || "", titulo: estado.anuncios[p.mlb]?.titulo || "", vendedor_id: estado.conta, reaberta: p.reaberta }));
+    .map((p) => {
+      const t = textoAtualDaPendencia(p, estado.anuncios[p.mlb]);
+      return { item_id: p.mlb, area: p.area, severidade: t.severidade, problema: t.problema, sugestao: p.sugestao, impacto_rs: p.impacto_rs, sku: estado.anuncios[p.mlb]?.sku || "", titulo: estado.anuncios[p.mlb]?.titulo || "", vendedor_id: estado.conta, reaberta: p.reaberta, analisado_em: p.ultima_vez_em || null, registro_anterior: t.registro_anterior };
+    })
+    .sort((a, b) => (PESO[b.severidade] || 0) - (PESO[a.severidade] || 0) || Math.abs(Number(b.impacto_rs) || 0) - Math.abs(Number(a.impacto_rs) || 0) || a.item_id.localeCompare(b.item_id));
+}
+
+/**
+ * (19/11) Anúncios JÁ ANALISADOS desta conta que batem com a busca (MLB, SKU ou título),
+ * inclusive de rodadas anteriores, com a situação e a data da última análise.
+ */
+export function buscarAnalisados(estado, busca) {
+  const b = txt(busca).toUpperCase();
+  if (!b) return [];
+  return Object.values(estado?.anuncios || {})
+    .filter((a) => [a.mlb, a.sku, a.titulo].some((t) => txt(t).toUpperCase().includes(b)))
+    .sort((x, y) => txt(y.ultima_analise_em).localeCompare(txt(x.ultima_analise_em)));
 }
 
 /** Status atual de uma pendência (para esconder da lista o que foi resolvido/removido). */
