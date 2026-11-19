@@ -12,7 +12,7 @@ import { supabase } from "../../supabase";
 import { consultorML } from "../consultaMLLeitura";
 import { executarAuditoria, CONTAS_AUDITORIA, contaLiberada } from "./index.js";
 import { CONTA_PADRAO, CONTA_LEGADO } from "./contas.js";
-import { CHAVE_TESTE_LOCAL, idDe, chaveDaConta, lerRelatorioDaConta, guardarRelatorioDaConta, conferirRelatorioDaConta } from "./relatoriosPorConta.js";
+import { CHAVE_TESTE_LOCAL, idDe, chaveDaConta, lerRelatorioDaConta, guardarRelatorioDaConta, conferirRelatorioDaConta, guardarSubstituindoComCopia, lerListaAnterior, trocarComListaAnterior } from "./relatoriosPorConta.js";
 import { roteadorConsultas, consultorComercial as leitorComercial } from "./leituraComercial.js";
 import { MODO, montarRodada, escolherIneditos, escolherReanalise, novoId } from "./filaAnuncios.js";
 import { repositorioNavegador, repositorioBanco, enviarRegistroParaBanco, ORIGEM } from "./filaRepositorio.js";
@@ -319,14 +319,27 @@ export async function analisarFila({ conta, modo, quantidade = 20, concorrencia 
     return info.escolhidos;
   };
   // (Pacote 1) continuar = retoma a rodada interrompida pela queda do login (mesma conta e tipo).
-  const rel = await rodarTesteLocal({ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds, continuar, tipo: modo });
+  const rel = await rodarTesteLocal({ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds, continuar, tipo: modo, guardar: false });
+  // (19/11) Antes de trocar a lista da tela, a lista atual é copiada para "lista anterior".
+  // Sem espaço para a cópia: a lista atual é mantida (a nova só fica na tela até recarregar).
+  const gravacao = guardarSubstituindoComCopia(rel, armazenamento());
   const m = montarRodada({ id: novoId(), conta: id, modo, rel, ativosTotal: info.ativosTotal, ineditosAntes: info.ineditosAntes, listaCompleta: info.listaCompleta });
-  if (!m.ok) return { rel, registrada: false, erro: m.erro, estado: estadoAntes };
+  if (!m.ok) return { rel, gravacao, registrada: false, erro: m.erro, estado: estadoAntes };
   try { armazenamento().setItem(chaveAGravar(id), JSON.stringify(m.rodada)); } catch { /* segue: grava direto */ }
   const r = await aberta.repo.registrarRodada(m.rodada);
-  if (!r.ok) return { rel, registrada: false, erro: `Análise concluída, mas não foi salva ainda (${r.erro}). Ela fica guardada e é gravada ao abrir de novo.`, estado: estadoAntes };
+  if (!r.ok) return { rel, gravacao, registrada: false, erro: `Análise concluída, mas não foi salva ainda (${r.erro}). Ela fica guardada e é gravada ao abrir de novo.`, estado: estadoAntes };
   try { armazenamento().removeItem(chaveAGravar(id)); } catch { /* segue */ }
-  return { rel, registrada: true, rodada: m.rodada, estado: await aberta.repo.carregar() };
+  return { rel, gravacao, registrada: true, rodada: m.rodada, estado: await aberta.repo.carregar() };
+}
+
+/** (19/11) Lista anterior desta conta (cópia feita antes da última troca), ou null. */
+export function lerListaAnteriorDaConta(conta) {
+  return lerListaAnterior(conta, armazenamento());
+}
+
+/** (19/11) Troca a lista da tela pela anterior; as duas continuam guardadas. */
+export function voltarParaListaAnterior(conta) {
+  return trocarComListaAnterior(conta, armazenamento());
 }
 
 /** Resolvido / Remover da lista / Voltar para a lista — só no histórico da fila desta conta. */

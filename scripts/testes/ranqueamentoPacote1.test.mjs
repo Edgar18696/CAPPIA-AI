@@ -123,7 +123,8 @@ test("c) o serviço confere o login antes, usa o mesmo período e a memória por
   assert.match(fonte, /await conferirLogin\(\);/);
   assert.match(fonte, /agora: ret\.agora/);
   assert.match(fonte, /const chaveRet = `\$\{escolhida\.id\}\|\$\{tipo\}`;/);
-  assert.match(fonte, /rodarTesteLocal\(\{ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds, continuar, tipo: modo \}\)/);
+  // (19/11) guardar: false — a lista é gravada depois, com a cópia da anterior.
+  assert.match(fonte, /rodarTesteLocal\(\{ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds, continuar, tipo: modo(, guardar: false)? \}\)/);
   assert.doesNotMatch(fonte, /signOut\(/, "não desconecta ninguém");
   const tela = ler("src/components/RelatorioManhaPaizinho.jsx");
   assert.match(tela, /data-paizinho-continuar-leitura/);

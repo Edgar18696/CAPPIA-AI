@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import {
   lerUltimoRelatorio, lerRelatorioTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO,
-  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador, podeContinuar, reanalisarAnuncio,
+  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador, podeContinuar, reanalisarAnuncio, lerListaAnteriorDaConta, voltarParaListaAnterior,
 } from "../services/paizinhoAuditoria/relatorioService";
 import { MODO, indicadores, pendenciasAbertas, buscarAnalisados } from "../services/paizinhoAuditoria/filaAnuncios";
 import PrioridadesPaizinho, { HistoricoFila } from "./PrioridadesPaizinho";
@@ -53,6 +53,9 @@ export default function RelatorioManhaPaizinho() {
   const [painel, setPainel] = useState(""); // "", "historico", "pendencias"
   const [busca, setBusca] = useState(""); // (18/11) busca do topo: comanda a lista de anúncios
   const [ultimoModo, setUltimoModo] = useState(MODO.NOVOS); // (Pacote 1) para "Continuar de onde parou"
+  // (19/11) Resumo da lista anterior guardada (cópia feita antes de "Analisar novos"/"Reanalisar" trocarem a lista).
+  const resumoAnterior = (c) => { const a = LOCAL ? lerListaAnteriorDaConta(c) : null; return a ? { gerado_em: a.gerado_em, quantidade: (a.anuncios || []).length } : null; };
+  const [anterior, setAnterior] = useState(() => resumoAnterior(CONTA_PADRAO.id));
   const contaAtual = CONTAS_AUDITORIA.find((c) => c.id === conta) || CONTA_PADRAO;
 
   useEffect(() => {
@@ -69,6 +72,7 @@ export default function RelatorioManhaPaizinho() {
     setConta(id);
     setServidor({ estado: "carregando" });
     setTeste(LOCAL ? lerRelatorioTesteLocal(id) : null);
+    setAnterior(resumoAnterior(id));
     setErroTeste("");
     setAvisoFila("");
     setFila(null);
@@ -92,9 +96,11 @@ export default function RelatorioManhaPaizinho() {
       setTeste(daConta(r.rel, alvo));
       setVerTeste(true);
       setFila((f) => (f?.conta === alvo ? { ...f, estado: r.estado } : f));
+      setAnterior(resumoAnterior(alvo));
+      const copia = r.gravacao && !r.gravacao.ok ? ` Atenção: ${r.gravacao.erro}` : r.gravacao?.copiou ? " A lista anterior foi guardada (botão \"Lista anterior\")." : "";
       setAvisoFila(r.registrada
-        ? `✔ ${r.rodada.anuncios.length} anúncio(s) ${modo === MODO.NOVOS ? "inéditos analisados" : "reanalisados"} e registrados na fila da ${contaAtual.nome}.`
-        : `⚠️ ${r.erro}`);
+        ? `✔ ${r.rodada.anuncios.length} anúncio(s) ${modo === MODO.NOVOS ? "inéditos analisados" : "reanalisados"} e registrados na fila da ${contaAtual.nome}.${copia}`
+        : `⚠️ ${r.erro}${copia}`);
     } catch (e) {
       setErroTeste(String(e?.message || e));
     }
@@ -111,7 +117,7 @@ export default function RelatorioManhaPaizinho() {
     try {
       const r = await reanalisarAnuncio({ conta: alvo, mlb, aoProgredir: setRodando, fila: filaDaConta });
       if (r.estado) setFila((f) => (f?.conta === alvo ? { ...f, estado: r.estado } : f));
-      if (r.ok && r.juntada) { setTeste(daConta(r.rel, alvo)); setVerTeste(true); }
+      if (r.ok && r.juntada) { setTeste(daConta(r.rel, alvo)); setVerTeste(true); setAnterior(resumoAnterior(alvo)); }
       setAvisoFila(r.ok && r.juntada
         ? `✔ ${mlb} reanalisado e ${r.acrescentado ? "acrescentado à" : "atualizado na"} lista atual; pendências e histórico atualizados. Os outros anúncios não mudaram.`
         : `⚠️ ${r.erro}`);
@@ -119,6 +125,16 @@ export default function RelatorioManhaPaizinho() {
       setErroTeste(String(e?.message || e));
     }
     setRodando("");
+  }
+
+  // (19/11) Volta para a lista anterior guardada; a atual vira a "anterior" (nada se perde).
+  function trocarLista() {
+    const r = voltarParaListaAnterior(conta);
+    if (!r.ok) { setAvisoFila(`⚠️ ${r.erro}`); return; }
+    setTeste(daConta(r.rel, conta));
+    setVerTeste(true);
+    setAnterior(resumoAnterior(conta));
+    setAvisoFila(`✔ Lista de ${hora(r.rel.gerado_em)} na tela (${(r.rel.anuncios || []).length} anúncios). A outra continua guardada em "Lista anterior".`);
   }
 
   async function agir(acao, achado, motivo) {
@@ -197,6 +213,10 @@ export default function RelatorioManhaPaizinho() {
               <button type="button" onClick={() => setPainel(painel === "pendencias" ? "" : "pendencias")} disabled={!filaDaConta} style={painel === "pendencias" ? S.linkAtivo : S.linkBotao} data-paizinho-fila-pendencias>Revisar pendências{ind?.pendentes ? ` (${ind.pendentes})` : ""}</button>
               <span aria-hidden="true">·</span>
               <button type="button" onClick={() => rodar(MODO.REANALISE)} disabled={ocupado || !ind?.analisados} style={S.linkBotao} data-paizinho-reanalisar>Reanalisar</button>
+              {anterior && <>
+                <span aria-hidden="true">·</span>
+                <button type="button" onClick={trocarLista} disabled={Boolean(rodando)} style={S.linkBotao} title="Troca a lista da tela pela cópia guardada; as duas continuam guardadas" data-paizinho-lista-anterior>↩️ Lista anterior ({anterior.quantidade} · {hora(anterior.gerado_em)})</button>
+              </>}
             </span>
           </div>
           {/* (18/11) Ajuda recolhida em uma linha. */}
