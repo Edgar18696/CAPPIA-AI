@@ -15,7 +15,7 @@
 import { num, txt, centavos, reais, pct, normalizar, codigoLimpo, atributo, atributoNumero, skuDoItem, diasAtras } from "./util.js";
 import { normalizarMedida, medidaCompleta, pesoCubicoG, pesoConsideradoG, divergentes, validarLimites, formatarDimensoes, formatarPeso } from "../logistica/logisticaMercadoLivre.js";
 import { lerRespostaCotacao } from "../fretePrecificacao.js";
-import { contarVendidos, faturarVendidos } from "./coleta.js";
+import { contarPedidos, contarVendidos, faturarVendidos } from "./coleta.js";
 
 export const AREAS = Object.freeze({
   VENDAS: "vendas",
@@ -185,6 +185,7 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
   const vendas30 = vendasLidas ? contexto.vendidos30[id] || 0 : null; // null = não lido (nunca zero)
   const vendas60 = vendasLidas ? contexto.vendidos60[id] || 0 : null;
   const faturamento30 = vendasLidas ? contexto.faturado30?.[id] || 0 : null; // valor real dos pedidos pagos
+  const pedidos30 = vendasLidas ? contexto.pedidos30?.[id] || 0 : null; // vendas (pedidos), base da conversão
   const fretesDasVendas = fretesReais(id, dados.pedidos, dados.envios);
   return {
     id,
@@ -209,7 +210,9 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     vendas30,
     vendas60,
     faturamento30,
-    conversao30: visitas > 0 && vendas30 !== null ? Math.round((vendas30 / visitas) * 10000) / 100 : null,
+    pedidos30,
+    // (Pacote 1) Conversão = vendas (pedidos) ÷ visitas, igual ao painel do ML (não unidades).
+    conversao30: visitas > 0 && pedidos30 !== null ? Math.round((pedidos30 / visitas) * 10000) / 100 : null,
     tarifa,
     frete: {
       gratis: freteGratis,
@@ -681,13 +684,14 @@ export function analisarAnuncios(dados, config = {}) {
   const vendidos30 = contarVendidos(dados.pedidos, agora, 30);
   const vendidos60 = contarVendidos(dados.pedidos, agora, 60);
   const faturado30 = faturarVendidos(dados.pedidos, agora, 30);
-  const ctxBase = { agora, cfg, vendidos30, vendidos60, faturado30, recotacoes: config.recotacoes || {} };
+  const pedidos30 = contarPedidos(dados.pedidos, agora, 30);
+  const ctxBase = { agora, cfg, vendidos30, vendidos60, faturado30, pedidos30, recotacoes: config.recotacoes || {} };
   const fichas = dados.itens.map((it) => fichaDoAnuncio(it, dados, cfg, ctxBase));
   // (12/11) Conversão só com anúncios que têm visitas E vendas lidas
   // (anúncio com visita não lida não entra nem no numerador nem no denominador).
   const ambos = fichas.filter((f) => f.visitas30 !== null && f.vendas30 !== null);
   const visitasTot = ambos.reduce((s, f) => s + f.visitas30, 0);
-  const vendasTot = ambos.reduce((s, f) => s + f.vendas30, 0);
+  const vendasTot = ambos.reduce((s, f) => s + f.pedidos30, 0); // (Pacote 1) vendas (pedidos), não unidades
   const leituraCompleta = dados.leituras?.vendas !== false && dados.leituras?.visitas !== false;
   const conversaoConta = !leituraCompleta ? null : visitasTot > 0 ? Math.round((vendasTot / visitasTot) * 10000) / 100 : 0;
   const ctx = { ...ctxBase, conversaoConta, perfilBling: perfilBling(dados, cfg) };

@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import {
   lerUltimoRelatorio, lerRelatorioTesteLocal, CONTAS_AUDITORIA, CONTA_PADRAO,
-  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador,
+  abrirFila, analisarFila, registrarAcaoFila, enviarFilaDoNavegador, podeContinuar,
 } from "../services/paizinhoAuditoria/relatorioService";
 import { MODO, indicadores, pendenciasAbertas } from "../services/paizinhoAuditoria/filaAnuncios";
 import PrioridadesPaizinho, { HistoricoFila } from "./PrioridadesPaizinho";
@@ -22,7 +22,16 @@ const numero = (v) => (v === null || v === undefined ? "—" : Number(v).toLocal
 // + = com as medidas do Bling o frete seria maior; − = menor.
 const textoDiferenca = (d) => (d === null || d === undefined ? "—" : d === 0 ? "sem diferença" : `${d > 0 ? "+" : "−"}${reais(Math.abs(d))}`);
 const hora = (iso) => { try { return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); } catch { return "—"; } };
-const COR = { alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
+// (Pacote 1) Período exato usado (dias inteiros de Brasília), para conferir com o painel do ML.
+const diaBr = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : "—");
+function textoPeriodo(p) {
+  const visitas = `Visitas: ${diaBr(p.visitas_de)} a ${diaBr(p.visitas_ate)}`;
+  const vendas = p.vendas_30d_de
+    ? `Vendas e faturamento: ${hora(p.vendas_30d_de)} a ${hora(p.vendas_ate)}`
+    : "Vendas e faturamento: 30 dias até o horário da análise (análise anterior ao ajuste de dias inteiros)";
+  return `📅 ${visitas} · ${vendas}`;
+}
+const COR ={ alta: "#f87171", media: "#fbbf24", baixa: "#60a5fa" };
 const ROTULO = { alta: "Urgente", media: "Importante", baixa: "Acompanhar" };
 
 // (17/11) Seletor das 3 contas (LOJA ONLINE é a padrão). Cada conta tem o seu relatório,
@@ -43,6 +52,7 @@ export default function RelatorioManhaPaizinho() {
   const [fila, setFila] = useState(null); // { repo, estado, origem, avisoBanco, naoEnviados, conta }
   const [painel, setPainel] = useState(""); // "", "historico", "pendencias"
   const [busca, setBusca] = useState(""); // (18/11) busca do topo: comanda a lista de anúncios
+  const [ultimoModo, setUltimoModo] = useState(MODO.NOVOS); // (Pacote 1) para "Continuar de onde parou"
   const contaAtual = CONTAS_AUDITORIA.find((c) => c.id === conta) || CONTA_PADRAO;
 
   useEffect(() => {
@@ -69,14 +79,16 @@ export default function RelatorioManhaPaizinho() {
 
   const filaDaConta = fila?.conta === conta && fila.estado ? fila : null;
 
-  async function rodar(modo) {
+  // (Pacote 1) continuar = retoma a rodada interrompida pela queda do login (mesma conta e tipo).
+  async function rodar(modo, continuar = false) {
     if (!filaDaConta) return;
     setErroTeste("");
     setAvisoFila("");
     setRodando("Começando…");
+    setUltimoModo(modo);
     const alvo = conta;
     try {
-      const r = await analisarFila({ conta: alvo, modo, quantidade: limite, concorrencia, aoProgredir: setRodando, fila: filaDaConta });
+      const r = await analisarFila({ conta: alvo, modo, quantidade: limite, concorrencia, aoProgredir: setRodando, fila: filaDaConta, continuar });
       setTeste(daConta(r.rel, alvo));
       setVerTeste(true);
       setFila((f) => (f?.conta === alvo ? { ...f, estado: r.estado } : f));
@@ -120,6 +132,7 @@ export default function RelatorioManhaPaizinho() {
         <div>
           <h2 style={S.titulo}>☀️ Relatório da manhã — {contaAtual.nome}</h2>
           <p style={S.sub}>{rel ? `Gerado em ${hora(rel.gerado_em)} · ${rel.origem === "teste_local" ? "ANÁLISE FEITA NESTE NAVEGADOR" : "rotina automática das 03h"}` : `${textoEstado(servidor)}${LOCAL ? ` Nenhuma análise da ${contaAtual.nome} feita neste navegador ainda.` : ""}`}</p>
+          {rel?.periodo && <p style={S.sub} data-paiia-periodo>{textoPeriodo(rel.periodo)}</p>}
         </div>
       </div>
 
@@ -194,7 +207,12 @@ export default function RelatorioManhaPaizinho() {
         </div>
       )}
 
-      {rel?.leitura_incompleta ? <AvisoLeituraIncompleta info={rel.leitura_incompleta} /> : null}
+      {rel?.leitura_incompleta ? (
+        <AvisoLeituraIncompleta
+          info={rel.leitura_incompleta}
+          continuar={LOCAL && rel === testeDaConta && !rodando && filaDaConta && podeContinuar(conta, ultimoModo, limite) ? () => rodar(ultimoModo, true) : null}
+        />
+      ) : null}
       {rel ? <AvisoLeiturasComerciais rel={rel} /> : null}
       {/* (18/11) Lista operacional: abrir → ver o problema → corrigir → próximo anúncio. */}
       {rel ? <AuditoriaAnuncios key={`${conta}-${rel.gerado_em}`} rel={rel} busca={busca} estado={filaDaConta?.estado} aoAgir={agir} /> : null}
@@ -244,7 +262,7 @@ export default function RelatorioManhaPaizinho() {
 }
 
 // (12/11) Leitura parcial fica evidente no topo: o relatório não é tratado como completo.
-function AvisoLeituraIncompleta({ info }) {
+function AvisoLeituraIncompleta({ info, continuar }) {
   const { bling, recotacao, custo, sessao_expirada: sessao } = info;
   return (
     <div style={S.erro} role="alert" data-paizinho-leitura-incompleta>
@@ -252,7 +270,10 @@ function AvisoLeituraIncompleta({ info }) {
       {bling ? <div>Bling lido em {bling.lidos} de {bling.total} SKUs.</div> : null}
       {recotacao ? <div>Frete recotado em {recotacao.feitas} de {recotacao.total} anúncios.</div> : null}
       {custo ? <div>Preço de custo lido em {custo.lidos} de {custo.total} SKUs.</div> : null}
-      {sessao ? <div>A sessão do PAIIA expirou durante a leitura. Entre de novo e rode outra vez: o que já foi lido no Bling fica guardado neste computador por 24 h.</div> : null}
+      {sessao ? <div>O login do PAIIA caiu durante a leitura (por exemplo, "Sair" usado em outro aparelho). Entre de novo <b>sem recarregar a página</b> e clique em Continuar: o que já foi lido no Mercado Livre e no Bling é aproveitado, com o mesmo período.</div> : null}
+      {sessao && continuar ? (
+        <button type="button" onClick={continuar} style={S.botao} data-paizinho-continuar-leitura>▶️ Continuar de onde parou</button>
+      ) : null}
     </div>
   );
 }

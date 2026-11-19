@@ -78,6 +78,16 @@ export function diasAtras(agora, n) {
   return new Date(new Date(agora).getTime() - n * 86400000).toISOString();
 }
 
+/**
+ * (12/11; Pacote 1 de 19/11) Início do dia (00:00 de Brasília) de N dias antes de `agora`, em ISO.
+ * Igual ao "últimos 30 dias" do painel do Mercado Livre: dias inteiros.
+ * Ex.: agora = 12/11 15:40 → n = 30 → 13/10 00:00 (Brasília) = 2026-10-13T03:00:00.000Z.
+ */
+export function inicioDoDiaBrasilia(agora, n = 0) {
+  const data = dataBrasilia(diasAtras(agora, n));
+  return new Date(`${data}T00:00:00.000-03:00`).toISOString();
+}
+
 /** Data de referência do relatório no horário de Brasília (AAAA-MM-DD). */
 export function dataBrasilia(agora) {
   const d = new Date(new Date(agora).getTime() - 3 * 3600000);

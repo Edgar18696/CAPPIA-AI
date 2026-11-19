@@ -17,6 +17,7 @@ import { roteadorConsultas, consultorComercial as leitorComercial } from "./leit
 import { MODO, montarRodada, escolherIneditos, escolherReanalise, novoId } from "./filaAnuncios.js";
 import { repositorioNavegador, repositorioBanco, enviarRegistroParaBanco, ORIGEM } from "./filaRepositorio.js";
 import { lerHistorico } from "./prioridadesAcoes.js";
+import { novaRetomada, retomadaValida, consultaComRetomada, parouPorLogin, MSG_LOGIN_INVALIDO } from "./retomada.js";
 
 const consultorComercial = (conta) => leitorComercial(conta, (nome, opcoes) => supabase.functions.invoke(nome, opcoes));
 
@@ -112,9 +113,15 @@ export function resumirCusto(d) {
  * Análise com dados reais de UMA conta (somente leitura). (17/11) A conta vem do seletor
  * da Central; tudo (ML, caches e relatório guardado) fica separado por conta.
  */
-export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir, escolherIds } = {}) {
+export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 100, concorrencia = 0, aoProgredir, escolherIds, continuar = false, tipo = "" } = {}) {
   const escolhida = contaLiberada(conta);
   if (!escolhida) throw new Error("Conta não liberada para a análise.");
+  // (Pacote 1) Login conferido ANTES de começar; memória de retomada por conta e tipo de rodada.
+  try { aoProgredir?.("Conferindo o login do PAIIA"); } catch { /* ignora */ }
+  await conferirLogin();
+  const chaveRet = `${escolhida.id}|${tipo}`;
+  if (!(continuar && retomadaValida(retomadas.get(chaveRet), { limiteItens, chave: chaveRet }))) retomadas.set(chaveRet, novaRetomada({ agora: new Date().toISOString(), limiteItens, chave: chaveRet }));
+  const ret = retomadas.get(chaveRet);
   const cache = lerCacheBling(escolhida.id);
   let novos = 0;
   const consultarBlingServidor = async (sku) => {
@@ -188,7 +195,9 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
       conta: escolhida.id,
       // (12/11) Vendas, visitas e custo de envio pela função paizinho-leitura-ml;
       // o resto continua pela mercadolivre-publicacao. As duas só leem.
-      consultar: roteadorConsultas({ principal: consultorML(escolhida.id), comercial: consultorComercial(escolhida.id) }),
+      // (Pacote 1) O que já deu certo no ML volta da memória na retomada; mesmo período.
+      consultar: consultaComRetomada(roteadorConsultas({ principal: consultorML(escolhida.id), comercial: consultorComercial(escolhida.id) }), ret),
+      agora: ret.agora,
       consultarBling,
       consultarCusto,
       consultarUltimasCompras,
@@ -205,8 +214,23 @@ export async function rodarTesteLocal({ conta = CONTA_PADRAO.id, limiteItens = 1
     if (novosCusto) gravarCacheBling(escolhida.id, cacheCusto, CHAVE_CACHE_CUSTO);
   }
   conferirRelatorioDaConta(rel, escolhida);
+  // Terminou sem queda de login: a memória da retomada não é mais necessária.
+  if (!parouPorLogin(rel) && retomadas.get(chaveRet) === ret) retomadas.delete(chaveRet);
   guardarRelatorioTesteLocal(rel);
   return rel;
+}
+
+// (Pacote 1) Retomada segura: memória da última rodada interrompida, por conta e tipo (só nesta página).
+const retomadas = new Map();
+export const podeContinuar = (conta, tipo, limiteItens) => {
+  const chave = `${idDe(conta)}|${tipo}`;
+  return retomadaValida(retomadas.get(chave), { limiteItens, chave });
+};
+
+/** (Pacote 1) Confere o login no servidor ANTES de começar (sessão encerrada por "Sair" em outro aparelho). */
+async function conferirLogin() {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user) throw new Error(MSG_LOGIN_INVALIDO);
 }
 
 /* ------------------------------------------------------------ */
@@ -278,7 +302,7 @@ export async function enviarFilaDoNavegador(conta) {
  * Falha no meio → nada registrado. Falha ao salvar → a rodada fica guardada e é gravada
  * na próxima abertura (mesmo id: não duplica).
  */
-export async function analisarFila({ conta, modo, quantidade = 20, concorrencia = 0, aoProgredir, fila }) {
+export async function analisarFila({ conta, modo, quantidade = 20, concorrencia = 0, aoProgredir, fila, continuar = false }) {
   const id = idDe(conta);
   const aberta = fila || (await abrirFila(id));
   const estadoAntes = aberta.estado;
@@ -292,7 +316,8 @@ export async function analisarFila({ conta, modo, quantidade = 20, concorrencia 
     if (!info.escolhidos.length) throw new Error(modo === MODO.NOVOS ? "Não há anúncios inéditos nesta conta: todos já foram analisados." : "Ainda não há anúncios analisados para reanalisar nesta conta.");
     return info.escolhidos;
   };
-  const rel = await rodarTesteLocal({ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds });
+  // (Pacote 1) continuar = retoma a rodada interrompida pela queda do login (mesma conta e tipo).
+  const rel = await rodarTesteLocal({ conta: id, limiteItens: quantidade, concorrencia, aoProgredir, escolherIds, continuar, tipo: modo });
   const m = montarRodada({ id: novoId(), conta: id, modo, rel, ativosTotal: info.ativosTotal, ineditosAntes: info.ineditosAntes, listaCompleta: info.listaCompleta });
   if (!m.ok) return { rel, registrada: false, erro: m.erro, estado: estadoAntes };
   try { armazenamento().setItem(chaveAGravar(id), JSON.stringify(m.rodada)); } catch { /* segue: grava direto */ }

@@ -14,7 +14,7 @@
 //   - Falhas de leitura não param a análise: ficam registradas em `falhas`
 //     e o relatório mostra o que não pôde ser conferido (nunca supõe).
 // =============================================================
-import { txt, num, pedacos, comLimite, diasAtras, skuDoItem } from "./util.js";
+import { txt, num, pedacos, comLimite, diasAtras, skuDoItem, dataBrasilia, inicioDoDiaBrasilia } from "./util.js";
 import { escolherCusto } from "./analise.js";
 
 export const PADROES_COLETA = Object.freeze({
@@ -69,7 +69,6 @@ export function erroDeSessao(r) {
   return Number(r?.status) === 401 || /não autenticad|nao autenticad|entre novamente|jwt|unauthori[sz]ed|invalid.*token/i.test(txt(r?.erro));
 }
 
-const dia = (iso) => txt(iso).slice(0, 10);
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Data no formato que a busca de pedidos do ML aceita (2026-11-10T06:00:00.000-00:00). */
 export const dataML = (iso) => new Date(iso).toISOString().replace("Z", "-00:00");
@@ -182,8 +181,9 @@ export async function coletarDadosConta({
   // 5) Visitas dos últimos N dias
   passo("Lendo as visitas");
   const visitas = {};
-  const de = dia(diasAtras(agora, o.diasVisitas));
-  const ate = dia(agora);
+  // (Pacote 1) Datas de Brasília (antes eram UTC: depois das 21h o período andava um dia).
+  const de = dataBrasilia(diasAtras(agora, o.diasVisitas));
+  const ate = dataBrasilia(agora);
   await comLimite(pedacos(itens.map((i) => i.id), 50), 2, async (lote) => {
     const r = await get(`/items/visits?ids=${lote.join(",")}&date_from=${de}&date_to=${ate}`);
     const lista = Array.isArray(r?.dados) ? r.dados : null;
@@ -221,7 +221,7 @@ export async function coletarDadosConta({
   // 6) Pedidos (vendas)
   passo("Lendo as vendas");
   const pedidos = [];
-  const desdeVendas = diasAtras(agora, o.diasVendas);
+  const desdeVendas = inicioDoDiaBrasilia(agora, o.diasVendas); // (Pacote 1) desde 00:00 do 1º dia
   for (let offset = 0; offset < o.limitePedidos; offset += 50) {
     const r = await get(`/orders/search?seller=${contaId}&order.date_created.from=${encodeURIComponent(dataML(desdeVendas))}&order.date_created.to=${encodeURIComponent(dataML(agora))}&sort=date_desc&limit=50&offset=${offset}`);
     if (!r?.ok) { falha("vendas", "/orders/search", r); break; }
@@ -366,7 +366,8 @@ export async function coletarDadosConta({
   return {
     conta: contaInfo,
     coletado_em: agora,
-    periodo: { visitas_de: de, visitas_ate: ate, vendas_desde: desdeVendas },
+    // (Pacote 1) vendas_30d_de / vendas_ate: período exato das vendas e do faturamento de 30 dias.
+    periodo: { visitas_de: de, visitas_ate: ate, vendas_desde: desdeVendas, vendas_30d_de: inicioDoDiaBrasilia(agora, 30), vendas_ate: new Date(agora).toISOString() },
     totais: { anuncios_ativos: total || idsAtivos.length || idsAnalisados.length, ativos_listados: idsAtivos.length, lista_ativos_completa: listaAtivosCompleta, anuncios_analisados: itens.length, descartados_outra_conta: descartadosOutraConta, pedidos: pedidos.length },
     itens, descricoes, visitas, pedidos, envios, fretes, tarifas, compat, bling, concorrencia,
     ...(typeof consultarCusto === "function" ? { custos } : {}),
@@ -386,9 +387,12 @@ export async function coletarDadosConta({
  * (12/11) Faturamento REAL por anúncio: soma de preço unitário × quantidade dos
  * pedidos pagos no período (o preço atual do anúncio pode ser outro).
  * Conferido contra a API: MLB3782488757 vendeu 25 un. a R$ 24,50 = R$ 612,50.
+ * (Pacote 1) Período em DIAS INTEIROS de Brasília (desde 00:00 do 1º dia), como o
+ * painel do ML. Antes contava do mesmo minuto de 30 dias atrás e deixava de fora
+ * pedidos do 1º dia (caso real: 13/10 13:57, 2 un. do MLB3782488757).
  */
 export function faturarVendidos(pedidos, agora, dias) {
-  const desde = new Date(diasAtras(agora, dias)).getTime();
+  const desde = new Date(inicioDoDiaBrasilia(agora, dias)).getTime();
   const out = {};
   for (const p of pedidos || []) {
     if (txt(p?.status) !== "paid") continue;
@@ -401,8 +405,25 @@ export function faturarVendidos(pedidos, agora, dias) {
   return out;
 }
 
+/**
+ * (Pacote 1) Número de VENDAS (pedidos pagos) por anúncio, como o painel do ML
+ * usa na conversão: 1 pedido com 3 unidades = 1 venda. Caso real:
+ * MLB3737977765, 9 un. em 6 vendas → ML 6 ÷ 58 = 10,3% (unidades davam 15%).
+ */
+export function contarPedidos(pedidos, agora, dias) {
+  const desde = new Date(inicioDoDiaBrasilia(agora, dias)).getTime();
+  const out = {};
+  for (const p of pedidos || []) {
+    if (txt(p?.status) !== "paid") continue;
+    if (new Date(p?.date_created).getTime() < desde) continue;
+    const ids = new Set((p?.order_items || []).map((oi) => oi?.item?.id).filter(Boolean));
+    for (const id of ids) out[id] = (out[id] || 0) + 1;
+  }
+  return out;
+}
+
 export function contarVendidos(pedidos, agora, dias) {
-  const desde = new Date(diasAtras(agora, dias)).getTime();
+  const desde = new Date(inicioDoDiaBrasilia(agora, dias)).getTime();
   const out = {};
   for (const p of pedidos || []) {
     if (txt(p?.status) !== "paid") continue;
