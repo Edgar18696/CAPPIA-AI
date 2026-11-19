@@ -29,6 +29,11 @@ export default function PrioridadesPaizinho({ rel, lista, estado, aoAgir, textoP
   const [ocupado, setOcupado] = useState(false);
   const itens = lista || rel?.prioridades || [];
   const visiveis = itens.filter((a) => !FORA.has(statusPendencia(estado, a)));
+  // (19/11) Identificação de cada LINHA na tela: anúncio + assunto + posição na lista original.
+  // O mesmo anúncio pode ter 2 problemas do mesmo assunto (ex.: título curto e código fora do
+  // título): com só anúncio + assunto as duas linhas tinham a mesma chave do React.
+  // Só a identificação da linha muda; filtro, ordem e ações continuam iguais.
+  const chaveLinha = new Map(itens.map((a, i) => [a, `${chaveAchado(a)}#${i}`]));
 
   async function agir(acao, achado, motivo = "") {
     if (ocupado) return;
@@ -51,15 +56,15 @@ export default function PrioridadesPaizinho({ rel, lista, estado, aoAgir, textoP
       <div style={S.achados}>
         {visiveis.map((a) => (
           <ItemPrioridade
-            key={chaveAchado(a)}
+            key={chaveLinha.get(a)}
             a={a}
             rel={rel}
             reaberta={a.reaberta || estado?.pendencias?.[chavePendencia(a.item_id, a.area)]?.reaberta}
             textoPotencial={textoPotencial}
-            confirmandoRemocao={removendo === chaveAchado(a)}
+            confirmandoRemocao={removendo === chaveLinha.get(a)}
             ocupado={ocupado}
             aoResolver={() => agir("resolvido", a)}
-            aoPedirRemocao={() => { setErro(""); setRemovendo(chaveAchado(a)); }}
+            aoPedirRemocao={() => { setErro(""); setRemovendo(chaveLinha.get(a)); }}
             aoCancelarRemocao={() => setRemovendo(null)}
             aoRemover={(motivo) => agir("removido", a, motivo)}
           />
