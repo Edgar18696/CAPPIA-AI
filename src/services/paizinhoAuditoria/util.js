@@ -23,6 +23,30 @@ export function normalizar(v) {
 /** Código sem separadores (0 258 003 300 → 0258003300). */
 export const codigoLimpo = (v) => txt(v).toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+/**
+ * (19/11) Códigos de um atributo do anúncio. O vendedor às vezes preenche VÁRIOS códigos
+ * no mesmo campo (ex.: "H8201443067, 025803002U, 025803002T, 0258030172/173").
+ * Separa só por vírgula, ponto e vírgula, barra vertical ou quebra de linha; cada código
+ * fica como foi escrito ("0258030172/173" não é desmembrado). Nada é inventado.
+ */
+export function codigosDoTexto(v) {
+  return [...new Set(txt(v).split(/[,;|\n]+/).map((c) => txt(c)).filter((c) => codigoLimpo(c).length > 0))];
+}
+
+/**
+ * (19/11) Código PRINCIPAL entre os códigos do anúncio: o que coincide com o SKU
+ * (ignorando separadores); se nenhum coincidir, o primeiro informado.
+ * Os demais são só "outros códigos informados no anúncio", nunca equivalências confirmadas.
+ */
+export function codigoPrincipal(v, sku = "") {
+  const codigos = codigosDoTexto(v);
+  if (!codigos.length) return { principal: "", outros: [] };
+  const s = codigoLimpo(sku);
+  const doSku = s ? codigos.find((c) => codigoLimpo(c) === s) : null;
+  const principal = doSku || codigos[0];
+  return { principal, outros: codigos.filter((c) => c !== principal) };
+}
+
 /** Atributo de um item do ML pelo id (BRAND, PART_NUMBER, SELLER_SKU...). */
 export function atributo(item, id) {
   const a = (item?.attributes || []).find((x) => x?.id === id);

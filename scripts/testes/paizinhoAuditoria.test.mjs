@@ -49,13 +49,15 @@ test("somente leitura: só caminhos GET, nunca método ou corpo; anúncio de out
 test("margem com custo do Bling: prejuízo calculado e impacto pelas vendas de 30 dias", async () => {
   const { rel } = await rodar();
   const a = achadosDe(rel, "MLB1").find((x) => x.area === "margem");
-  assert.equal(a.severidade, "alta");
-  assert.match(a.problema, /PREJUÍZO de R\$ 14,00 por venda \(antes dos impostos\)/);
+  assert.equal(a.severidade, "alta", "com vendas no período continua urgente");
+  // (19/11) Texto pela origem do custo; a conta é a mesma.
+  assert.match(a.problema, /^Prejuízo estimado de R\$ 14,00 por venda \(custo cadastrado no Bling, antes dos impostos\): preço R\$ 100,00/);
+  assert.doesNotMatch(a.problema, /não realizado/, "houve vendas");
   assert.equal(a.impacto_rs, -28); // 2 vendas
   // Com imposto informado o cálculo inclui o imposto
   const { rel: r2 } = await rodar({ config: { impostoPercentual: 6 } });
   const b = achadosDe(r2, "MLB1").find((x) => x.area === "margem");
-  assert.match(b.problema, /PREJUÍZO de R\$ 20,00 por venda: .*imposto R\$ 6,00/);
+  assert.match(b.problema, /Prejuízo estimado de R\$ 20,00 por venda \(custo cadastrado no Bling\): .*imposto R\$ 6,00/);
 });
 
 test("custo pelo custo_por_sku (só leitura): vazio/0 = sem custo; fornecedor padrão; >20% de diferença = a confirmar", async () => {

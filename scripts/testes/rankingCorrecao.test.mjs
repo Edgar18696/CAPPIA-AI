@@ -62,20 +62,23 @@ test("margem baixa com custo cadastrado não é prejuízo; título/fotos/compat 
   assert.deepEqual(c.categorias, [C.CATEGORIA.MARGEM_BAIXA, C.CATEGORIA.QUALIDADE]);
   assert.equal(c.problemas.length, 4, "positivos ficam fora");
   assert.ok(c.problemas.filter((x) => x.area !== "margem").every((x) => x.categoria === C.CATEGORIA.QUALIDADE));
-  assert.equal(C.ROTULO_CATEGORIA.prejuizo, "💸 Prejuízo financeiro");
+  assert.equal(C.ROTULO_CATEGORIA.prejuizo, "💸 Prejuízo estimado (custo cadastrado no Bling)");
   assert.equal(C.ROTULO_CATEGORIA.nao_verificado, "❔ Custo / margem não verificados");
   assert.equal(C.ROTULO_CATEGORIA.qualidade, "🛠️ Qualidade do anúncio");
 });
 
-test("título sugerido: só código/marca citados no problema, ≤ 60 caracteres, sem inventar", () => {
+test("título sugerido: só o código principal citado no problema (marca NUNCA), ≤ 60 caracteres, sem inventar", () => {
   const a = base({ titulo: "Bobina De Ignição Clio", achados: [
     { area: "conteudo", severidade: "media", problema: "O código 7700274008 não está no título.", sugestao: "Incluir o código" },
     { area: "conteudo", severidade: "baixa", problema: "A marca Bosch não está no título.", sugestao: "Incluir a marca" },
   ] });
   const t = C.sugestaoTitulo(a);
-  assert.equal(t.titulo, "Bobina De Ignição Clio Bosch 7700274008");
+  assert.equal(t.titulo, "Bobina De Ignição Clio 7700274008", "(19/11) marca não é acrescentada");
   assert.ok(t.titulo.length <= C.LIMITE_TITULO_ML);
-  assert.deepEqual(t.adicionados, ["Bosch", "7700274008"]);
+  assert.deepEqual(t.adicionados, ["7700274008"]);
+  // Alerta antigo de marca (relatório anterior) não vira problema nem sugestão.
+  assert.ok(!C.classificarAnuncio(a).problemas.some((x) => /A marca/.test(x.problema)));
+  assert.equal(C.sugestaoTitulo(base({ titulo: "Bobina", achados: [{ area: "conteudo", severidade: "baixa", problema: "A marca Torken não está no título.", sugestao: "x" }] })), null);
 
   // Sem problema de código/marca → nenhuma sugestão (não inventa).
   assert.equal(C.sugestaoTitulo(base({ achados: [{ area: "conteudo", severidade: "media", problema: "Título curto (20 de 60 caracteres).", sugestao: "Usar o espaço" }] })), null);
@@ -88,7 +91,7 @@ test("título sugerido: só código/marca citados no problema, ≤ 60 caracteres
   assert.equal(n.titulo, null);
   assert.match(n.aviso, /limite do Mercado Livre: 60/);
 
-  // Os dois não cabem, só o código cabe → sugere só o código e avisa da marca.
+  // Código cabe; a marca (alerta antigo) é ignorada, sem aviso de marca.
   const medio = "Bobina De Ignição Renault Clio Kangoo Logan 1.6"; // 46
   const p = C.sugestaoTitulo(base({ titulo: medio, achados: [
     { area: "conteudo", severidade: "media", problema: "O código 7700274008 não está no título.", sugestao: "x" },
@@ -96,7 +99,14 @@ test("título sugerido: só código/marca citados no problema, ≤ 60 caracteres
   ] }));
   assert.equal(p.titulo, `${medio} 7700274008`);
   assert.ok(p.titulo.length <= 60);
-  assert.match(p.aviso, /marca Magneti Marelli/);
+  assert.doesNotMatch(p.aviso, /Magneti/);
+
+  // (19/11) Vários códigos no mesmo campo (relatório anterior): só o principal = o do SKU.
+  const v = C.sugestaoTitulo(base({ titulo: "Sensor Rotação Clio", sku: "H8201443067", achados: [
+    { area: "conteudo", severidade: "media", problema: "O código H8201443067, 025803002U, 025803002T, 0258030172/173 não está no título.", sugestao: "x" },
+  ] }));
+  assert.equal(v.titulo, "Sensor Rotação Clio H8201443067");
+  assert.deepEqual(v.adicionados, ["H8201443067"], "outros códigos não entram no título");
 });
 
 test("palavras-chave: só as da concorrência (palavras) que faltam no título", () => {

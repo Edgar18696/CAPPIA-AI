@@ -106,7 +106,7 @@ export default function AuditoriaAnuncios({ rel, busca: buscaDoTopo, estado, aoA
                   {p.length
                     ? <span style={S.prob} title={p.map((x) => x.problema).join("\n")}>{p[0].problema}{p.length > 1 ? ` (+${p.length - 1})` : ""}</span>
                     : <span style={{ color: "#86efac" }}>✔ sem problema</span>}
-                  {c.prejuizo && <small style={{ color: COR.alta, fontWeight: 800 }}>💸 prejuízo (custo cadastrado)</small>}
+                  {c.prejuizo && <small style={{ color: COR.alta, fontWeight: 800 }}>💸 prejuízo estimado (custo cadastrado no Bling)</small>}
                 </span>
                 <span style={S.cPrio}>
                   {sit.resolvido
@@ -209,6 +209,10 @@ function PainelCorrecao({ a, c, rel, sit, aoAgir, temProximo, aoProximo, aoFecha
         </div>
         <div style={S.ajuda}>
           <strong>Título:</strong> {a.titulo}
+          {/* (19/11) Marca e códigos como estão no anúncio: conferência manual, nada é confirmado nem acrescentado. */}
+          {a.marca ? <><br /><strong>Marca no anúncio (ML):</strong> {a.marca} <small style={{ color: "#fbbf24" }}>— conferir manualmente com o produto real (o PAIIA não acrescenta marca ao título)</small></> : null}
+          {a.codigo ? <><br /><strong>Código principal:</strong> {a.codigo}</> : null}
+          {a.outros_codigos?.length ? <><br /><strong>Outros códigos informados no anúncio:</strong> {a.outros_codigos.join(", ")} <small style={{ color: "#fbbf24" }}>— não conferidos como equivalentes</small></> : null}
           {a.palavras?.length ? <><br /><strong>Palavras-chave sugeridas (concorrência):</strong> {a.palavras.join(", ")}</> : <><br /><small>Palavras-chave: só aparecem quando a pesquisa de concorrência é usada na análise.</small></>}
           {a.lucro !== null && a.lucro !== undefined && <><br /><strong>Lucro por venda:</strong> {reais(a.lucro)}{a.margem_com_imposto === false ? " (antes do imposto: cadastre o imposto em Preços, Custos e Lucro)" : ""}</>}
           <br /><strong>Custo cadastrado no Bling:</strong> {Number(a.custo) > 0 ? textoCusto(a) : <span style={{ color: "#fbbf24" }}>Custo não informado{a.custo_motivo ? ` (${a.custo_motivo})` : ""}</span>}

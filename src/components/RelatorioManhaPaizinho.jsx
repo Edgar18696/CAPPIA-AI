@@ -326,7 +326,7 @@ function Relatorio({ rel, estado, aoAgir }) {
         <Kpi rotulo="Conversão" valor={r.conversao_30d == null ? "não lido" : `${String(r.conversao_30d).replace(".", ",")}%`} />
         <Kpi rotulo="Faturamento (30 dias)" valor={r.faturamento_30d == null ? "não lido" : reais(r.faturamento_30d)} />
         <Kpi rotulo="Urgentes / Importantes" valor={`${r.problemas.alta} / ${r.problemas.media}`} cor={r.problemas.alta ? COR.alta : undefined} />
-        <Kpi rotulo={`Prejuízo calculado (custo real, 30 dias)${r.anuncios_com_custo ? ` · custo em ${numero(r.anuncios_com_custo)} de ${numero(r.anuncios_analisados)}` : ""}`} valor={r.prejuizo_estimado_30d == null ? (r.anuncios_com_custo === 0 ? "sem custo cadastrado" : "não lido") : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
+        <Kpi rotulo={`Prejuízo estimado nas vendas de 30 dias (custo cadastrado no Bling)${r.anuncios_com_custo ? ` · custo em ${numero(r.anuncios_com_custo)} de ${numero(r.anuncios_analisados)}` : ""}`} valor={r.prejuizo_estimado_30d == null ? (r.anuncios_com_custo === 0 ? "sem custo cadastrado" : "não lido") : reais(r.prejuizo_estimado_30d)} cor={r.prejuizo_estimado_30d ? COR.alta : undefined} />
         {r.prejuizo_a_confirmar_30d ? <Kpi rotulo={`Possível prejuízo (custo a confirmar, ${numero(r.anuncios_custo_a_confirmar)} anúncios)`} valor={reais(r.prejuizo_a_confirmar_30d)} /> : null}
         {r.fretes_medidas && <Kpi rotulo="Frete: impacto potencial (a confirmar)" valor={r.fretes_medidas.impacto_potencial_30d != null ? `${reais(r.fretes_medidas.impacto_potencial_30d)} / 30 dias` : `${reais(r.fretes_medidas.impacto_potencial_por_envio)} por envio`} />}
         <Kpi rotulo="Medidas ausentes" valor={numero(r.medidas_pendentes)} />

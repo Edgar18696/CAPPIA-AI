@@ -12,7 +12,7 @@
 //     (quando houver) e com a concorrência; NUNCA calcula margem.
 //   - Nada é corrigido: cada achado traz a correção SUGERIDA para aprovação.
 // =============================================================
-import { num, txt, centavos, reais, pct, normalizar, codigoLimpo, atributo, atributoNumero, skuDoItem, diasAtras } from "./util.js";
+import { num, txt, centavos, reais, pct, normalizar, codigoLimpo, codigoPrincipal, atributo, atributoNumero, skuDoItem, diasAtras } from "./util.js";
 import { normalizarMedida, medidaCompleta, pesoCubicoG, pesoConsideradoG, divergentes, validarLimites, formatarDimensoes, formatarPeso } from "../logistica/logisticaMercadoLivre.js";
 import { lerRespostaCotacao } from "../fretePrecificacao.js";
 import { contarPedidos, contarVendidos, faturarVendidos } from "./coleta.js";
@@ -200,7 +200,11 @@ export function fichaDoAnuncio(item, dados, config, contexto) {
     estoque: num(item.available_quantity),
     criado_em: txt(item.date_created),
     marca: marcaDoItem(item),
-    codigo: codigoDoItem(item),
+    // (19/11) Campo de código com VÁRIOS códigos: só o principal (o do SKU, ou o 1º) é usado
+    // nas regras; os outros ficam à parte, sem virar equivalência confirmada.
+    codigo: codigoPrincipal(codigoDoItem(item), sku).principal,
+    codigo_anuncio: codigoDoItem(item),
+    outros_codigos: codigoPrincipal(codigoDoItem(item), sku).outros,
     renault: ehRenault(item),
     original: ehOriginalMontadora(item),
     fotos: Array.isArray(item.pictures) ? item.pictures.length : 0,
@@ -370,8 +374,12 @@ function regrasMargem(f, ctx) {
   if (m.lucro < 0) {
     // Custo a confirmar: não entra no prejuízo confirmado (impacto_rs null) e não é "urgente".
     const impacto30 = f.vendas30 > 0 ? m.lucro * f.vendas30 : null;
-    out.push(achado(f, AREAS.MARGEM, f.custo_a_confirmar ? "media" : "alta",
-      `${f.custo_a_confirmar ? "Possível prejuízo" : "PREJUÍZO"} de ${reais(-m.lucro)} por venda${rotulo}: preço ${reais(m.preco)} − tarifa ${reais(m.tarifa)} − frete ${reais(m.frete)}${m.imposto !== null ? ` − imposto ${reais(m.imposto)}` : ""} − custo ${reais(m.custo)}.`,
+    // (19/11) Texto pela ORIGEM do custo (custo cadastrado no Bling, sem afirmar validação manual).
+    // Zero vendas no período (lidas): prejuízo estimado por venda, não realizado → Importante.
+    const semVendas = f.vendas30 === 0;
+    const origemCusto = f.custo_a_confirmar ? `custo a confirmar (fornecedores: ${reais(f.custo_faixa?.[0])} a ${reais(f.custo_faixa?.[1])})` : "custo cadastrado no Bling";
+    out.push(achado(f, AREAS.MARGEM, f.custo_a_confirmar || semVendas ? "media" : "alta",
+      `${f.custo_a_confirmar ? "Possível prejuízo" : "Prejuízo estimado"} de ${reais(-m.lucro)} por venda (${origemCusto}${m.com_imposto ? "" : ", antes dos impostos"}): preço ${reais(m.preco)} − tarifa ${reais(m.tarifa)} − frete ${reais(m.frete)}${m.imposto !== null ? ` − imposto ${reais(m.imposto)}` : ""} − custo ${reais(m.custo)}.${semVendas ? " Nenhuma venda nos últimos 30 dias: prejuízo estimado por venda, não realizado." : ""}`,
       f.custo_a_confirmar ? "Confirmar o custo no Bling antes de mexer no preço." : "Revisar preço ou frete deste anúncio.",
       f.custo_a_confirmar ? null : impacto30,
       { margem: m, custo_a_confirmar: f.custo_a_confirmar, impacto_a_confirmar_30d: f.custo_a_confirmar ? impacto30 : null }));
@@ -411,7 +419,7 @@ function regrasConteudo(f) {
   const tNorm = codigoLimpo(titulo);
   const cod = codigoLimpo(f.codigo);
   if (titulo.length < 35) {
-    out.push(achado(f, AREAS.CONTEUDO, "media", `Título curto (${titulo.length} de 60 caracteres).`, "Usar o espaço com peça + marca + código + aplicação principal."));
+    out.push(achado(f, AREAS.CONTEUDO, "media", `Título curto (${titulo.length} de 60 caracteres).`, "Usar o espaço com peça + código + marca e aplicação conferidas no produto real."));
   }
   if (cod && cod.length >= 4 && !tNorm.includes(cod)) {
     out.push(achado(f, AREAS.CONTEUDO, "media", `O código ${f.codigo} não está no título.`, "Incluir o código da peça no título: é a busca mais usada por quem conhece a peça."));
@@ -421,9 +429,9 @@ function regrasConteudo(f) {
   }
   if (!f.marca) {
     out.push(achado(f, AREAS.CONTEUDO, "media", "Atributo Marca vazio.", "Preencher a marca na ficha técnica."));
-  } else if (!normalizar(titulo).includes(normalizar(f.marca))) {
-    out.push(achado(f, AREAS.CONTEUDO, "baixa", `A marca ${f.marca} não está no título.`, "Incluir a marca no título."));
   }
+  // (19/11) Sem alerta de "marca fora do título": a marca do anúncio não é confirmada com o
+  // produto real; ela aparece na auditoria do anúncio para conferência manual.
   if (f.descricao !== undefined) {
     const d = txt(f.descricao);
     if (d.length < 150) {
