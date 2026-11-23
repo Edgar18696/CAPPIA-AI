@@ -389,3 +389,6 @@ export function criarCacheConsulta({ validadeMs = VALIDADE_CONSULTA_MS, relogio 
     esquecer(chave) { guardados.delete(chave); },
   };
 }
+
+/** (23/11) Cache ÚNICO: o aviso do código e o "Buscar e Montar" usam a mesma consulta. */
+export const cacheConsultaSKU = criarCacheConsulta();

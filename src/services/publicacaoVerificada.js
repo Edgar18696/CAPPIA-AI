@@ -24,6 +24,7 @@ import { mlbRegistradoDaFicha } from "./pilotoPublicacao.js";
 import { blingIdDaPublicacao } from "./blingRegistrado.js";
 import { lojaBlingDaConta, normalizarMLB } from "./vinculoBlingPublicacao.js";
 import { normalizarCodigoComparacao, skusDoAnuncio } from "./duplicidadeML.js";
+import { TIPO_ML } from "./anuncioProvisorio.js";
 
 /** Chave da marca de envio em dados_conferencia (fica até o MLB ser gravado ou o ML confirmar que nada foi criado). */
 export const CHAVE_ENVIO = "envio_publicacao";
@@ -63,7 +64,11 @@ export function envioPendenteDaFicha(ficha) {
  *   lerBling(sku) → { ok, encontrado, ambiguo, produto: { id, codigo } }
  *   anunciosBling({ id_loja, id_produto }) → { ok, id_loja, anuncios: [{ mlb, produto_id }] }
  */
-export async function checarAntesDePublicar({ anuncioId, contaId, sku, usoBling = "usar", automatico = false, conferirDuplicidade = true, deps = {} }) {
+export async function checarAntesDePublicar({ anuncioId, contaId, sku, usoBling = "usar", automatico = false, conferirDuplicidade = true, outroAnuncioConfirmado = null, deps = {} }) {
+  // (23/11) Outro anúncio do mesmo SKU nesta conta, de OUTRO tipo (Clássico × Premium), que você
+  // confirmou na tela: vira aviso SÓ para esses MLBs e só se o tipo deles for diferente do novo.
+  const confirmadosOutro = new Set(String(outroAnuncioConfirmado?.ids || "").split(",").map((x) => normalizarMLB(x)).filter(Boolean));
+  const tipoNovo = outroAnuncioConfirmado ? TIPO_ML[outroAnuncioConfirmado.tipoAnuncio === "premium" ? "premium" : "classico"] : "";
   const itens = [];
   const add = (item, nivel, texto) => itens.push({ item, nivel, texto });
   const conta = idConta(contaId);
@@ -118,13 +123,19 @@ export async function checarAntesDePublicar({ anuncioId, contaId, sku, usoBling 
     if (!base?.ok) add("Duplicidade", "erro", `Base PAIIA não conferida (${txt(base?.erro) || "sem resposta"}).`);
     else {
       const daFicha = (base.registros || []).filter((x) => txt(x.anuncio_id) !== txt(anuncioId));
-      if (daFicha.length) add("Duplicidade", outros, `A base PAIIA já registra este SKU nesta conta: ${daFicha.map((x) => x.mlb_id || x.id).join(", ")}.`);
+      const cobertos = daFicha.filter((x) => confirmadosOutro.has(normalizarMLB(x.mlb_id)));
+      const resto = daFicha.filter((x) => !cobertos.includes(x));
+      if (resto.length) add("Duplicidade", outros, `A base PAIIA já registra este SKU nesta conta: ${resto.map((x) => x.mlb_id || x.id).join(", ")}.`);
+      if (cobertos.length) add("Duplicidade", "aviso", `A base PAIIA registra ${cobertos.map((x) => x.mlb_id).join(", ")} nesta conta (outro tipo, confirmado por você).`);
     }
     const ml = await seguro(() => deps.duplicidadeML({ conta, sku: skuEnvio }));
     if (ml?.erro || !ml?.verificado) add("Duplicidade", "erro", `Mercado Livre não conferido (${txt(ml?.erro) || "sem resposta"}).`);
     else {
       ativosML = (ml.duplicados || []).map((d) => normalizarMLB(d.id)).filter(Boolean);
-      if (ativosML.length) add("Duplicidade", outros, `Já existe anúncio deste SKU nesta conta: ${ativosML.join(", ")}.`);
+      const outroTipoOk = (d) => confirmadosOutro.has(normalizarMLB(d.id)) && txt(d.tipo) && txt(d.tipo) !== tipoNovo;
+      const semConfirmacao = (ml.duplicados || []).filter((d) => normalizarMLB(d.id) && !outroTipoOk(d)).map((d) => normalizarMLB(d.id));
+      if (semConfirmacao.length) add("Duplicidade", outros, `Já existe anúncio deste SKU nesta conta: ${semConfirmacao.join(", ")}.`);
+      else if (ativosML.length) add("Duplicidade", "aviso", `Já existe anúncio deste SKU nesta conta (${ativosML.join(", ")}), de outro tipo: você confirmou outro anúncio.`);
       else if ((ml.possiveis || []).length) add("Duplicidade", "aviso", `Possível duplicidade (mesmo código, SKU diferente): ${ml.possiveis.map((d) => d.id).join(", ")}.`);
       else add("Duplicidade", "ok", "Nenhum anúncio ativo deste SKU nesta conta.");
     }
@@ -153,8 +164,11 @@ export async function checarAntesDePublicar({ anuncioId, contaId, sku, usoBling 
         else if (txt(v.id_loja) && txt(v.id_loja) !== loja.bling_loja_id) add("Vínculo Bling", "erro", "O Bling respondeu sobre outra loja: vínculo não conferido.");
         else {
           const ligados = [...new Set((v.anuncios || []).filter((a) => txt(a.produto_id) === r.blingProdutoId).map((a) => normalizarMLB(a.mlb)).filter(Boolean))];
-          const ativos = ligados.filter((m) => ativosML.includes(m));
-          if (ativos.length) add("Vínculo Bling", outros, `O produto Bling já está vinculado a anúncio ATIVO desta conta: ${ativos.join(", ")}.`);
+          const ativosTodos = ligados.filter((m) => ativosML.includes(m));
+          // (23/11) Anúncio ativo de OUTRO tipo que você confirmou: o novo usa o MESMO produto Bling (nada é criado).
+          const ativos = ativosTodos.filter((m) => !(confirmadosOutro.has(m) && tipoNovo));
+          if (!ativos.length && ativosTodos.length) add("Vínculo Bling", "aviso", `O produto Bling ${r.blingProdutoId} já está vinculado a ${ativosTodos.join(", ")} (outro tipo, confirmado por você). O novo anúncio usa o MESMO produto: nada é criado no Bling.`);
+          else if (ativos.length) add("Vínculo Bling", outros, `O produto Bling já está vinculado a anúncio ATIVO desta conta: ${ativos.join(", ")}.`);
           else if (ligados.length) add("Vínculo Bling", "aviso", `Vínculos antigos (não ativos no ML) ficam como histórico: ${ligados.join(", ")}.`);
           else add("Vínculo Bling", "ok", `Nenhum anúncio desta conta vinculado ao produto na loja ${loja.bling_loja_nome}.`);
         }

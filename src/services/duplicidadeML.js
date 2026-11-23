@@ -89,7 +89,7 @@ export function situacaoMLBRegistrado({ mlb, conta, resp }) {
   const it = resp.dados;
   if (!it || typeof it !== "object" || String(it.id || "").toUpperCase() !== id) return { ...base, motivo: "resposta ambígua do Mercado Livre" };
   const sub = Array.isArray(it.sub_status) ? it.sub_status.map(String) : [];
-  const info = { ...base, status: String(it.status || ""), sub_status: sub };
+  const info = { ...base, status: String(it.status || ""), sub_status: sub, tipo: String(it.listing_type_id || "") };
   if (String(it.seller_id ?? "") !== contaTxt) return { ...info, motivo: `vendedor diferente no Mercado Livre (${it.seller_id ?? "—"})` };
   if (!info.status) return { ...info, motivo: "resposta ambígua do Mercado Livre (sem status)" };
   const situacao = classificarSituacaoML(it);
@@ -281,7 +281,7 @@ export async function verificarDuplicidadeML({ conta, codigos = [], consultar, l
     if (anuncioEncerradoML(it)) continue; // encerrado/excluído não bloqueia
     const c = compararAnuncio(it, codigoNorm);
     if (!c) continue;
-    const reg = { id: it.id, status: it.status, titulo: String(it.title || "").slice(0, 80), motivo: c.motivo };
+    const reg = { id: it.id, status: it.status, titulo: String(it.title || "").slice(0, 80), motivo: c.motivo, tipo: String(it.listing_type_id || "") };
     (c.tipo === "sku" ? duplicados : possiveis).push(reg);
   }
   return { verificado: true, duplicados, possiveis, buscas, candidatos: candidatos.size, codigoNorm };

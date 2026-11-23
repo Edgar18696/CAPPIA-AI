@@ -132,6 +132,9 @@ import ProdutoExistenteSKU from "./ProdutoExistenteSKU";
 import AvisoSKU from "./AvisoSKU";
 import { lerFichasDoCodigo } from "../services/produtoExistenteService";
 import { fichasExistentes } from "../services/produtoExistenteSKU";
+import { montarProvisorioDasFontes } from "../services/fontesAnuncioProvisorio";
+import { valorSemSobrescrever, campoDoUsuario, FONTE as FONTE_PROVISORIO } from "../services/anuncioProvisorio";
+import { nomeDaLoja } from "../services/duplicidadeML";
 
 import {
   motorCopilotoIA,
@@ -922,6 +925,32 @@ const [descricao, setDescricaoDigitada] = useState("");
 // O que é digitado é padronizado ao sair do campo (sem pular o cursor).
 const setTitulo = useCallback((v) => setTituloDigitado((ant) => padronizarTitulo(typeof v === "function" ? v(ant) : v)), []);
 const setDescricao = useCallback((v) => setDescricaoDigitada((ant) => padronizarDescricao(typeof v === "function" ? v(ant) : v)), []);
+// (23/11) Buscar e Montar: o texto que o PAIIA preencheu fica guardado aqui. Título/descrição
+// com OUTRO texto são do usuário e nunca são trocados por uma busca.
+const textoAutoRef = useRef({ titulo: "", descricao: "" });
+const textoAtualRef = useRef({ titulo: "", descricao: "" });
+useEffect(() => { textoAtualRef.current = { titulo, descricao }; }, [titulo, descricao]);
+const buscaIdRef = useRef(0);
+const [aproveitamento, setAproveitamento] = useState(null);
+/** Preenche título/descrição SEM substituir o que o usuário escreveu. Vazio não apaga nada. */
+function aplicarTextoAutomatico({ titulo: t = "", descricao: d = "" } = {}) {
+  const preservados = [];
+  const auto = { ...textoAutoRef.current };
+  const atual = { ...textoAtualRef.current };
+  if (String(t || "").trim()) {
+    const r = valorSemSobrescrever({ atual: atual.titulo, ultimoAutomatico: auto.titulo, novo: t });
+    if (r.preservado) preservados.push("título");
+    else { const v = padronizarTitulo(r.valor); setTituloDigitado(v); auto.titulo = v; atual.titulo = v; }
+  }
+  if (String(d || "").trim()) {
+    const r = valorSemSobrescrever({ atual: atual.descricao, ultimoAutomatico: auto.descricao, novo: d });
+    if (r.preservado) preservados.push("descrição");
+    else { const v = padronizarDescricao(r.valor); setDescricaoDigitada(v); auto.descricao = v; atual.descricao = v; }
+  }
+  textoAutoRef.current = auto;
+  textoAtualRef.current = atual;
+  return { titulo: atual.titulo, descricao: atual.descricao, preservados };
+}
 const [preco, setPreco] = useState("");
 const [tipoAnuncio, setTipoAnuncio] =
   useState("classico");
@@ -3034,26 +3063,43 @@ if (!precosComparaveis.length) {
   }
 }
 
-// (16/11) Código JÁ trabalhado (caso SKU 7527362): antes de pesquisar, lê as fichas deste código na
-// base PAIIA (leitura interna, nada externo). Havendo ficha, NADA é apagado nem pesquisado como peça
-// nova: aparece o quadro do produto existente (fichas, Bling e as 3 contas). Pesquisar como nova só
-// pelo seu toque em "É outra peça".
+// (16/11) Código JÁ trabalhado (caso SKU 7527362): lê as fichas deste código na base PAIIA (leitura
+// interna). (23/11) Não interrompe mais: o anúncio é montado do mesmo jeito (aproveitando o texto
+// da ficha existente) e o quadro do produto existente fica numa linha "Ver detalhes". Nada é apagado:
+// o que você escreveu continua; a duplicidade é conferida na Publicação.
 const [produtoExistente, setProdutoExistente] = useState(null);
+const [produtoExistenteAberto, setProdutoExistenteAberto] = useState(false);
 async function buscarComReconhecimento() {
   const cod = String(codigo || oem || "").trim();
   if (!cod || processando) return buscarEMontarAnuncio();
   const r = await lerFichasDoCodigo(cod).catch(() => null);
   const outras = r?.ok ? fichasExistentes(r.anuncios, fichaNovo.fichaId) : [];
-  if (outras.length) {
-    setProdutoExistente({ codigo: cod, fichas: outras });
-    return;
-  }
-  setProdutoExistente(null);
+  setProdutoExistenteAberto(false);
+  setProdutoExistente(outras.length ? { codigo: cod, fichas: outras } : null);
   return buscarEMontarAnuncio();
 }
-function pesquisarComoNova() {
-  setProdutoExistente(null);
-  buscarEMontarAnuncio();
+
+// (23/11) Completa o anúncio com as fontes já integradas (SÓ LEITURA): ficha PAIIA do código >
+// anúncio ML nosso com o MESMO SKU (REVELAÇÃO > LOJA ONLINE > CIEBR) > nome do Bling.
+//  semCatalogo: o catálogo não achou → monta título/descrição provisórios (o que falta vira "[A CONFIRMAR]").
+//  Com catálogo: só o texto de uma ficha já trabalhada substitui o do catálogo (nunca o do usuário).
+async function completarComFontes(codigoFinal, { semCatalogo = false, buscaId = 0 } = {}) {
+  const contas = contasConectadasNA.map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) }));
+  const prov = await montarProvisorioDasFontes({ codigo: codigoFinal, contas, fichaAtualId: fichaNovo.fichaId || "" });
+  if (buscaId !== buscaIdRef.current) return null; // outra busca começou: resultado velho não entra
+  const usar = semCatalogo || prov.fonte === FONTE_PROVISORIO.FICHA;
+  const aplicado = usar ? aplicarTextoAutomatico({ titulo: prov.titulo, descricao: prov.descricao }) : { preservados: [] };
+  const anunciadas = (prov.consulta?.ml || []).filter((m) => m?.anuncios?.length).map((m) => `${m.nome} (${m.anuncios.map((a) => a.mlb).join(", ")})`);
+  setAproveitamento({
+    codigo: codigoFinal,
+    usado: usar && Boolean(prov.rotulo) && Boolean(prov.titulo || prov.descricao),
+    provisorio: usar && prov.provisorio,
+    rotulo: prov.rotulo,
+    semFonte: semCatalogo && !prov.rotulo,
+    preservados: aplicado.preservados,
+    anunciadas,
+  });
+  return prov;
 }
 
 async function buscarEMontarAnuncio() {
@@ -3077,17 +3123,26 @@ async function buscarEMontarAnuncio() {
 
   // Outro código = outro anúncio: a próxima gravação cria OUTRA ficha (a
   // anterior continua salva na base e aparece na Central).
+  let outroProduto = false;
   if (!fichaNovo.fichaServeParaCodigo(codigoFinal)) {
     fichaNovo.novaFicha();
+    outroProduto = true;
     // Outro anúncio: nada técnico do anterior (tipo, peso, medidas) passa.
     zerarDadosTecnicos();
     // ...nem fotos, preço, custo ou clip do anúncio anterior.
     zerarDadosDoAnuncioAnterior();
   }
 
+  const buscaId = ++buscaIdRef.current;
+  setAproveitamento(null);
   setOem("");
-  setTitulo("");
-  setDescricao("");
+  // (23/11) Título/descrição: outro produto = começa limpo. Mesmo código = só sai o que o
+  // PAIIA preencheu; o que o usuário escreveu ou corrigiu fica.
+  const limparTitulo = outroProduto || !campoDoUsuario(textoAtualRef.current.titulo, textoAutoRef.current.titulo);
+  const limparDescricao = outroProduto || !campoDoUsuario(textoAtualRef.current.descricao, textoAutoRef.current.descricao);
+  if (limparTitulo) { setTitulo(""); textoAtualRef.current.titulo = ""; }
+  if (limparDescricao) { setDescricao(""); textoAtualRef.current.descricao = ""; }
+  textoAutoRef.current = { titulo: "", descricao: "" };
   setPecaEncontrada(null);
   setDiagnostico(null);
   setAuditoria(null);
@@ -3123,6 +3178,7 @@ async function buscarEMontarAnuncio() {
         codigoFinal,
         linhasBaseValidada
       );
+      completarComFontes(codigoFinal, { buscaId }).catch(() => null);
       return;
     }
 
@@ -3629,13 +3685,11 @@ const descricaoResultado =
       oemResultado
     );
 
-    setTitulo(
-      tituloResultado
-    );
-
-    setDescricao(
-      descricaoResultado
-    );
+    // (23/11) Catálogo preenche só o que não é do usuário.
+    const textoFinal = aplicarTextoAutomatico({
+      titulo: tituloResultado,
+      descricao: descricaoResultado,
+    });
 
     setPreco(
       resultado?.preco || ""
@@ -3673,10 +3727,10 @@ const descricaoResultado =
           oemResultado,
 
         titulo:
-          tituloResultado,
+          textoFinal.titulo,
 
         descricao:
-          descricaoResultado,
+          textoFinal.descricao,
 
         preco:
           resultado?.preco ||
@@ -3749,6 +3803,8 @@ const descricaoResultado =
       setEtapaProcessamento("");
       setProgressoProcessamento(0);
     }, 1000);
+    // (23/11) Em segundo plano: texto de ficha já trabalhada deste código e onde ele já está anunciado.
+    completarComFontes(codigoFinal, { buscaId }).catch(() => null);
   } catch (erro) {
     // Base PAIIA não tem o código → Paizinho pesquisa em fontes originais.
     // Erros técnicos continuam no fluxo antigo (alerta).
@@ -3756,17 +3812,24 @@ const descricaoResultado =
       ehNaoEncontradoNosCatalogos(erro?.message)
     ) {
       if (!PESQUISA_EXTERNA_CRIAR_ANUNCIO_ATIVA) {
-        // Sem pesquisa externa: só o aviso. Nada de aplicação, veículo,
-        // motor, OEM ou descrição — o código digitado fica no campo.
+        // Sem pesquisa externa. Nada de aplicação, veículo, motor ou OEM
+        // inventado — o código digitado fica no campo. (23/11) Título e
+        // descrição PROVISÓRIOS com o que é confirmado (ficha PAIIA, anúncio
+        // ML do mesmo SKU, nome do Bling); o resto vai como "[A CONFIRMAR]".
         if (digitadoNoOem) {
           setOem(codigoFinal);
         } else {
           setCodigo(codigoFinal);
         }
+        setEtapaProcessamento("🔎 Não está nos catálogos. Montando com os dados do PAIIA, do Bling e do Mercado Livre...");
+        setProgressoProcessamento(60);
+        const prov = await completarComFontes(codigoFinal, { semCatalogo: true, buscaId }).catch(() => null);
         setPesquisaPaizinho({
           status: "nao_encontrado_catalogos",
           codigoPesquisado: codigoFinal,
-          mensagem: MENSAGEM_NAO_ENCONTRADO_CATALOGOS,
+          mensagem: prov?.rotulo
+            ? `Código não encontrado nos catálogos. Título e descrição PROVISÓRIOS montados com: ${prov.rotulo}. Confira e edite à vontade.`
+            : `${MENSAGEM_NAO_ENCONTRADO_CATALOGOS} Nenhuma outra fonte tinha dados: a descrição traz só o código e o que falta confirmar.`,
         });
         setProcessando(false);
         setEtapaProcessamento("");
@@ -3810,8 +3873,7 @@ function aplicarBaseValidadaPaizinho(
 
   setCodigo(codigoFinal);
   if (campos.oem) setOem(campos.oem);
-  if (campos.titulo) setTitulo(campos.titulo);
-  if (campos.descricao) setDescricao(campos.descricao);
+  aplicarTextoAutomatico({ titulo: campos.titulo, descricao: campos.descricao });
 
   if (campos.pecaEncontrada) {
     const fontesBase =
@@ -5362,12 +5424,32 @@ marcarAnuncioPronto({
       : ""
   }
 />
-        {produtoExistente && (
+        {/* (23/11) Uma linha só, sem interromper: de onde veio o texto e onde o código já está. */}
+        {(aproveitamento || produtoExistente) && !processando && (
+          <div data-paiia-aproveitamento style={{ fontSize: 13, color: "#bae6fd", margin: "8px 0", lineHeight: 1.5 }}>
+            {aproveitamento?.usado && (
+              <div>
+                📋 Título e descrição {aproveitamento.provisorio ? <b style={{ color: "#fde68a" }}>PROVISÓRIOS</b> : "aproveitados"} de: {aproveitamento.rotulo}.
+                {aproveitamento.provisorio ? " O que não foi confirmado está marcado com [A CONFIRMAR] e bloqueia a publicação até você conferir." : ""}
+              </div>
+            )}
+            {aproveitamento?.preservados?.length > 0 && <div>✏️ Seu texto foi mantido ({aproveitamento.preservados.join(" e ")}).</div>}
+            {aproveitamento?.anunciadas?.length > 0 && <div>ℹ️ Já anunciado em: {aproveitamento.anunciadas.join(" · ")}. Pode preparar outro anúncio; a duplicidade é conferida na Publicação.</div>}
+            {produtoExistente && (
+              <div>
+                📦 Este código já tem {produtoExistente.fichas.length} ficha(s) no PAIIA.{" "}
+                <button type="button" data-paiia-ver-produto-existente onClick={() => setProdutoExistenteAberto((v) => !v)} style={{ background: "none", border: "none", color: "#38bdf8", textDecoration: "underline", cursor: "pointer", fontSize: 13, padding: 0 }}>
+                  {produtoExistenteAberto ? "Fechar detalhes" : "Ver detalhes"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {produtoExistente && produtoExistenteAberto && (
           <ProdutoExistenteSKU
             codigo={produtoExistente.codigo}
             fichas={produtoExistente.fichas}
-            onPesquisarMesmoAssim={pesquisarComoNova}
-            onFechar={() => setProdutoExistente(null)}
+            onFechar={() => setProdutoExistenteAberto(false)}
           />
         )}
         </div>

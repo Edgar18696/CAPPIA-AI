@@ -106,7 +106,8 @@ const chaveLinha = (s) => minuscula(semAcento(s)).replace(/\s+/g, " ").trim();
 const RE_ROTULO_PROTEGIDO = /^(compativel com|compatibilidade|compativeis|aplicac(ao|oes)|veiculos?|montadoras?|modelos?|motor(es|izacao|izacoes)?|anos?|periodo|codigos?|referencias?|equivalen|oem|sku|catalogos?|fontes?|pagina|informacoes encontradas|origem)\b/;
 
 // Linhas fixas do modelo oficial da loja: ficam como estão.
-const RE_LINHA_FIXA = /^(atencao|importante|especificacoes tecnicas:|condicao do item:|garantia:|conteudo da embalagem:)/;
+// (23/11) "[A CONFIRMAR]" e "INFORMAÇÕES CONFIRMADAS" do anúncio pré-montado também ficam como estão.
+const RE_LINHA_FIXA = /^(atencao|importante|especificacoes tecnicas:|condicao do item:|garantia:|conteudo da embalagem:|\[a confirmar\]|informacoes confirmadas$)/;
 
 export function padronizarDescricao(descricao, opcoes = {}) {
   if (typeof descricao !== "string") return descricao;

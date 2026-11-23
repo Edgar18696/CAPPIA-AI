@@ -253,15 +253,18 @@ test("aproveitar para CIEBR (base falsa): ficha nova com os mesmos dados, sem ML
   assert.equal(again.anuncioId, r.anuncioId);
 });
 
-test("Novo Anúncio: 'Buscar' lê as fichas do código ANTES de pesquisar; havendo ficha, nada é apagado", () => {
+// (23/11) Regra nova do Edgar: código existente NÃO interrompe. As fichas são lidas antes, o anúncio é
+// montado do mesmo jeito (sem apagar o texto do usuário) e o quadro fica numa linha "Ver detalhes".
+test("Novo Anúncio: 'Buscar' lê as fichas do código ANTES de pesquisar; havendo ficha, monta sem interromper", () => {
   const t = ler("src/components/NovoAnuncio.jsx");
   assert.match(t, /buscarEMontarAnuncio=\{buscarComReconhecimento\}/);
   const g = t.slice(t.indexOf("async function buscarComReconhecimento()"), t.indexOf("async function buscarEMontarAnuncio()"));
   const leitura = g.indexOf("lerFichasDoCodigo(");
-  const retorno = g.indexOf("setProdutoExistente({ codigo: cod, fichas: outras });");
-  assert.ok(leitura > 0 && retorno > leitura);
-  assert.ok(g.slice(retorno, g.indexOf("return;", retorno) + 7).includes("return;"), "não segue para a pesquisa");
-  assert.match(t, /<ProdutoExistenteSKU[\s\S]*?onPesquisarMesmoAssim=\{pesquisarComoNova\}/);
+  const quadro = g.indexOf("setProdutoExistente(outras.length ? { codigo: cod, fichas: outras } : null);");
+  const segue = g.indexOf("return buscarEMontarAnuncio();", quadro);
+  assert.ok(leitura > 0 && quadro > leitura && segue > quadro, "lê as fichas, guarda o quadro e segue para montar");
+  assert.match(t, /data-paiia-ver-produto-existente/);
+  assert.doesNotMatch(t, /onPesquisarMesmoAssim=\{/, "sem o botão que apagava título e descrição");
   const p = ler("src/components/ProdutoExistenteSKU.jsx");
   assert.doesNotMatch(p, /useEffect/, "o painel não consulta ML/Bling sozinho (só pelo botão — regra de 17/10)");
   assert.doesNotMatch(p, /"publicar"|criar_produto/);

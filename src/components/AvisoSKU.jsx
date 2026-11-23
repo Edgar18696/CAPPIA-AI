@@ -14,11 +14,12 @@ import { enderecoDaFicha } from "../services/fichasCentral";
 import { nomeDaLoja } from "../services/duplicidadeML";
 import {
   ESTADO_CONSULTA, PENDENCIA, ESPERA_DIGITACAO_SKU_MS, consultarSKURapido, consultarBlingInicial, chaveConsulta,
-  criarCacheConsulta, resumoIndicador, oportunidadesSKU, linkProdutoBling, textoEstoque, contasDoSKU, ESTADO_LINHA,
+  cacheConsultaSKU, resumoIndicador, oportunidadesSKU, linkProdutoBling, textoEstoque, contasDoSKU, ESTADO_LINHA,
 } from "../services/consultaInicialSKU";
 
 const TEXTO_LINHA = {
-  [ESTADO_LINHA.ANUNCIADA]: "já anunciado — não crie outro",
+  // (23/11) Não impede preparar outro anúncio (outro tipo/canal): a duplicidade é conferida na Publicação.
+  [ESTADO_LINHA.ANUNCIADA]: "já anunciado — a publicação confere a duplicidade",
   [ESTADO_LINHA.LIVRE]: "sem anúncio deste SKU",
   [ESTADO_LINHA.EM_ANDAMENTO]: "ficha em andamento",
   [ESTADO_LINHA.CONFERIR]: "confira",
@@ -34,7 +35,8 @@ const COR_LINHA = {
   [ESTADO_LINHA.NAO_CONECTADA]: "#64748b",
 };
 
-const cache = criarCacheConsulta();
+// (23/11) Mesmo cache do "Buscar e Montar": a consulta não é repetida.
+const cache = cacheConsultaSKU;
 const STATUS_FICHA = { publicado: "publicada", publicado_com_pendencia: "publicada", publicando: "publicando", conferencia_aprovada: "aprovada", rascunho: "rascunho", erro_publicacao: "erro na publicação" };
 const COR = { existe: "#fbbf24", conferir: "#fbbf24", nao_encontrado: "#94a3b8", indisponivel: "#fca5a5" };
 
