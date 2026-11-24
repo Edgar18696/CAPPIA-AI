@@ -12,7 +12,8 @@ const telasDoCodigo = [...HOME.matchAll(/^\s*tela: "([^"]+)",/gm)].map((m) => m[
 
 test("Home: exatamente Mídias PAIIA, Banner Express IA e Criar meu Mascote ficam fora da vista", () => {
   assert.deepEqual([...TELAS_FORA_DA_HOME].sort(), ["bannerStudio", "criarMascotePaizinho", "midiasAppia"]);
-  assert.match(HOME, /\{cards\.filter\(\(card\) => cartaoVisivelNaHome\(card\.tela\)\)\.map\(\(card\) => \(/);
+  // (24/11) + filtro por aparelho (PAIIA Voz só no celular): ver navegacaoAparelho.test.mjs.
+  assert.match(HOME, /\{cards\.filter\(\(card\) => cartaoVisivelNaHome\(card\.tela\) && cartaoVisivelNoAparelho\(card\.tela, ehCelular\(\)\)\)\.map\(\(card\) => \(/);
   assert.equal((HOME.match(/cards\.map\(/g) || []).length, 0, "nenhuma lista de cartões sem o filtro");
 });
 

@@ -231,10 +231,10 @@ test("5) piloto: publica UMA vez, avisa 'publicado' e, liberada a tela (Criar Pr
   assert.ok(piloto.includes("const encerrado = () => !enviando && Boolean(p.encerrado?.());"));
 });
 
-test("6) tela da publicação: 'Anúncio Publicado Com Sucesso' + Criar Próximo Anúncio + Fechar; registra as conferências na ficha", () => {
+test("6) tela da publicação: 'Anúncio Publicado Com Sucesso' + Criar Próximo Anúncio + Voltar para o Início; registra as conferências na ficha", () => {
   const t = ler("src/components/PilotoAutomaticoPublicacao.jsx");
   assert.ok(t.includes("✅ Anúncio Publicado Com Sucesso"));
-  assert.ok(t.includes("data-paiia-criar-proximo") && t.includes("＋ Criar Próximo Anúncio") && t.includes("data-paiia-fechar-piloto") && t.includes(">Fechar<"));
+  assert.ok(t.includes("data-paiia-criar-proximo") && t.includes("＋ Criar Próximo Anúncio") && t.includes("data-paiia-fechar-piloto") && t.includes(">🏠 Voltar para o Início<"));
   assert.ok(t.includes("registrarPosPublicacao({ anuncioId: d.anuncioId, mlb: pub.mlb"));
   assert.ok(t.includes("marcarFichaPublicada(d.anuncioId, pub.mlb)"));
   assert.ok(!t.includes("✅ ESTOQUE CONFERIDO</div>"), "estoque não aparece conferido sem conferência real");

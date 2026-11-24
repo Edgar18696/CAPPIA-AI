@@ -7,6 +7,8 @@ import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
 import { ROTULO_CONTA_INTERNA_TESTE } from "../config/contasInternasPaiia";
 // (P-08) Cartões fora da vista da Home (a tela continua existindo): ver config/homePaiia.js.
 import { cartaoVisivelNaHome } from "../config/homePaiia";
+// (24/11) PAIIA Voz só aparece no celular; no computador fica oculto (a programação continua).
+import { cartaoVisivelNoAparelho, ehCelular } from "../config/aparelhoPaiia";
 
 export default function Home({
   totalFotos,
@@ -238,7 +240,7 @@ export default function Home({
           marginTop: "20px",
         }}
       >
-        {cards.filter((card) => cartaoVisivelNaHome(card.tela)).map((card) => (
+        {cards.filter((card) => cartaoVisivelNaHome(card.tela) && cartaoVisivelNoAparelho(card.tela, ehCelular())).map((card) => (
           <button
             key={card.titulo}
             type="button"

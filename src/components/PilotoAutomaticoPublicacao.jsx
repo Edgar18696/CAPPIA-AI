@@ -14,7 +14,7 @@ import { registrarPosPublicacao } from "../services/posPublicacaoService";
 import { marcarFichaPublicada } from "../services/posPublicacao";
 import { marcarFichaLiberada } from "../modules/paiiaVoz/servicos/limpezaPosPublicacaoVoz";
 
-export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoId = "", anuncioId = "", quantidade = "", onProximo, onCorrigir }) {
+export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoId = "", anuncioId = "", quantidade = "", onProximo, onCorrigir, onInicio }) {
   // Nº da autorização: do PAIIA Voz (?auto= na URL) ou da autorização única do Novo Anúncio (autoId).
   const auto = autoId || autorizacaoDaUrl(window.location.href);
   const [st, setSt] = useState({ etapa: "canais", texto: "", fim: null });
@@ -84,11 +84,12 @@ export default function PilotoAutomaticoPublicacao({ conta = "", sku = "", autoI
     encerradoRef.current = true;
     setFechado(true);
     if (proximo) onProximo?.();
+    else onInicio?.();
   };
   const botoes = st.publicado ? (
     <div data-paiia-piloto-botoes style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
       <button type="button" data-paiia-criar-proximo onClick={() => liberar(true)} style={{ flex: "1 1 200px", padding: "12px 14px", borderRadius: 10, border: "1px solid #2f5fd0", background: "linear-gradient(160deg,#1d4ed8 0%,#123a8a 100%)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>＋ Criar Próximo Anúncio</button>
-      <button type="button" data-paiia-fechar-piloto onClick={() => liberar(false)} style={{ flex: "1 1 120px", padding: "12px 14px", borderRadius: 10, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>Fechar</button>
+      <button type="button" data-paiia-fechar-piloto data-paiia-voltar-inicio onClick={() => liberar(false)} style={{ flex: "1 1 160px", padding: "12px 14px", borderRadius: 10, border: "1px solid #334155", background: "#1e293b", color: "#e2e8f0", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>🏠 Voltar para o Início</button>
     </div>
   ) : null;
   // (09/11) Publicação PAUSADA ou ainda antes do envio: a ficha já está salva na conta (anuncioId).

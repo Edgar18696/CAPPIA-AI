@@ -51,7 +51,8 @@ import { fotosIniciaisConferencia, guardarFotosEmMemoria, simuladorEhDoAnuncio, 
 import { lerAplicacoesDaFicha, valorAplicacoesDaFicha } from "../services/aplicacoesManuaisLocal";
 import FichaPublicadaPAIIA from "./FichaPublicadaPAIIA";
 import { fichaSoNoNovoAnuncio, rascunhoDaFicha, idFichaValido } from "../services/fichaNovoAnuncio";
-import { abrirFichaNoNovoAnuncio } from "../services/aberturaNovoAnuncio";
+import { abrirFichaNoNovoAnuncio, iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
+import { ehCelular, telaDoProximoAnuncio } from "../config/aparelhoPaiia";
 import {
   edicoesDoNovoAnuncio,
   medidaCompletaFicha,
@@ -5098,9 +5099,21 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
                 }, 300);
               }}
               onProximo={() => {
-                // (08/11) Publicado: abre o PAIIA Voz com uma ficha nova e limpa (a anterior fica salva na conta).
-                try { window.history.replaceState(window.history.state, "", "/?tela=paiiaVoz"); } catch { /* segue */ }
-                setScreen?.("paiiaVoz");
+                // (24/11) Celular: abre o PAIIA Voz com uma ficha nova e limpa (como desde 08/11).
+                // Computador: abre o Criar Anúncio tradicional com uma ficha limpa (a anterior fica salva na conta).
+                if (telaDoProximoAnuncio(ehCelular()) === "paiiaVoz") {
+                  try { window.history.replaceState(window.history.state, "", "/?tela=paiiaVoz"); } catch { /* segue */ }
+                  setScreen?.("paiiaVoz");
+                  return;
+                }
+                iniciarAnuncioNovo();
+                try { window.history.replaceState(window.history.state, "", "/?tela=novoAnuncio"); } catch { /* segue */ }
+                setScreen?.("novoAnuncio");
+              }}
+              onInicio={() => {
+                // (24/11) "Voltar para o Início": só navega; a ficha publicada/pendente fica salva na conta.
+                try { window.history.replaceState(window.history.state, "", "/"); } catch { /* segue */ }
+                setScreen?.("home");
               }}
             />
             {/* (Caminho único) Com a autorização única disponível (LOJA ONLINE), o fluxo antigo fica ESCONDIDO:
