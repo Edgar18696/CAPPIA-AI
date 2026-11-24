@@ -84,7 +84,7 @@ export function identidadeMLB({ mlb, conta, sku, resp }) {
   const base = { mlb: m, conta: idConta(conta), skus: [], variacoes: [], status: "", situacao: "", titulo: "", vendedor: "", onde: "" };
   if (!resp || resp.ok !== true || !resp.dados?.id) return { ...base, tipo: IDENTIDADE.NAO_LIDO, motivo: `não foi possível ler no Mercado Livre (${txt(resp?.erro) || "sem resposta"})` };
   const it = resp.dados;
-  const r = { ...base, status: txt(it.status), situacao: situacaoDoItemML(it), titulo: txt(it.title).slice(0, 90), vendedor: idConta(it.seller_id), variacoes: skusDasVariacoes(it), skus: skusDoAnuncio(it) };
+  const r = { ...base, status: txt(it.status), situacao: situacaoDoItemML(it), titulo: txt(it.title).slice(0, 90), vendedor: idConta(it.seller_id), listagem: txt(it.listing_type_id), variacoes: skusDasVariacoes(it), skus: skusDoAnuncio(it) };
   if (MLB(it.id) !== m) return { ...r, tipo: IDENTIDADE.NAO_LIDO, motivo: "o Mercado Livre devolveu outro anúncio" };
   if (r.vendedor !== r.conta) return { ...r, tipo: IDENTIDADE.OUTRA_CONTA, motivo: `pertence ao vendedor ${r.vendedor} (${nomeContaPublicacao(r.vendedor)}), não a ${nomeContaPublicacao(r.conta)}` };
   const alvo = normalizarCodigoComparacao(sku);
@@ -140,7 +140,7 @@ export function quadroProdutoExistente({ fichas = [], reconhecimento = null } = 
     const nome = nomeContaPublicacao(conta);
     const rc = contasRec.get(conta) || null;
     // Só MLB cujo anúncio no ML tem ESTE SKU (busca por SKU/variações ou registro sem divergência).
-    const anuncios = (rc?.anuncios || []).filter((a) => MLB(a.mlb) && !a.divergente).map((a) => ({ mlb: MLB(a.mlb), status: txt(a.status || a.situacao), registrado: Boolean(a.registrado) }));
+    const anuncios = (rc?.anuncios || []).filter((a) => MLB(a.mlb) && !a.divergente).map((a) => ({ mlb: MLB(a.mlb), status: txt(a.status || a.situacao), registrado: Boolean(a.registrado), tipo: txt(a.tipo) }));
     for (const a of anuncios) confirmados.add(a.mlb);
     const outraPeca = (rc?.anuncios || []).filter((a) => a.divergente).map((a) => ({ mlb: MLB(a.mlb), motivo: "o anúncio no Mercado Livre tem OUTRO SKU (não é desta peça)" }));
     const possiveis = (rc?.possiveis || []).map((p) => ({ mlb: MLB(p.mlb), motivo: txt(p.motivo) || "mesmo código no título/número da peça, SKU diferente" }));
@@ -158,7 +158,7 @@ export function quadroProdutoExistente({ fichas = [], reconhecimento = null } = 
       } else if (id.tipo === IDENTIDADE.CONFIRMADO && ["encerrado", "excluido"].includes(id.situacao)) {
         historico.push({ mlb: x.mlb, ficha: x.ficha, motivo: `anúncio deste SKU, mas ${id.situacao} no Mercado Livre (histórico)` });
       } else if (id.tipo === IDENTIDADE.CONFIRMADO) {
-        anuncios.push({ mlb: x.mlb, status: id.status, registrado: false, daFicha: true, onde: id.onde });
+        anuncios.push({ mlb: x.mlb, status: id.status, registrado: false, daFicha: true, onde: id.onde, tipo: txt(id.listagem) });
         confirmados.add(x.mlb);
       } else if (id.tipo === IDENTIDADE.OUTRO_SKU || id.tipo === IDENTIDADE.OUTRA_CONTA) {
         outraPeca.push({ mlb: x.mlb, ficha: x.ficha, motivo: id.motivo, titulo: id.titulo });

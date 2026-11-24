@@ -75,7 +75,7 @@ export function avaliarContaML({ conta, nome = "", conectada = true, resultado =
   if (erro) return { ...base, ...incompleta(erro) };
   if (!resultado || typeof resultado !== "object") return { ...base, ...incompleta("sem resposta do Mercado Livre") };
   if (resultado.erro) return { ...base, ...incompleta(resultado.erro) };
-  const mapa = (l) => (Array.isArray(l) ? l : []).map((d) => ({ mlb: txt(d?.id).toUpperCase(), status: txt(d?.status), titulo: txt(d?.titulo), motivo: txt(d?.motivo) }));
+  const mapa = (l) => (Array.isArray(l) ? l : []).map((d) => ({ mlb: txt(d?.id).toUpperCase(), status: txt(d?.status), titulo: txt(d?.titulo), motivo: txt(d?.motivo), tipo: txt(d?.tipo) }));
   const confirmados = mapa(resultado.duplicados);
   const possiveis = mapa(resultado.possiveis);
   if (confirmados.length) return { ...base, estado: ESTADO_RECONHECIMENTO.ENCONTRADO, anuncios: confirmados, possiveis };

@@ -28,7 +28,7 @@ function ficha(extra = {}) {
 }
 
 /** Mercado Livre / Bling / base simulados; registra cada chamada (prova de que só há leitura). */
-function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada", atributoSemValor = false } = {}) {
+function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, skuTipo = "", blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada", atributoSemValor = false } = {}) {
   const chamadas = [];
   const categorias = {
     MLB456155: { name: "Lanternas de Pisca", path: ["Acessórios para Veículos", "Peças de Linha Pesada", "Iluminação", "Lanternas de Pisca"], tipo: tipoCategoria },
@@ -65,7 +65,7 @@ function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lantern
     if (/\/items\/search\?seller_sku=/.test(c)) return { ok: true, dados: { results: skuAtivo ? [skuAtivo] : [] } };
     if (/\/items\/search\?q=/.test(c)) return { ok: true, dados: { results: skuAtivo ? [skuAtivo] : [], paging: { total: skuAtivo ? 1 : 0 } } };
     if (c === "/items/MLB7920523934") return { ok: true, dados: { id: "MLB7920523934", seller_id: Number(LOJA), status: "closed", sub_status: ["deleted"] } };
-    if (skuAtivo && c === `/items/${skuAtivo}`) return { ok: true, dados: { id: skuAtivo, seller_id: Number(LOJA), status: "active", title: "Lanterna", seller_custom_field: "856371-305", attributes: [{ id: "SELLER_SKU", value_name: "856371-305" }] } };
+    if (skuAtivo && c === `/items/${skuAtivo}`) return { ok: true, dados: { id: skuAtivo, seller_id: Number(LOJA), status: "active", title: "Lanterna", ...(skuTipo ? { listing_type_id: skuTipo } : {}), seller_custom_field: "856371-305", attributes: [{ id: "SELLER_SKU", value_name: "856371-305" }] } };
     if (/\/shipping_options\/free/.test(c)) return { ok: true, dados: { coverage: { all_country: { list_cost: 13.85, billable_weight: 350, currency_id: "BRL" } } } };
     return { ok: false, erro: `não simulado: ${c}` };
   };
@@ -148,11 +148,20 @@ test("sem conta: pergunta a conta e não consulta nada no Mercado Livre", async 
   assert.ok(!w.chamadas.some((c) => c[1] === "ml_consulta"));
 });
 
-test("(regra 08/11) anúncio ATIVO do mesmo SKU na conta NÃO bloqueia: vira anúncio ADICIONAL, informado", async () => {
-  const w = mundo({ skuAtivo: "MLB5499135577" });
-  const p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: w.deps });
-  assert.equal(p.verificacoes.duplicidade.estado, "ok", p.verificacoes.duplicidade.texto);
-  assert.match(p.verificacoes.duplicidade.texto, /MLB5499135577.*anúncio ADICIONAL/);
+test("(regra 24/11) mesmo SKU na conta: mesmo tipo ou tipo desconhecido BLOQUEIA; tipo diferente pede confirmação na publicação", async () => {
+  // ficha(): Premium. Existente Premium = bloqueia.
+  let p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: mundo({ skuAtivo: "MLB5499135577", skuTipo: "gold_pro" }).deps });
+  assert.equal(p.verificacoes.duplicidade.estado, "bloqueio", p.verificacoes.duplicidade.texto);
+  assert.match(p.verificacoes.duplicidade.texto, /MLB5499135577.*Premium/);
+  // Existente sem tipo informado = bloqueia por segurança.
+  p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: mundo({ skuAtivo: "MLB5499135577" }).deps });
+  assert.equal(p.verificacoes.duplicidade.estado, "bloqueio");
+  assert.match(p.verificacoes.duplicidade.texto, /desconhecido/);
+  // Existente Clássico e novo Premium = informa; a confirmação é manual na tela de publicação.
+  p = await prepararConferenciaVoz(ficha(), { conta: LOJA, deps: mundo({ skuAtivo: "MLB5499135577", skuTipo: "gold_special" }).deps });
+  assert.equal(p.verificacoes.duplicidade.estado, "ok");
+  assert.match(p.verificacoes.duplicidade.texto, /tipo diferente.*confirmação é pedida na tela de publicação/);
+  assert.doesNotMatch(p.verificacoes.duplicidade.texto, /ADICIONAL/);
 });
 
 test("SKU fora do Bling: pergunta (o PAIIA não cria produto); estoque acima do Bling bloqueia", async () => {

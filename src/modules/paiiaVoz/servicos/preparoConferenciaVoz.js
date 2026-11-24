@@ -16,6 +16,7 @@ import { preferenciaDaPeca, preferenciaDoTermo, resolverCategoriaPreferida, atri
 import { resolverCompatibilidades, compatibilidadeNaoExigivel, aplicarVeiculosConfirmados } from "../../../services/compatibilidadeML.js";
 import { montarAtributosCategoria } from "../../../services/atributosCategoriaML.js";
 import { verificarDuplicidadeML, avaliarRegistrosBase, situacaoMLBRegistrado, nomeDaLoja } from "../../../services/duplicidadeML.js";
+import { avaliarOutroAnuncioNaConta } from "../../../services/anuncioProvisorio.js";
 import { conferirEstoque } from "../../../services/estoqueBlingPAIIA.js";
 import { parametrosCotacao, prontoParaCotar, cotarNoPreco, reais } from "../../../services/fretePrecificacao.js";
 
@@ -300,10 +301,14 @@ async function conferirDuplicidade(e, deps, conta) {
     conferidosBase.push({ ...situacaoMLBRegistrado({ mlb, conta, resp }), mlb: mlb || "sem MLB", ficha_origem: p?.anuncio_id || "" });
   }
   const av = avaliarRegistrosBase({ registros: outros, ml: { ...ml, conferidosBase } });
-  // (Regra definitiva 08/11) Outros anúncios do mesmo SKU NÃO bloqueiam: o usuário pode anunciar a mesma
-  // peça mais de uma vez. Só falha de consulta para; a repetição da MESMA autorização é barrada no servidor.
-  const existentes = [...new Set([...ml.duplicados.map((d) => `${d.id} ${d.status}`), ...av.pendentes.map((p) => p.mlb), ...ml.possiveis.map((d) => d.id)])];
-  if (existentes.length) return item("ok", `Duplicidade: já existem anúncios deste SKU nesta conta (${existentes.join(", ")}). Será criado um anúncio ADICIONAL, como você pediu.`, { existentes, duplicados: ml.duplicados.map((d) => d.id) });;
+  // (24/11) Regra única por tipo (a mesma da tela principal, da revisão final e do servidor):
+  // mesmo tipo ou tipo desconhecido = bloqueia; tipo diferente = a confirmação manual é pedida na tela de
+  // publicação (2º clique). Nunca libera sozinho. Possíveis (SKU diferente) seguem conferidos no 2º clique.
+  const avTipo = avaliarOutroAnuncioNaConta({ ml: { ...ml, conferidosBase }, tipoAnuncio: e.tipoAnuncio });
+  const extra = { existentes: avTipo.existentes.map((x) => x.mlb), duplicados: ml.duplicados.map((d) => d.id) };
+  if (avTipo.estado === "bloqueia") return item("bloqueio", `Duplicidade: ${avTipo.texto}`, extra);
+  if (avTipo.estado === "confirmar") return item("ok", `Duplicidade: ${avTipo.texto} A confirmação é pedida na tela de publicação (2º clique); sem ela nada é publicado.`, extra);
+  if (ml.possiveis.length) return item("ok", `Duplicidade: possível anúncio com o mesmo código e SKU diferente (${ml.possiveis.map((d) => d.id).join(", ")}). Conferido na tela de publicação antes de publicar.`, { existentes: ml.possiveis.map((d) => d.id), duplicados: [] });
   return item("ok", `Duplicidade: nenhum anúncio deste SKU na ${nomeDaLoja(conta)} (${ml.buscas} buscas).${av.anteriores.length ? ` ${av.anteriores.map((a) => a.texto).join(" ")}` : ""}`);
 }
 

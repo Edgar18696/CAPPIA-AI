@@ -64,6 +64,7 @@ import {
 import { conferirPadroesNoItem, conferirPadroesPublicados, padroesEsperadosConferencia } from "../services/padroesPublicacaoML";
 import { TEXTO_ESTOQUE_ZERO, linkProdutoBling } from "../services/consultaInicialSKU";
 import { avaliarOutroAnuncioNaConta, chaveOutroAnuncio, mlbsCobertos, temMarcaAConfirmar, MARCA_A_CONFIRMAR } from "../services/anuncioProvisorio";
+import { confirmacaoValida, confirmacaoDe } from "../services/regraDuplicidadeTipo";
 import { normalizarQuantidade, quantidadeDaFicha, conferirEstoque, montarProdutoBling, conferirProdutoCriado, conferirEstoqueSemBling, produtosBlingRegistradosDoSku, idsBlingDescartados, semBlingDescartados, situacaoProdutoBling, classificarVinculosBling, textoVinculoAntigo } from "../services/estoqueBlingPAIIA";
 import { conferirFichaPersistida, conferirCompatPersistida, modelosConfirmados, modelosFaltandoNaDescricao, TEXTO_MODELOS_FALTANDO } from "../services/publicacaoSegura";
 
@@ -1232,18 +1233,36 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
     }
     // Proteção dupla, conferida de novo NA HORA do clique (sem cache).
     // (Automático) outros anúncios do SKU não bloqueiam; repetição da MESMA autorização é barrada no servidor.
-    const base = autoPublicacao ? { registros: [] } : await consultarDuplicidadeBase(contaEscolhida);
+    // (24/11) Também na publicação AUTOMÁTICA a duplicidade é conferida de novo AGORA (base + Mercado Livre),
+    // com a regra única por tipo. Registros DESTA ficha não contam (retomada é tratada antes, pelo MLB da ficha).
+    const baseLida = await consultarDuplicidadeBase(contaEscolhida);
+    const base = autoPublicacao && !baseLida.erro ? { ...baseLida, registros: (baseLida.registros || []).filter((p) => String(p?.anuncio_id || "") !== String(ficha.anuncioId || "")) } : baseLida;
     if (!autoPublicacao) setDuplicidadeBase(base);
-    const noML = autoPublicacao || base.erro ? null : await consultarDuplicidadeML(contaEscolhida, base.registros || []);
+    const noML = base.erro ? null : await consultarDuplicidadeML(contaEscolhida, base.registros || []);
     if (noML) setDuplicidadeML(noML);
     const avBase = base.erro ? null : avaliarRegistrosBase({ registros: base.registros || [], ml: noML });
     // (23/11) Outro anúncio de OUTRO tipo nesta conta: só passa com a confirmação dada para ESTES MLBs agora.
     const outroAgora = avaliarOutroAnuncioNaConta({ ml: noML, tipoAnuncio: campos.tipoAnuncio });
-    const outroOk = outroAgora.estado === "confirmar" && Boolean(outroConfirmadoChave) && outroConfirmadoChave === chaveOutroAnuncio(outroAgora, campos.tipoAnuncio);
-    // (Regra 08/11 — publicação automática do PAIIA Voz) outros anúncios do mesmo SKU NÃO bloqueiam:
-    // só falhas de consulta param; a repetição da MESMA autorização é barrada no servidor.
+    // Automático: a confirmação é a do 2º clique na tela principal, gravada na ficha (estes MLBs, este tipo).
+    let confAuto = null;
+    if (autoPublicacao && outroAgora.estado === "confirmar") {
+      const lida = await obterAnuncio(ficha.anuncioId);
+      confAuto = lida?.ok ? lida.anuncio?.dados_conferencia?.contas_publicacao?.outro_tipo_confirmado?.[String(contaEscolhida)] || null : null;
+    }
+    const outroOk = autoPublicacao
+      ? confirmacaoValida(outroAgora, confAuto)
+      : outroAgora.estado === "confirmar" && Boolean(outroConfirmadoChave) && outroConfirmadoChave === chaveOutroAnuncio(outroAgora, campos.tipoAnuncio);
+    const duplicidadeConfirmada = outroOk ? confirmacaoDe(outroAgora) : null;
+    // (24/11) Nunca libera duplicidade sozinho, nem no automático: mesmo tipo ou tipo desconhecido bloqueia;
+    // outro tipo só com a confirmação manual destes MLBs. (Possíveis — SKU diferente — seguem a conferência do 2º clique.)
     const motivo = autoPublicacao
-      ? (base.erro ? `Base PAIIA não conferida (${base.erro}).` : noML?.erro ? `Mercado Livre não conferido (${noML.erro}).` : "")
+      ? (base.erro ? `Base PAIIA não conferida (${base.erro}).`
+        : noML?.erro ? `Mercado Livre não conferido (${noML.erro}).`
+          : outroAgora.estado !== "livre" && !outroOk
+            ? (outroAgora.estado === "confirmar" ? `${outroAgora.texto} A confirmação destes anúncios não foi dada na tela de publicação: confira de novo e confirme.` : outroAgora.texto)
+            : avBase && avBase.estado !== "ok" && !(outroOk && mlbsCobertos(avBase.pendentes.map((p) => p.mlb), outroAgora))
+              ? `A base PAIIA registra este código publicado nesta conta e o Mercado Livre não confirmou exclusão/encerramento (${(avBase.pendentes.length ? avBase.pendentes.map((p) => `${p.mlb}: ${p.motivo}`) : avBase.mlbs).join("; ")}).`
+              : "")
       : base.erro
       ? `Base PAIIA não conferida (${base.erro}).`
       : avBase && avBase.estado !== "ok" && !(outroOk && mlbsCobertos(avBase.pendentes.map((p) => p.mlb), outroAgora))
@@ -1295,6 +1314,8 @@ export default function RevisaoPublicacaoML({ autoPublicacao: autoPublicacaoProp
             confirmacao: "PUBLICAR",
             // (PAIIA Voz, publicação automática) nº ÚNICO da autorização: o servidor recusa repetição.
             ...(autoPublicacao ? { autorizacao_id: autoPublicacao } : {}),
+            // (24/11) O servidor confere a duplicidade de novo; outro tipo só com ESTA confirmação manual.
+            ...(duplicidadeConfirmada ? { duplicidade_confirmada: duplicidadeConfirmada } : {}),
           }, contaEscolhida);
           // (15/11) O MLB devolvido é MESMO deste anúncio? Relido no ML: SKU desta ficha e nenhuma outra ficha
           // com ele. Caso real: o servidor devolveu o MLB de OUTRO produto e ele foi gravado nesta ficha.

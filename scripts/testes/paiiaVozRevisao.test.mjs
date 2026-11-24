@@ -28,7 +28,7 @@ function ficha(extra = {}) {
 }
 
 /** Mercado Livre / Bling / base simulados; registra cada chamada (prova de que só há leitura). */
-function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada", atributoSemValor = false } = {}) {
+function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lanternas de Pisca", domain_id: "MLB-VEHICLE_TURN_SIGNAL_LIGHTS" }], skuAtivo = null, skuTipo = "", blingEncontrado = true, saldo = 10, registrosBase = [], tipoCategoria = "Linha Pesada", atributoSemValor = false } = {}) {
   const chamadas = [];
   const categorias = {
     MLB456155: { name: "Lanternas de Pisca", path: ["Acessórios para Veículos", "Peças de Linha Pesada", "Iluminação", "Lanternas de Pisca"], tipo: tipoCategoria },
@@ -64,7 +64,7 @@ function mundo({ preditor = [{ category_id: "MLB456155", category_name: "Lantern
     if (/\/items\/search\?seller_sku=/.test(c)) return { ok: true, dados: { results: skuAtivo ? [skuAtivo] : [] } };
     if (/\/items\/search\?q=/.test(c)) return { ok: true, dados: { results: skuAtivo ? [skuAtivo] : [], paging: { total: skuAtivo ? 1 : 0 } } };
     if (c === "/items/MLB7920523934") return { ok: true, dados: { id: "MLB7920523934", seller_id: Number(LOJA), status: "closed", sub_status: ["deleted"] } };
-    if (skuAtivo && c === `/items/${skuAtivo}`) return { ok: true, dados: { id: skuAtivo, seller_id: Number(LOJA), status: "active", title: "Lanterna", seller_custom_field: "856371-305", attributes: [{ id: "SELLER_SKU", value_name: "856371-305" }] } };
+    if (skuAtivo && c === `/items/${skuAtivo}`) return { ok: true, dados: { id: skuAtivo, seller_id: Number(LOJA), status: "active", title: "Lanterna", ...(skuTipo ? { listing_type_id: skuTipo } : {}), seller_custom_field: "856371-305", attributes: [{ id: "SELLER_SKU", value_name: "856371-305" }] } };
     if (/\/shipping_options\/free/.test(c)) return { ok: true, dados: { coverage: { all_country: { list_cost: 13.85, billable_weight: 350, currency_id: "BRL" } } } };
     return { ok: false, erro: `não simulado: ${c}` };
   };
@@ -168,10 +168,14 @@ test("Clássico é o padrão SEM pergunta (decisão 07/11); trocar para Premium 
   assert.equal(montarRevisao(row2).pendencias.some((p) => p.id === "modalidade"), false);
 });
 
-test("(regra 08/11) outro anúncio do mesmo SKU não vira pendência; falha de consulta continua bloqueando", async () => {
-  const row = await conferido(ficha(), mundo({ skuAtivo: "MLB5499135577" }));
-  const r = montarRevisao(row);
+test("(regra 24/11) mesmo SKU: tipo diferente não vira pendência aqui (confirmação na publicação); mesmo tipo/desconhecido vira; falha de consulta bloqueia", async () => {
+  // ficha(): Premium. Existente Clássico = outro tipo: a confirmação manual é pedida na tela de publicação.
+  let r = montarRevisao(await conferido(ficha(), mundo({ skuAtivo: "MLB5499135577", skuTipo: "gold_special" })));
   assert.ok(!r.pendencias.some((p) => p.id === "duplicidade"));
+  r = montarRevisao(await conferido(ficha(), mundo({ skuAtivo: "MLB5499135577", skuTipo: "gold_pro" })));
+  assert.ok(r.pendencias.some((p) => p.id === "duplicidade"), "mesmo tipo vira pendência");
+  r = montarRevisao(await conferido(ficha(), mundo({ skuAtivo: "MLB5499135577" })));
+  assert.ok(r.pendencias.some((p) => p.id === "duplicidade"), "tipo desconhecido vira pendência");
   const c = await import("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js");
   assert.ok(String(c.prepararConferenciaVoz).length > 0);
   assert.ok(fs.readFileSync(new URL("../../src/modules/paiiaVoz/servicos/preparoConferenciaVoz.js", import.meta.url), "utf8").includes('Duplicidade: Mercado Livre não conferido (${ml.erro}). Publicação bloqueada.'));

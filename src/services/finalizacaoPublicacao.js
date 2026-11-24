@@ -19,6 +19,7 @@
 import { ORDEM_CONTAS_QUADRO, ESTADO_QUADRO } from "./produtoExistenteSKU.js";
 import { SITUACAO_CONTA, nomeContaPublicacao } from "./contasPublicacaoML.js";
 import { ESTADO_RECONHECIMENTO } from "./reconhecimentoSKU.js";
+import { avaliarDuplicidadeTipo, confirmacaoDe, NOME_TIPO_ML } from "./regraDuplicidadeTipo.js";
 
 export const ESTADO_FINAL = Object.freeze({
   PUBLICADO: "publicado",
@@ -78,7 +79,7 @@ export function situacaoBling(bling, { registrados = [], sku = "" } = {}) {
  * → { linhas: [{ conta, nome, estado, rotulo, mlbs, motivos, avisos, acao }], bling, global }
  *   acao: { tipo: "publicar"|"retomar"|"nenhuma", conferida, texto }
  */
-export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes = [], fotos = 0, blingRegistrados = [], sku = "" } = {}) {
+export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes = [], fotos = 0, blingRegistrados = [], sku = "", tipoAnuncio = "" } = {}) {
   const mlbFicha = MLB(ficha.mlb);
   const contaFicha = idConta(ficha.conta);
   const envio = ficha.envio && ficha.envio.iniciado_em ? ficha.envio : null;
@@ -111,7 +112,14 @@ export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes
       return fim(ESTADO_FINAL.IMPEDIDO, [`Esta ficha é a publicação na ${nomeContaPublicacao(contaFicha)}: para ${nome}, use "Publicar em outra conta" na ficha publicada.`], undefined, []);
     }
     // 4) Anúncio deste SKU já existe nesta conta (confirmado no ML, inclusive variações).
-    if (q?.estado === ESTADO_QUADRO.ANUNCIADA) return fim(ESTADO_FINAL.JA_EXISTENTE, [`Já existe anúncio deste SKU nesta conta: ${mlbsQ.join(", ")}. Nada é duplicado.`]);
+    // (24/11) Regra única por tipo: mesmo tipo ou tipo desconhecido = JÁ EXISTENTE (bloqueia);
+    // TODOS de outro tipo (Clássico × Premium) = segue só com a sua confirmação manual no 2º clique.
+    let outroTipo = null;
+    if (q?.estado === ESTADO_QUADRO.ANUNCIADA) {
+      const avTipo = avaliarDuplicidadeTipo({ existentes: (q.anuncios || []).map((a) => ({ mlb: a.mlb, tipo: a.tipo })), tipoNovo: tipoAnuncio });
+      if (avTipo.estado !== "confirmar") return fim(ESTADO_FINAL.JA_EXISTENTE, [`Já existe anúncio deste SKU nesta conta: ${mlbsQ.join(", ")}. Nada é duplicado.`, ...(avTipo.estado === "bloqueia" && /desconhecido|não está definido/.test(avTipo.texto) ? [avTipo.texto] : [])]);
+      outroTipo = avTipo;
+    }
     // 5) Leituras que não terminaram / impedimentos.
     const motivos = [...globais];
     if (!q || q.estado === ESTADO_QUADRO.INCOMPLETA) motivos.push(`Mercado Livre não conferido nesta conta (${txt(q?.motivo) || "sem resposta"}).`);
@@ -130,6 +138,16 @@ export function situacaoFinalDasContas({ ficha = {}, quadro = null, verificacoes
       ...(q?.possiveis || []).map((o) => `${o.mlb}: ${o.motivo}`),
       ...(v?.situacao === SITUACAO_CONTA.CONFERIR ? (v.itens || []).filter((i) => i.nivel === "conferir").map((i) => `${i.item}: ${i.texto}`) : []),
     ];
+    // (24/11) Outro anúncio de TIPO DIFERENTE nesta conta: só com a sua confirmação manual (estes MLBs, este tipo).
+    const confOutro = outroTipo ? confirmacaoDe(outroTipo) : null;
+    if (outroTipo) {
+      const semRepetir = conferir.filter((t) => !t.includes(outroTipo.texto));
+      const nomeTipo = NOME_TIPO_ML[outroTipo.tipoNovo] || "";
+      if (bling.foraDaBusca) {
+        return fim(ESTADO_FINAL.CONFERIR, [outroTipo.texto, ...msgOutra, ...semRepetir, bling.texto], { tipo: "publicar", conferida: true, outroTipo: confOutro, descartarBling: bling.foraDaBusca, outraFicha, texto: `✅ Confirmo outro anúncio ${nomeTipo} nesta conta, conferi no Bling (produto ${bling.foraDaBusca.join(", ")} não existe) e publico na ${nome}${notaOutra}` }, mlbsQ);
+      }
+      return fim(ESTADO_FINAL.CONFERIR, [outroTipo.texto, ...msgOutra, ...semRepetir], { tipo: "publicar", conferida: true, outroTipo: confOutro, outraFicha, texto: `✅ Confirmo outro anúncio ${nomeTipo} nesta conta e publico na ${nome}${semRepetir.length ? " (conferi os demais avisos)" : ""}${notaOutra}` }, mlbsQ);
+    }
     // (16/11) Produto Bling registrado que não aparece no Bling: o 2º clique registra a SUA conferência
     // ("não existe mais") e o piloto faz UM cadastro protegido (relê o SKU antes; nunca duplica).
     if (bling.foraDaBusca) {

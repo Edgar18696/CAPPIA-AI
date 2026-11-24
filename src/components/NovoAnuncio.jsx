@@ -133,7 +133,8 @@ import AvisoSKU from "./AvisoSKU";
 import { lerFichasDoCodigo } from "../services/produtoExistenteService";
 import { fichasExistentes } from "../services/produtoExistenteSKU";
 import { montarProvisorioDasFontes } from "../services/fontesAnuncioProvisorio";
-import { valorSemSobrescrever, campoDoUsuario, FONTE as FONTE_PROVISORIO } from "../services/anuncioProvisorio";
+import { valorSemSobrescrever, campoDoUsuario, temMarcaAConfirmar, FONTE as FONTE_PROVISORIO } from "../services/anuncioProvisorio";
+import { normalizarCodigoFicha } from "../services/fichaNovoAnuncio";
 import { nomeDaLoja } from "../services/duplicidadeML";
 
 import {
@@ -931,6 +932,14 @@ const textoAutoRef = useRef({ titulo: "", descricao: "" });
 const textoAtualRef = useRef({ titulo: "", descricao: "" });
 useEffect(() => { textoAtualRef.current = { titulo, descricao }; }, [titulo, descricao]);
 const buscaIdRef = useRef(0);
+// (24/11) Código ao qual o título/descrição da tela pertencem. Outro código = texto limpo,
+// mesmo quando a ficha ainda não foi gravada (salvamento atrasado ou com falha).
+const codigoDoTextoRef = useRef("");
+useEffect(() => {
+  if (!codigoDoTextoRef.current && (titulo || descricao) && codigo) codigoDoTextoRef.current = normalizarCodigoFicha(codigo);
+  if (!titulo && !descricao) codigoDoTextoRef.current = "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [titulo, descricao]);
 const [aproveitamento, setAproveitamento] = useState(null);
 /** Preenche título/descrição SEM substituir o que o usuário escreveu. Vazio não apaga nada. */
 function aplicarTextoAutomatico({ titulo: t = "", descricao: d = "" } = {}) {
@@ -3124,6 +3133,15 @@ async function buscarEMontarAnuncio() {
   // Outro código = outro anúncio: a próxima gravação cria OUTRA ficha (a
   // anterior continua salva na base e aparece na Central).
   let outroProduto = false;
+  // (24/11) O texto na tela é de OUTRO código (ficha ainda não gravada) = também outro anúncio.
+  const codigoNovo = normalizarCodigoFicha(codigoFinal);
+  const textoDeOutroCodigo = Boolean(codigoDoTextoRef.current) && codigoDoTextoRef.current !== codigoNovo;
+  if (textoDeOutroCodigo && fichaNovo.fichaServeParaCodigo(codigoFinal)) {
+    fichaNovo.novaFicha();
+    outroProduto = true;
+    zerarDadosTecnicos();
+    zerarDadosDoAnuncioAnterior();
+  }
   if (!fichaNovo.fichaServeParaCodigo(codigoFinal)) {
     fichaNovo.novaFicha();
     outroProduto = true;
@@ -3138,6 +3156,7 @@ async function buscarEMontarAnuncio() {
   setOem("");
   // (23/11) Título/descrição: outro produto = começa limpo. Mesmo código = só sai o que o
   // PAIIA preencheu; o que o usuário escreveu ou corrigiu fica.
+  codigoDoTextoRef.current = codigoNovo;
   const limparTitulo = outroProduto || !campoDoUsuario(textoAtualRef.current.titulo, textoAutoRef.current.titulo);
   const limparDescricao = outroProduto || !campoDoUsuario(textoAtualRef.current.descricao, textoAutoRef.current.descricao);
   if (limparTitulo) { setTitulo(""); textoAtualRef.current.titulo = ""; }
@@ -5430,7 +5449,7 @@ marcarAnuncioPronto({
             {aproveitamento?.usado && (
               <div>
                 📋 Título e descrição {aproveitamento.provisorio ? <b style={{ color: "#fde68a" }}>PROVISÓRIOS</b> : "aproveitados"} de: {aproveitamento.rotulo}.
-                {aproveitamento.provisorio ? " O que não foi confirmado está marcado com [A CONFIRMAR] e bloqueia a publicação até você conferir." : ""}
+                {aproveitamento.provisorio && (temMarcaAConfirmar(titulo) || temMarcaAConfirmar(descricao)) ? " O que não foi confirmado está marcado com [A CONFIRMAR] e bloqueia a publicação até você conferir." : ""}
               </div>
             )}
             {aproveitamento?.preservados?.length > 0 && <div>✏️ Seu texto foi mantido ({aproveitamento.preservados.join(" e ")}).</div>}

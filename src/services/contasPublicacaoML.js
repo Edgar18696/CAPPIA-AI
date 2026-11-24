@@ -15,6 +15,7 @@
 // =============================================================
 import { parametrosCotacao, cotarNoPreco, resultadoDoPreco, reais, ORIGEM_FRETE } from "./fretePrecificacao.js";
 import { conferirRegistrosNoML, avaliarRegistrosBase } from "./duplicidadeML.js";
+import { avaliarOutroAnuncioNaConta } from "./anuncioProvisorio.js";
 
 /** As três contas Mercado Livre do PAIIA, na ordem da publicação. */
 export const CONTAS_PUBLICACAO_ML = Object.freeze([
@@ -147,7 +148,12 @@ export async function verificarContaPublicacao({ contaId, dados = {}, deps = {} 
         const historico = av.anteriores.length
           ? ` Histórico: ${av.anteriores.map((a) => `${a.mlb} ${a.rotulo || "excluído/encerrado no Mercado Livre"}`).join("; ")} — não bloqueia.`
           : "";
-        if ((ml.duplicados || []).length) add("Duplicidade", "erro", `Este SKU já tem anúncio nesta conta: ${ml.duplicados.map((d) => `${d.id} (${d.status})`).join(", ")}.`);
+        // (24/11) Regra única por tipo: mesmo tipo/desconhecido bloqueia; tipo diferente = "conferir"
+        // (só entra na publicação com a sua confirmação manual destes MLBs e deste tipo).
+        const avTipo = avaliarOutroAnuncioNaConta({ ml: { ...ml, conferidosBase }, tipoAnuncio: dados.tipoAnuncio || dados.registroFrete?.tipoAnuncio || "" });
+        resultado.duplicidade.tipo = avTipo.estado === "livre" ? null : { estado: avTipo.estado, ids: avTipo.ids, tipoNovo: avTipo.tipoNovo, texto: avTipo.texto };
+        if (avTipo.estado === "confirmar") add("Duplicidade", "conferir", `${avTipo.texto}${historico}`);
+        else if ((ml.duplicados || []).length) add("Duplicidade", "erro", `Este SKU já tem anúncio nesta conta: ${ml.duplicados.map((d) => `${d.id} (${d.status})`).join(", ")}.${avTipo.texto ? ` ${avTipo.texto}` : ""}`);
         else if (av.pendentes.length) add("Duplicidade", "erro", `Este SKU já tem publicação registrada nesta conta que ainda existe ou não pôde ser confirmada no Mercado Livre: ${av.pendentes.map((p) => `${p.mlb} (${p.motivo})`).join("; ")}.`);
         else if ((ml.possiveis || []).length) add("Duplicidade", "conferir", `Possível duplicidade (mesmo código, SKU diferente): ${ml.possiveis.map((d) => `${d.id} (${d.status})`).join(", ")}. Confira no Mercado Livre e marque se NÃO for o mesmo produto.${historico}`);
         else add("Duplicidade", "ok", `Nenhum anúncio ativo deste SKU nesta conta.${historico}`);
@@ -261,9 +267,17 @@ export function resumoConfirmacao(resultados = [], conferidas = {}) {
  * vez (paiia_anuncios_publicacoes: 1 linha por ficha × marketplace): a
  * primeira conta confirmada é a desta ficha; as demais ficam na fila.
  */
-export function montarPlanoContas({ selecao, resultados = [], conferidas = {}, agora = new Date().toISOString() }) {
+export function montarPlanoContas({ selecao, resultados = [], conferidas = {}, outroTipo = {}, agora = new Date().toISOString() }) {
   const confirmadas = contasLiberadas(resultados, conferidas);
+  // (24/11) Confirmação MANUAL de outro anúncio de tipo diferente: { [conta]: { ids, tipo } }.
+  // Só para as contas desta publicação; a revisão final e o servidor exigem exatamente estes MLBs/tipo.
+  const outroTipoConfirmado = {};
+  for (const c of confirmadas) {
+    const o = outroTipo?.[c];
+    if (o && txt(o.ids) && txt(o.tipo)) outroTipoConfirmado[c] = { ids: txt(o.ids).toUpperCase(), tipo: txt(o.tipo), confirmado_em: agora };
+  }
   return {
+    ...(Object.keys(outroTipoConfirmado).length ? { outro_tipo_confirmado: outroTipoConfirmado } : {}),
     versao: 1,
     selecionadas: normalizarContasSelecionadas(selecao),
     confirmadas,

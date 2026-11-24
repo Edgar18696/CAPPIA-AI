@@ -36,6 +36,7 @@ const MARCAS = [
   "gm original", "vw original", "original", "genuino", "genuíno", "paraflu", "wahler", "sachs",
 ];
 
+import { avaliarDuplicidadeTipo, chaveConfirmacao, tipoMLDe } from "./regraDuplicidadeTipo.js";
 const txt = (v) => String(v ?? "").trim();
 const semAcento = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "");
 const norm = (v) => semAcento(v).toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -265,44 +266,28 @@ export function valorSemSobrescrever({ atual = "", ultimoAutomatico = "", novo =
 }
 
 // ---------------- Publicação: outro anúncio do mesmo SKU na mesma conta ----------------
-export const TIPO_ML = Object.freeze({ classico: "gold_special", premium: "gold_pro" });
-export const NOME_TIPO_ML = Object.freeze({ gold_special: "Clássico", gold_pro: "Premium", free: "Grátis" });
+// (24/11) A regra está em regraDuplicidadeTipo.js (a MESMA da tela principal e do servidor).
+export { TIPO_ML, NOME_TIPO_ML } from "./regraDuplicidadeTipo.js";
 
 /**
- * Mesmo SKU já anunciado NESTA conta (ativo/pausado): o Mercado Livre não aceita
- * dois anúncios iguais do mesmo produto na mesma conta, mas aceita o mesmo
- * produto em Clássico e em Premium. Então:
- *  - "livre": nenhum anúncio ativo deste SKU nesta conta;
- *  - "confirmar": todos os existentes são de OUTRO tipo → pede a sua confirmação;
- *  - "bloqueia": algum é do MESMO tipo, de tipo desconhecido, ou um MLB
- *    registrado não foi confirmado no ML (na dúvida, bloqueia).
  * ml: resultado de consultarDuplicidadeML (duplicados com .tipo; conferidosBase com .tipo).
+ * Converte para a regra única: existentes (ativos/pausados) e incertos (MLB registrado sem confirmação).
+ * tipoAnuncio vazio/desconhecido com anúncio existente = bloqueia.
  */
-export function avaliarOutroAnuncioNaConta({ ml = null, tipoAnuncio = "classico" } = {}) {
-  const tipoNovo = TIPO_ML[tipoAnuncio === "premium" ? "premium" : "classico"];
-  const vazio = { estado: "livre", existentes: [], ids: "", texto: "" };
-  if (!ml || ml.erro || ml.carregando) return vazio;
+export function avaliarOutroAnuncioNaConta({ ml = null, tipoAnuncio = "" } = {}) {
+  if (!ml || ml.erro || ml.carregando) return { estado: "livre", existentes: [], ids: "", tipoNovo: "", texto: "" };
   const existentes = [
-    ...(ml.duplicados || []).map((d) => ({ mlb: txt(d.id).toUpperCase(), tipo: txt(d.tipo) })),
-    ...(ml.conferidosBase || []).filter((c) => !c.libera && txt(c.status) && c.situacao !== "nao_confirmada").map((c) => ({ mlb: txt(c.mlb).toUpperCase(), tipo: txt(c.tipo) })),
+    ...(ml.duplicados || []).map((d) => ({ mlb: d.id, tipo: d.tipo })),
+    ...(ml.conferidosBase || []).filter((c) => !c.libera && txt(c.status) && c.situacao !== "nao_confirmada").map((c) => ({ mlb: c.mlb, tipo: c.tipo })),
   ];
   const incertos = (ml.conferidosBase || []).filter((c) => !c.libera && (!txt(c.status) || c.situacao === "nao_confirmada"));
-  if (!existentes.length && !incertos.length) return vazio;
-  const ids = existentes.map((e) => e.mlb).sort().join(",");
-  const lista = existentes.map((e) => `${e.mlb} (${NOME_TIPO_ML[e.tipo] || "tipo não informado"})`).join(", ");
-  const nomeNovo = NOME_TIPO_ML[tipoNovo];
-  if (incertos.length) {
-    return { estado: "bloqueia", existentes, ids, texto: `MLB registrado nesta conta sem confirmação no Mercado Livre (${incertos.map((c) => c.mlb).join(", ")}). Publicação bloqueada até confirmar.` };
-  }
-  if (existentes.some((e) => !e.tipo || e.tipo === tipoNovo)) {
-    return { estado: "bloqueia", existentes, ids, texto: `Já existe anúncio deste SKU nesta conta: ${lista}. O Mercado Livre não permite outro anúncio ${nomeNovo} igual na mesma conta. Para outro anúncio aqui, escolha o outro tipo (Clássico/Premium) ou publique em outra conta.` };
-  }
-  return { estado: "confirmar", existentes, ids, texto: `Já existe anúncio deste SKU nesta conta: ${lista}. Este novo será ${nomeNovo} (tipo diferente). Confirme para continuar.` };
+  return avaliarDuplicidadeTipo({ existentes, incertos, tipoNovo: tipoAnuncio });
 }
 
 /** Chave da confirmação: vale só para ESTES MLBs e ESTE tipo (mudou algo = confirmar de novo). */
-export function chaveOutroAnuncio(av, tipoAnuncio = "classico") {
-  return av?.estado === "confirmar" && av.ids ? `${av.ids}|${TIPO_ML[tipoAnuncio === "premium" ? "premium" : "classico"]}` : "";
+export function chaveOutroAnuncio(av, tipoAnuncio = "") {
+  const k = chaveConfirmacao(av);
+  return k && (!tipoAnuncio || tipoMLDe(tipoAnuncio) === av.tipoNovo) ? k : "";
 }
 
 /** Todos os MLBs pendentes estão entre os existentes de outro tipo (já avaliados)? */

@@ -86,6 +86,7 @@ export function avaliarMLBRegistrado({ registro, resp, agora = new Date().toISOS
     estado: situacaoFinal(situacao) ? "historico" : "existe",
     motivo: situacaoFinal(situacao) ? "encerrado/excluído confirmado agora pelo Mercado Livre" : "",
     divergente: Boolean(atualizar.sku_ml_divergente),
+    tipo: txt(it.listing_type_id),
     atualizar,
   };
 }
@@ -99,10 +100,10 @@ export function avaliarMLBRegistrado({ registro, resp, agora = new Date().toISOS
  */
 export function decidirConta({ conta, nome = "", conectada = true, motivoConta = "", erroRegistro = "", avaliados = [], busca = null }) {
   const historico = avaliados.filter((a) => a.estado === "historico").map((a) => ({ mlb: a.mlb, situacao: a.situacao }));
-  const existentes = avaliados.filter((a) => a.estado === "existe").map((a) => ({ mlb: a.mlb, situacao: a.situacao, status: a.atualizar?.situacao_ml?.status || "", divergente: Boolean(a.divergente), registrado: true }));
+  const existentes = avaliados.filter((a) => a.estado === "existe").map((a) => ({ mlb: a.mlb, situacao: a.situacao, status: a.atualizar?.situacao_ml?.status || "", divergente: Boolean(a.divergente), registrado: true, tipo: txt(a.tipo) }));
   const pendentesReg = avaliados.filter((a) => a.estado === "pendente").map((a) => ({ mlb: a.mlb, motivo: a.motivo }));
   const doRegistro = new Set(avaliados.map((a) => a.mlb));
-  const daBusca = (lista) => (Array.isArray(lista) ? lista : []).map((d) => ({ mlb: txt(d?.id).toUpperCase(), status: txt(d?.status), titulo: txt(d?.titulo), motivo: txt(d?.motivo) }));
+  const daBusca = (lista) => (Array.isArray(lista) ? lista : []).map((d) => ({ mlb: txt(d?.id).toUpperCase(), status: txt(d?.status), titulo: txt(d?.titulo), motivo: txt(d?.motivo), tipo: txt(d?.tipo) }));
   const confirmadosBusca = busca && !busca.erro ? daBusca(busca.duplicados) : [];
   const possiveis = busca && !busca.erro ? daBusca(busca.possiveis).filter((p) => !doRegistro.has(p.mlb)) : [];
   const novos = confirmadosBusca.filter((d) => !doRegistro.has(d.mlb));
@@ -112,7 +113,7 @@ export function decidirConta({ conta, nome = "", conectada = true, motivoConta =
     // Busca ao vivo achou anúncio NÃO encerrado com o mesmo SKU: existe,
     // mesmo que o registro o tenha como histórico (a busca é a palavra final).
     ...confirmadosBusca.filter((d) => !existentes.some((e) => e.mlb === d.mlb))
-      .map((d) => ({ mlb: d.mlb, situacao: situacaoDoItemML({ status: d.status }), status: d.status, titulo: d.titulo, motivo: d.motivo, registrado: doRegistro.has(d.mlb) })),
+      .map((d) => ({ mlb: d.mlb, situacao: situacaoDoItemML({ status: d.status }), status: d.status, titulo: d.titulo, motivo: d.motivo, registrado: doRegistro.has(d.mlb), tipo: d.tipo })),
   ];
   const motivos = [];
   if (!conectada) motivos.push(motivoConta || "conta não conectada ao PAIIA");

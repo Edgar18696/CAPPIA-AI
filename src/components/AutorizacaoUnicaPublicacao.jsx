@@ -101,7 +101,7 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
         ...produtosBlingRegistradosDoSku(fichas?.ok ? fichas.anuncios : [], { excetoFicha: anuncioId }).filter((r) => r.mlb),
         ...produtosBlingRegistradosDoSku([{ id: anuncioId, publicacao: f.publicacao, integracao_bling: f.dados_conferencia?.integracao_bling }]),
       ], idsBlingDescartados(f.dados_conferencia));
-      const res = situacaoFinalDasContas({ ficha, quadro, verificacoes: verif.resultados, fotos, blingRegistrados, sku: String(sku || codigo || "").trim() });
+      const res = situacaoFinalDasContas({ ficha, quadro, verificacoes: verif.resultados, fotos, blingRegistrados, sku: String(sku || codigo || "").trim(), tipoAnuncio: dados.tipoAnuncio });
       setSt({ lendo: false, res: { ...res, verif, ficha }, assinatura: assinaturaDaConta, erro: "" });
     } catch (e) {
       setSt({ lendo: false, res: null, assinatura: "", erro: `Não foi possível conferir (${e?.message || e}). Nada foi publicado nem alterado.` });
@@ -114,7 +114,8 @@ export default function AutorizacaoUnicaPublicacao({ anuncioId = "", sku = "", c
     setOcupado(linha.conta);
     setAviso("");
     const resultado = (st.res.verif.resultados || []).find((r) => String(r.conta) === linha.conta);
-    const plano = montarPlanoContas({ selecao: [linha.conta], resultados: resultado ? [resultado] : [], conferidas: linha.acao.conferida ? { [linha.conta]: true } : {} });
+    // (24/11) Outro anúncio de tipo diferente: este 2º clique É a sua confirmação manual (estes MLBs, este tipo).
+    const plano = montarPlanoContas({ selecao: [linha.conta], resultados: resultado ? [resultado] : [], conferidas: linha.acao.conferida ? { [linha.conta]: true } : {}, outroTipo: linha.acao.outroTipo ? { [linha.conta]: linha.acao.outroTipo } : {} });
     if (plano.conta_desta_ficha !== linha.conta) { setOcupado(""); setAviso(`A conferência da ${linha.nome} não liberou a publicação. Confira de novo.`); return; }
     // (16/11) Você conferiu no Bling que o produto registrado não existe: registra na ficha (sem apagar nada).
     if (linha.acao.descartarBling?.length) {
