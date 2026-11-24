@@ -25,6 +25,7 @@ export const FONTE = Object.freeze({
   FICHA: "ficha_paiia",
   ML: "anuncio_ml",
   BLING: "bling",
+  GOOGLE: "google",
   NENHUMA: "",
 });
 

@@ -155,6 +155,9 @@ export async function buscarPesquisaRecente(
         .from(TABELA_AUDITORIA)
         .select("*")
         .eq("codigo_normalizado", alvo)
+        // (24/11) As pesquisas do Google do "Buscar e Montar" (provedor serpapi_google)
+        // ficam na mesma tabela, mas não são pesquisas do Paizinho: nunca são reaproveitadas aqui.
+        .or("provedor.is.null,provedor.neq.serpapi_google")
         .in("status", aceitos)
         .neq("status_validacao", STATUS_VALIDACAO.REJEITADO)
         .gte("criado_em", limiteNegativo < limite ? limiteNegativo : limite)

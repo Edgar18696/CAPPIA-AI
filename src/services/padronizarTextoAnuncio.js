@@ -107,7 +107,9 @@ const RE_ROTULO_PROTEGIDO = /^(compativel com|compatibilidade|compativeis|aplica
 
 // Linhas fixas do modelo oficial da loja: ficam como estão.
 // (23/11) "[A CONFIRMAR]" e "INFORMAÇÕES CONFIRMADAS" do anúncio pré-montado também ficam como estão.
-const RE_LINHA_FIXA = /^(atencao|importante|especificacoes tecnicas:|condicao do item:|garantia:|conteudo da embalagem:|\[a confirmar\]|informacoes confirmadas$)/;
+// (24/11) Seções da pré-montagem pelo Google e linhas de fonte (com link) também ficam como estão.
+const RE_LINHA_FIXA = /^(atencao|importante|especificacoes tecnicas:|condicao do item:|garantia:|conteudo da embalagem:|\[a confirmar\]|informacoes confirmadas$|identificacao da peca$|aplicacoes encontradas$|codigos de referencia$|caracteristicas encontradas$|fontes consultadas)/;
+const RE_LINHA_COM_LINK = /https?:\/\/\S/i;
 
 export function padronizarDescricao(descricao, opcoes = {}) {
   if (typeof descricao !== "string") return descricao;
@@ -123,7 +125,7 @@ export function padronizarDescricao(descricao, opcoes = {}) {
       const rotulo = RE_ROTULO_PROTEGIDO.test(k) || RE_LINHA_FIXA.test(k);
       if (rotulo && /:\s*$/.test(pd)) { estado = "abriu"; return pd; }
       if (rotulo && /:/.test(pd)) return pd; // "Código OEM: 0258003300"
-      if (RE_LINHA_FIXA.test(k)) return pd;
+      if (RE_LINHA_FIXA.test(k) || RE_LINHA_COM_LINK.test(pd)) return pd;
       return padronizarLinha(pd, opcoes);
     })
     .join("");

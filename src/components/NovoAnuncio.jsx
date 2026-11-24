@@ -3089,12 +3089,14 @@ async function buscarComReconhecimento() {
 }
 
 // (23/11) Completa o anúncio com as fontes já integradas (SÓ LEITURA): ficha PAIIA do código >
-// anúncio ML nosso com o MESMO SKU (REVELAÇÃO > LOJA ONLINE > CIEBR) > nome do Bling.
+// anúncio ML nosso com o MESMO SKU (REVELAÇÃO > LOJA ONLINE > CIEBR) > (24/11) UMA pesquisa no
+// Google (inclui anúncios do ML de outros vendedores; reaproveitada por 30 dias) > nome do Bling.
 //  semCatalogo: o catálogo não achou → monta título/descrição provisórios (o que falta vira "[A CONFIRMAR]").
 //  Com catálogo: só o texto de uma ficha já trabalhada substitui o do catálogo (nunca o do usuário).
+//  A pesquisa no Google só acontece SEM catálogo (com catálogo nada é pago).
 async function completarComFontes(codigoFinal, { semCatalogo = false, buscaId = 0 } = {}) {
   const contas = contasConectadasNA.map((c) => ({ id: String(c.ml_user_id), nome: nomeDaLoja(c.ml_user_id, c.nickname) }));
-  const prov = await montarProvisorioDasFontes({ codigo: codigoFinal, contas, fichaAtualId: fichaNovo.fichaId || "" });
+  const prov = await montarProvisorioDasFontes({ codigo: codigoFinal, contas, fichaAtualId: fichaNovo.fichaId || "", pesquisarGoogle: semCatalogo });
   if (buscaId !== buscaIdRef.current) return null; // outra busca começou: resultado velho não entra
   const usar = semCatalogo || prov.fonte === FONTE_PROVISORIO.FICHA;
   const aplicado = usar ? aplicarTextoAutomatico({ titulo: prov.titulo, descricao: prov.descricao }) : { preservados: [] };
@@ -3840,7 +3842,7 @@ const descricaoResultado =
         } else {
           setCodigo(codigoFinal);
         }
-        setEtapaProcessamento("🔎 Não está nos catálogos. Montando com os dados do PAIIA, do Bling e do Mercado Livre...");
+        setEtapaProcessamento("🔎 Não está nos catálogos. Montando com os dados do PAIIA, do Mercado Livre e uma pesquisa no Google...");
         setProgressoProcessamento(60);
         const prov = await completarComFontes(codigoFinal, { semCatalogo: true, buscaId }).catch(() => null);
         setPesquisaPaizinho({
