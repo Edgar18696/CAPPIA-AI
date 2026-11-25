@@ -279,6 +279,9 @@ const [
 
 const [usuario, setUsuario] =
   useState(null);
+// (25/11) Só depois de conferir a sessão a Galeria pode dizer "você não está conectado".
+const [sessaoVerificada, setSessaoVerificada] =
+  useState(false);
 
 const [email, setEmail] =
   useState("");
@@ -569,6 +572,7 @@ useEffect(() => {
     if (session?.user) {
       setUsuario(session.user);
     }
+    setSessaoVerificada(true);
   }
 
   recuperarSessao();
@@ -867,7 +871,9 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
   }
 
   async function sairUsuario() {
-    await supabase.auth.signOut();
+    // (25/11) "Sair" encerra a conta SÓ neste aparelho. O signOut() padrão é global e
+    // derrubava também o celular (câmera e Galeria paravam de salvar sem aviso).
+    await supabase.auth.signOut({ scope: "local" });
     setUsuario(null);
     setGaleria([]);
     setGaleriaTemMais(false);
@@ -4002,6 +4008,7 @@ setQualidadeFoto={setQualidadeFoto}
     setFotosAnuncio={setFotosAnuncio}
     setScreen={setScreen}
     cardStyle={cardStyle}
+    semLogin={sessaoVerificada && !usuario?.id}
   />
 )}
 

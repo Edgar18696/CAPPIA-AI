@@ -24,9 +24,11 @@ function Miniatura({ item }) {
   return src ? <img src={src} alt="" style={{ width: 64, height: 64, objectFit: "contain", background: "#fff", borderRadius: 8, flex: "0 0 64px" }} /> : <div style={{ width: 64, height: 64, background: "#1e293b", borderRadius: 8 }} />;
 }
 
-export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleria, desativado = false }) {
+export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleria, entrar, desativado = false }) {
   const cameraRef = useRef(null);
   const [usuario, setUsuario] = useState(usuarioId || "");
+  // (25/11) Sessão conferida e ausente: avisa ANTES de abrir a câmera (a foto se perderia).
+  const [semLogin, setSemLogin] = useState(false);
   const [itens, setItens] = useState([]);
   const [prontas, setProntas] = useState([]);
   const [aviso, setAviso] = useState("");
@@ -36,7 +38,7 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
 
   useEffect(() => {
     let vivo = true;
-    usuarioDaGaleria(supabase, usuarioId).then((u) => { if (vivo) setUsuario(u.id); });
+    usuarioDaGaleria(supabase, usuarioId).then((u) => { if (vivo) { setUsuario(u.id); setSemLogin(!u.id); } });
     return () => { vivo = false; };
   }, [usuarioId]);
 
@@ -85,13 +87,19 @@ export default function TirarFotoCamera({ usuarioId, aoEscolherFoto, abrirGaleri
   return (
     <section data-paiia-foto-camera style={{ maxWidth: 950, margin: "0 auto 20px", padding: 14, borderRadius: 16, background: "#0f172a", border: "1px solid #2563eb", boxSizing: "border-box" }}>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button type="button" data-paiia-tirar-foto disabled={desativado} onClick={() => { marcarCameraAberta(globalThis.sessionStorage); cameraRef.current?.click(); }} style={botao("linear-gradient(135deg,#2563eb,#06b6d4)")}>📷 Tirar Foto</button>
+        <button type="button" data-paiia-tirar-foto disabled={desativado} onClick={() => { if (semLogin) return; marcarCameraAberta(globalThis.sessionStorage); cameraRef.current?.click(); }} style={botao("linear-gradient(135deg,#2563eb,#06b6d4)")}>📷 Tirar Foto</button>
         <button type="button" data-paiia-escolher-foto disabled={desativado} onClick={aoEscolherFoto} style={botao("#334155")}>🖼️ Escolher Foto</button>
       </div>
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={aoFotografar} data-paiia-camera-input />
       <p style={{ margin: "10px 2px 0", color: "#94a3b8", fontSize: 13, lineHeight: 1.4 }}>
         Tire a foto: o PAIIA coloca fundo branco e salva na Galeria. Dica: fotografe de perto, com a peça ocupando metade da tela.
       </p>
+      {semLogin && (
+        <div data-paiia-camera-sem-login role="alert" style={{ marginTop: 10, padding: 12, borderRadius: 10, border: "1px solid #f59e0b", color: "#fde68a", fontSize: 15, fontWeight: 700, lineHeight: 1.4 }}>
+          ⚠ Você não está conectado à sua conta PAIIA neste aparelho. Entre de novo para tirar fotos e salvá-las na Galeria.
+          {entrar && <div><button type="button" data-paiia-camera-entrar onClick={entrar} style={{ marginTop: 10, padding: "12px 16px", borderRadius: 10, border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>🔐 Entrar na conta PAIIA</button></div>}
+        </div>
+      )}
       {avisoPerda && <div data-paiia-camera-foto-perdida role="alert" style={{ marginTop: 10, padding: 10, borderRadius: 10, border: "1px solid #f59e0b", color: "#fde68a", fontSize: 14, fontWeight: 700 }}>⚠ {avisoPerda}</div>}
       {aviso && <div data-paiia-camera-aviso style={{ marginTop: 10, color: "#bfdbfe", fontSize: 14, fontWeight: 700 }}>{aviso}</div>}
       {(itens.length > 0 || prontas.length > 0) && (

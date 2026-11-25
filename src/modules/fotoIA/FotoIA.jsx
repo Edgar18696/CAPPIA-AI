@@ -177,6 +177,7 @@ export default function FotoIA({
           usuarioId={usuarioId}
           aoEscolherFoto={() => escolherRef.current?.click()}
           abrirGaleria={abrirGaleria}
+          entrar={() => setScreen?.("login")}
         />
       )}
 

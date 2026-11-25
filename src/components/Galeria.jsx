@@ -80,6 +80,7 @@ export default function Galeria({
   cardStyle,
   galeriaTemMais = false,
   carregarMaisGaleria,
+  semLogin = false,
 }) {
 
   const [imagemAberta, setImagemAberta] = useState(null);
@@ -1902,7 +1903,16 @@ item.tipo === "clip" ? (
     </button>
   </div>
 )}
-      {galeriaFiltrada.length === 0 && (
+      {/* (25/11) Sem login a Galeria fica vazia: diz o motivo em vez de "Nenhuma imagem". */}
+      {semLogin && (
+        <div data-paiia-galeria-sem-login role="alert" style={{ marginTop: "25px", padding: "14px", borderRadius: "12px", border: "1px solid #f59e0b", background: "#1c1917", color: "#fde68a", fontWeight: 700, lineHeight: 1.4 }}>
+          ⚠ Você não está conectado à sua conta PAIIA neste aparelho. Entre de novo para ver as suas fotos.
+          <div>
+            <button type="button" onClick={() => setScreen?.("login")} style={{ marginTop: "10px", padding: "12px 16px", borderRadius: "10px", border: "none", background: "#2563eb", color: "#fff", fontWeight: 800, fontSize: "16px", cursor: "pointer" }}>🔐 Entrar na conta PAIIA</button>
+          </div>
+        </div>
+      )}
+      {!semLogin && galeriaFiltrada.length === 0 && (
         <p style={{ color: "#94a3b8", marginTop: "25px" }}>
           {selecionandoParaAnuncio
             ? abaMidiaAnuncio === "banner"
