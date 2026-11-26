@@ -35,7 +35,7 @@ import { GARANTIA_ML, LINHAS_FIXAS, padroesEsperadosConferencia } from "../servi
 import PainelCategoriaML from "./PainelCategoriaML";
 import { avaliarCategorias, registrarConfirmacao, desfazerConfirmacao, conferirCategoriaParaPublicar, mesclarRejeicoes, rejeicaoManual, ORIGEM_CATEGORIA } from "../services/categoriaML";
 import { montarAtributosCategoria, registrarAtributo, assinaturaAtributos } from "../services/atributosCategoriaML";
-import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU } from "../services/categoriaMLBusca";
+import { consultarPreditor, lerDetalheCategoria, lerEvidenciaMesmoCodigo, lerRejeicoesDoSKU, buscarCategoriasManual } from "../services/categoriaMLBusca";
 import { exigenciasAtributos, ATRIBUTO_MOTIVO_SEM_GTIN } from "../services/categoriaPublicacaoML";
 import {
   listarAnunciosDoCodigo,
@@ -2505,7 +2505,10 @@ function confirmarCategoria(candidata, revisao = null) {
   setCategoria(caminho);
   setCategoriaId(candidata.id);
   setOrigemCategoria("confirmada");
-  setDecisaoCategoria((d) => registrarConfirmacao(d, { candidata, avaliacao: avaliacaoCategoria, revisao }));
+  // (25/11) Escolhida no resultado da BUSCA MANUAL: registra o que essa busca apresentou.
+  const daBusca = Boolean(buscaCategoriaManual?.avaliacao?.candidatas?.includes(candidata));
+  setDecisaoCategoria((d) => registrarConfirmacao(d, { candidata, avaliacao: daBusca ? buscaCategoriaManual.avaliacao : avaliacaoCategoria, revisao }));
+  setBuscaCategoriaManual(null);
 }
 function trocarCategoria() {
   setDecisaoCategoria((d) => desfazerConfirmacao(d, "o usuário pediu para trocar a categoria"));
@@ -2556,6 +2559,9 @@ const cacheDetalhesCategoriaRef = useRef({});
 const termosExtrasCategoriaRef = useRef([]);
 const categoriaManualRef = useRef("");
 const [categoriaPreferida, setCategoriaPreferida] = useState("");
+// (25/11/2026) Resultado da BUSCA MANUAL (separado da sugestão automática).
+const [buscaCategoriaManual, setBuscaCategoriaManual] = useState(null);
+const buscaCategoriaSeqRef = useRef(0);
 // Obrigatórios/condicionais da categoria selecionada (motivo sem GTIN).
 const exigenciaCategoria = useMemo(() => {
   const d = categoriaId ? detalhesCategoria[categoriaId] : null;
@@ -3589,15 +3595,32 @@ function rejeitarCategoriaManual(candidata, justificativa) {
   avaliarCategoria();
 }
 
-// Busca manual: acrescenta o termo às consultas e confere tudo de novo.
+// (25/11/2026) Busca manual: SÓ o termo digitado, consulta NOVA ao Mercado Livre a cada
+// clique (sem cache), com resultado próprio — a sugestão automática não é reaproveitada.
+// Antes o termo era somado aos automáticos (e passava do limite de 5 termos do preditor),
+// e a tela mostrava de novo a sugestão automática. Código da categoria (/^MLB\d+$/i.test(termo)):
+// lido direto. A resposta de uma busca antiga é descartada (sequência).
 async function buscarCategoriaManual() {
   const termo = String(termoCategoria || "").trim();
-  // (06/11) Código da categoria (MLB…): conferido direto; texto: vai ao preditor do ML.
-  const codigoMLB = /^MLB\d+$/i.test(termo) ? termo.toUpperCase() : "";
-  categoriaManualRef.current = codigoMLB;
-  setCategoriaPreferida(codigoMLB);
-  if (termo && !codigoMLB) termosExtrasCategoriaRef.current = [...new Set([...termosExtrasCategoriaRef.current, termo])].slice(-3);
-  await avaliarCategoria();
+  const seq = ++buscaCategoriaSeqRef.current;
+  setBuscaCategoriaManual({ termo, carregando: true, avaliacao: null, mensagem: "" });
+  let r;
+  try {
+    r = await buscarCategoriasManual({ termo, tipoVeiculo, rejeicoes: rejeicoesSKU });
+  } catch (erro) {
+    console.error("❌ ERRO BUSCA MANUAL DE CATEGORIA:", erro);
+    r = { termo, avaliacao: null, detalhes: {}, encontradas: 0, mensagem: "Não foi possível buscar no Mercado Livre agora. Tente de novo." };
+  }
+  if (seq !== buscaCategoriaSeqRef.current) return;
+  if (r.detalhes && Object.keys(r.detalhes).length) {
+    Object.assign(cacheDetalhesCategoriaRef.current, r.detalhes);
+    setDetalhesCategoria((d) => ({ ...d, ...r.detalhes }));
+  }
+  setBuscaCategoriaManual({ ...r, carregando: false });
+}
+function limparBuscaCategoriaManual() {
+  buscaCategoriaSeqRef.current += 1;
+  setBuscaCategoriaManual(null);
 }
 // (06/11) Atributo obrigatório escolhido pelo usuário: fica na decisão da categoria (ficha).
 function escolherAtributoCategoria(atributo, { valueId = "", valueName = "" } = {}) {
@@ -6795,6 +6818,8 @@ const categoriaNaTela = useMemo(() => conferirCategoriaParaPublicar({
   onTermo={setTermoCategoria}
   onBuscar={buscarCategoriaManual}
   preferida={categoriaPreferida}
+  buscaManual={buscaCategoriaManual}
+  onLimparBusca={limparBuscaCategoriaManual}
   atributos={atributosCategoria}
   onAtributo={escolherAtributoCategoria}
   onSeguir={() => document.getElementById("conf-bloco-16")?.scrollIntoView({ behavior: "smooth", block: "start" })}

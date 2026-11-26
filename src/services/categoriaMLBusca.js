@@ -11,7 +11,7 @@
 //     "forbidden" sem motivo comprovado vira só RESTRIÇÃO no histórico.
 // Regras: services/categoriaML.js
 // =============================================================
-import { classificarMLBsAnteriores, mesclarRejeicoes, MOTIVOS_CONFIRMADOS_ML } from "./categoriaML.js";
+import { classificarMLBsAnteriores, mesclarRejeicoes, MOTIVOS_CONFIRMADOS_ML, avaliarCategorias, ORIGEM_CATEGORIA } from "./categoriaML.js";
 import { resumoAtributosCategoria } from "./categoriaPublicacaoML.js";
 import { tipoVeiculoDaCategoria } from "./compatibilidadeML.js";
 
@@ -65,6 +65,53 @@ export async function lerDetalheCategoria(id, lerJson = lerJsonPublico, cache = 
     atributos: resumoAtributosCategoria(atributos),
     tipoVeiculo: Array.isArray(atributos) ? tipoVeiculoDaCategoria(atributos) : null,
   });
+}
+
+/**
+ * (25/11/2026) BUSCA MANUAL do bloco ⑮ — só o que o usuário digitou.
+ * Antes, o termo digitado era SOMADO aos termos automáticos (e às vezes nem
+ * chegava ao ML: o preditor só consulta 5 termos) e a tela mostrava de novo a
+ * sugestão automática. Agora: uma consulta NOVA ao ML a cada busca (sem cache),
+ * só com o termo digitado; código MLB = lido direto em /categories/{id}.
+ * Devolve { termo, tipo: "codigo"|"texto"|"vazio", avaliacao, detalhes, encontradas, mensagem }.
+ */
+export async function buscarCategoriasManual({ termo, tipoVeiculo, rejeicoes = [], lerJson = lerJsonPublico } = {}) {
+  const t = txt(termo);
+  if (!t) return { termo: "", tipo: "vazio", avaliacao: null, detalhes: {}, encontradas: 0, mensagem: "Digite o nome técnico da peça ou o código da categoria (ex.: MLB270881)." };
+  const codigo = /^MLB\d+$/i.test(t) ? t.toUpperCase() : "";
+  const detalhes = {};
+  const consultas = codigo ? [] : await consultarPreditor([t], lerJson);
+  const ids = codigo ? [codigo] : [...new Set(consultas.flatMap((q) => q.sugestoes.map((s) => s.category_id.toUpperCase())))].slice(0, 8);
+  await Promise.all(ids.map(async (id) => {
+    detalhes[id] = await lerDetalheCategoria(id, lerJson, {});
+  }));
+  if (codigo && !detalhes[codigo]?.lido) {
+    return { termo: t, tipo: "codigo", avaliacao: null, detalhes: {}, encontradas: 0, mensagem: `O Mercado Livre não encontrou a categoria ${codigo}. Confira o código.` };
+  }
+  if (!ids.length) {
+    const respondeu = consultas.some((q) => q.ok);
+    return {
+      termo: t, tipo: "texto", avaliacao: null, detalhes: {}, encontradas: 0,
+      mensagem: respondeu
+        ? `Nenhuma categoria encontrada no Mercado Livre para “${t}”. Tente outro nome técnico ou informe o código MLB.`
+        : `O Mercado Livre não respondeu à busca por “${t}”. Tente de novo em instantes.`,
+    };
+  }
+  const herdadas = codigo ? [{ id: codigo, origem: ORIGEM_CATEGORIA.BUSCA }] : [];
+  // Texto: o sistema técnico é o do termo digitado (o usuário disse qual é a peça).
+  // Código: só as conferências estruturais (ramo, categoria final, tipo de veículo, rejeição).
+  const avaliacao = avaliarCategorias({ tipoVeiculo, textoPeca: codigo ? "" : t, consultas, detalhes, evidencia: null, rejeicoes, herdadas });
+  const compativeis = avaliacao.candidatas.filter((c) => c.compativel).length;
+  return {
+    termo: t,
+    tipo: codigo ? "codigo" : "texto",
+    avaliacao,
+    detalhes,
+    encontradas: avaliacao.candidatas.length,
+    mensagem: compativeis ? "" : codigo
+      ? `A categoria ${codigo} não serve para esta peça: ${(avaliacao.candidatas[0]?.rejeitada ? ["já foi rejeitada pelo Mercado Livre para este SKU"] : avaliacao.candidatas[0]?.bloqueios || []).join("; ") || "não passou na conferência"}.`
+      : `Nenhuma das ${avaliacao.candidatas.length} categoria(s) encontrada(s) para “${t}” passou na conferência do PAIIA (veja os motivos abaixo).`,
+  };
 }
 
 /** Anúncios reais do mesmo código (evidência). Servidor sem a ação = indisponível. */
