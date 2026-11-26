@@ -72,6 +72,7 @@ export const FONTES_ORIGINAIS = [
   { dominio: "ngkntk.com.br", nome: "NGK/NTK Brasil", marca: "NGK / NTK", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },
   { dominio: "densoautoparts.com", nome: "DENSO Auto Parts", marca: "Denso", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },
   { dominio: "denso.com", nome: "DENSO", marca: "Denso", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },
+  { dominio: "denso.com.br", nome: "DENSO Aftermarket Brasil", marca: "Denso", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },
   { dominio: "delphiautoparts.com", nome: "Delphi", marca: "Delphi", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },
   { dominio: "delphi.catalogofraga.com.br", nome: "Catálogo Fraga-Delphi", marca: "Delphi", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },
   { dominio: "continental-aftermarket.com", nome: "Continental Aftermarket", marca: "Continental / VDO", tipo: TIPO_FONTE.FABRICANTE, prioridade: 2 },

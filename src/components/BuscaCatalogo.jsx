@@ -6,6 +6,12 @@ import DiagnosticoTecnicoIA from "./DiagnosticoTecnicoIA";
 import FichaTecnicaIA from "./FichaTecnicaIA";
 import CentroInteligenciaIA from "./CentroInteligenciaIA";
 import { iniciarAnuncioNovo } from "../services/aberturaNovoAnuncio";
+import { fabricantePeloTexto, registroDoFabricante } from "../config/catalogosTecnicos";
+import {
+  prioridadeDaFonte,
+  divergenciaEntreFontes,
+  agruparPeriodosConsecutivos,
+} from "../services/catalogos/codigosTecnicos";
 
 /*
  * ============================================================
@@ -429,11 +435,19 @@ function converterRegistroCatCar(
 export default function BuscaCatalogo({
   setScreen,
   cardStyle,
+  // (26/11) Tela única "Catálogos Técnicos": a pesquisa fica dentro da tela,
+  // filtrada pelo cartão do fabricante escolhido (fabricante = item de FABRICANTES_CATALOGOS).
+  embutido = false,
+  fabricante = null,
 }) {
-  const catalogoSelecionado =
-    localStorage.getItem(
-      "catalogoSelecionado"
-    ) || "";
+  const fabricanteConfig = embutido
+    ? fabricante
+    : fabricantePeloTexto(localStorage.getItem("catalogoSelecionado") || "");
+  const catalogoSelecionado = embutido
+    ? fabricante?.nome || ""
+    : localStorage.getItem(
+        "catalogoSelecionado"
+      ) || "";
 
   const [
     termo,
@@ -474,6 +488,13 @@ export default function BuscaCatalogo({
         ? "selecionado"
         : "todos"
     );
+
+  // Ao trocar o cartão do fabricante, a pesquisa passa a ser só nele.
+  const [fabricanteAnterior, setFabricanteAnterior] = useState(catalogoSelecionado);
+  if (embutido && fabricanteAnterior !== catalogoSelecionado) {
+    setFabricanteAnterior(catalogoSelecionado);
+    setModoPesquisa(catalogoSelecionado ? "selecionado" : "todos");
+  }
 
   /*
    * ==========================================================
@@ -517,7 +538,8 @@ export default function BuscaCatalogo({
        */
 
       const ehCatCarSelecionado =
-        modoPesquisa ===
+        modoPesquisa === "catcar" ||
+        (modoPesquisa ===
           "selecionado" &&
         String(
           catalogoSelecionado ||
@@ -525,7 +547,7 @@ export default function BuscaCatalogo({
         )
           .trim()
           .toLowerCase() ===
-          "catcar";
+          "catcar");
 
       if (ehCatCarSelecionado) {
         setProgresso(
@@ -655,6 +677,9 @@ export default function BuscaCatalogo({
         catalogoSelecionado
           ? encontradosRecebidos.filter(
               (item) => {
+                if (fabricanteConfig) {
+                  return registroDoFabricante(item, fabricanteConfig);
+                }
                 const textoFabricante =
                   String(
                     item.fabricante ||
@@ -712,6 +737,14 @@ export default function BuscaCatalogo({
               );
             }
 
+            // (26/11) Mesma pontuação: montadora > componente original (OE) > reposição;
+            // no mesmo grupo, catálogo brasileiro antes do estrangeiro.
+            const hierarquia =
+              prioridadeDaFonte(a) - prioridadeDaFonte(b);
+            if (hierarquia !== 0) {
+              return hierarquia;
+            }
+
             const pecaA =
               String(
                 a.peca || ""
@@ -751,12 +784,24 @@ export default function BuscaCatalogo({
           }
         );
 
+      // (26/11) Períodos seguidos da mesma aplicação viram uma linha só
+      // (as linhas originais ficam em "agrupadas").
+      const encontradosAgrupados =
+        agruparPeriodosConsecutivos(
+          encontradosOrdenados,
+          { juntarObservacoes: false }
+        );
+
       setResultados(
-        encontradosOrdenados
+        encontradosAgrupados
       );
 
       setProgresso(
-        `✅ ${encontradosOrdenados.length} resultado(s) encontrado(s).`
+        encontradosAgrupados.length > 0
+          ? `✅ ${encontradosAgrupados.length} resultado(s) encontrado(s).`
+          : modoPesquisa === "selecionado" && encontradosRecebidos.length > 0
+            ? `Nada em ${catalogoSelecionado}, mas há ${encontradosRecebidos.length} resultado(s) em outros catálogos: ${embutido ? 'toque em "✕ Todos os fabricantes"' : 'escolha "Todos os catálogos"'}.`
+            : ""
       );
     } catch (error) {
       console.error(
@@ -827,8 +872,12 @@ export default function BuscaCatalogo({
       resultados
     );
 
+  const divergencia = divergenciaEntreFontes(resultados);
+
   return (
-    <div style={cardStyle}>
+    <div style={embutido ? undefined : cardStyle}>
+      {!embutido && (
+      <>
       <button
         onClick={
           voltarCatalogos
@@ -863,7 +912,11 @@ export default function BuscaCatalogo({
             : "Pesquisa Universal"}
         </div>
       </div>
+      </>
+      )}
 
+      {/* Na tela única o cartão do fabricante já filtra: as opções só aparecem para o CatCar (Renault). */}
+      {(!embutido || fabricanteConfig?.catcar) && (
       <div
         style={
           opcoesPesquisa
@@ -921,7 +974,22 @@ export default function BuscaCatalogo({
             </span>
           </label>
         )}
+
+        {fabricanteConfig?.catcar && (
+          <label style={opcaoPesquisa}>
+            <input
+              type="radio"
+              name="modoPesquisa"
+              value="catcar"
+              checked={modoPesquisa === "catcar"}
+              onChange={() => setModoPesquisa("catcar")}
+            />
+            <span>🚘 CatCar Renault (computador da loja)</span>
+          </label>
+        )}
       </div>
+
+      )}
 
       <div
         style={
@@ -931,10 +999,12 @@ export default function BuscaCatalogo({
         <label
           style={label}
         >
-          {modoPesquisa === "selecionado" &&
+          {modoPesquisa === "catcar"
+            ? "Pesquisar no CatCar Renault"
+            : modoPesquisa === "selecionado" &&
           catalogoSelecionado
             ? `Pesquisar somente em ${catalogoSelecionado}`
-            : "Pesquisar em toda a base técnica do PAIIA AI"}
+            : "Digite o código da peça (com ou sem hífen) ou o nome da peça"}
         </label>
 
         <div
@@ -1033,6 +1103,15 @@ export default function BuscaCatalogo({
           );
         }}
       />
+
+      {divergencia && (
+        <div style={avisoDivergencia} data-testid="aviso-divergencia">
+          ⚠️ {divergencia.mensagem}{" "}
+          {divergencia.fontes
+            .map((f) => `${f.origem}: ${f.pecas.join(", ").toLowerCase()}`)
+            .join(" · ")}
+        </div>
+      )}
 
       {resultados.length >
         0 && (
@@ -1179,6 +1258,13 @@ export default function BuscaCatalogo({
                               }`
                             : "Não informado";
 
+                        const anosComGrupo =
+                          resultado.agrupadas?.length > 1
+                            ? `${anos} (${resultado.agrupadas.length} períodos seguidos do catálogo: ${resultado.agrupadas
+                                .map((r) => `${r.ano_inicio}–${r.ano_fim ?? "atual"}`)
+                                .join(", ")})`
+                            : anos;
+
                         const tipoCorrespondencia =
                           identificarCorrespondencia(
                             resultado,
@@ -1277,7 +1363,7 @@ export default function BuscaCatalogo({
                               <CampoResultado
                                 titulo="Anos"
                                 valor={
-                                  anos
+                                  anosComGrupo
                                 }
                               />
 
@@ -1468,6 +1554,17 @@ const catalogoAtual = {
   borderRadius: "999px",
   padding: "10px 16px",
   fontWeight: "bold",
+};
+
+const avisoDivergencia = {
+  margin: "14px 0",
+  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1px solid #b45309",
+  background: "rgba(180,83,9,.15)",
+  color: "#fde68a",
+  fontSize: "13px",
+  lineHeight: 1.5,
 };
 
 const botaoVoltar = {

@@ -11,6 +11,7 @@
 // =============================================================
 import { extrairProdutoPrincipal, normalizarTexto, NUCLEOS_DE_PECA } from "./nomePecaFicha.js";
 import { MARCA_A_CONFIRMAR, LIMITE_TITULO_ML } from "./anuncioProvisorio.js";
+import { modeloConhecido, familiaDaMontadora } from "./catalogos/modelosVeiculos.js";
 
 const txt = (v) => String(v ?? "").trim();
 const norm = (v) => normalizarTexto(v).replace(/[^a-z0-9]/g, "");
@@ -191,6 +192,7 @@ export function organizarResultadosGoogle({ codigo = "", resultados = [] } = {})
 
   const marcas = new Map();
   const modelos = new Map();
+  const montadoraDoModelo = new Map();
   const motores = new Map();
   const anos = new Map();
   const codigos = new Map();
@@ -200,12 +202,17 @@ export function organizarResultadosGoogle({ codigo = "", resultados = [] } = {})
     const texto = `${r.titulo} ${r.trecho}`.replace(/\.\.\./g, " ").replace(/R\$\s?[\d.,]+/g, " ");
     // Montadora
     for (const w of normalizarTexto(texto).split(/[^a-z0-9-]+/)) if (MONTADORAS[w]) contar(marcas, MONTADORAS[w], fonte, MONTADORAS[w]);
-    // Modelos: palavras com inicial maiúscula NO TÍTULO, que não são peça/marca/código/termo comum.
+    // Modelos: palavras com inicial maiúscula NO TÍTULO, que não são peça/marca/código/termo comum
+    // E (26/11) que são um modelo CONHECIDO. Palavras soltas ("Pré", "Dark") não viram modelo, e
+    // cada modelo guarda a SUA montadora (Fiesta é Ford, mesmo num resultado que cita Toyota).
     for (const w of r.titulo.split(/[^A-Za-zÀ-ÿ0-9-]+/)) {
       const n = normalizarTexto(w);
       if (!/^[A-ZÀ-Ý]/.test(w) || n.length < 3 || /\d/.test(n) || /^[ivxl]+$/.test(n)) continue;
       if (NAO_MODELO.has(n) || MONTADORAS[n] || MARCAS_DE_PECA.has(n) || palavrasSites.has(n) || NUCLEOS_DE_PECA.has(n) || palavrasPeca.has(n) || palavrasPeca.has(n.replace(/(?:eis|el|is|es|s)$/, ""))) continue;
-      contar(modelos, n, fonte, capital(w));
+      const conhecido = modeloConhecido(w);
+      if (!conhecido) continue;
+      contar(modelos, n, fonte, conhecido.modelo);
+      montadoraDoModelo.set(n, conhecido.montadora);
     }
     // Motores (versões): 1.0 a 6.9
     for (const m of texto.matchAll(/\b([1-6][.,]\d)\b/g)) contar(motores, m[1].replace(",", "."), fonte, m[1].replace(",", "."));
@@ -229,8 +236,15 @@ export function organizarResultadosGoogle({ codigo = "", resultados = [] } = {})
     }
   }
   const ordenar = (mapa) => [...mapa.values()].map((v) => ({ nome: formaMaisUsada(v), fontes: v.fontes.size })).sort((a, b) => b.fontes - a.fontes || a.nome.localeCompare(b.nome));
-  const listaModelos = ordenar(modelos);
   const marca = ordenar(marcas)[0] || { nome: "", fontes: 0 };
+  // Modelo de outra montadora (ex.: Fiesta num resultado de Toyota) vai com a própria marca.
+  const listaModelos = [...modelos.entries()]
+    .map(([k, v]) => {
+      const dono = montadoraDoModelo.get(k) || "";
+      const outra = dono && marca.nome && familiaDaMontadora(dono) !== familiaDaMontadora(marca.nome);
+      return { nome: formaMaisUsada(v), fontes: v.fontes.size, montadora: outra ? dono : "" };
+    })
+    .sort((a, b) => b.fontes - a.fontes || a.nome.localeCompare(b.nome));
   const codigoBase = txt(codigo).toUpperCase();
   const listaCodigos = [codigoBase, ...ordenar(codigos).map((c) => c.nome)].filter((c, i, a) => c && a.indexOf(c) === i && norm(c) === alvo);
   const vistos = new Set();
@@ -259,7 +273,8 @@ export function tituloGoogle(org, codigo = "", limite = LIMITE_TITULO_ML) {
   if (!org?.peca) return "";
   const cod = txt(codigo).toUpperCase();
   const marca = org.montadoraFontes >= MIN_FONTES ? org.montadora : "";
-  const modelos = (org.modelos || []).map((m) => m.nome);
+  // (26/11) No título só entram os modelos da montadora do título.
+  const modelos = (org.modelos || []).filter((m) => !m.montadora).map((m) => m.nome);
   for (let n = modelos.length; n >= 0; n--) {
     const t = [org.peca, marca, ...modelos.slice(0, n), cod].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
     if (t.length <= limite) return t;
@@ -273,15 +288,16 @@ export function descricaoGoogle(org, codigo = "", { quando = new Date() } = {}) 
   const A = MARCA_A_CONFIRMAR;
   const marca = org.montadora && org.montadoraFontes >= MIN_FONTES ? org.montadora : "";
   const linhas = [];
-  linhas.push([org.peca, marca, (org.modelos || []).map((m) => m.nome).join(" / ")].filter(Boolean).join(" "), "");
+  linhas.push([org.peca, marca, (org.modelos || []).filter((m) => !m.montadora).map((m) => m.nome).join(" / ")].filter(Boolean).join(" "), "");
+  const comMarca = (m) => (m.montadora ? `${m.montadora} ` : marca ? `${marca} ` : "");
   linhas.push("IDENTIFICAÇÃO DA PEÇA", `${org.peca}${marca ? ` – ${marca}` : ""}.`);
   if (org.pecaOriginal) {
     linhas.push(`${A} Nome traduzido do francês (original: "${org.pecaOriginal}")${org.traducaoCompleta ? "" : " — parte do nome não foi traduzida"}.`);
   }
   linhas.push("");
   linhas.push("APLICAÇÕES ENCONTRADAS");
-  for (const m of org.modelos || []) linhas.push(`${marca ? `${marca} ` : ""}${m.nome}`);
-  for (const m of org.modelosAConfirmar || []) linhas.push(`${A} ${marca ? `${marca} ` : ""}${m.nome} (citado em apenas 1 fonte)`);
+  for (const m of org.modelos || []) linhas.push(`${m.montadora ? `${A} ` : ""}${comMarca(m)}${m.nome}${m.montadora ? " (outra montadora — confira)" : ""}`);
+  for (const m of org.modelosAConfirmar || []) linhas.push(`${A} ${comMarca(m)}${m.nome} (citado em apenas 1 fonte)`);
   if (org.motores?.length) linhas.push(`${A} Motores citados: ${org.motores.map((m) => m.nome).join(", ")}`);
   if (org.anos?.length) linhas.push(`${A} Anos citados${org.anos.length > 1 ? " (as fontes divergem)" : ""}: ${org.anos.map((a) => a.nome).join(", ")}`);
   if (!(org.modelos || []).length && !(org.modelosAConfirmar || []).length) linhas.push(`${A} Aplicação (montadora, modelo, motor e ano): não encontrada.`);

@@ -16,6 +16,7 @@ import {
 } from "./buscaPecaInternetProvisoria";
 
 import { resolverProdutosPorChave } from "./catalogos/resolverCatalogoChaves";
+import { formasDenso, compactoAlternativoDenso, agruparPeriodosConsecutivos } from "./catalogos/codigosTecnicos";
 import {
   AVISO_CODIGO_SEM_APLICACAO,
   ehReferenciaTecnicaSemAplicacao,
@@ -120,6 +121,15 @@ function variantesCodigoPesquisa(valor) {
         compacto.slice(7),
       ].join(" ")
     );
+  }
+
+  /*
+   * (26/11) Códigos DENSO "439000-0830RC" / "BC261430-1270RC": acha com e
+   * sem hífen e com e sem o sufixo RC. O código gravado (oficial, completo)
+   * é sempre o que aparece no resultado.
+   */
+  for (const forma of formasDenso(compacto)) {
+    variantes.add(forma);
   }
 
   return [...variantes];
@@ -1140,7 +1150,10 @@ async function consultarPecasPorCodigos(codigos) {
 
   const compactosPedido = [
     ...new Set(
-      (codigos || []).map((codigo) => normalizarCodigo(codigo)).filter(Boolean)
+      (codigos || [])
+        .map((codigo) => normalizarCodigo(codigo))
+        .flatMap((compacto) => [compacto, compactoAlternativoDenso(compacto)])
+        .filter(Boolean)
     ),
   ];
 
@@ -1241,21 +1254,49 @@ async function pesquisarBaseAppiaTermo(
 
     let pecas = await consultarPecasPorCodigos(variantes);
 
+    // (26/11) DENSO com/sem RC: a forma exata digitada vem primeiro; a forma
+    // "irmã" só vale quando a exata não acha nada.
+    const alternativoDenso = compactoAlternativoDenso(compacto);
+    let compactoUsado = compacto;
+    if (alternativoDenso && pecas.length > 0) {
+      const exatos = pecas.filter((registro) =>
+        registroTemCodigoNormalizado(registro, compacto)
+      );
+      if (exatos.length > 0) {
+        pecas = exatos;
+      } else {
+        compactoUsado = alternativoDenso;
+      }
+    }
+
     if (pecas.length === 0) {
-      try {
-        produtosChave = await executarComTimeout(
-          resolverProdutosPorChave(termo),
-          2000,
-          "CHAVES"
-        );
-      } catch (erro) {
-        console.warn("⚠️ catalogo_chaves:", erro);
+      for (const tentativa of [compacto, alternativoDenso].filter(Boolean)) {
+        try {
+          produtosChave = await executarComTimeout(
+            resolverProdutosPorChave(tentativa),
+            2000,
+            "CHAVES"
+          );
+        } catch (erro) {
+          console.warn("⚠️ catalogo_chaves:", erro);
+        }
+        if ((produtosChave || []).length > 0) {
+          compactoUsado = tentativa;
+          break;
+        }
       }
 
+      // (26/11) A chave já liga o código digitado ao produto: a ficha do
+      // produto vale mesmo quando o OEM não cabe na lista da própria ficha
+      // (sondas universais têm centenas de OEM; só os 60 primeiros vão nela).
       const pecasPorChave = (produtosChave || [])
-        .flatMap((produto) => produto.pecas || [])
-        .filter((registro) =>
-          registroTemCodigoNormalizado(registro, compacto)
+        .flatMap((produto) =>
+          (produto.pecas || []).filter(
+            (registro) =>
+              registroTemCodigoNormalizado(registro, compactoUsado) ||
+              normalizarCodigo(registro?.codigo_oem) ===
+                normalizarCodigo(produto.codigo_tecnico_principal_normalizado)
+          )
         );
 
       if (pecasPorChave.length > 0) {
@@ -1299,7 +1340,7 @@ async function pesquisarBaseAppiaTermo(
     const registros = preferirFormaExataComMais(
       termo,
       pecas.filter((registro) =>
-        registroTemCodigoNormalizado(registro, compacto)
+        registroTemCodigoNormalizado(registro, compactoUsado)
       )
     );
 
@@ -1846,9 +1887,16 @@ function consolidarAplicacoes(
   }
 
 
-  return [
-    ...mapa.values(),
-  ];
+  // (26/11) Períodos seguidos da MESMA aplicação (mesma montadora, modelo,
+  // motor e origem) viram uma linha só: 2011–2013 + 2014–2016 = 2011 até 2016.
+  // As linhas originais ficam em "agrupadas" (nada se perde).
+  return agruparPeriodosConsecutivos([...mapa.values()], {
+    juntarObservacoes: false,
+  }).map((item) => ({
+    ...item,
+    anoInicio: item.ano_inicio,
+    anoFim: item.ano_fim,
+  }));
 }
 /*
  * ============================================================

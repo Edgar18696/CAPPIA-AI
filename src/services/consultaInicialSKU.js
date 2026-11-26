@@ -280,7 +280,8 @@ export function resumoIndicador(r) {
   // Falha NUNCA vira "não encontrado".
   if (falhou) return { tipo: "indisponivel", texto: "Consulta indisponível", alerta: false, incompleto: true };
   if (duvida) return { tipo: "conferir", texto: "Parecido — confira", alerta: true, incompleto: false };
-  return { tipo: "nao_encontrado", texto: "Não encontrado", alerta: false, incompleto: false };
+  // (26/11) Antes dizia "Não encontrado" e parecia que a PEÇA não tinha sido achada no catálogo.
+  return { tipo: "nao_encontrado", texto: "SKU novo — sem anúncio", alerta: false, incompleto: false };
 }
 
 /**

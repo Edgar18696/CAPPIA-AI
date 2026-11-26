@@ -1,7 +1,7 @@
 // (17/11/2026) AVISO DO SKU — Criar Anúncio. Somente leitura e em segundo plano.
 // O usuário digita o código e continua. Depois de uma pausa na digitação, o PAIIA consulta
 // sozinho as integrações que ele USA (Bling, se conectado; contas ML conectadas) e as fichas
-// PAIIA do código. Ao lado do campo aparece só: "Já existe · Ver detalhes", "Não encontrado"
+// PAIIA do código. Ao lado do campo aparece só: "Já existe · Ver detalhes", "SKU novo — sem anúncio"
 // ou "Consulta indisponível". "Ver detalhes" abre um painel compacto (Bling, PAIIA, contas ML)
 // com no máximo os atalhos necessários: Continuar ficha, Aproveitar para outra conta,
 // Abrir anúncio, e — só com estoque 0 — Regularizar no Bling / Verificar de novo.

@@ -898,6 +898,32 @@ export const CATALOGOS_ONLINE = [
     verificadoEm: V,
   },
 
+  // (26/11/2026) DENSO Brasil — substitui na tela "DENSO Auto Parts — Find My Part" (EUA/Canadá)
+  // e "DENSO — Catálogo global de velas". Conferido em 26/11/2026: o catálogo oficial brasileiro
+  // é o "Catálogo DENSO" (Ideia 2001): programa instalado no computador e app no celular; não há
+  // versão web. Catálogos em PDF, lançamentos e fichas técnicas ficam no site DENSO Aftermarket.
+  {
+    id: "denso-oficial-brasil",
+    nome: "DENSO — Catálogo Oficial Brasil",
+    fabricante: "Denso",
+    marcas: ["Denso"],
+    grupo: "componentes",
+    categoria: "Climatização / arrefecimento / elétricos / velas",
+    descricao:
+      "Catálogo DENSO Aftermarket Brasil: código, aplicação, dimensões e lançamentos (programa no computador e app no celular).",
+    acesso: "Livre",
+    busca: ["codigo", "veiculo", "placa", "equivalencia"],
+    oficial: true,
+    url: "https://aftermarket.denso.com.br/downloads?categoria=catalog",
+    links: [
+      { rotulo: "Catálogos e lançamentos (site oficial)", url: "https://aftermarket.denso.com.br/downloads?categoria=catalog" },
+      { rotulo: "App no celular (iPhone e Android)", url: "https://catexp.com.br/app/aplicativo?n=denso" },
+    ],
+    observacao: "No computador da loja: use o Catálogo DENSO instalado (atualizado em 13/11/2026). Não existe versão para abrir no navegador.",
+    testeBrasil: "26/11/2026: aftermarket.denso.com.br abriu (Downloads: catálogos, montagem, lançamentos, fichas técnicas); catexp.com.br/app/aplicativo?n=denso abriu (\"Baixe grátis o aplicativo Catálogo DENSO\"); catalogoexpresso.com.br/denso não existe (404)",
+    verificadoEm: "2026-11-26",
+  },
+
   // Delphi
   {
     id: "delphi-brasil",

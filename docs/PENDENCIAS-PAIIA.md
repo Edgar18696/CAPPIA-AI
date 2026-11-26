@@ -53,3 +53,9 @@ Branch `paizinho/simplificacao-geral` (= main fb9489c + margem fc2c40b + simplif
 | S1 | Juntar "Prioridades de hoje" e "Detalhes por assunto" na Auditoria por anúncio (hoje o mesmo problema aparece em até 4 lugares) | Ranqueamento |
 | S2 | Central de Promoções aproveitar os dados do Ranqueamento (custo, margem, data da análise) ao receber um anúncio: o banco da seleção tem colunas fixas — precisa de coluna nova (migração, autorização) | Central de Promoções |
 | S3 | Imposto informado num só lugar (Preços, Custos e Lucro), com a Black Friday só lendo | Preços / Promoções |
+
+## Catálogos Técnicos — tela única (26/11/2026, branch catalogos/tecnicos-unificados, NÃO publicado)
+- Aguardando o Edgar: publicar a branch; importar na produção DENSO Lambda (A+B+C) e TSA (roteiros prontos, não rodados).
+- Euro: sem catálogo nem site identificado. Gauss: endereço oficial não conferido.
+- TSA: 19 ocorrências para conferência manual (`C:\PAIIA\analise-tsa\PENDENCIAS_CONFERENCIA_MANUAL.csv`).
+- Relatório: `C:\PAIIA\catalogos-tecnicos\RELATORIO_CATALOGOS_TECNICOS_26-11-2026.md`.

@@ -1,5 +1,7 @@
 import { supabase } from "../../supabase";
 import { consultarCatcar } from "./consultarCatcar";
+import { resolverProdutosPorChave } from "./resolverCatalogoChaves";
+import { formasDenso, compactoAlternativoDenso } from "./codigosTecnicos";
 
 /*
  * ============================================================
@@ -406,6 +408,12 @@ function criarVariantesCodigo(
     variantes.add(
       `${matchOza[1]}${matchOza[2]}-${matchOza[3]}${matchOza[4]}`
     );
+  }
+
+  // (26/11) DENSO "439000-0830RC": com e sem hífen, com e sem o sufixo RC.
+  for (const forma of formasDenso(compacto)) {
+    variantes.add(forma);
+    variantes.add(normalizarCodigo(forma));
   }
 
 
@@ -1468,6 +1476,49 @@ export async function pesquisarCatalogoUniversal({
     };
   }
 
+
+  /*
+   * (26/11) Chaves de busca (catalogo_chaves): OEM/equivalente documentado no
+   * catálogo → produto (ex.: OEM Fiat 7091200 → TSA T-010267; OEM → DENSO DOX).
+   * Mesma regra do Buscar e Montar: só a ligação escrita no catálogo vale.
+   */
+  try {
+    const compactoChave = normalizarCodigo(termo);
+    for (const tentativa of [compactoChave, compactoAlternativoDenso(compactoChave)].filter(Boolean)) {
+      const produtos = await executarComTimeout(
+        resolverProdutosPorChave(tentativa),
+        4000,
+        "CHAVES"
+      );
+      const pecasChave = removerDuplicados(
+        (produtos || []).flatMap((produto) =>
+          (produto.pecas || []).filter(
+            (registro) =>
+              normalizarCodigo(registro?.codigo_oem) ===
+              normalizarCodigo(produto.codigo_tecnico_principal_normalizado)
+          )
+        )
+      ).filter(
+        (registro) =>
+          !fabricante ||
+          fabricante === "todos" ||
+          String(registro?.fabricante || "")
+            .toLowerCase()
+            .includes(String(fabricante).toLowerCase())
+      );
+      if (pecasChave.length > 0) {
+        return {
+          sucesso: true,
+          quantidade: pecasChave.length,
+          registros: pecasChave,
+          origem: "base_tecnica_paiia",
+          validado: true,
+        };
+      }
+    }
+  } catch (erroChaves) {
+    console.warn("⚠️ catalogo_chaves:", erroChaves);
+  }
 
   console.log(
     "⚠️ CÓDIGO NÃO CONFIRMADO NA BASE TÉCNICA:",

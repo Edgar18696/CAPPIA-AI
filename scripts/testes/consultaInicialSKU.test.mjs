@@ -256,7 +256,7 @@ test("16. só Mercado Livre (Bling não conectado): o Bling NÃO é consultado n
   assert.equal(r.bling.estado, E.SEM_INTEGRACAO);
   assert.equal(r.bling.pendencia, "");
   assert.equal(r.resumo.tipo, "nao_encontrado");
-  assert.equal(r.resumo.texto, "Não encontrado");
+  assert.equal(r.resumo.texto, "SKU novo — sem anúncio");
 });
 
 test("17. só Bling (nenhuma conta ML conectada): o ML não é consultado", async () => {

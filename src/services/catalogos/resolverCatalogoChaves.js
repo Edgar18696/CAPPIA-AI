@@ -146,15 +146,24 @@ async function montarProduto(chaveEntrada, chavesIrmas, termo, compacto, cliente
   const tecnicos = chavesIrmas.filter((chave) =>
     TIPOS_TECNICOS.has(chave.tipo_chave)
   );
+  // (26/11) O código principal do produto entra sempre: produtos com centenas
+  // de chaves (sondas universais) passam do limite de chaves irmãs lidas, e o
+  // próprio código principal podia ficar de fora (a ficha não era encontrada).
   const codigosOem = [
     ...new Set(
-      tecnicos.flatMap((chave) =>
-        [chave.codigo_exibido, chave.codigo_normalizado].filter(Boolean)
-      )
+      [
+        chaveEntrada.codigo_tecnico_principal,
+        ...tecnicos.flatMap((chave) =>
+          [chave.codigo_exibido, chave.codigo_normalizado].filter(Boolean)
+        ),
+      ].filter(Boolean)
     ),
   ];
   const tecnicosNorm = new Set(
-    tecnicos.map((chave) => normalizarCodigoChave(chave.codigo_normalizado))
+    [
+      chaveEntrada.codigo_tecnico_principal_normalizado,
+      ...tecnicos.map((chave) => normalizarCodigoChave(chave.codigo_normalizado)),
+    ].filter(Boolean)
   );
 
   const lote = await consultarPecasDaOrigem(
