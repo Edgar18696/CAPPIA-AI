@@ -143,7 +143,7 @@ export default function ParceirosPiloto() {
           <h3 className="pp-titulo">🤝 PAIIA Parceiros {EM_TESTE && <span className="pp-selo">PILOTO · TESTE · DADOS FICTÍCIOS</span>}</h3>
           <p className="pp-miudo">
             Área comercial, separada da informação técnica: parceiros nunca mudam a ordem nem o conteúdo
-            dos resultados dos catálogos. Sem cobrança real.
+            dos resultados dos catálogos.{EM_TESTE && " Sem cobrança real."}
           </p>
           <p className="pp-miudo" data-testid="perfil-atual">Você está como: <b>{rotuloPerfil(papel)}</b></p>
         </div>

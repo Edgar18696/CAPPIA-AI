@@ -132,3 +132,13 @@ test("cadastro: olhinho na senha e na confirmação; link de confirmação volta
   assert.match(prod, /lower\(email\) = 'comercial@casadainjecaosp\.com\.br' and email_confirmed_at is not null/);
   assert.doesNotMatch(prod, /597ee814/); // conta de uso diário nunca vira administradora
 });
+
+test("visitante sem conta não consulta a área de parceiros; frase de teste só fora da produção", () => {
+  const cat = ler("../../src/components/Catalogos.jsx");
+  assert.match(cat, /const parceirosVisiveis = PILOTO_PARCEIROS && logado;/);
+  assert.match(cat, /\{parceirosVisiveis && <ParceirosPiloto \/>\}/);
+  assert.match(cat, /\{parceirosVisiveis && <ParceirosNaPesquisa/);
+  assert.match(cat, /data-testid="parceiros-visitante"/);
+  const tela = ler("../../src/components/ParceirosPiloto.jsx");
+  assert.match(tela, /\{EM_TESTE && " Sem cobrança real\."\}/);
+});

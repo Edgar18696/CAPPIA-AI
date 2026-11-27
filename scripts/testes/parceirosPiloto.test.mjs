@@ -123,9 +123,9 @@ test("banco: papéis e travas da etapa 2", () => {
   assert.doesNotMatch(sql, /catalogo_pecas|catalogo_chaves/);
 });
 
-test("Catálogos Técnicos mostram a área de parceiros só no STAGING", () => {
+test("Catálogos Técnicos: área de parceiros conforme o ambiente e só para quem entrou", () => {
   const tela = fs.readFileSync(new URL("../../src/components/Catalogos.jsx", import.meta.url), "utf8");
   assert.match(tela, /pilotoParceirosAtivo\(ambienteSupabase\)/);
-  assert.match(tela, /PILOTO_PARCEIROS && <ParceirosPiloto \/>/);
-  assert.match(tela, /aoPesquisar=\{PILOTO_PARCEIROS \? setPesquisaParceiros : null\}/);
+  assert.match(tela, /parceirosVisiveis && <ParceirosPiloto \/>/);
+  assert.match(tela, /aoPesquisar=\{parceirosVisiveis \? setPesquisaParceiros : null\}/);
 });

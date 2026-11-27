@@ -1,16 +1,28 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import BuscaCatalogo from "./BuscaCatalogo";
 import {
   GRUPOS_CATALOGOS_TECNICOS,
   FABRICANTES_CATALOGOS,
   oficiaisDoFabricante,
 } from "../config/catalogosTecnicos";
-import { ambienteSupabase } from "../supabase";
+import { supabase, ambienteSupabase } from "../supabase";
 import { pilotoParceirosAtivo } from "../config/parceirosPiloto";
 import ParceirosPiloto, { ParceirosNaPesquisa } from "./ParceirosPiloto";
 
 // (26/11) Piloto PAIIA Parceiros: só no ambiente de teste (STAGING).
 const PILOTO_PARCEIROS = pilotoParceirosAtivo(ambienteSupabase);
+
+// (27/11) Parceiros só para quem entrou na conta: o banco não libera a área para visitantes.
+function useLogado() {
+  const [logado, setLogado] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    supabase.auth.getSession().then(({ data }) => vivo && setLogado(!!data?.session));
+    const { data } = supabase.auth.onAuthStateChange((_evento, sessao) => setLogado(!!sessao));
+    return () => { vivo = false; data?.subscription?.unsubscribe(); };
+  }, []);
+  return logado;
+}
 
 // (26/11/2026) CATÁLOGOS TÉCNICOS — UMA SÓ TELA.
 // Acabou a separação em duas abas (base interna x sites externos): o usuário
@@ -21,6 +33,8 @@ export default function Catalogos({ setScreen, cardStyle }) {
   const fabricante = FABRICANTES_CATALOGOS.find((f) => f.id === fabricanteId) || null;
   const oficiais = oficiaisDoFabricante(fabricante);
   const [pesquisaParceiros, setPesquisaParceiros] = useState(null);
+  const logado = useLogado();
+  const parceirosVisiveis = PILOTO_PARCEIROS && logado;
 
   function escolher(id) {
     setFabricanteId((atual) => (atual === id ? "" : id));
@@ -74,10 +88,10 @@ export default function Catalogos({ setScreen, cardStyle }) {
         setScreen={setScreen}
         embutido
         fabricante={fabricante}
-        aoPesquisar={PILOTO_PARCEIROS ? setPesquisaParceiros : null}
+        aoPesquisar={parceirosVisiveis ? setPesquisaParceiros : null}
       />
 
-      {PILOTO_PARCEIROS && <ParceirosNaPesquisa pesquisa={pesquisaParceiros} />}
+      {parceirosVisiveis && <ParceirosNaPesquisa pesquisa={pesquisaParceiros} />}
 
       {GRUPOS_CATALOGOS_TECNICOS.map((grupo) => (
         <section key={grupo.id} style={{ marginTop: "22px" }}>
@@ -104,7 +118,12 @@ export default function Catalogos({ setScreen, cardStyle }) {
         </section>
       ))}
 
-      {PILOTO_PARCEIROS && <ParceirosPiloto />}
+      {parceirosVisiveis && <ParceirosPiloto />}
+      {PILOTO_PARCEIROS && !logado && (
+        <p style={{ marginTop: "22px", fontSize: "13px", color: "#94a3b8" }} data-testid="parceiros-visitante">
+          🤝 <b>PAIIA Parceiros</b>: entre na sua conta para ver os distribuidores parceiros e falar direto com eles.
+        </p>
+      )}
 
       <button type="button" onClick={() => setScreen("importadorCatalogos")} style={botaoImportar}>
         📥 Importar Catálogo Técnico em PDF
