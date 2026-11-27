@@ -59,3 +59,23 @@ Branch `paizinho/simplificacao-geral` (= main fb9489c + margem fc2c40b + simplif
 - Euro: sem catálogo nem site identificado. Gauss: endereço oficial não conferido.
 - TSA: 19 ocorrências para conferência manual (`C:\PAIIA\analise-tsa\PENDENCIAS_CONFERENCIA_MANUAL.csv`).
 - Relatório: `C:\PAIIA\catalogos-tecnicos\RELATORIO_CATALOGOS_TECNICOS_26-11-2026.md`.
+
+## PAIIA Parceiros — PUBLICADO (27/11/2026, main 0982232 + 4de45e1, autorizado pelo Edgar)
+- **Modelo simplificado confirmado pelo Edgar no site oficial:**
+  - catálogos dos fornecedores entram só com aprovação técnica;
+  - contato direto entre usuário e fornecedor;
+  - negociação, pagamento e entrega ficam entre as empresas;
+  - mensalidade configurável, começando em R$ 199,90, com 30 dias gratuitos;
+  - administração só pela comercial@casadainjecaosp.com.br;
+  - nenhuma interferência comercial nos resultados técnicos.
+- **O que foi feito:**
+  - banco oficial: 10 tabelas, 23 funções, agendador da lista de montadoras/modelos (15 min), nenhum dado fictício (o banco recusa);
+  - Supabase oficial: link de confirmação para www.paiia.com.br; e-mail "PAIIA AI";
+  - código: olhinho no login, no cadastro (senha e confirmação) e convite para visitante sem login (antes aparecia erro de permissão).
+- **Conferido em 27/11:**
+  - produção com 0 parceiros, 0 itens e 1 administrador;
+  - base técnica intacta (1.368.231 peças e 14.585 chaves);
+  - olhinhos funcionando no site oficial;
+  - formulário de administração conferido pelo Edgar.
+- **Situação:** aguardando o primeiro parceiro real. Não cadastrar empresas fictícias na produção. Sem novas funcionalidades nesta etapa, só pequenas correções por necessidade real.
+- **Reversão e backup:** `C:\PAIIA\backups\2026-11-27-antes-parceiros\PROCEDIMENTO_PUBLICACAO_E_REVERSAO.md`.
