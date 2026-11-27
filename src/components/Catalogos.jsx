@@ -5,6 +5,12 @@ import {
   FABRICANTES_CATALOGOS,
   oficiaisDoFabricante,
 } from "../config/catalogosTecnicos";
+import { ambienteSupabase } from "../supabase";
+import { pilotoParceirosAtivo } from "../config/parceirosPiloto";
+import ParceirosPiloto, { ParceirosNaPesquisa } from "./ParceirosPiloto";
+
+// (26/11) Piloto PAIIA Parceiros: só no ambiente de teste (STAGING).
+const PILOTO_PARCEIROS = pilotoParceirosAtivo(ambienteSupabase);
 
 // (26/11/2026) CATÁLOGOS TÉCNICOS — UMA SÓ TELA.
 // Acabou a separação em duas abas (base interna x sites externos): o usuário
@@ -14,6 +20,7 @@ export default function Catalogos({ setScreen, cardStyle }) {
   const [fabricanteId, setFabricanteId] = useState("");
   const fabricante = FABRICANTES_CATALOGOS.find((f) => f.id === fabricanteId) || null;
   const oficiais = oficiaisDoFabricante(fabricante);
+  const [pesquisaParceiros, setPesquisaParceiros] = useState(null);
 
   function escolher(id) {
     setFabricanteId((atual) => (atual === id ? "" : id));
@@ -63,7 +70,14 @@ export default function Catalogos({ setScreen, cardStyle }) {
         </div>
       )}
 
-      <BuscaCatalogo setScreen={setScreen} embutido fabricante={fabricante} />
+      <BuscaCatalogo
+        setScreen={setScreen}
+        embutido
+        fabricante={fabricante}
+        aoPesquisar={PILOTO_PARCEIROS ? setPesquisaParceiros : null}
+      />
+
+      {PILOTO_PARCEIROS && <ParceirosNaPesquisa pesquisa={pesquisaParceiros} />}
 
       {GRUPOS_CATALOGOS_TECNICOS.map((grupo) => (
         <section key={grupo.id} style={{ marginTop: "22px" }}>
@@ -89,6 +103,8 @@ export default function Catalogos({ setScreen, cardStyle }) {
           </div>
         </section>
       ))}
+
+      {PILOTO_PARCEIROS && <ParceirosPiloto />}
 
       <button type="button" onClick={() => setScreen("importadorCatalogos")} style={botaoImportar}>
         📥 Importar Catálogo Técnico em PDF

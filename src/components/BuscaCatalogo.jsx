@@ -439,6 +439,9 @@ export default function BuscaCatalogo({
   // filtrada pelo cartão do fabricante escolhido (fabricante = item de FABRICANTES_CATALOGOS).
   embutido = false,
   fabricante = null,
+  // (26/11) Piloto PAIIA Parceiros (só STAGING): avisa quem embute a pesquisa sobre
+  // o termo e os resultados técnicos. Não altera os resultados.
+  aoPesquisar = null,
 }) {
   const fabricanteConfig = embutido
     ? fabricante
@@ -796,6 +799,8 @@ export default function BuscaCatalogo({
         encontradosAgrupados
       );
 
+      aoPesquisar?.({ termo: termoBusca, resultados: encontradosAgrupados });
+
       setProgresso(
         encontradosAgrupados.length > 0
           ? `✅ ${encontradosAgrupados.length} resultado(s) encontrado(s).`
@@ -810,6 +815,9 @@ export default function BuscaCatalogo({
       );
 
       setResultados([]);
+
+      // (26/11) Piloto Parceiros: sem resultado técnico, procura só o código digitado.
+      aoPesquisar?.({ termo: termoBusca, resultados: [] });
 
       setProgresso(
         error?.message ||

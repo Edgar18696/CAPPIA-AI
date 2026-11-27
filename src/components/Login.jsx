@@ -68,6 +68,13 @@ export default function Login({
   const [mostrarSenha, setMostrarSenha] =
     useState(false);
 
+  // (27/11) Olhinho também no cadastro (senha e confirmação), cada campo com o seu.
+  const [mostrarSenhaCadastro, setMostrarSenhaCadastro] =
+    useState(false);
+
+  const [mostrarConfirmacao, setMostrarConfirmacao] =
+    useState(false);
+
   function somenteNumeros(valor) {
     return String(valor || "").replace(/\D/g, "");
   }
@@ -740,22 +747,37 @@ export default function Login({
             <label style={label}>
               Senha
 
+              <div style={{ position: "relative" }}>
               <input
-                type="password"
+                type={mostrarSenhaCadastro ? "text" : "password"}
                 value={senha}
                 onChange={(e) =>
                   setSenha(e.target.value)
                 }
                 placeholder="Mínimo 6 caracteres"
-                style={campo}
+                autoComplete="new-password"
+                style={{ ...campo, paddingRight: "48px" }}
               />
+                <button
+                  type="button"
+                  onClick={() => setMostrarSenhaCadastro((v) => !v)}
+                  aria-label={mostrarSenhaCadastro ? "Esconder senha" : "Mostrar senha"}
+                  aria-pressed={mostrarSenhaCadastro}
+                  title={mostrarSenhaCadastro ? "Esconder senha" : "Mostrar senha"}
+                  style={botaoOlhoCadastro}
+                  data-paiia-cadastro-olho="senha"
+                >
+                  {mostrarSenhaCadastro ? "🙈" : "👁️"}
+                </button>
+              </div>
             </label>
 
             <label style={label}>
               Confirmar senha
 
+              <div style={{ position: "relative" }}>
               <input
-                type="password"
+                type={mostrarConfirmacao ? "text" : "password"}
                 value={confirmarSenha}
                 onChange={(e) =>
                   setConfirmarSenha(
@@ -763,8 +785,21 @@ export default function Login({
                   )
                 }
                 placeholder="Repita a senha"
-                style={campo}
+                autoComplete="new-password"
+                style={{ ...campo, paddingRight: "48px" }}
               />
+                <button
+                  type="button"
+                  onClick={() => setMostrarConfirmacao((v) => !v)}
+                  aria-label={mostrarConfirmacao ? "Esconder senha" : "Mostrar senha"}
+                  aria-pressed={mostrarConfirmacao}
+                  title={mostrarConfirmacao ? "Esconder senha" : "Mostrar senha"}
+                  style={botaoOlhoCadastro}
+                  data-paiia-cadastro-olho="confirmacao"
+                >
+                  {mostrarConfirmacao ? "🙈" : "👁️"}
+                </button>
+              </div>
             </label>
           </div>
 
@@ -858,6 +893,24 @@ const campo = {
   color: "#ffffff",
   outline: "none",
   fontSize: "14px",
+};
+
+// No cadastro o campo fica dentro do rótulo: o botão centraliza na altura do próprio campo.
+const botaoOlhoCadastro = {
+  position: "absolute",
+  right: "6px",
+  top: "50%",
+  transform: "translateY(-50%)",
+  width: "38px",
+  height: "34px",
+  border: "none",
+  borderRadius: "8px",
+  background: "transparent",
+  color: "#cbd5e1",
+  cursor: "pointer",
+  fontSize: "18px",
+  lineHeight: 1,
+  padding: 0,
 };
 
 const botaoOlho = {

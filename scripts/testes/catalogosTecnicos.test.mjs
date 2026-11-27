@@ -130,7 +130,7 @@ test("tela única: sem as abas antigas e com o importador de PDF", () => {
   const s = ler("src/components/Catalogos.jsx");
   assert.ok(!/Catálogos já existentes/.test(s) && !/CatalogosOnline/.test(s));
   assert.match(s, /Importar Catálogo Técnico em PDF/);
-  assert.match(s, /<BuscaCatalogo setScreen=\{setScreen\} embutido fabricante=\{fabricante\} \/>/);
+  assert.match(s, /<BuscaCatalogo\s+setScreen=\{setScreen\}\s+embutido\s+fabricante=\{fabricante\}/);
 });
 
 test("aviso do SKU não diz mais 'Não encontrado' (a peça pode ter sido achada no catálogo)", () => {

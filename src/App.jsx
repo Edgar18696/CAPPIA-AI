@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { supabase, supabaseKey } from "./supabase";
+import { supabase, supabaseKey, ambienteSupabase } from "./supabase";
 import Catalogos from "./components/Catalogos";
 import BuscaCatalogo from "./components/BuscaCatalogo";
 import MeusRascunhos from "./components/MeusRascunhos";
@@ -767,6 +767,11 @@ const estatisticasAtendimento = historicoAtendimento.reduce(
       email,
       password: senha,
       options: {
+        // (27/11) O link de confirmação volta para o site certo (antes caía em localhost:3000).
+        emailRedirectTo:
+          ambienteSupabase === "producao"
+            ? "https://www.paiia.com.br"
+            : window.location.origin,
         data: {
           tipo_conta:
             dadosCadastro.tipoConta ||
