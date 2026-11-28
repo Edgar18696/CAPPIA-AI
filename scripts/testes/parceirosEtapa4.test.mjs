@@ -137,8 +137,25 @@ test("visitante sem conta não consulta a área de parceiros; frase de teste só
   const cat = ler("../../src/components/Catalogos.jsx");
   assert.match(cat, /const parceirosVisiveis = PILOTO_PARCEIROS && logado;/);
   assert.match(cat, /\{parceirosVisiveis && <ParceirosPiloto \/>\}/);
-  assert.match(cat, /\{parceirosVisiveis && <ParceirosNaPesquisa/);
+  assert.match(cat, /\{parceirosVisiveis && ITENS_DISTRIBUIDOR_ATIVO && <ParceirosNaPesquisa/);
   assert.match(cat, /data-testid="parceiros-visitante"/);
   const tela = ler("../../src/components/ParceirosPiloto.jsx");
   assert.match(tela, /\{EM_TESTE && " Sem cobrança real\."\}/);
+});
+
+test("distribuidores: só nome, logotipo e link do catálogo online; nada entra na base nem na pesquisa", async () => {
+  const cfg = await import("../../src/config/parceirosPiloto.js");
+  assert.equal(cfg.ITENS_DISTRIBUIDOR_ATIVO, false);
+  assert.equal(cfg.linkCatalogoParceiro({ catalogo_url: "www.dist.com.br/catalogo", site: "dist.com.br" }), "https://www.dist.com.br/catalogo");
+  assert.equal(cfg.linkCatalogoParceiro({ site: "dist.com.br" }), "https://dist.com.br");
+  assert.equal(cfg.linkCatalogoParceiro({}), "");
+  const cat = ler("../../src/components/Catalogos.jsx");
+  assert.match(cat, /parceirosVisiveis && ITENS_DISTRIBUIDOR_ATIVO && <ParceirosNaPesquisa/);
+  assert.match(cat, /aoPesquisar=\{parceirosVisiveis && ITENS_DISTRIBUIDOR_ATIVO \? setPesquisaParceiros : null\}/);
+  const tela = ler("../../src/components/ParceirosPiloto.jsx");
+  assert.match(tela, /\{ITENS_DISTRIBUIDOR_ATIVO && <CatalogoDoParceiro/);
+  assert.match(tela, /\{!ITENS_DISTRIBUIDOR_ATIVO \? null : p\.id \?/); // envio de arquivo/itens desligado
+  assert.match(tela, /target="_blank" rel="noopener noreferrer" className="pp-cartao"/);
+  // usuário comum não abre o perfil com contatos: só admin e o próprio parceiro
+  assert.match(tela, /modo === "ver" && aberto && \(papel\.admin \|\| papel\.parceiros\.includes\(aberto\.id\)\)/);
 });

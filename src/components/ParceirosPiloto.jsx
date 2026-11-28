@@ -31,6 +31,8 @@ import {
   reaisParaCentavos,
   LIMITE_CATALOGO_BYTES,
   modoTesteParceiros,
+  ITENS_DISTRIBUIDOR_ATIVO,
+  linkCatalogoParceiro,
 } from "../config/parceirosPiloto";
 import {
   meuPapel,
@@ -140,12 +142,14 @@ export default function ParceirosPiloto() {
       <EstilosParceiros />
       <div className="pp-topo">
         <div>
-          <h3 className="pp-titulo">🤝 PAIIA Parceiros {EM_TESTE && <span className="pp-selo">PILOTO · TESTE · DADOS FICTÍCIOS</span>}</h3>
+          <h3 className="pp-titulo">🏪 Distribuidores parceiros {EM_TESTE && <span className="pp-selo">PILOTO · TESTE · DADOS FICTÍCIOS</span>}</h3>
           <p className="pp-miudo">
-            Área comercial, separada da informação técnica: parceiros nunca mudam a ordem nem o conteúdo
-            dos resultados dos catálogos.{EM_TESTE && " Sem cobrança real."}
+            Clique no distribuidor para abrir o catálogo online no site da empresa. Negociação, pagamento e
+            entrega são direto com a empresa.{EM_TESTE && " Sem cobrança real."}
           </p>
-          <p className="pp-miudo" data-testid="perfil-atual">Você está como: <b>{rotuloPerfil(papel)}</b></p>
+          {(papel.admin || papel.parceiros.length > 0) && (
+            <p className="pp-miudo" data-testid="perfil-atual">Você está como: <b>{rotuloPerfil(papel)}</b></p>
+          )}
         </div>
         {papel.admin && (
           <button type="button" className="pp-botao" onClick={() => editar(null)} data-testid="novo-parceiro">
@@ -161,6 +165,27 @@ export default function ParceirosPiloto() {
         {parceiros.map((p) => {
           const sit = SITUACOES.find((s) => s.id === p.situacao);
           const meu = papel.parceiros.includes(p.id);
+          // (28/11) Usuário: o cartão é só o link direto para o catálogo online da empresa.
+          if (!papel.admin && !meu) {
+            const link = linkCatalogoParceiro(p);
+            return link ? (
+              <a key={p.id} href={link} target="_blank" rel="noopener noreferrer" className="pp-cartao" data-testid={`catalogo-parceiro-${p.id}`}>
+                <span className="pp-linha">
+                  <Logo parceiro={p} tamanho={30} />
+                  <strong>{p.nome_fantasia}</strong>
+                </span>
+                <span className="pp-miudo">Abrir catálogo online ↗</span>
+              </a>
+            ) : (
+              <div key={p.id} className="pp-cartao" data-testid={`catalogo-parceiro-${p.id}`}>
+                <span className="pp-linha">
+                  <Logo parceiro={p} tamanho={30} />
+                  <strong>{p.nome_fantasia}</strong>
+                </span>
+                <span className="pp-miudo">Catálogo online em breve</span>
+              </div>
+            );
+          }
           return (
             <button key={p.id} type="button" onClick={() => abrir(p.id)} className={`pp-cartao${p.id === abertoId ? " pp-cartao-ativo" : ""}`} data-testid={`parceiro-${p.id}`}>
               <span className="pp-linha">
@@ -175,7 +200,7 @@ export default function ParceirosPiloto() {
         {!parceiros.length && !erro && <div className="pp-miudo">Nenhum parceiro disponível.</div>}
       </div>
 
-      {modo === "ver" && aberto && (
+      {modo === "ver" && aberto && (papel.admin || papel.parceiros.includes(aberto.id)) && (
         <PerfilParceiro parceiro={aberto} perfil={perfilParaParceiro(papel, aberto.id)} aoEditar={() => editar(aberto)} />
       )}
       {modo === "editar" && rascunho && (
@@ -255,7 +280,12 @@ function PerfilParceiro({ parceiro, perfil, aoEditar }) {
         </div>
       )}
 
-      <CatalogoDoParceiro parceiro={parceiro} perfil={perfil} />
+      {linkCatalogoParceiro(parceiro) && (
+        <a className="pp-botao" href={linkCatalogoParceiro(parceiro)} target="_blank" rel="noopener noreferrer" data-testid="abrir-catalogo-online">
+          Abrir catálogo online ↗
+        </a>
+      )}
+      {ITENS_DISTRIBUIDOR_ATIVO && <CatalogoDoParceiro parceiro={parceiro} perfil={perfil} />}
       {COTACAO_INTERNA_ATIVA && gerencia && <CotacoesRecebidas parceiro={parceiro} />}
     </div>
   );
@@ -572,7 +602,7 @@ function FormularioParceiro({ inicial, perfil, aoCancelar, aoSalvar }) {
       <strong className="pp-nome">
         {!p.id ? (EM_TESTE ? "Cadastrar parceiro (fictício)" : "Cadastrar parceiro") : admin ? `⚙️ Administração — ${p.nome_fantasia}` : `✏️ Meus dados — ${p.nome_fantasia}`}
       </strong>
-      {!admin && <p className="pp-miudo">Preencha seus dados, envie o logotipo e o catálogo. Tudo passa pela aprovação do PAIIA antes de aparecer para os usuários.</p>}
+      {!admin && <p className="pp-miudo">Preencha seus dados, envie o logotipo e informe o link do catálogo online. Tudo passa pela aprovação do PAIIA antes de aparecer para os usuários.</p>}
 
       <Bloco titulo="1. Empresa">
         <Campo rotulo="Nome da empresa"><input className="pp-campo" value={p.nome_fantasia} onChange={(e) => set("nome_fantasia", e.target.value)} data-testid="campo-nome" /></Campo>
@@ -621,7 +651,7 @@ function FormularioParceiro({ inicial, perfil, aoCancelar, aoSalvar }) {
         <Campo rotulo="Apresentação" largo><textarea className="pp-campo" rows={3} value={p.apresentacao || ""} onChange={(e) => set("apresentacao", e.target.value)} /></Campo>
       </Bloco>
 
-      <Bloco titulo="2. Contatos comerciais">
+      <Bloco titulo={ITENS_DISTRIBUIDOR_ATIVO ? "2. Contatos comerciais" : "2. Contatos (uso interno: não aparecem para os usuários)"}>
         <Campo rotulo="Site"><input className="pp-campo" value={p.site || ""} onChange={(e) => set("site", e.target.value)} /></Campo>
         <Campo rotulo="WhatsApp da empresa"><input className="pp-campo" value={p.whatsapp || ""} onChange={(e) => set("whatsapp", e.target.value)} /></Campo>
         <Campo rotulo="Telefone comercial"><input className="pp-campo" value={p.telefone || ""} onChange={(e) => set("telefone", e.target.value)} data-testid="campo-telefone" /></Campo>
@@ -646,15 +676,15 @@ function FormularioParceiro({ inicial, perfil, aoCancelar, aoSalvar }) {
         </div>
       </Bloco>
 
-      <Bloco titulo="3. Catálogo (passa pela validação e aprovação técnica)">
+      <Bloco titulo={ITENS_DISTRIBUIDOR_ATIVO ? "3. Catálogo (passa pela validação e aprovação técnica)" : "3. Catálogo online"}>
         <label className="pp-opcao pp-largo">
           <input type="checkbox" checked={!!p.catalogo_autorizado} onChange={(e) => set("catalogo_autorizado", e.target.checked)} />
-          <span>A empresa autoriza a integração do seu catálogo ao PAIIA</span>
+          <span>{ITENS_DISTRIBUIDOR_ATIVO ? "A empresa autoriza a integração do seu catálogo ao PAIIA" : "A empresa autoriza o PAIIA a mostrar seu nome, logotipo e o link do catálogo online"}</span>
         </label>
-        <Campo rotulo="Catálogo no site (opcional)" largo>
+        <Campo rotulo={ITENS_DISTRIBUIDOR_ATIVO ? "Catálogo no site (opcional)" : "Link do catálogo online (é o que o usuário abre)"} largo>
           <input className="pp-campo" placeholder="https://" value={p.catalogo_url || ""} onChange={(e) => { set("catalogo_url", e.target.value); set("catalogo_tipo", e.target.value ? "site" : "itens_paiia"); }} />
         </Campo>
-        {p.id ? (
+        {!ITENS_DISTRIBUIDOR_ATIVO ? null : p.id ? (
           <>
             <Campo rotulo={`Enviar catálogo — PDF ou planilha (CSV, XLS, XLSX), até ${LIMITE_CATALOGO_BYTES / 1024 / 1024} MB. O PAIIA lê os itens sozinho.`} largo>
               <input
@@ -975,6 +1005,7 @@ const CSS_PARCEIROS = `
 .pp-curto { flex: 0 0 120px; }
 .pp-grade-cartoes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 10px; }
 .pp-cartao { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; border-radius: 12px; border: 1px solid #475569; background: linear-gradient(180deg,#0f172a,#020617); color: #fff; cursor: pointer; width: 100%; }
+a.pp-cartao, a.pp-botao { text-decoration: none; box-sizing: border-box; font-size: 13.33px; }
 .pp-cartao-ativo { border-color: #f59e0b; background: rgba(120,53,15,.35); }
 .pp-painel { margin-top: 12px; padding: 14px; border-radius: 12px; border: 1px solid #475569; background: rgba(15,23,42,.85); display: grid; gap: 12px; min-width: 0; }
 .pp-painel-cotacao { border: 1px dashed #f59e0b; background: rgba(120,53,15,.18); }

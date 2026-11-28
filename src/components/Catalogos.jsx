@@ -6,7 +6,7 @@ import {
   oficiaisDoFabricante,
 } from "../config/catalogosTecnicos";
 import { supabase, ambienteSupabase } from "../supabase";
-import { pilotoParceirosAtivo } from "../config/parceirosPiloto";
+import { pilotoParceirosAtivo, ITENS_DISTRIBUIDOR_ATIVO } from "../config/parceirosPiloto";
 import ParceirosPiloto, { ParceirosNaPesquisa } from "./ParceirosPiloto";
 
 // (26/11) Piloto PAIIA Parceiros: só no ambiente de teste (STAGING).
@@ -88,10 +88,11 @@ export default function Catalogos({ setScreen, cardStyle }) {
         setScreen={setScreen}
         embutido
         fabricante={fabricante}
-        aoPesquisar={parceirosVisiveis ? setPesquisaParceiros : null}
+        aoPesquisar={parceirosVisiveis && ITENS_DISTRIBUIDOR_ATIVO ? setPesquisaParceiros : null}
       />
 
-      {parceirosVisiveis && <ParceirosNaPesquisa pesquisa={pesquisaParceiros} />}
+      {/* (28/11) distribuidores não entram na pesquisa: só o cartão com o link do catálogo online */}
+      {parceirosVisiveis && ITENS_DISTRIBUIDOR_ATIVO && <ParceirosNaPesquisa pesquisa={pesquisaParceiros} />}
 
       {GRUPOS_CATALOGOS_TECNICOS.map((grupo) => (
         <section key={grupo.id} style={{ marginTop: "22px" }}>
@@ -121,7 +122,7 @@ export default function Catalogos({ setScreen, cardStyle }) {
       {parceirosVisiveis && <ParceirosPiloto />}
       {PILOTO_PARCEIROS && !logado && (
         <p style={{ marginTop: "22px", fontSize: "13px", color: "#94a3b8" }} data-testid="parceiros-visitante">
-          🤝 <b>PAIIA Parceiros</b>: entre na sua conta para ver os distribuidores parceiros e falar direto com eles.
+          🤝 <b>PAIIA Parceiros</b>: entre na sua conta para ver os distribuidores parceiros e abrir os catálogos online deles.
         </p>
       )}
 

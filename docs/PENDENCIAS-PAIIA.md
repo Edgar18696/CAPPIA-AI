@@ -79,3 +79,17 @@ Branch `paizinho/simplificacao-geral` (= main fb9489c + margem fc2c40b + simplif
   - formulário de administração conferido pelo Edgar.
 - **Situação:** aguardando o primeiro parceiro real. Não cadastrar empresas fictícias na produção. Sem novas funcionalidades nesta etapa, só pequenas correções por necessidade real.
 - **Reversão e backup:** `C:\PAIIA\backups\2026-11-27-antes-parceiros\PROCEDIMENTO_PUBLICACAO_E_REVERSAO.md`.
+
+## Catálogos: fabricantes x distribuidores (28/11/2026, orientação do Edgar) — PRONTO, aguardando autorização para publicar
+- **Montadoras e fabricantes:** continua como está.
+  - PDF técnico oficial pode ser importado para a base PAIIA.
+  - O catálogo online oficial fica sempre com acesso direto, tenha ou não PDF na base.
+  - Tudo o que já foi importado foi preservado.
+- **Distribuidores:** só aparecem nome, logotipo e link direto para o catálogo online. O cartão abre o site da empresa em nova aba; sem link de catálogo, usa o site da empresa.
+  - Produtos, códigos, aplicações e equivalências de distribuidores não entram na base nem na pesquisa.
+  - Esse código ficou guardado e desligado (`ITENS_DISTRIBUIDOR_ATIVO = false`).
+  - No cadastro do administrador saíram o envio de arquivo e de itens. Ficou o campo "Link do catálogo online".
+  - Os contatos passaram a ser só de uso interno. Mensalidade e contrato continuam.
+- **Uma só tela de Catálogos:** grupos dos fabricantes e, no fim, "🏪 Distribuidores parceiros".
+- **Banco oficial:** nenhuma mudança necessária.
+- **Testes:** 1428 sem falhas; STAGING conferido como administrador e como usuário comum (conta de teste devolvida à administração).

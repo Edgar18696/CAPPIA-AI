@@ -15,6 +15,16 @@ export const MENSALIDADE_FICTICIA_CENTAVOS = 19990;
 // no projeto para uso futuro: basta ligar esta chave (e revisar com ele antes).
 export const COTACAO_INTERNA_ATIVA = false;
 
+// (28/11) DISTRIBUIDORES: o PAIIA mostra só nome, logotipo e link direto para o catálogo online
+// (decisão do Edgar). Produtos, códigos, aplicações e equivalências de distribuidores NÃO entram
+// na base PAIIA nem na pesquisa. O código de envio/validação de itens fica guardado, desligado.
+export const ITENS_DISTRIBUIDOR_ATIVO = false;
+
+/** Link que o cartão do distribuidor abre: o catálogo online; sem ele, o site da empresa. */
+export function linkCatalogoParceiro(parceiro = {}) {
+  return linkSite(parceiro.catalogo_url) || linkSite(parceiro.site);
+}
+
 // Todas as linhas automotivas, sem preferência. O parceiro marca as suas e pode acrescentar outras.
 export const SEGMENTOS_AUTOMOTIVOS = [
   "Linha leve", "Linha pesada", "Utilitários", "Motos", "Agrícola", "Máquinas e linha amarela", "Náutica",

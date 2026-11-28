@@ -127,5 +127,5 @@ test("Catálogos Técnicos: área de parceiros conforme o ambiente e só para qu
   const tela = fs.readFileSync(new URL("../../src/components/Catalogos.jsx", import.meta.url), "utf8");
   assert.match(tela, /pilotoParceirosAtivo\(ambienteSupabase\)/);
   assert.match(tela, /parceirosVisiveis && <ParceirosPiloto \/>/);
-  assert.match(tela, /aoPesquisar=\{parceirosVisiveis \? setPesquisaParceiros : null\}/);
+  assert.match(tela, /aoPesquisar=\{parceirosVisiveis && ITENS_DISTRIBUIDOR_ATIVO \? setPesquisaParceiros : null\}/);
 });
